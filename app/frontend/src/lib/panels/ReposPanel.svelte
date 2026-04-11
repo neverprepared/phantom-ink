@@ -98,7 +98,7 @@
   }
 </script>
 
-<div class="panel">
+<div class="panel" aria-busy={loading}>
   <header>
     <h1><span class="accent">repos</span></h1>
     <button class="new-btn" onclick={openAddModal}>+ add repo</button>

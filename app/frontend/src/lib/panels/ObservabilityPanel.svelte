@@ -46,7 +46,7 @@
   }
 </script>
 
-<div class="panel">
+<div class="panel" aria-busy={loading}>
   <header>
     <h1><span class="accent">observability</span></h1>
     <div class="header-meta">
@@ -170,8 +170,6 @@
   }
   .tab:hover { color: var(--color-text-primary); }
   .tab.active { color: var(--color-text-primary); border-bottom-color: var(--color-info); }
-
-  .loading { color: var(--color-text-tertiary); font-size: 13px; padding: 24px 0; }
 
   .metrics-list { display: flex; flex-direction: column; gap: 8px; }
 

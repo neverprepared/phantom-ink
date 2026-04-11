@@ -155,10 +155,10 @@
   }
 </script>
 
-<div class="panel">
+<div class="panel" aria-busy={loading}>
   <header class="panel-header">
     <h1><span class="panel-accent">integrations</span></h1>
-    <button class="btn-refresh" onclick={refresh} title="Refresh status">
+    <button class="btn-refresh" onclick={refresh} title="Refresh status" aria-label="Refresh status">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
     </button>
   </header>
@@ -187,7 +187,7 @@
               <span class="scope-badge danger">not configured</span>
             {/if}
           </button>
-          <button class="btn-icon" onclick={() => copySecretsTemplate(p.name)} title="Copy secrets template to clipboard">
+          <button class="btn-icon" onclick={() => copySecretsTemplate(p.name)} title="Copy secrets template to clipboard" aria-label="Copy secrets template for {p.name}">
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
           </button>
         </div>

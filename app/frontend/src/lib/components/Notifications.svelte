@@ -3,7 +3,7 @@
 </script>
 
 {#if notifications.value.length > 0}
-  <div class="notifications" aria-live="polite">
+  <div class="notifications" aria-live="polite" role="status">
     {#each notifications.value as n (n.id)}
       <div class="notification {n.type}" role="alert">
         <span class="msg">{n.message}</span>
