@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 // ---------------------------------------------------------------------------
 // Services / Integrations
@@ -54,10 +57,12 @@ func (a *App) StartService(name string) error {
 				return err
 			}
 			if a.db != nil {
-				_ = a.db.UpsertIntegration(IntegrationRow{
+				if err := a.db.UpsertIntegration(IntegrationRow{
 					Name: name, Enabled: true, Remote: cfg.Remote,
 					LocalURL: cfg.LocalURL, RemoteURL: cfg.RemoteURL,
-				})
+				}); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to update integration %q: %v\n", name, err)
+				}
 			}
 			return nil
 		}
