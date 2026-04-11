@@ -154,7 +154,7 @@
   }
 </script>
 
-<div class="panel">
+<div class="panel" aria-busy={loading}>
   <header>
     <h1><span class="accent">dashboard</span></h1>
     <button class="new-btn" onclick={() => showSubmitModal = true}>+ submit task</button>
@@ -386,8 +386,6 @@
     transition: all 0.15s;
   }
   .new-btn:hover { background: rgba(59, 130, 246, 0.2); border-color: var(--color-info); }
-
-  .loading { color: var(--color-text-tertiary); font-size: 13px; padding: 24px 0; }
 
   /* === Overview cards === */
   .cards-grid {
@@ -678,7 +676,6 @@
   .modal-sub { font-size: 12px; color: var(--color-text-muted); margin-bottom: 20px; }
   .field { margin-bottom: 14px; }
 
-  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
   .btn-cancel-modal {
     background: none;
     border: 1px solid var(--color-border-secondary);

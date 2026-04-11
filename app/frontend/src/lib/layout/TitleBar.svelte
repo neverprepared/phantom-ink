@@ -48,7 +48,7 @@
           title={p.secrets_mode === 'none' ? `${p.path} (no secrets configured)` : `${p.path} (${p.secrets_mode})`}
         >{p.name}</button>
       {/each}
-      <button class="tab-refresh" onclick={refreshProfiles} title="Refresh profiles">
+      <button class="tab-refresh" onclick={refreshProfiles} title="Refresh profiles" aria-label="Refresh profiles">
         <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
       </button>
     </div>
@@ -59,7 +59,7 @@
       <span class="conn-dot"></span>
       {connected ? 'connected' : 'disconnected'}
     </span>
-    <button class="palette-btn" onclick={() => commandPalette.toggle()} title="Command palette (⌘K)">
+    <button class="palette-btn" onclick={() => commandPalette.toggle()} title="Command palette (⌘K)" aria-label="Command palette">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
       <span>⌘K</span>
     </button>
