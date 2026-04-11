@@ -1,0 +1,32 @@
+# Build artifacts
+build/bin
+app/build/bin
+app/frontend/dist
+app/tmp
+
+# Dependencies
+node_modules
+__pycache__
+*.pyc
+.venv
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Go
+shell-profiler/bin/
+
+# Wails dev
+app/frontend/.vite
+
+# Python
+*.egg-info/
+dist/
+
+# Environment / secrets
+.env.secrets
+.env.local

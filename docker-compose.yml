@@ -1,0 +1,61 @@
+# Brainbox stack — API + Qdrant
+# Usage: docker compose up -d
+#
+# DooD (Docker-outside-Docker) note: bind mount paths for session containers must be
+# host paths (resolved by the Docker daemon). So the API config dir is mounted at the
+# same host path inside the container, ensuring session mounts are valid host paths.
+services:
+  brainbox-api:
+    image: ghcr.io/neverprepared/brainbox-api:latest
+    ports:
+      - "127.0.0.1:9999:9999"
+    volumes:
+      # API config (sessions, api key, state) — mounted at the same path as on the host
+      # so that session container bind mounts reference real host paths.
+      - "${XDG_CONFIG_HOME:-${HOME}/.config}:${XDG_CONFIG_HOME:-${HOME}/.config}"
+      # All workspace profiles — read-only, enables multi-profile parallel containers.
+      # bundle.py reads each profile's .claude/, .ssh/, .aws/ etc. via workspace_home
+      # passed per-request. Set WORKSPACES_HOME to the parent of your profiles dir.
+      - "${WORKSPACES_HOME}:${WORKSPACES_HOME}:ro"
+      # Docker socket — DooD for session container management
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      # shell-profiler rendered env cache (secrets resolved from 1Password etc.)
+      # Mounted read-only so _resolve_profile_env can find $TMPDIR/sp-profiles inside the container.
+      - "${TMPDIR:-/tmp}sp-profiles:/host-sp-profiles:ro"
+    environment:
+      # Pass through host env vars unchanged so paths resolve identically inside the container
+      - XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-${HOME}/.config}
+      - WORKSPACES_HOME=${WORKSPACES_HOME}
+      # Real host $HOME for path translation (Path.home() returns /root inside container)
+      - HOST_HOME=${HOME}
+      # Host TMPDIR for sp-profiles cache (macOS uses /var/folders/... not /tmp)
+      - HOST_TMPDIR=${TMPDIR:-/tmp}
+      # SSH agent socket (Docker Desktop for Mac)
+      - SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock
+    networks:
+      - brainbox-net
+    restart: unless-stopped
+
+  brainbox-ui:
+    image: ghcr.io/neverprepared/brainbox-ui:latest
+    ports:
+      - "127.0.0.1:9998:80"
+    depends_on:
+      - brainbox-api
+    networks:
+      - brainbox-net
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "127.0.0.1:6333:6333"
+    volumes:
+      - "${QDRANT_DATA_DIR:-${XDG_CONFIG_HOME:-${HOME}/.config}/qdrant}:/qdrant/storage"
+    networks:
+      - brainbox-net
+    restart: unless-stopped
+
+networks:
+  brainbox-net:
+    name: brainbox-net

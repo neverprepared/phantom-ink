@@ -1,0 +1,40 @@
+{
+  "env": {
+    "DISABLE_AUTOUPDATER": "1"
+  },
+  "bypassPermissions": true,
+  "promptSuggestionEnabled": false,
+  "sandbox": {
+    "allowUnsandboxedCommands": false
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|mcp__playwright__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/developer/.claude/hooks/network-guardrail.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/developer/.claude/hooks/langfuse-hook.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "/home/developer/.claude/hooks/qdrant-websearch-hook.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

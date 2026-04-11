@@ -1,0 +1,16 @@
+# n8n — workflow automation platform
+# Dashboard: http://localhost:5678
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - "127.0.0.1:5678:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    environment:
+      - N8N_SECURE_COOKIE=false
+      - WEBHOOK_URL=http://localhost:5678/
+    restart: unless-stopped
+
+volumes:
+  n8n-data:

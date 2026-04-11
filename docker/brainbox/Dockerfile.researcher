@@ -1,0 +1,56 @@
+FROM brainbox-base
+
+# =============================================================================
+# Researcher container — research/fact-checking with read-only HTTP guardrail
+# Writes findings to Qdrant so other containers can consume them.
+# =============================================================================
+LABEL brainbox.role=researcher
+
+# Claude config + network guardrail hook (shared with developer)
+COPY --chown=developer:developer docker/brainbox/setup/researcher/CLAUDE.md /home/developer/.claude/CLAUDE.md
+COPY --chown=developer:developer docker/brainbox/setup/researcher/settings.json /home/developer/.claude/settings.json
+COPY --chown=developer:developer docker/brainbox/setup/network-guardrail.py /home/developer/.claude/hooks/network-guardrail.py
+
+# LangFuse observability hook (traces tool calls when credentials are present)
+COPY --chown=developer:developer reflex/plugins/reflex/scripts/langfuse-hook.sh /home/developer/.claude/hooks/langfuse-hook.sh
+COPY --chown=developer:developer reflex/plugins/reflex/scripts/langfuse-trace.py /home/developer/.claude/hooks/langfuse-trace.py
+
+# Qdrant WebSearch auto-storage hook (stores search results in vector DB)
+COPY --chown=developer:developer reflex/plugins/reflex/scripts/qdrant-websearch-hook.sh /home/developer/.claude/hooks/qdrant-websearch-hook.sh
+COPY --chown=developer:developer reflex/plugins/reflex/scripts/qdrant-websearch-store.py /home/developer/.claude/hooks/qdrant-websearch-store.py
+
+# Skills — Research + RAG + Harvesting
+COPY --chown=developer:developer reflex/plugins/reflex/skills/qdrant-patterns/SKILL.md /home/developer/.claude/skills/qdrant-patterns/SKILL.md
+COPY --chown=developer:developer reflex/plugins/reflex/skills/analysis-patterns/SKILL.md /home/developer/.claude/skills/analysis-patterns/SKILL.md
+COPY --chown=developer:developer reflex/plugins/reflex/skills/rag-builder/SKILL.md /home/developer/.claude/skills/rag-builder/SKILL.md
+COPY --chown=developer:developer reflex/plugins/reflex/skills/rag-wrapper/SKILL.md /home/developer/.claude/skills/rag-wrapper/SKILL.md
+COPY --chown=developer:developer reflex/plugins/reflex/skills/research-patterns/SKILL.md /home/developer/.claude/skills/research-patterns/SKILL.md
+COPY --chown=developer:developer reflex/plugins/reflex/skills/web-research/SKILL.md /home/developer/.claude/skills/web-research/SKILL.md
+COPY --chown=developer:developer reflex/plugins/reflex/skills/knowledge-ingestion-patterns/SKILL.md /home/developer/.claude/skills/knowledge-ingestion-patterns/SKILL.md
+COPY --chown=developer:developer reflex/plugins/reflex/skills/github-harvester/SKILL.md /home/developer/.claude/skills/github-harvester/SKILL.md
+COPY --chown=developer:developer reflex/plugins/reflex/skills/pdf-harvester/SKILL.md /home/developer/.claude/skills/pdf-harvester/SKILL.md
+COPY --chown=developer:developer reflex/plugins/reflex/skills/youtube-harvester/SKILL.md /home/developer/.claude/skills/youtube-harvester/SKILL.md
+COPY --chown=developer:developer reflex/plugins/reflex/skills/site-crawler/SKILL.md /home/developer/.claude/skills/site-crawler/SKILL.md
+
+# MCP servers (research-focused: Qdrant, Brave Search, Memory only)
+RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add qdrant -- uvx --python 3.12 --with fastembed mcp-server-qdrant'
+RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add brave-search -- npx -y @anthropic-ai/mcp-brave-search'
+RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add memory -- npx -y @modelcontextprotocol/server-memory'
+
+# Skip onboarding
+RUN bash -c 'if [ -f /home/developer/.claude.json ]; then \
+    jq ". + {hasCompletedOnboarding: true, bypassPermissionsModeAccepted: true}" /home/developer/.claude.json > /tmp/.claude.json.tmp && \
+    mv /tmp/.claude.json.tmp /home/developer/.claude.json; \
+    else echo "{\"hasCompletedOnboarding\":true,\"bypassPermissionsModeAccepted\":true}" > /home/developer/.claude.json; fi'
+
+# Shell config + ttyd wrapper
+COPY --chown=developer:developer docker/brainbox/setup/.bashrc /tmp/.bashrc.extra
+RUN cat /tmp/.bashrc.extra >> /home/developer/.bashrc && rm /tmp/.bashrc.extra
+
+COPY --chown=developer:developer docker/brainbox/setup/ttyd-wrapper.sh /home/developer/ttyd-wrapper.sh
+RUN chmod +x /home/developer/ttyd-wrapper.sh
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD pgrep -x "claude" > /dev/null || exit 1
+
+CMD ["/bin/bash", "-l"]

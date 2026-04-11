@@ -1,0 +1,13 @@
+# Uptime Kuma — lightweight self-hosted monitoring
+# Dashboard: http://localhost:3001
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:latest
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - uptime-kuma-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  uptime-kuma-data:

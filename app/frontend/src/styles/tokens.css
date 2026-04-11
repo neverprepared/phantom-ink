@@ -1,0 +1,136 @@
+/* ==========================================================================
+   phantom-ink design tokens — Soft UI inspired
+   Supports light/dark via [data-theme="light"] on <html>
+   ========================================================================== */
+
+:root {
+  /* --- Dark theme (default) --- */
+
+  /* Backgrounds — warm neutral zinc */
+  --color-bg-primary: #18181b;
+  --color-bg-secondary: #27272a;
+  --color-bg-tertiary: #303033;
+  --color-bg-card: linear-gradient(127.09deg, rgba(40, 40, 44, 0.94) 19.41%, rgba(35, 35, 39, 0.49) 76.65%);
+  --color-bg-sidebar: #1e1e21;
+
+  /* Borders */
+  --color-border-primary: rgba(255, 255, 255, 0.06);
+  --color-border-secondary: rgba(255, 255, 255, 0.1);
+
+  /* Text */
+  --color-text-primary: #f4f4f5;
+  --color-text-secondary: #a1a1aa;
+  --color-text-tertiary: #71717a;
+  --color-text-muted: #52525b;
+
+  /* Accent */
+  --color-accent: #f59e0b;
+  --color-accent-soft: rgba(245, 158, 11, 0.12);
+  --color-focus: #3b82f6;
+
+  /* Status */
+  --color-success: #22c55e;
+  --color-error: #ef4444;
+  --color-warning: #eab308;
+  --color-info: #0ea5e9;
+
+  /* Role colors */
+  --color-role-developer: #3b82f6;
+  --color-role-researcher: #a855f7;
+  --color-role-performer: #f97316;
+  --color-role-supervisor: #f59e0b;
+  --color-role-worker: #22c55e;
+  --color-role-reviewer: #ec4899;
+
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 20px;
+  --spacing-2xl: 24px;
+
+  /* Border radius — soft, generous */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+
+  /* Shadows — multi-layer soft */
+  --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -2px rgba(0, 0, 0, 0.15);
+  --shadow-card-hover: 0 10px 15px -3px rgba(0, 0, 0, 0.25), 0 4px 6px -4px rgba(0, 0, 0, 0.15);
+  --shadow-modal: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+  --shadow-button: 0 4px 7px -1px rgba(0, 0, 0, 0.11), 0 2px 4px -1px rgba(0, 0, 0, 0.07);
+  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.15);
+
+  /* Sidebar */
+  --sidebar-width: 220px;
+  --sidebar-collapsed-width: 60px;
+
+  /* TitleBar */
+  --titlebar-height: 44px;
+  --titlebar-pad-left: 80px;
+  --titlebar-pad-right: 16px;
+
+  /* Controls */
+  --control-height: 28px;
+
+  /* Typography */
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'SF Mono', 'Cascadia Code', 'Consolas', 'JetBrains Mono', monospace;
+}
+
+/* ==========================================================================
+   Light theme
+   ========================================================================== */
+
+[data-theme="light"] {
+  --color-bg-primary: #f4f4f5;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #e4e4e7;
+  --color-bg-card: linear-gradient(127.09deg, rgba(255, 255, 255, 0.94) 19.41%, rgba(250, 250, 252, 0.68) 76.65%);
+  --color-bg-sidebar: #ffffff;
+
+  --color-border-primary: rgba(0, 0, 0, 0.06);
+  --color-border-secondary: rgba(0, 0, 0, 0.1);
+
+  --color-text-primary: #18181b;
+  --color-text-secondary: #52525b;
+  --color-text-tertiary: #71717a;
+  --color-text-muted: #a1a1aa;
+
+  --color-accent: #f59e0b;
+  --color-accent-soft: rgba(245, 158, 11, 0.1);
+
+  --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --shadow-card-hover: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
+  --shadow-modal: 0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  --shadow-button: 0 4px 7px -1px rgba(0, 0, 0, 0.06), 0 2px 4px -1px rgba(0, 0, 0, 0.04);
+  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* ==========================================================================
+   Platform overrides
+   ========================================================================== */
+
+[data-platform="windows"] {
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --titlebar-height: 32px;
+  --titlebar-pad-left: 12px;
+  --titlebar-pad-right: 140px;
+  --control-height: 26px;
+  --font-ui: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Code', 'Consolas', monospace;
+}
+
+[data-platform="linux"] {
+  --titlebar-height: 36px;
+  --titlebar-pad-left: 12px;
+  --titlebar-pad-right: 12px;
+  --control-height: 30px;
+  --font-ui: system-ui, 'Cantarell', 'Noto Sans', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Noto Sans Mono', monospace;
+}

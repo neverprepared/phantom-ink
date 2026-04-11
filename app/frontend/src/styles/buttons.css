@@ -1,0 +1,100 @@
+/* ==========================================================================
+   Shared button variants
+   ========================================================================== */
+
+/* Primary action (blue) */
+.btn-primary {
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: var(--color-info);
+  padding: 7px 14px;
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+.btn-primary:hover { background: rgba(59, 130, 246, 0.2); border-color: var(--color-info); }
+
+/* Success action (green) */
+.btn-success {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: var(--color-success);
+  padding: 7px 14px;
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+.btn-success:hover { background: rgba(16, 185, 129, 0.2); border-color: var(--color-success); }
+
+/* Danger action (red) */
+.btn-danger {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  padding: 7px 14px;
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+.btn-danger:hover { background: rgba(239, 68, 68, 0.2); border-color: var(--color-error); }
+
+/* Accent action (amber) */
+.btn-accent {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  color: var(--color-accent);
+  padding: 7px 14px;
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+.btn-accent:hover { background: rgba(245, 158, 11, 0.2); border-color: var(--color-accent); }
+
+/* Ghost / secondary */
+.btn-ghost {
+  background: none;
+  border: 1px solid var(--color-border-secondary);
+  color: var(--color-text-secondary);
+  padding: 7px 14px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  transition: all 0.15s;
+}
+.btn-ghost:hover { background: rgba(255, 255, 255, 0.05); }
+
+/* Small variants */
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: var(--radius-md);
+}
+
+/* Icon button */
+.btn-icon {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--color-border-secondary);
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.btn-icon:hover { color: var(--color-text-primary); border-color: var(--color-text-tertiary); }
+
+/* Refresh icon button */
+.btn-refresh {
+  background: none;
+  border: 1px solid var(--color-border-secondary);
+  color: var(--color-text-tertiary);
+  padding: 6px;
+  border-radius: var(--radius-md);
+  display: flex;
+  transition: all 0.15s;
+}
+.btn-refresh:hover { color: var(--color-text-primary); border-color: var(--color-text-tertiary); }

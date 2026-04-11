@@ -1,0 +1,15 @@
+node_modules/
+tmp/
+.env
+*.log
+
+# 1Password
+.op-sa-token
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+dist/
+build/

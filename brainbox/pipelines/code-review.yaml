@@ -1,0 +1,44 @@
+name: code-review
+description: >
+  Review a code diff using Claude Code in a container session.
+  First pass generates findings, second pass prioritizes into an
+  actionable report. Demonstrates claude-session step type.
+version: "1"
+
+steps:
+  - name: analyze-diff
+    type: claude-session
+    timeout: 300
+    config:
+      session_prefix: "review"
+      system_prompt: >
+        You are a senior software engineer performing a code review.
+        Focus on: bugs, security issues, performance problems, and
+        maintainability concerns. Cite specific line numbers.
+        Return ONLY your findings as a markdown list — no tool calls,
+        no file reads, just analyze the diff provided.
+      prompt: >
+        Review this code diff and identify all issues:
+
+        ${params.diff}
+
+  - name: prioritize-findings
+    type: claude-session
+    depends_on: [analyze-diff]
+    timeout: 300
+    config:
+      session_prefix: "review"
+      system_prompt: >
+        You are a tech lead. Given code review findings, produce a concise
+        actionable report. Return ONLY the formatted markdown — no tool calls.
+      prompt: >
+        Prioritize and format these code review findings into a markdown report:
+
+        # Code Review Report
+        ## Critical Issues
+        ## Warnings
+        ## Nits
+        ## Summary
+
+        Findings:
+        ${steps.analyze-diff.output}

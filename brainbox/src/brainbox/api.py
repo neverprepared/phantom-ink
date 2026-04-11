@@ -1,0 +1,2077 @@
+"""FastAPI application: hub API, session management, dashboard, and SSE."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import threading
+import time
+import uuid
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+
+import docker
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+from sse_starlette.sse import EventSourceResponse
+from starlette.middleware.cors import CORSMiddleware
+
+from datetime import datetime, timezone
+
+from .auth import get_api_key, load_or_create_key, require_api_key
+from .config import settings
+from .rate_limit import limiter, rate_limit_exceeded_handler
+from .hub import init as hub_init, shutdown as hub_shutdown
+from .backends.docker import _calc_cpu, _human_bytes
+from .lifecycle import (
+    _docker,
+    provision,
+    configure,
+    recycle,
+    run_pipeline,
+    start as lifecycle_start,
+    monitor as lifecycle_monitor,
+)
+from .validation import (
+    validate_artifact_key,
+    validate_session_name,
+    ValidationError,
+)
+from .log import get_logger, setup_logging
+from .models import TaskCreate, Token
+from .models_api import (
+    CreateRepoRequest,
+    CreateSessionRequest,
+    DeleteSessionRequest,
+    ExecSessionRequest,
+    QuerySessionRequest,
+    StartSessionRequest,
+    StopSessionRequest,
+    UpdateRepoRequest,
+)
+from .registry import get_agent, list_agents, list_tokens, validate_token
+from .router import (
+    add_repo,
+    cancel_task,
+    complete_task,
+    ensure_repo_agents,
+    get_repo,
+    get_task,
+    list_repos,
+    list_tasks,
+    on_event,
+    remove_repo,
+    submit_task,
+    update_repo,
+)
+from .artifacts import (
+    ArtifactError,
+    delete_artifact,
+    download_artifact,
+    health_check as artifact_health_check,
+    list_artifacts,
+    upload_artifact,
+)
+from .langfuse_client import (
+    LangfuseError,
+    health_check as langfuse_health_check,
+    get_session_traces_summary,
+    get_trace as langfuse_get_trace,
+    list_traces as langfuse_list_traces,
+)
+from .messages import get_message_log, get_messages, route as route_message
+from .models_api import OllamaChatRequest, OllamaPullRequest, StartPipelineRunRequest
+from .pipeline import (
+    cancel_run as pipeline_cancel_run,
+    get_pipeline as pipeline_get,
+    get_run as pipeline_get_run,
+    list_pipelines as pipeline_list,
+    list_runs as pipeline_list_runs,
+    load_pipelines,
+    resolve_pipeline as pipeline_resolve,
+    resolve_pipelines as pipeline_resolve_all,
+    start_run as pipeline_start_run,
+)
+from .ollama import (
+    OllamaError,
+    chat as ollama_chat,
+    health_check as ollama_health_check,
+    list_models as ollama_list_models,
+    pull_model as ollama_pull_model,
+)
+
+log = get_logger()
+
+
+# ---------------------------------------------------------------------------
+# Audit logging helper
+# ---------------------------------------------------------------------------
+
+
+def _audit_log(
+    request: Request,
+    operation: str,
+    session_name: str | None = None,
+    success: bool = True,
+    error: str | None = None,
+) -> None:
+    """Log destructive operations with client metadata and request ID."""
+    client_ip = get_remote_address(request) if hasattr(request, "client") else "unknown"
+    user_agent = request.headers.get("user-agent", "unknown")
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+
+    log.info(
+        "audit.operation",
+        metadata={
+            "request_id": request_id,
+            "operation": operation,
+            "session_name": session_name or "N/A",
+            "client_ip": client_ip,
+            "user_agent": user_agent,
+            "success": success,
+            "error": error,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# SSE client management
+# ---------------------------------------------------------------------------
+
+_sse_queues: set[asyncio.Queue] = set()
+_sse_drops: int = 0
+
+
+def _broadcast_sse(data: str) -> None:
+    if not _sse_queues:
+        return
+    global _sse_drops
+    for q in list(_sse_queues):
+        try:
+            q.put_nowait(data)
+        except asyncio.QueueFull:
+            _sse_drops += 1
+            if _sse_drops % 50 == 1:
+                log.warning(
+                    "sse.queue_full",
+                    metadata={"total_drops": _sse_drops, "connected_clients": len(_sse_queues)},
+                )
+
+
+# ---------------------------------------------------------------------------
+# Task tracking for async execution
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Docker events watcher
+# ---------------------------------------------------------------------------
+
+_docker_events_task: asyncio.Task | None = None
+
+
+async def _watch_docker_events() -> None:
+    """Watch Docker events and broadcast to SSE clients."""
+    loop = asyncio.get_running_loop()
+    retry = 0
+
+    def _blocking_watch() -> bool:
+        """Run in thread — blocks on Docker event stream.
+
+        Returns True if at least one event was processed successfully.
+        """
+        try:
+            client = _docker()
+            for event in client.events(filters={"label": "brainbox.managed=true"}, decode=True):
+                action = event.get("Action", "")
+                if action in ("create", "start", "stop", "die", "destroy"):
+                    loop.call_soon_threadsafe(_broadcast_sse, action)
+            return True
+        except Exception as e:
+            log.warning(
+                "docker.events.watcher_error",
+                metadata={"reason": str(e)},
+            )
+            return False
+
+    while True:
+        ok = False
+        try:
+            ok = await loop.run_in_executor(None, _blocking_watch)
+        except Exception as e:
+            log.warning(
+                "docker.events.watcher_error",
+                metadata={"reason": str(e)},
+            )
+
+        if ok:
+            retry = 0
+        else:
+            retry += 1
+
+        # Exponential backoff before restarting the stream
+        await asyncio.sleep(min(2**retry, 60))
+
+
+# ---------------------------------------------------------------------------
+# SPA static files
+# ---------------------------------------------------------------------------
+
+_dashboard_dist = Path(__file__).resolve().parent.parent.parent / "dashboard" / "dist"
+
+
+# ---------------------------------------------------------------------------
+# Auth dependency
+# ---------------------------------------------------------------------------
+
+
+def _extract_token(request: Request) -> Token | None:
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    token_id = auth[7:].strip()
+    return validate_token(token_id)
+
+
+def require_token(request: Request) -> Token:
+    token = _extract_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing or invalid Bearer token")
+    return token
+
+
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from brainbox.config import migrate_config_dir
+    migrate_config_dir()
+    setup_logging()
+    await hub_init()
+    load_or_create_key()
+    load_pipelines()
+
+    # Forward hub events to SSE
+    on_event(
+        lambda event, data: _broadcast_sse(
+            json.dumps(
+                {
+                    "hub": True,
+                    "event": event,
+                    "data": data.model_dump() if hasattr(data, "model_dump") else data,
+                }
+            )
+        )
+    )
+
+    # Start Docker events watcher
+    global _docker_events_task
+    _docker_events_task = asyncio.create_task(_watch_docker_events())
+
+    log.info("api.started", metadata={"port": settings.api_port})
+    yield
+
+    if _docker_events_task:
+        _docker_events_task.cancel()
+
+    await hub_shutdown()
+
+
+app = FastAPI(title="Brainbox", version="0.2.0", lifespan=lifespan)
+
+# CORS — restrict to localhost by default; override via CL_CORS_ORIGINS
+_cors_origins = (
+    os.environ.get("CL_CORS_ORIGINS", "").split(",")
+    if os.environ.get("CL_CORS_ORIGINS")
+    else [
+        "http://localhost:9999",
+        "http://127.0.0.1:9999",
+        "http://localhost:9998",  # brainbox-ui nginx container
+        "http://localhost:5173",  # Vite dev server
+    ]
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-Id", "X-API-Key"],
+)
+
+# Add rate limiter state and exception handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+
+# ---------------------------------------------------------------------------
+# API key endpoint (loopback only)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/auth/key")
+async def api_get_key(request: Request):
+    """Return the API key — only accessible from loopback or private Docker networks.
+
+    The API binds to 127.0.0.1 on the host, so only localhost processes and
+    containers on the same Docker network (172.x / 10.x / 192.168.x) can reach
+    this endpoint. Private-network requests come from trusted internal containers
+    (e.g. the brainbox-ui nginx proxy) and are treated as equivalent to localhost.
+    """
+    import ipaddress
+
+    client_ip = request.client.host if request.client else ""
+    try:
+        addr = ipaddress.ip_address(client_ip)
+        trusted = addr.is_loopback or addr.is_private
+    except ValueError:
+        trusted = False
+    if not trusted:
+        raise HTTPException(status_code=403, detail="Only accessible from localhost")
+    return {"key": get_api_key()}
+
+
+# ---------------------------------------------------------------------------
+# Dashboard (session info helper used by API)
+# ---------------------------------------------------------------------------
+
+
+_ROLE_PREFIXES = ("developer-", "researcher-", "performer-")
+
+
+def _extract_session_name(container_name: str) -> str:
+    """Strip any known role prefix from a container name."""
+    for prefix in _ROLE_PREFIXES:
+        if container_name.startswith(prefix):
+            return container_name[len(prefix) :]
+    return container_name
+
+
+def _extract_role(container: Any) -> str:
+    """Get the role label from a container, defaulting to 'developer'."""
+    labels = container.labels or {}
+    return labels.get("brainbox.role", "developer")
+
+
+def _get_sessions_info() -> list[dict[str, Any]]:
+    """Get session info from all backends (Docker + UTM)."""
+    from .backends import create_backend
+
+    sessions = []
+
+    # Get Docker sessions
+    try:
+        docker_backend = create_backend("docker")
+        docker_sessions = docker_backend.get_sessions_info()
+        for sess in docker_sessions:
+            # Add legacy fields for backward compatibility
+            sess["session_name"] = _extract_session_name(sess["name"])
+            sess["role"] = sess.get("role", "developer")
+        sessions.extend(docker_sessions)
+    except Exception as exc:
+        log.warning("docker.list_sessions_failed", metadata={"reason": str(exc)})
+
+    # Get UTM sessions
+    try:
+        utm_backend = create_backend("utm")
+        utm_sessions = utm_backend.get_sessions_info()
+        sessions.extend(utm_sessions)
+    except Exception as exc:
+        log.warning("utm.list_sessions_failed", metadata={"reason": str(exc)})
+
+    # Return sessions from all backends
+    return sessions
+
+
+def _get_sessions_info_legacy() -> list[dict[str, Any]]:
+    """Legacy Docker-only session listing (deprecated)."""
+    sessions = []
+    try:
+        client = _docker()
+        containers = client.containers.list(all=True, filters={"label": "brainbox.managed=true"})
+
+        for c in containers:
+            name = c.name
+            is_running = c.status == "running"
+            port = None
+            volume = "-"
+
+            if is_running:
+                ports = c.attrs.get("NetworkSettings", {}).get("Ports") or {}
+                for bindings in ports.values():
+                    if bindings:
+                        for b in bindings:
+                            hp = b.get("HostPort")
+                            if hp:
+                                port = hp
+                                break
+
+            # Get volume mounts
+            mounts = c.attrs.get("Mounts", [])
+            bind_mounts = [
+                f"{m['Source']}:{m['Destination']}"
+                for m in mounts
+                if m.get("Type") == "bind" and not m["Destination"].endswith("/.claude/projects")
+            ]
+            if bind_mounts:
+                volume = ", ".join(bind_mounts)
+
+            labels = c.labels or {}
+            llm_provider = labels.get("brainbox.llm_provider", "claude")
+            llm_model = labels.get("brainbox.llm_model", "")
+            workspace_profile = labels.get("brainbox.workspace_profile", "")
+
+            sessions.append(
+                {
+                    "backend": "docker",
+                    "name": name,
+                    "session_name": _extract_session_name(name),
+                    "role": _extract_role(c),
+                    "port": port,
+                    "url": f"http://localhost:{port}" if port else None,
+                    "volume": volume,
+                    "active": is_running,
+                    "llm_provider": llm_provider,
+                    "llm_model": llm_model,
+                    "workspace_profile": workspace_profile,
+                }
+            )
+    except Exception as exc:
+        log.warning("docker.list_sessions_failed", metadata={"reason": str(exc)})
+
+    sessions.sort(key=lambda s: (not s["active"], s["name"]))
+    return sessions
+
+
+# ---------------------------------------------------------------------------
+# SSE endpoint
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/events")
+async def sse_events(
+    session: str | None = Query(None, description="Filter events by session name"),
+):
+    queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+    _sse_queues.add(queue)
+
+    async def event_generator():
+        try:
+            yield {"data": "connected"}
+            while True:
+                data = await queue.get()
+                # If a session filter is active, only forward matching events
+                if session:
+                    try:
+                        parsed = json.loads(data)
+                        event_session = parsed.get("data", {}).get("session_name") or parsed.get(
+                            "session_name"
+                        )
+                        if event_session and event_session != session:
+                            continue
+                    except (json.JSONDecodeError, TypeError, AttributeError):
+                        pass  # Non-JSON events (docker actions) pass through
+                yield {"data": data}
+        except asyncio.CancelledError:
+            pass
+        finally:
+            _sse_queues.discard(queue)
+
+    return EventSourceResponse(event_generator())
+
+
+# ---------------------------------------------------------------------------
+# Session management routes (from dashboard/server.js)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/sessions")
+async def api_list_sessions():
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _get_sessions_info)
+
+
+@app.get("/api/sessions/{name}")
+async def api_get_session(name: str):
+    """Get info for a single session by name."""
+    try:
+        validate_session_name(name)
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    loop = asyncio.get_running_loop()
+    sessions = await loop.run_in_executor(None, _get_sessions_info)
+    for session in sessions:
+        if session.get("session_name") == name:
+            return session
+    raise HTTPException(status_code=404, detail=f"Session '{name}' not found")
+
+
+@app.post("/api/stop")
+@limiter.limit("10/minute")
+async def api_stop_session(
+    request: Request, body: StopSessionRequest, _key=Depends(require_api_key)
+):
+    name = body.name
+    session_name = _extract_session_name(name)
+    try:
+        await recycle(session_name, reason="dashboard_stop")
+        _audit_log(request, "session.stop", session_name=session_name, success=True)
+        return {"success": True}
+    except Exception as exc:
+        # Fallback to direct Docker stop
+        log.warning(
+            "session.recycle_failed",
+            metadata={"session": session_name, "error": str(exc), "fallback": "direct_docker_stop"},
+        )
+        try:
+            client = _docker()
+            container = client.containers.get(name)
+            container.stop(timeout=1)
+            _audit_log(request, "session.stop", session_name=session_name, success=True)
+            return {"success": True}
+        except docker.errors.NotFound:
+            _audit_log(
+                request, "session.stop", session_name=session_name, success=False, error="not_found"
+            )
+            log.error("session.stop_failed.not_found", metadata={"container": name})
+            raise HTTPException(status_code=404, detail=f"Container not found: {name}")
+        except docker.errors.DockerException as docker_exc:
+            _audit_log(
+                request,
+                "session.stop",
+                session_name=session_name,
+                success=False,
+                error=str(docker_exc),
+            )
+            log.error(
+                "session.stop_failed.docker_error",
+                metadata={"container": name, "error": str(docker_exc)},
+            )
+            raise HTTPException(status_code=500, detail=f"Docker error: {docker_exc}")
+        except Exception as fallback_exc:
+            _audit_log(
+                request,
+                "session.stop",
+                session_name=session_name,
+                success=False,
+                error=str(fallback_exc),
+            )
+            log.exception("session.stop_failed.unexpected")
+            raise HTTPException(status_code=500, detail=f"Failed to stop session: {fallback_exc}")
+
+
+@app.post("/api/delete")
+@limiter.limit("10/minute")
+async def api_delete_session(
+    request: Request, body: DeleteSessionRequest, _key=Depends(require_api_key)
+):
+    name = body.name
+    session_name = _extract_session_name(name)
+    try:
+        await recycle(session_name, reason="dashboard_delete")
+        _audit_log(request, "session.delete", session_name=session_name, success=True)
+        return {"success": True}
+    except Exception as exc:
+        log.warning(
+            "session.recycle_failed",
+            metadata={
+                "session": session_name,
+                "error": str(exc),
+                "fallback": "direct_docker_remove",
+            },
+        )
+        try:
+            client = _docker()
+            container_name = f"{settings.resolved_prefix}{session_name}"
+            container = client.containers.get(container_name)
+            container.remove(force=True)
+            _audit_log(request, "session.delete", session_name=session_name, success=True)
+            return {"success": True}
+        except docker.errors.NotFound:
+            _audit_log(
+                request,
+                "session.delete",
+                session_name=session_name,
+                success=False,
+                error="not_found",
+            )
+            log.error("session.delete_failed.not_found", metadata={"container": session_name})
+            raise HTTPException(status_code=404, detail=f"Container not found: {session_name}")
+        except docker.errors.DockerException as docker_exc:
+            _audit_log(
+                request,
+                "session.delete",
+                session_name=session_name,
+                success=False,
+                error=str(docker_exc),
+            )
+            log.error(
+                "session.delete_failed.docker_error",
+                metadata={"container": name, "error": str(docker_exc)},
+            )
+            raise HTTPException(status_code=500, detail=f"Docker error: {docker_exc}")
+        except Exception as fallback_exc:
+            _audit_log(
+                request,
+                "session.delete",
+                session_name=session_name,
+                success=False,
+                error=str(fallback_exc),
+            )
+            log.exception("session.delete_failed.unexpected")
+            raise HTTPException(status_code=500, detail=f"Failed to delete session: {fallback_exc}")
+
+
+@app.post("/api/start")
+@limiter.limit("10/minute")
+async def api_start_session(
+    request: Request, body: StartSessionRequest, _key=Depends(require_api_key)
+):
+    name = body.name
+    session_name = _extract_session_name(name)
+    try:
+        ctx = await provision(session_name=session_name, hardened=False)
+        await configure(ctx)
+        await lifecycle_start(ctx)
+        await lifecycle_monitor(ctx)
+        _audit_log(request, "session.start", session_name=session_name, success=True)
+        return {"success": True, "url": f"http://localhost:{ctx.port}"}
+    except Exception as exc:
+        log.error(
+            "session.start_failed.lifecycle", metadata={"session": session_name, "error": str(exc)}
+        )
+        # Fallback to direct Docker start
+        try:
+            client = _docker()
+            container = client.containers.get(name)
+            container.start()
+
+            # Get port
+            container.reload()
+            ports = container.attrs.get("NetworkSettings", {}).get("Ports") or {}
+            port = "7681"
+            for bindings in ports.values():
+                if bindings:
+                    for b in bindings:
+                        if b.get("HostPort"):
+                            port = b["HostPort"]
+                            break
+
+            _audit_log(request, "session.start", session_name=session_name, success=True)
+            return {"success": True, "url": f"http://localhost:{port}"}
+        except docker.errors.NotFound:
+            _audit_log(
+                request,
+                "session.start",
+                session_name=session_name,
+                success=False,
+                error="not_found",
+            )
+            log.error("session.start_failed.not_found", metadata={"container": name})
+            raise HTTPException(status_code=404, detail=f"Container not found: {name}")
+        except docker.errors.DockerException as docker_exc:
+            _audit_log(
+                request,
+                "session.start",
+                session_name=session_name,
+                success=False,
+                error=str(docker_exc),
+            )
+            log.error(
+                "session.start_failed.docker_error",
+                metadata={"container": name, "error": str(docker_exc)},
+            )
+            raise HTTPException(status_code=500, detail=f"Docker error: {docker_exc}")
+        except Exception as fallback_exc:
+            _audit_log(
+                request,
+                "session.start",
+                session_name=session_name,
+                success=False,
+                error=str(fallback_exc),
+            )
+            log.exception("session.start_failed.unexpected")
+            raise HTTPException(status_code=500, detail=f"Failed to start session: {fallback_exc}")
+
+
+@app.post("/api/create")
+@limiter.limit("10/minute")
+async def api_create_session(
+    request: Request, body: CreateSessionRequest, _key=Depends(require_api_key)
+):
+    try:
+        # ci-ratchet: register as a hub task so complete.sh → recycle() works
+        hub_token = None
+        if body.repo and body.repo.mode == "ci-ratchet":
+            from .router import register_ci_ratchet_task
+
+            _, hub_token = register_ci_ratchet_task(
+                description=body.repo.task,
+                repo_url=body.repo.url,
+                session_name=body.name,
+            )
+
+        ctx = await run_pipeline(
+            session_name=body.name,
+            role=body.role,
+            hardened=False,
+            volume_mounts=body.volumes,
+            llm_provider=body.llm_provider,
+            llm_model=body.llm_model,
+            ollama_host=body.ollama_host,
+            workspace_profile=body.workspace_profile,
+            workspace_home=body.workspace_home,
+            backend=body.backend,
+            vm_template=body.vm_template,
+            guest_os=body.guest_os,
+            ports=body.ports,
+            docker_host=body.docker_host,
+            token=hub_token,
+            repo=body.repo,
+            task_description=body.task,
+        )
+        _audit_log(request, "session.create", session_name=body.name, success=True)
+
+        # Response format depends on backend
+        if ctx.backend == "utm":
+            return {
+                "success": True,
+                "backend": "utm",
+                "ssh_port": ctx.ssh_port,
+                "url": None,
+            }
+        else:
+            return {
+                "success": True,
+                "backend": "docker",
+                "url": f"http://localhost:{ctx.port}",
+            }
+    except Exception as exc:
+        _audit_log(request, "session.create", session_name=body.name, success=False, error=str(exc))
+        log.error("session.create.failed", metadata={"error": str(exc)})
+        return {"success": False, "error": str(exc)}
+
+
+@app.post("/api/sessions/{name}/exec")
+@limiter.limit("10/minute")
+async def api_exec_session(
+    request: Request, name: str, body: ExecSessionRequest, _key=Depends(require_api_key)
+):
+    """Execute a command inside a running container."""
+    try:
+        validate_session_name(name)
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Sanitize command input
+    if not body.command or not body.command.strip():
+        raise HTTPException(status_code=400, detail="Command cannot be empty")
+    if "\x00" in body.command:
+        raise HTTPException(status_code=400, detail="Command cannot contain null bytes")
+    if len(body.command) > 10_000:
+        raise HTTPException(status_code=400, detail="Command too long (max 10000 chars)")
+
+    prefix = settings.resolved_prefix
+    container_name = f"{prefix}{name}"
+
+    try:
+        client = _docker()
+        container = client.containers.get(container_name)
+    except docker.errors.NotFound:
+        _audit_log(request, "session.exec", session_name=name, success=False, error="not_found")
+        raise HTTPException(status_code=404, detail=f"Container '{name}' not found")
+
+    loop = asyncio.get_running_loop()
+    exit_code, output = await loop.run_in_executor(
+        None, lambda: container.exec_run(["sh", "-c", body.command])
+    )
+    _audit_log(
+        request,
+        "session.exec",
+        session_name=name,
+        success=exit_code == 0,
+        error=None if exit_code == 0 else f"exit_code={exit_code}",
+    )
+    return {
+        "success": exit_code == 0,
+        "exit_code": exit_code,
+        "output": output.decode(errors="replace"),
+    }
+
+
+@app.post("/api/sessions/{name}/refresh-secrets")
+@limiter.limit("5/minute")
+async def api_refresh_secrets(request: Request, name: str, _key=Depends(require_api_key)):
+    """Re-resolve and re-inject secrets into a running session."""
+    try:
+        validate_session_name(name)
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    from .secrets import resolve_secrets
+    from .lifecycle import get_session
+
+    ctx = get_session(name)
+    if not ctx:
+        _audit_log(
+            request, "session.refresh_secrets", session_name=name, success=False, error="not_found"
+        )
+        raise HTTPException(status_code=404, detail=f"Session '{name}' not found")
+
+    try:
+        secrets = resolve_secrets()
+        ctx.secrets.update(secrets)
+        await configure(ctx)
+        _audit_log(request, "session.refresh_secrets", session_name=name, success=True)
+        return {"success": True, "secrets_count": len(secrets)}
+    except Exception as exc:
+        _audit_log(
+            request, "session.refresh_secrets", session_name=name, success=False, error=str(exc)
+        )
+        raise HTTPException(status_code=500, detail=f"Secret refresh failed: {exc}")
+
+
+@app.post("/api/sessions/{name}/query")
+@limiter.limit("5/minute")
+async def api_query_session(
+    request: Request,
+    name: str,
+    body: QuerySessionRequest,
+    _key=Depends(require_api_key),
+):
+    """Send a prompt to Claude Code running in the container via tmux."""
+    try:
+        validate_session_name(name)
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return await _query_via_tmux(request, name, body)
+
+
+def _parse_claude_output(raw_output: str) -> str:
+    """Parse Claude CLI output to extract just the assistant's response.
+
+    Removes box drawing, ANSI codes, prompts, and extracts clean content.
+    """
+    import re
+
+    # First, strip out the welcome box (everything before the first ❯)
+    if "❯" in raw_output:
+        # Find the first occurrence of ❯ and remove everything before it
+        first_prompt_idx = raw_output.find("❯")
+        raw_output = raw_output[first_prompt_idx:]
+
+    # Split by the prompt marker (❯) to get command/response sections
+    sections = raw_output.split("❯")
+
+    # Find the LAST section that contains Claude's response (marked with ●)
+    response_text = ""
+    for section in reversed(sections):
+        # Skip empty sections
+        if not section.strip():
+            continue
+
+        # Skip sections that are just navigation commands (cd /)
+        lines = section.strip().splitlines()
+        if lines and lines[0].strip().startswith("cd /"):
+            continue
+
+        # Look for Claude's response marker (●)
+        if "●" in section:
+            # Split on ● and take everything after the LAST ●
+            parts = section.split("●")
+            # Get the last non-empty part
+            for part in reversed(parts):
+                if part.strip():
+                    response_text = part.strip()
+                    break
+            if response_text:
+                break
+
+    if not response_text:
+        # Fallback: return original if we can't parse
+        return raw_output.strip()
+
+    # Clean up artifacts
+    # Remove "Web Search(...)" lines
+    response_text = re.sub(r"Web Search\([^)]+\)\n", "", response_text)
+    # Remove search timing indicators like "⎿  Did 1 search in 7s"
+    response_text = re.sub(r"⎿\s*Did \d+ search.*?\n", "", response_text)
+    # Remove completion timing like "✻ Churned for 37s"
+    response_text = re.sub(r"✻\s*(?:Brewed|Churned|Percolated|Simmered).*?\n", "", response_text)
+    # Remove separator lines
+    response_text = re.sub(r"─{10,}", "", response_text)
+    # Remove permission UI indicators
+    response_text = re.sub(r"⏵.*?bypass permissions.*?\n", "", response_text, flags=re.IGNORECASE)
+    # Normalize whitespace
+    response_text = re.sub(r"\n{3,}", "\n\n", response_text)
+
+    return response_text.strip()
+
+
+def _tmux_verify_container(client, container_name: str):
+    """Validate that a container exists and is running.
+
+    Raises HTTPException(404) if the container is not found,
+    HTTPException(400) if the container exists but is not running.
+    """
+    try:
+        container = client.containers.get(container_name)
+    except docker.errors.NotFound:
+        raise HTTPException(status_code=404, detail=f"Container '{container_name}' not found")
+    if container.status != "running":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Container '{container_name}' is not running (status: {container.status})",
+        )
+    return container
+
+
+async def _tmux_send_and_wait(
+    container_name: str,
+    prompt: str,
+    timeout: float,
+    working_dir: str | None = None,
+) -> str:
+    """Send a prompt to the container's tmux session and wait for completion.
+
+    Handles send-keys, marker injection, the polling loop, and raw output
+    capture.  Raises TimeoutError if the response is not ready within
+    *timeout* seconds.
+    """
+    loop = asyncio.get_running_loop()
+    container = _docker().containers.get(container_name)
+
+    # Clear any existing input
+    await loop.run_in_executor(
+        None, lambda: container.exec_run(["tmux", "send-keys", "-t", "main", "C-c"])
+    )
+    await asyncio.sleep(0.5)
+
+    # Change to working directory if specified
+    if working_dir:
+        cd_cmd = f"cd {working_dir}"
+        await loop.run_in_executor(
+            None,
+            lambda: container.exec_run(["tmux", "send-keys", "-t", "main", cd_cmd, "Enter"]),
+        )
+        await asyncio.sleep(0.5)
+
+    # Capture pane before sending prompt
+    exit_code, before_output = await loop.run_in_executor(
+        None, lambda: container.exec_run(["tmux", "capture-pane", "-t", "main", "-p"])
+    )
+
+    # Send prompt to tmux session
+    await loop.run_in_executor(
+        None,
+        lambda: container.exec_run(["tmux", "send-keys", "-t", "main", prompt, "Enter"]),
+    )
+
+    # Wait a moment for Claude to show the permission prompt
+    await asyncio.sleep(2)
+
+    # Auto-approve permissions by pressing Enter (bypass is already on)
+    await loop.run_in_executor(
+        None, lambda: container.exec_run(["tmux", "send-keys", "-t", "main", "Enter"])
+    )
+
+    # Wait for Claude to complete - detect completion markers
+    max_wait = timeout
+    waited = 0
+    poll_interval = 0.5
+    last_output = ""
+    stable_count = 0
+    completion_markers = [
+        "● Done",  # Claude's done marker
+        "● Complete",  # Alternative completion
+        "● Error",  # Error completion
+        "● Failed",  # Failure completion
+    ]
+
+    while waited < max_wait:
+        await asyncio.sleep(poll_interval)
+        waited += poll_interval
+
+        # Capture current pane content
+        exit_code, current_output = await loop.run_in_executor(
+            None, lambda: container.exec_run(["tmux", "capture-pane", "-t", "main", "-p"])
+        )
+        output_text = current_output.decode("utf-8", errors="replace")
+
+        # Also check if prompt is back (lines with ❯ that aren't in the permission UI)
+        lines = output_text.splitlines()
+        prompt_back = False
+        for i, line in enumerate(lines):
+            # Look for prompt line that's not followed by permission UI
+            if line.strip().startswith("❯") and len(line.strip()) == 1:
+                # Check next few lines don't have permission UI
+                if i + 1 < len(lines):
+                    next_line = lines[i + 1] if i + 1 < len(lines) else ""
+                    if "bypass permissions" not in next_line and "⏵" not in next_line:
+                        prompt_back = True
+                        break
+
+        # Check if any completion marker is present
+        has_completion_marker = any(marker in output_text for marker in completion_markers)
+
+        # If output hasn't changed for 2 polls and we see completion, we're done
+        if output_text == last_output:
+            if has_completion_marker or prompt_back:
+                stable_count += 1
+                if stable_count >= 2:  # Stable for 1 second with completion
+                    break
+        else:
+            stable_count = 0
+
+        last_output = output_text
+
+    if waited >= max_wait:
+        raise TimeoutError(f"Query execution timed out after {timeout}s")
+
+    # Capture final output
+    exit_code, final_output = await loop.run_in_executor(
+        None,
+        lambda: container.exec_run(["tmux", "capture-pane", "-t", "main", "-p", "-S", "-100"]),
+    )
+    return final_output.decode("utf-8", errors="replace")
+
+
+def _tmux_parse_output(raw_output: str, start_marker: str, end_marker: str) -> str:
+    """Extract and clean Claude's response from raw tmux pane output.
+
+    Finds the response by locating *start_marker* in the prompt line, then
+    applies the regex cleanup chain via _parse_claude_output.
+    """
+    lines = raw_output.splitlines()
+    response_lines = []
+    found_prompt = False
+
+    for line in lines:
+        if start_marker in line and "❯" in line:
+            found_prompt = True
+            continue
+        if found_prompt:
+            response_lines.append(line)
+
+    cleaned_output = "\n".join(response_lines).strip()
+    raw = cleaned_output or raw_output
+    return _parse_claude_output(raw) if raw else ""
+
+
+async def _query_via_tmux(request: Request, name: str, body: QuerySessionRequest):
+    """Query container via tmux (legacy fallback)."""
+    prefix = settings.resolved_prefix
+    container_name = f"{prefix}{name}"
+    start_time = time.time()
+
+    # Verify container exists and is running
+    client = _docker()
+    try:
+        container = _tmux_verify_container(client, container_name)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            _audit_log(
+                request, "session.query", session_name=name, success=False, error="not_found"
+            )
+        raise
+
+    # Check if tmux session exists
+    loop = asyncio.get_running_loop()
+    exit_code, _ = await loop.run_in_executor(
+        None, lambda: container.exec_run(["tmux", "has-session", "-t", "main"])
+    )
+
+    if exit_code != 0:
+        _audit_log(
+            request, "session.query", session_name=name, success=False, error="no_tmux_session"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Claude tmux session not found in container. Is Claude running?",
+        )
+
+    try:
+        raw_output = await _tmux_send_and_wait(
+            container_name,
+            body.prompt,
+            body.timeout,
+            working_dir=body.working_dir,
+        )
+
+        # Calculate duration
+        duration = time.time() - start_time
+
+        # Parse the Claude CLI output for clean presentation
+        parsed_response = _tmux_parse_output(raw_output, body.prompt, "")
+
+        _audit_log(request, "session.query", session_name=name, success=True)
+
+        return {
+            "success": True,
+            "conversation_id": f"{name}-{int(time.time())}",
+            "response": parsed_response,  # Clean, parsed assistant response
+            "output": raw_output,  # Keep raw output for debugging
+            "error": None,
+            "exit_code": 0,
+            "duration_seconds": duration,
+            "files_modified": [],  # TODO: Implement git-based detection
+        }
+
+    except TimeoutError:
+        _audit_log(request, "session.query", session_name=name, success=False, error="timeout")
+        raise HTTPException(
+            status_code=408,
+            detail=f"Query execution timed out after {body.timeout}s",
+        )
+    except Exception as e:
+        _audit_log(request, "session.query", session_name=name, success=False, error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Query execution failed: {e}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Container metrics (with LangFuse trace count cache)
+# ---------------------------------------------------------------------------
+
+_trace_cache: dict[str, dict[str, Any]] = {}  # session_name -> {data, ts}
+_trace_cache_lock = threading.Lock()
+_TRACE_CACHE_TTL = 60  # seconds - increased from 10s to reduce load
+
+
+def _get_trace_counts(session_name: str, timeout: float = 2.0) -> dict[str, int]:
+    """Get trace/error counts for a session, cached for 60s with timeout."""
+    now = time.monotonic()
+    with _trace_cache_lock:
+        cached = _trace_cache.get(session_name)
+    if cached and (now - cached["ts"]) < _TRACE_CACHE_TTL:
+        return cached["data"]
+
+    if settings.langfuse.mode == "off":
+        return {"trace_count": 0, "error_count": 0}
+
+    try:
+        # Use a thread pool with timeout to prevent blocking
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(get_session_traces_summary, session_name)
+            summary = future.result(timeout=timeout)
+            data = {"trace_count": summary.total_traces, "error_count": summary.error_count}
+    except (Exception, concurrent.futures.TimeoutError):
+        # Return zeros on timeout or error, don't cache failures
+        return {"trace_count": 0, "error_count": 0}
+
+    with _trace_cache_lock:
+        _trace_cache[session_name] = {"data": data, "ts": now}
+    return data
+
+
+def _get_container_metrics() -> list[dict[str, Any]]:
+    """Collect per-container CPU %, memory usage, and uptime (blocking)."""
+    import concurrent.futures
+
+    results = []
+    try:
+        client = _docker()
+        containers = client.containers.list(filters={"label": "brainbox.managed=true"})
+
+        def get_container_metrics(c):
+            """Get metrics for a single container."""
+            try:
+                stats = c.stats(stream=False)
+                cpu_pct = _calc_cpu(stats)
+                mem = stats.get("memory_stats", {})
+                mem_usage = mem.get("usage", 0)
+                mem_limit = mem.get("limit", 1)
+
+                # Uptime from State.StartedAt
+                started_at = c.attrs.get("State", {}).get("StartedAt", "")
+                uptime_seconds = 0
+                if started_at:
+                    try:
+                        started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                        uptime_seconds = (datetime.now(timezone.utc) - started).total_seconds()
+                    except (ValueError, TypeError):
+                        pass
+
+                labels = c.labels or {}
+                session_name = _extract_session_name(c.name)
+                # Use shorter timeout for trace counts to prevent blocking
+                trace_counts = _get_trace_counts(session_name, timeout=1.0)
+
+                return {
+                    "name": c.name,
+                    "session_name": session_name,
+                    "role": _extract_role(c),
+                    "llm_provider": labels.get("brainbox.llm_provider", "claude"),
+                    "workspace_profile": labels.get("brainbox.workspace_profile", ""),
+                    "cpu_percent": round(cpu_pct, 2),
+                    "mem_usage": mem_usage,
+                    "mem_usage_human": _human_bytes(mem_usage),
+                    "mem_limit": mem_limit,
+                    "mem_limit_human": _human_bytes(mem_limit),
+                    "uptime_seconds": round(uptime_seconds),
+                    "trace_count": trace_counts["trace_count"],
+                    "error_count": trace_counts["error_count"],
+                }
+            except Exception:
+                return None
+
+        # Process containers in parallel with a timeout per container
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(containers), 8)) as executor:
+            future_to_container = {executor.submit(get_container_metrics, c): c for c in containers}
+            for future in concurrent.futures.as_completed(future_to_container, timeout=10):
+                try:
+                    result = future.result(timeout=2)
+                    if result:
+                        results.append(result)
+                except (Exception, concurrent.futures.TimeoutError):
+                    pass
+
+    except Exception:
+        pass
+
+    results.sort(key=lambda r: r["name"])
+    return results
+
+
+@app.get("/api/metrics/containers")
+async def api_container_metrics():
+    """Per-container CPU %, memory usage, and uptime."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _get_container_metrics)
+
+
+# ---------------------------------------------------------------------------
+# Hub API routes (from hub-api.js)
+# ---------------------------------------------------------------------------
+
+# --- Agents ---
+
+
+@app.get("/api/hub/agents")
+async def hub_list_agents():
+    return [a.model_dump() for a in list_agents()]
+
+
+@app.get("/api/hub/agents/{name}")
+async def hub_get_agent(name: str):
+    agent = get_agent(name)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    return agent.model_dump()
+
+
+# --- Tasks ---
+
+
+@app.post("/api/hub/tasks", status_code=201)
+async def hub_submit_task(body: TaskCreate, _key=Depends(require_api_key)):
+    try:
+        task = await submit_task(
+            body.description,
+            body.agent_name,
+            repo_url=getattr(body, "repo_url", None),
+        )
+        return task.model_dump()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/hub/tasks")
+async def hub_list_tasks(status: str | None = None, _key=Depends(require_api_key)):
+    tasks = list_tasks(status=status)
+    return [t.model_dump() for t in tasks]
+
+
+@app.get("/api/hub/tasks/{task_id}")
+async def hub_get_task(task_id: str, _key=Depends(require_api_key)):
+    task = get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    return task.model_dump()
+
+
+@app.delete("/api/hub/tasks/{task_id}")
+async def hub_cancel_task(task_id: str, _key=Depends(require_api_key)):
+    try:
+        task = await cancel_task(task_id)
+        return task.model_dump()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+# --- Messages ---
+
+
+@app.post("/api/hub/messages")
+async def hub_route_message(request: Request, token: Token = Depends(require_token)):
+    body = await request.json()
+
+    try:
+        result = route_message(
+            {
+                "sender_token_id": token.token_id,
+                "recipient": body.get("recipient", "hub"),
+                "type": body.get("type"),
+                "payload": body.get("payload"),
+            }
+        )
+    except ValueError as exc:
+        status = 401 if "token" in str(exc).lower() else 400
+        raise HTTPException(status_code=status, detail=str(exc))
+
+    # Handle task completion side effect
+    payload = body.get("payload", {})
+    if isinstance(payload, dict) and payload.get("event") == "task.completed":
+        task_id = token.task_id
+        completion_result = payload.get("result")
+        if task_id:
+            try:
+                await complete_task(task_id, completion_result)
+            except Exception as exc:
+                log.warning(
+                    "hub.task_completion_error",
+                    metadata={"task_id": task_id, "reason": str(exc)},
+                )
+
+    return result
+
+
+@app.get("/api/hub/messages")
+async def hub_get_messages(token: Token = Depends(require_token)):
+    return get_messages(token.token_id)
+
+
+# --- Tokens ---
+
+
+@app.get("/api/hub/tokens")
+async def hub_list_tokens(_key=Depends(require_api_key)):
+    return [t.model_dump() for t in list_tokens()]
+
+
+# --- State ---
+
+
+@app.get("/api/hub/state")
+async def hub_state(_key=Depends(require_api_key)):
+    return {
+        "agents": [a.model_dump() for a in list_agents()],
+        "tasks": [t.model_dump() for t in list_tasks()],
+        "tokens": [t.model_dump() for t in list_tokens()],
+        "messages": get_message_log(),
+        "repos": [r.model_dump() for r in list_repos()],
+    }
+
+
+@app.get("/api/hub/message-log")
+async def hub_message_log(_key=Depends(require_api_key)):
+    """Return the hub message audit log (admin read-only, no agent token required)."""
+    return get_message_log()
+
+
+# --- Repositories ---
+
+
+@app.get("/api/hub/repos")
+async def hub_list_repos(_key=Depends(require_api_key)):
+    return [r.model_dump() for r in list_repos()]
+
+
+@app.post("/api/hub/repos", status_code=201)
+async def hub_add_repo(body: CreateRepoRequest, _key=Depends(require_api_key)):
+    try:
+        repo = add_repo(
+            body.url,
+            name=body.name,
+            merge_queue=body.merge_queue,
+            pr_shepherd=body.pr_shepherd,
+            target_branch=body.target_branch,
+            is_fork=body.is_fork,
+            upstream_url=body.upstream_url,
+            workspace_home=body.workspace_home,
+            workspace_profile=body.workspace_profile,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # Launch persistent agents for this repo
+    launched = []
+    try:
+        launched = await ensure_repo_agents(repo.name)
+    except Exception as exc:
+        log.warning(
+            "hub.repo_agent_launch_failed",
+            metadata={"repo": repo.name, "reason": str(exc)},
+        )
+
+    return {
+        "repo": repo.model_dump(),
+        "launched_tasks": [t.model_dump() for t in launched],
+    }
+
+
+@app.get("/api/hub/repos/{name}")
+async def hub_get_repo(name: str, _key=Depends(require_api_key)):
+    repo = get_repo(name)
+    if not repo:
+        raise HTTPException(status_code=404, detail=f"Repository '{name}' not found")
+    return repo.model_dump()
+
+
+@app.patch("/api/hub/repos/{name}")
+async def hub_update_repo(name: str, body: UpdateRepoRequest, _key=Depends(require_api_key)):
+    try:
+        repo = update_repo(
+            name,
+            merge_queue=body.merge_queue,
+            pr_shepherd=body.pr_shepherd,
+            target_branch=body.target_branch,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # Launch any newly enabled agents
+    launched = []
+    try:
+        launched = await ensure_repo_agents(repo.name)
+    except Exception as exc:
+        log.warning(
+            "hub.repo_agent_launch_failed",
+            metadata={"repo": repo.name, "reason": str(exc)},
+        )
+
+    return {
+        "repo": repo.model_dump(),
+        "launched_tasks": [t.model_dump() for t in launched],
+    }
+
+
+@app.delete("/api/hub/repos/{name}")
+async def hub_remove_repo(name: str, _key=Depends(require_api_key)):
+    if not remove_repo(name):
+        raise HTTPException(status_code=404, detail=f"Repository '{name}' not found")
+    return {"deleted": True}
+
+
+# ---------------------------------------------------------------------------
+# Artifact store
+# ---------------------------------------------------------------------------
+
+
+async def _artifact_op(operation_fn, *args, **kwargs):
+    """Run an artifact operation respecting the configured mode."""
+    mode = settings.artifact.mode
+    if mode == "off":
+        raise HTTPException(status_code=503, detail="Artifact store is disabled")
+    try:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: operation_fn(*args, **kwargs))
+    except ArtifactError as exc:
+        if "not found" in exc.reason:
+            raise HTTPException(status_code=404, detail=str(exc))
+        if mode == "enforce":
+            raise HTTPException(status_code=502, detail=str(exc))
+        log.warning("artifact.operation_failed", metadata={"error": str(exc)})
+        return None
+    except Exception as exc:
+        if mode == "enforce":
+            raise HTTPException(status_code=502, detail=str(exc))
+        log.warning("artifact.operation_failed", metadata={"error": str(exc)})
+        return None
+
+
+@app.get("/api/artifacts/health")
+async def api_artifact_health():
+    """Check artifact store connectivity."""
+    mode = settings.artifact.mode
+    if mode == "off":
+        return {"healthy": False, "mode": "off", "detail": "Artifact store is disabled"}
+    loop = asyncio.get_running_loop()
+    healthy = await loop.run_in_executor(None, artifact_health_check)
+    return {"healthy": healthy, "mode": mode}
+
+
+@app.get("/api/artifacts")
+async def api_list_artifacts(prefix: str = Query(default=""), _key=Depends(require_api_key)):
+    """List artifacts, optionally filtered by key prefix."""
+    result = await _artifact_op(list_artifacts, prefix)
+    if result is None:
+        return []
+    return [
+        {"key": a.key, "size": a.size, "etag": a.etag, "timestamp": a.timestamp} for a in result
+    ]
+
+
+@app.post("/api/artifacts/{key:path}", status_code=201)
+@limiter.limit("30/minute")
+async def api_upload_artifact(key: str, request: Request, _key=Depends(require_api_key)):
+    """Upload an artifact (raw bytes in request body)."""
+    # Validate artifact key to prevent path traversal
+    try:
+        validated_key = validate_artifact_key(key)
+    except ValidationError as val_err:
+        log.error("artifact.upload.validation_failed", metadata={"key": key, "error": str(val_err)})
+        raise HTTPException(status_code=400, detail=str(val_err))
+
+    # Enforce upload size limit (default 50 MB)
+    max_size = int(os.environ.get("CL_ARTIFACT_MAX_SIZE", 50 * 1024 * 1024))
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > max_size:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Upload too large ({int(content_length)} bytes). Max: {max_size} bytes.",
+        )
+
+    data = await request.body()
+    if len(data) > max_size:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Upload too large ({len(data)} bytes). Max: {max_size} bytes.",
+        )
+
+    content_type = request.headers.get("content-type", "application/octet-stream")
+    metadata = {"content_type": content_type}
+
+    task_id = request.headers.get("x-task-id")
+    if task_id:
+        metadata["task_id"] = task_id
+
+    result = await _artifact_op(upload_artifact, validated_key, data, metadata)
+    if result is None:
+        return {"stored": False, "key": validated_key}
+    return {"stored": True, "key": result.key, "size": result.size, "etag": result.etag}
+
+
+@app.get("/api/artifacts/{key:path}")
+@limiter.limit("30/minute")
+async def api_download_artifact(request: Request, key: str):
+    """Download an artifact by key."""
+    # Validate artifact key to prevent path traversal
+    try:
+        validated_key = validate_artifact_key(key)
+    except ValidationError as val_err:
+        log.error(
+            "artifact.download.validation_failed", metadata={"key": key, "error": str(val_err)}
+        )
+        raise HTTPException(status_code=400, detail=str(val_err))
+
+    result = await _artifact_op(download_artifact, validated_key)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Artifact not available")
+    body, metadata = result
+    content_type = metadata.get("content_type", "application/octet-stream")
+    return Response(content=body, media_type=content_type)
+
+
+@app.delete("/api/artifacts/{key:path}")
+@limiter.limit("30/minute")
+async def api_delete_artifact(request: Request, key: str, _key=Depends(require_api_key)):
+    """Delete an artifact by key."""
+    await _artifact_op(delete_artifact, key)
+    return {"deleted": True, "key": key}
+
+
+# ---------------------------------------------------------------------------
+# LangFuse observability proxy
+# ---------------------------------------------------------------------------
+
+
+async def _langfuse_op(operation_fn, *args, **kwargs):
+    """Run a LangFuse operation respecting the configured mode."""
+    mode = settings.langfuse.mode
+    if mode == "off":
+        raise HTTPException(status_code=503, detail="LangFuse integration is disabled")
+    try:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: operation_fn(*args, **kwargs))
+    except LangfuseError as exc:
+        if mode == "enforce":
+            raise HTTPException(status_code=502, detail=str(exc))
+        log.warning("langfuse.operation_failed", metadata={"error": str(exc)})
+        return None
+    except Exception as exc:
+        if mode == "enforce":
+            raise HTTPException(status_code=502, detail=str(exc))
+        log.warning("langfuse.operation_failed", metadata={"error": str(exc)})
+        return None
+
+
+@app.get("/api/langfuse/health")
+async def api_langfuse_health():
+    """Check LangFuse connectivity."""
+    mode = settings.langfuse.mode
+    if mode == "off":
+        return {"healthy": False, "mode": "off", "detail": "LangFuse integration is disabled"}
+    loop = asyncio.get_running_loop()
+    healthy = await loop.run_in_executor(None, langfuse_health_check)
+    return {"healthy": healthy, "mode": mode, "url": settings.langfuse.base_url}
+
+
+@app.get("/api/qdrant/health")
+async def api_qdrant_health():
+    """Check Qdrant connectivity."""
+    if not settings.qdrant.enabled:
+        return {"healthy": False, "url": None, "detail": "Qdrant integration is disabled"}
+
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{settings.qdrant.url}/")
+            healthy = response.status_code == 200
+            return {"healthy": healthy, "url": settings.qdrant.url}
+    except Exception as e:
+        return {"healthy": False, "url": settings.qdrant.url, "error": str(e)}
+
+
+@app.get("/api/langfuse/sessions/{session_name}/traces")
+async def api_langfuse_session_traces(
+    session_name: str, limit: int = Query(default=50), _key=Depends(require_api_key)
+):
+    """List traces for a container session."""
+    result = await _langfuse_op(langfuse_list_traces, session_name, limit)
+    if result is None:
+        return []
+    return [
+        {
+            "id": t.id,
+            "name": t.name,
+            "session_id": t.session_id,
+            "timestamp": t.timestamp,
+            "status": t.status,
+            "input": t.input,
+            "output": t.output,
+        }
+        for t in result
+    ]
+
+
+@app.get("/api/langfuse/sessions/{session_name}/summary")
+async def api_langfuse_session_summary(session_name: str, _key=Depends(require_api_key)):
+    """Trace count, error count, and tool breakdown for a session."""
+    result = await _langfuse_op(get_session_traces_summary, session_name)
+    if result is None:
+        return {
+            "session_id": session_name,
+            "total_traces": 0,
+            "total_observations": 0,
+            "error_count": 0,
+            "tool_counts": {},
+        }
+    return {
+        "session_id": result.session_id,
+        "total_traces": result.total_traces,
+        "total_observations": result.total_observations,
+        "error_count": result.error_count,
+        "tool_counts": result.tool_counts,
+    }
+
+
+@app.get("/api/langfuse/traces/{trace_id}")
+async def api_langfuse_trace_detail(trace_id: str, _key=Depends(require_api_key)):
+    """Single trace detail with observations."""
+    result = await _langfuse_op(langfuse_get_trace, trace_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Trace not available")
+    trace, observations = result
+    return {
+        "trace": {
+            "id": trace.id,
+            "name": trace.name,
+            "session_id": trace.session_id,
+            "timestamp": trace.timestamp,
+            "status": trace.status,
+            "input": trace.input,
+            "output": trace.output,
+        },
+        "observations": [
+            {
+                "id": o.id,
+                "trace_id": o.trace_id,
+                "name": o.name,
+                "type": o.type,
+                "start_time": o.start_time,
+                "end_time": o.end_time,
+                "status": o.status,
+                "level": o.level,
+            }
+            for o in observations
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Ollama LLM proxy
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/ollama/health")
+async def api_ollama_health():
+    """Check Ollama connectivity."""
+    loop = asyncio.get_running_loop()
+    healthy = await loop.run_in_executor(None, ollama_health_check)
+    return {"healthy": healthy, "host": settings.ollama.host}
+
+
+@app.post("/api/ollama/chat")
+async def api_ollama_chat(body: OllamaChatRequest, _key=Depends(require_api_key)):
+    """Proxy a chat completion request to Ollama."""
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, lambda: ollama_chat(body.messages, body.model))
+        return {
+            "model": result.model,
+            "message": {"role": result.message.role, "content": result.message.content},
+            "total_duration": result.total_duration,
+            "eval_count": result.eval_count,
+        }
+    except OllamaError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.get("/api/ollama/models")
+async def api_ollama_models(_key=Depends(require_api_key)):
+    """List models available on the Ollama server."""
+    try:
+        loop = asyncio.get_running_loop()
+        models = await loop.run_in_executor(None, ollama_list_models)
+        return {
+            "models": [
+                {
+                    "name": m.name,
+                    "size": m.size,
+                    "modified_at": m.modified_at,
+                    "digest": m.digest,
+                }
+                for m in models
+            ]
+        }
+    except OllamaError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.post("/api/ollama/pull")
+async def api_ollama_pull(body: OllamaPullRequest, _key=Depends(require_api_key)):
+    """Pull a model from the Ollama registry."""
+    try:
+        loop = asyncio.get_running_loop()
+        status = await loop.run_in_executor(None, lambda: ollama_pull_model(body.name))
+        return {"status": status, "model": body.name}
+    except OllamaError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Pipeline orchestration
+# ---------------------------------------------------------------------------
+
+
+def _pipeline_summary(p):
+    """Build a summary dict for a pipeline definition."""
+    step_types = sorted({s.type.value for s in p.steps})
+    provider = "private"
+    if "claude-session" in step_types or "claude-chat" in step_types:
+        provider = "cloud" if "ollama-chat" not in step_types else "mixed"
+    return {
+        "name": p.name,
+        "description": p.description,
+        "version": p.version,
+        "steps": len(p.steps),
+        "step_types": step_types,
+        "provider": provider,
+        "source_tier": p.source_tier,
+        "source_file": p.source_file,
+    }
+
+
+@app.get("/api/pipelines")
+async def api_list_pipelines(
+    workspace: str | None = Query(None),
+    repo: str | None = Query(None),
+    _key=Depends(require_api_key),
+):
+    """List pipeline definitions from all tiers (generic + workspace + repo)."""
+    all_pipelines = pipeline_resolve_all(workspace=workspace, repo=repo)
+    return {"pipelines": [_pipeline_summary(p) for p in all_pipelines.values()]}
+
+
+# Runs routes MUST come before /api/pipelines/{name} to avoid path collision
+@app.get("/api/pipelines/runs")
+async def api_list_pipeline_runs(
+    pipeline_name: str | None = Query(None),
+    status: str | None = Query(None),
+    workspace: str | None = Query(None),
+    repo: str | None = Query(None),
+    _key=Depends(require_api_key),
+):
+    """List pipeline runs, optionally filtered. Enriched with definition metadata."""
+    runs = pipeline_list_runs(pipeline_name=pipeline_name, status=status)
+    # Cache resolved definitions for enrichment
+    all_defs = pipeline_resolve_all(workspace=workspace, repo=repo)
+    result = []
+    for r in runs:
+        defn = all_defs.get(r.pipeline_name)
+        summary = _pipeline_summary(defn) if defn else {}
+        step_summary = {
+            name: {"status": sr.status, "duration_ms": sr.duration_ms}
+            for name, sr in r.steps.items()
+        }
+        result.append(
+            {
+                "id": r.id,
+                "pipeline_name": r.pipeline_name,
+                "status": r.status,
+                "created_at": r.created_at,
+                "started_at": r.started_at,
+                "finished_at": r.finished_at,
+                "error": r.error,
+                "title": r.params.get("title", ""),
+                "provider": summary.get("provider", "private"),
+                "step_types": summary.get("step_types", []),
+                "source_tier": summary.get("source_tier", "generic"),
+                "steps": step_summary,
+                "description": summary.get("description", ""),
+            }
+        )
+    return {"runs": result}
+
+
+@app.get("/api/pipelines/runs/{run_id}")
+async def api_get_pipeline_run(run_id: str, _key=Depends(require_api_key)):
+    """Get full pipeline run status including step results."""
+    run = pipeline_get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Pipeline run '{run_id}' not found")
+    return run.model_dump()
+
+
+@app.post("/api/pipelines/runs/{run_id}/cancel")
+async def api_cancel_pipeline_run(run_id: str, _key=Depends(require_api_key)):
+    """Cancel a running pipeline."""
+    try:
+        run = await pipeline_cancel_run(run_id)
+        return {"run_id": run.id, "status": run.status}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/pipelines/runs/{run_id}/steps/{step_name}")
+async def api_get_pipeline_step(run_id: str, step_name: str, _key=Depends(require_api_key)):
+    """Get a specific step result from a pipeline run."""
+    run = pipeline_get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Pipeline run '{run_id}' not found")
+    sr = run.steps.get(step_name)
+    if not sr:
+        raise HTTPException(status_code=404, detail=f"Step '{step_name}' not found in run")
+    return sr.model_dump()
+
+
+@app.get("/api/pipelines/{name}")
+async def api_get_pipeline(
+    name: str,
+    workspace: str | None = Query(None),
+    repo: str | None = Query(None),
+    _key=Depends(require_api_key),
+):
+    """Get a pipeline definition by name, resolved across all tiers."""
+    p = pipeline_resolve(name, workspace=workspace, repo=repo)
+    if not p:
+        raise HTTPException(status_code=404, detail=f"Pipeline '{name}' not found")
+    return p.model_dump()
+
+
+@app.post("/api/pipelines/{name}/run")
+async def api_start_pipeline_run(
+    name: str,
+    body: StartPipelineRunRequest,
+    workspace: str | None = Query(None),
+    repo: str | None = Query(None),
+    _key=Depends(require_api_key),
+):
+    """Start a new pipeline run, resolved across all tiers."""
+    try:
+        run = await pipeline_start_run(name, params=body.params, workspace=workspace, repo=repo)
+        return {"run_id": run.id, "status": run.status, "pipeline": run.pipeline_name}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Credential proxy endpoints (for remote Docker mode)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/credentials/aws-token")
+@limiter.limit("30/minute")
+async def api_aws_token(request: Request, _token=Depends(require_token)):
+    """Return fresh AWS credentials in credential_process format.
+
+    Called automatically by the AWS SDK inside containers when credentials
+    expire. Fetches live credentials from the host's boto3 session so AWS SSO
+    tokens are always current without any bind mount.
+    """
+    try:
+        import boto3  # type: ignore[import]
+
+        session = boto3.Session()
+        creds = session.get_credentials()
+        if creds is None:
+            raise HTTPException(status_code=503, detail="No AWS credentials available on host")
+        frozen = creds.get_frozen_credentials()
+        expiry = getattr(frozen, "_expiry_time", None)
+        result: dict[str, Any] = {
+            "Version": 1,
+            "AccessKeyId": frozen.access_key,
+            "SecretAccessKey": frozen.secret_key,
+        }
+        if frozen.token:
+            result["SessionToken"] = frozen.token
+        if expiry:
+            result["Expiration"] = expiry.isoformat()
+        return result
+    except HTTPException:
+        raise
+    except ImportError:
+        raise HTTPException(status_code=503, detail="boto3 not installed on host")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to fetch AWS credentials: {exc}")
+
+
+@app.websocket("/api/credentials/ssh-agent")
+async def api_ssh_agent_relay(websocket):
+    """WebSocket relay for SSH agent forwarding to remote Docker containers.
+
+    Bridges the host SSH agent socket to a WebSocket connection so containers
+    on remote Docker daemons can use SSH keys without copying private keys.
+    """
+    import asyncio
+
+    from fastapi import WebSocket
+    from fastapi.websockets import WebSocketState
+
+    ws: WebSocket = websocket
+    await ws.accept()
+
+    ssh_sock = os.environ.get("SSH_AUTH_SOCK")
+    if not ssh_sock:
+        await ws.close(1011, "SSH_AUTH_SOCK not available on server")
+        return
+
+    try:
+        reader, writer = await asyncio.open_unix_connection(ssh_sock)
+    except Exception as exc:
+        log.warning("ssh_relay.connect_failed", metadata={"reason": str(exc)})
+        await ws.close(1011, f"Cannot connect to SSH agent: {exc}")
+        return
+
+    async def forward_in() -> None:
+        """WebSocket → SSH agent."""
+        try:
+            async for data in ws.iter_bytes():
+                writer.write(data)
+                await writer.drain()
+        except Exception:
+            pass
+
+    async def forward_out() -> None:
+        """SSH agent → WebSocket."""
+        try:
+            while True:
+                chunk = await reader.read(4096)
+                if not chunk:
+                    break
+                if ws.client_state == WebSocketState.CONNECTED:
+                    await ws.send_bytes(chunk)
+        except Exception:
+            pass
+
+    try:
+        await asyncio.gather(forward_in(), forward_out())
+    finally:
+        writer.close()
+        if ws.client_state == WebSocketState.CONNECTED:
+            await ws.close()
+
+
+@app.post("/api/sessions/{name}/push-config")
+@limiter.limit("10/minute")
+async def api_push_config(request: Request, name: str, _key=Depends(require_api_key)):
+    """Re-inject translated ~/.claude config bundle into a running container.
+
+    Useful when the user updates plugins, skills, or settings mid-session
+    without reprovisioning the container.
+    """
+    try:
+        validate_session_name(name)
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    from .bundle import build_config_bundle
+    from .backends import create_backend
+    from .lifecycle import get_session
+
+    ctx = get_session(name)
+    if ctx is None:
+        # Try to find by container name prefix
+        from .lifecycle import _sessions
+
+        for sess_name, sess_ctx in _sessions.items():
+            if sess_ctx.container_name == name or sess_name == name:
+                ctx = sess_ctx
+                break
+
+    if ctx is None:
+        raise HTTPException(status_code=404, detail=f"Session '{name}' not found")
+
+    try:
+        bundle = build_config_bundle(
+            workspace_home=ctx.workspace_home,
+            path_map=settings.path_map or None,
+        )
+        docker_backend = create_backend("docker")
+        await docker_backend.inject_config_bundle(ctx, bundle)
+        _audit_log(request, "session.push_config", session_name=name, success=True)
+        return {"success": True, "session": name}
+    except Exception as exc:
+        _audit_log(request, "session.push_config", session_name=name, success=False, error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# SPA: serve built dashboard (must be last)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/info")
+async def api_info():
+    """Return API version and basic status. Used as a lightweight health check."""
+    return {
+        "version": "0.10.2",
+        "status": "ok",
+    }
+
+
+if _dashboard_dist.is_dir():
+    # Serve static assets (JS, CSS, etc.)
+    app.mount("/assets", StaticFiles(directory=str(_dashboard_dist / "assets")), name="assets")
+
+    # SPA fallback: serve index.html for non-API routes; return JSON 404 for unknown /api/* paths
+    @app.get("/{path:path}")
+    async def spa_fallback(path: str):
+        # Unknown /api/* paths get a JSON 404 so callers can distinguish API errors from HTML
+        if path.startswith("api/"):
+            raise HTTPException(status_code=404, detail=f"API endpoint not found: /{path}")
+        # Try to serve exact file first (e.g. favicon.ico)
+        file = _dashboard_dist / path
+        if path and file.is_file():
+            return FileResponse(file)
+        return FileResponse(_dashboard_dist / "index.html")

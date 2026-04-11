@@ -1,0 +1,21 @@
+name: hello-world
+description: >
+  Simple validation pipeline — two ollama-chat steps chained together.
+  No containers needed. Tests template interpolation and wave execution.
+version: "1"
+
+steps:
+  - name: generate-haiku
+    type: ollama-chat
+    config:
+      model: "llama3.2:3b"
+      system_prompt: "You are a poet. Respond with ONLY a haiku, nothing else."
+      prompt: "Write a haiku about ${params.topic}"
+
+  - name: analyze-haiku
+    type: ollama-chat
+    depends_on: [generate-haiku]
+    config:
+      model: "llama3.2:3b"
+      system_prompt: "You are a literary critic. Be brief — 2 sentences max."
+      prompt: "Analyze this haiku and explain its imagery:\n\n${steps.generate-haiku.output}"

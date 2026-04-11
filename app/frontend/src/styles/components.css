@@ -1,0 +1,275 @@
+/* ==========================================================================
+   Shared component patterns — rows, cards, modals, badges, spinners
+   ========================================================================== */
+
+/* --- Panel header --- */
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.panel-title {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.panel-accent {
+  color: var(--color-accent);
+}
+
+/* --- Row / list item --- */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.row-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.row-desc {
+  display: block;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.meta-text {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.meta-text.muted {
+  color: var(--color-text-tertiary);
+}
+
+.meta-url {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Section header --- */
+.section-label {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+  margin-bottom: 14px;
+}
+
+/* --- Modal dialog patterns --- */
+.modal-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.modal-sub {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-bottom: 20px;
+}
+
+.modal-field {
+  margin-bottom: 14px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+/* --- Inline badges --- */
+.scope-badge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--color-accent);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.scope-badge.info {
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--color-info);
+  border-color: rgba(59, 130, 246, 0.2);
+}
+
+.scope-badge.muted {
+  background: rgba(100, 116, 139, 0.15);
+  color: var(--color-text-tertiary);
+  border-color: rgba(100, 116, 139, 0.2);
+}
+
+.scope-badge.danger {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-error);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.scope-badge.success {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--color-success);
+  border-color: rgba(16, 185, 129, 0.2);
+}
+
+/* --- Pill badge (rounded full) --- */
+.pill-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 9999px;
+  font-weight: 500;
+}
+
+.pill-badge.mq {
+  background: rgba(16, 185, 129, 0.1);
+  color: #6ee7b7;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.pill-badge.ps {
+  background: rgba(168, 85, 247, 0.1);
+  color: #d8b4fe;
+  border: 1px solid rgba(168, 85, 247, 0.2);
+}
+
+/* --- Group header (repo/session groups) --- */
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-border-primary);
+}
+.group-header:first-of-type { margin-top: 0; }
+
+.group-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+}
+
+.group-count {
+  font-size: 10px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  padding: 1px 6px;
+  border-radius: 9999px;
+}
+
+/* --- Checkbox list --- */
+.checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.checkbox-item input[type="checkbox"] { width: auto; }
+
+/* --- Profile picker (used in modals) --- */
+.profile-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.profile-opt {
+  background: transparent;
+  border: 1px solid var(--color-border-secondary);
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  padding: 5px 12px;
+  transition: all 0.15s;
+}
+.profile-opt:hover {
+  color: var(--color-text-secondary);
+  background: rgba(255, 255, 255, 0.03);
+}
+.profile-opt.active {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
+/* --- Spinner --- */
+.spinner {
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.busy-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+/* --- Hint text --- */
+.hint {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-top: 4px;
+}
+
+/* --- Loading state --- */
+.loading {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  padding: 24px 0;
+}
+
+/* --- Empty state --- */
+.empty {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  padding: 12px 0;
+}

@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""
+LangFuse trace sender for Claude Code tool calls.
+
+Receives tool call data from stdin (JSON) and sends it to LangFuse.
+Designed to be called from langfuse-hook.sh as a PostToolUse hook.
+
+Environment variables:
+  LANGFUSE_BASE_URL    - LangFuse server URL (default: http://localhost:3000)
+  LANGFUSE_PUBLIC_KEY  - LangFuse public key (required)
+  LANGFUSE_SECRET_KEY  - LangFuse secret key (required)
+  LANGFUSE_SESSION_ID  - Optional session ID for grouping traces
+"""
+
+import json
+import os
+import sys
+from datetime import datetime, timezone, timedelta
+
+# Check for langfuse package
+try:
+    from langfuse import get_client, propagate_attributes
+except ImportError:
+    # Silently exit if langfuse not installed
+    sys.exit(0)
+
+
+def get_session_id() -> str:
+    """Get or generate a session ID for trace grouping."""
+    # Use provided session ID or generate from timestamp
+    return os.environ.get(
+        "LANGFUSE_SESSION_ID",
+        f"claude-code-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+    )
+
+
+def parse_tool_data(data: dict) -> dict:
+    """Extract relevant fields from Claude Code tool call data."""
+    # Claude Code PostToolUse hook sends: tool_name, tool_input, tool_response
+    tool_response = data.get("tool_response", {})
+
+    # Determine if there was an error
+    error = tool_response.get("stderr") if tool_response.get("stderr") else None
+
+    return {
+        "tool_name": data.get("tool_name", "unknown"),
+        "tool_input": data.get("tool_input", {}),
+        "tool_response": tool_response,
+        "session_id": data.get("session_id"),
+        "tool_use_id": data.get("tool_use_id"),
+        "success": not bool(error),
+        "error": error,
+    }
+
+
+def debug_log(msg: str) -> None:
+    """Write debug message to log file."""
+    log_path = os.path.join(
+        os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude")),
+        "reflex", "langfuse-debug.log"
+    )
+    if os.path.exists(log_path) and os.path.getsize(log_path) > 1_000_000:
+        with open(log_path, "w"):
+            pass
+    with open(log_path, "a") as f:
+        f.write(f"[PYTHON] {msg}\n")
+
+
+def send_trace(tool_data: dict) -> None:
+    """Send tool call trace to LangFuse using SDK v3 API."""
+    host = os.environ.get("LANGFUSE_BASE_URL", "http://localhost:3000")
+    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY")
+    secret_key = os.environ.get("LANGFUSE_SECRET_KEY")
+
+    debug_log(f"host={host}")
+    debug_log(f"public_key={'<set>' if public_key else '<not set>'}")
+    debug_log(f"secret_key={'<set>' if secret_key else '<not set>'}")
+
+    if not public_key or not secret_key:
+        debug_log("Missing credentials, returning")
+        return
+
+    try:
+        # Set environment variables for get_client() to use
+        os.environ["LANGFUSE_HOST"] = host
+
+        debug_log("Getting Langfuse client...")
+        langfuse = get_client()
+        debug_log("Langfuse client obtained")
+
+        parsed = parse_tool_data(tool_data)
+        # Prefer LANGFUSE_SESSION_ID env var (set by containers to the container name),
+        # then fall back to Claude Code's per-session UUID, then generate one
+        session_id = os.environ.get("LANGFUSE_SESSION_ID") or parsed.get("session_id") or get_session_id()
+
+        # SDK v3 uses start_as_current_observation with context manager
+        # Use propagate_attributes for session_id and user_id
+        user_id = os.environ.get("LANGFUSE_USER_ID") or os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown"
+        debug_log(f"Creating span for tool:{parsed['tool_name']}")
+        debug_log(f"user_id={user_id}")
+
+        # Use hook-stamped time as the span timestamp so queue delay doesn't skew traces.
+        # _queued_at is set by langfuse-hook.sh immediately after the tool completes.
+        queued_at_raw = tool_data.get("_queued_at")
+        if queued_at_raw:
+            try:
+                end_time = datetime.fromisoformat(queued_at_raw.replace("Z", "+00:00"))
+            except ValueError:
+                end_time = datetime.now(timezone.utc)
+        else:
+            end_time = datetime.now(timezone.utc)
+
+        with propagate_attributes(session_id=session_id, user_id=user_id):
+            with langfuse.start_as_current_observation(
+                as_type="span",
+                name=f"tool:{parsed['tool_name']}",
+                start_time=end_time,
+                input=parsed["tool_input"],
+                metadata={
+                    "source": "claude-code",
+                    "plugin": "reflex",
+                    "tool_name": parsed["tool_name"],
+                    "tool_use_id": parsed.get("tool_use_id"),
+                    "success": parsed["success"],
+                },
+            ) as span:
+                # Update with output and explicit end time
+                span.update(output=parsed["tool_response"], end_time=end_time)
+
+                # Add error level if there was an error
+                if parsed["error"]:
+                    span.update(level="ERROR", status_message=str(parsed["error"]))
+
+        debug_log(f"Span created: tool:{parsed['tool_name']}")
+
+        # Flush to ensure data is sent
+        debug_log("Flushing...")
+        langfuse.flush()
+        debug_log("Flush complete")
+
+    except Exception as e:
+        # Log error for debugging
+        debug_log(f"ERROR: {type(e).__name__}: {e}")
+        import traceback
+        debug_log(f"Traceback: {traceback.format_exc()}")
+
+
+def main():
+    """Read tool data from stdin (or a --batch JSONL file) and send trace(s)."""
+    import argparse
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--batch", metavar="FILE", default=None)
+    args, _ = parser.parse_known_args()
+
+    if args.batch:
+        try:
+            with open(args.batch) as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        send_trace(json.loads(line))
+                    except (json.JSONDecodeError, Exception):
+                        pass
+        except Exception:
+            pass
+        return
+
+    try:
+        raw_input = sys.stdin.read().strip()
+        if not raw_input:
+            return
+
+        tool_data = json.loads(raw_input)
+        send_trace(tool_data)
+
+    except json.JSONDecodeError:
+        # Invalid JSON - skip silently
+        pass
+    except Exception:
+        # Any other error - skip silently
+        pass
+
+
+if __name__ == "__main__":
+    main()
