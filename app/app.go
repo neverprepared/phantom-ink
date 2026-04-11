@@ -39,9 +39,11 @@ func (a *App) startup(ctx context.Context) {
 	if a.db != nil {
 		for _, def := range knownServices {
 			if _, ok := a.db.GetIntegration(def.Name); !ok {
-				_ = a.db.UpsertIntegration(IntegrationRow{
+				if err := a.db.UpsertIntegration(IntegrationRow{
 					Name: def.Name, Enabled: false, LocalURL: def.DefaultURL,
-				})
+				}); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to save integration default for %s: %v\n", def.Name, err)
+				}
 			}
 		}
 	}
@@ -62,7 +64,9 @@ func (a *App) shutdown(_ context.Context) {
 		a.sse.Stop()
 	}
 	if a.db != nil {
-		a.db.Close()
+		if err := a.db.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close database: %v\n", err)
+		}
 	}
 }
 
@@ -106,10 +110,16 @@ func (a *App) SetConfig(baseURL, apiKey, workspacesRoot string) error {
 		a.sse.Restart()
 	}
 	if a.db != nil {
-		_ = a.db.SetSetting("base_url", baseURL)
-		_ = a.db.SetSetting("api_key", apiKey)
+		if err := a.db.SetSetting("base_url", baseURL); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to save setting base_url: %v\n", err)
+		}
+		if err := a.db.SetSetting("api_key", apiKey); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to save setting api_key: %v\n", err)
+		}
 		if workspacesRoot != "" {
-			_ = a.db.SetSetting("workspaces_root", workspacesRoot)
+			if err := a.db.SetSetting("workspaces_root", workspacesRoot); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to save setting workspaces_root: %v\n", err)
+			}
 		}
 	}
 	return nil

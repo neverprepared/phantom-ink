@@ -63,7 +63,9 @@ func (a *App) CreateProfile(name string) (Profile, error) {
 	}
 	a.config.ActiveProfile = p.Name
 	if a.db != nil {
-		_ = a.db.SetSetting("active_profile", p.Name)
+		if err := a.db.SetSetting("active_profile", p.Name); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to save setting active_profile: %v\n", err)
+		}
 	}
 	return p, nil
 }
@@ -76,7 +78,9 @@ func (a *App) DeleteProfile(name string, backup bool) error {
 	if a.config.ActiveProfile == name {
 		a.config.ActiveProfile = ""
 		if a.db != nil {
-			_ = a.db.SetSetting("active_profile", "")
+			if err := a.db.SetSetting("active_profile", ""); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to save setting active_profile: %v\n", err)
+			}
 		}
 	}
 	return nil
