@@ -77,6 +77,8 @@ export function PurgeBackup(arg1:string):Promise<void>;
 
 export function RestoreProfile(arg1:string):Promise<void>;
 
+export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
+
 export function ScanProfiles():Promise<Array<main.Profile>>;
 
 export function SetActiveProfile(arg1:string):Promise<void>;

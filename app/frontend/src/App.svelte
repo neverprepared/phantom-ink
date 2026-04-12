@@ -4,6 +4,7 @@
   import CommandPalette from './lib/components/CommandPalette.svelte';
   import Notifications from './lib/components/Notifications.svelte';
   import { commandPalette, currentPanel, profileState, featureFlags } from './lib/stores.svelte';
+  import { notifications } from './lib/notifications.svelte';
   import { startEventListener } from './lib/events.svelte';
 
   import './styles/tokens.css';
@@ -31,6 +32,19 @@
         enabled: s.enabled,
         running: s.running,
       }));
+
+      // Run preflight checks and notify on issues
+      try {
+        const checks = await mod.RunPreflightChecks();
+        for (const c of checks ?? []) {
+          if (c.status === 'error') {
+            notifications.error(c.message, 10000);
+          } else if (c.status === 'warning') {
+            notifications.warning(c.message, 8000);
+          }
+        }
+      } catch {}
+
     } catch {
       document.documentElement.dataset.platform = 'darwin';
     }

@@ -150,6 +150,10 @@ export function RestoreProfile(arg1) {
   return window['go']['main']['App']['RestoreProfile'](arg1);
 }
 
+export function RunPreflightChecks() {
+  return window['go']['main']['App']['RunPreflightChecks']();
+}
+
 export function ScanProfiles() {
   return window['go']['main']['App']['ScanProfiles']();
 }

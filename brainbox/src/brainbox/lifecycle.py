@@ -1042,6 +1042,9 @@ async def run_pipeline(
         if not _docker_is_local(docker_host):
             await docker_backend.inject_remote_credentials(ctx)
 
+        # Fix git credential helper paths for all containers (host brew path → container brew path)
+        await docker_backend.fix_git_credential_paths(ctx)
+
     # Store worktree path in context so delete can clean it up
     if worktree_path:
         ctx.worktree_path = worktree_path

@@ -493,6 +493,22 @@ export namespace main {
 	        this.workspace_home = source["workspace_home"];
 	    }
 	}
+	export class PreflightCheck {
+	    name: string;
+	    status: string;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PreflightCheck(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.status = source["status"];
+	        this.message = source["message"];
+	    }
+	}
 	export class Profile {
 	    name: string;
 	    path: string;

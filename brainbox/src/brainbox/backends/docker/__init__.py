@@ -544,6 +544,28 @@ class DockerBackend:
 
         slog.info("container.remote_credentials_injected")
 
+    async def fix_git_credential_paths(self, ctx: SessionContext) -> None:
+        """Rewrite git credential helper to use container-local brew path."""
+        client = _docker(ctx.docker_host)
+        container = await _run(client.containers.get, ctx.container_name)
+        git_cred_fix = textwrap.dedent("""\
+            BREW_GH="$(brew --prefix 2>/dev/null)/bin/gh"
+            if [ -x "$BREW_GH" ]; then
+                cp /home/developer/.gitconfig /home/developer/.gitconfig.local 2>/dev/null || true
+                sed -i "s|!/opt/homebrew/bin/gh|!$BREW_GH|g" /home/developer/.gitconfig.local 2>/dev/null
+                echo 'export GIT_CONFIG_GLOBAL=/home/developer/.gitconfig.local' >> /home/developer/.env
+                export GIT_CONFIG_GLOBAL=/home/developer/.gitconfig.local
+            fi
+        """)
+        try:
+            await _run(
+                container.exec_run,
+                ["sh", "-c", git_cred_fix],
+                user="developer",
+            )
+        except Exception as exc:
+            slog.warning("container.git_credential_fix_failed", metadata={"reason": str(exc)})
+
     def get_sessions_info(self) -> list[dict[str, Any]]:
         """List all managed Docker containers."""
         sessions = []
