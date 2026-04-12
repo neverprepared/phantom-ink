@@ -33,7 +33,6 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 
 # =============================================================================
@@ -96,7 +95,7 @@ except ImportError:
 # Extractors for different file formats
 # =============================================================================
 
-def extract_pdf(path: Path) -> Tuple[str, Dict]:
+def extract_pdf(path: Path) -> tuple[str, dict]:
     """Extract text from PDF using PyMuPDF."""
     try:
         import fitz
@@ -114,19 +113,19 @@ def extract_pdf(path: Path) -> Tuple[str, Dict]:
     return "\n\n".join(pages), {"total_pages": len(pages), "format": "pdf"}
 
 
-def extract_markdown(path: Path) -> Tuple[str, Dict]:
+def extract_markdown(path: Path) -> tuple[str, dict]:
     """Extract text from Markdown file."""
     text = path.read_text(encoding="utf-8", errors="ignore")
     return text, {"format": "markdown"}
 
 
-def extract_text(path: Path) -> Tuple[str, Dict]:
+def extract_text(path: Path) -> tuple[str, dict]:
     """Extract text from plain text file."""
     text = path.read_text(encoding="utf-8", errors="ignore")
     return text, {"format": "text"}
 
 
-def extract_html(path: Path) -> Tuple[str, Dict]:
+def extract_html(path: Path) -> tuple[str, dict]:
     """Extract text from HTML file."""
     try:
         from bs4 import BeautifulSoup
@@ -150,7 +149,7 @@ def extract_html(path: Path) -> Tuple[str, Dict]:
     return text, {"format": "html", "title": title}
 
 
-def extract_epub(path: Path) -> Tuple[str, Dict]:
+def extract_epub(path: Path) -> tuple[str, dict]:
     """Extract text from EPUB ebook."""
     try:
         import ebooklib
@@ -185,7 +184,7 @@ def extract_epub(path: Path) -> Tuple[str, Dict]:
     }
 
 
-def extract_docx(path: Path) -> Tuple[str, Dict]:
+def extract_docx(path: Path) -> tuple[str, dict]:
     """Extract text from Word document."""
     try:
         from docx import Document
@@ -210,7 +209,7 @@ def extract_docx(path: Path) -> Tuple[str, Dict]:
     return "\n\n".join(paragraphs), {"format": "docx"}
 
 
-def extract_notebook(path: Path) -> Tuple[str, Dict]:
+def extract_notebook(path: Path) -> tuple[str, dict]:
     """Extract text from Jupyter notebook."""
     try:
         content = json.loads(path.read_text(encoding="utf-8"))
@@ -239,7 +238,7 @@ def extract_notebook(path: Path) -> Tuple[str, Dict]:
     }
 
 
-def extract_mermaid(path: Path) -> Tuple[str, Dict]:
+def extract_mermaid(path: Path) -> tuple[str, dict]:
     """Extract Mermaid diagram with metadata."""
     text = path.read_text(encoding="utf-8", errors="ignore")
 
@@ -312,7 +311,7 @@ def detect_mermaid_type(text: str) -> str:
         return "unknown"
 
 
-def detect_diagram_patterns(text: str) -> List[str]:
+def detect_diagram_patterns(text: str) -> list[str]:
     """Detect architectural patterns in diagram."""
     patterns = []
     text_lower = text.lower()
@@ -342,7 +341,7 @@ def detect_diagram_patterns(text: str) -> List[str]:
     return patterns
 
 
-def extract_mermaid_components(text: str) -> List[str]:
+def extract_mermaid_components(text: str) -> list[str]:
     """Extract component/node names from Mermaid diagram."""
     components = set()
 
@@ -375,7 +374,7 @@ def extract_mermaid_components(text: str) -> List[str]:
     return list(components)
 
 
-def extract_mermaid_description(text: str) -> Optional[str]:
+def extract_mermaid_description(text: str) -> str | None:
     """Extract description from Mermaid file comments."""
     lines = text.split('\n')
     description_lines = []
@@ -393,7 +392,7 @@ def extract_mermaid_description(text: str) -> Optional[str]:
     return ' '.join(description_lines) if description_lines else None
 
 
-def extract_code(path: Path) -> Tuple[str, Dict]:
+def extract_code(path: Path) -> tuple[str, dict]:
     """Extract text from code file."""
     text = path.read_text(encoding="utf-8", errors="ignore")
 
@@ -468,7 +467,7 @@ def is_supported(path: Path) -> bool:
     return path.suffix.lower() in EXTRACTORS
 
 
-def extract(path: Path) -> Tuple[str, Dict]:
+def extract(path: Path) -> tuple[str, dict]:
     """Extract text from file based on extension."""
     ext = path.suffix.lower()
     extractor = EXTRACTORS.get(ext)
@@ -487,7 +486,7 @@ def chunk_text(
     text: str,
     chunk_size: int = 400,
     overlap: int = 50
-) -> List[Dict]:
+) -> list[dict]:
     """
     Chunk text into overlapping segments.
 
@@ -586,9 +585,9 @@ def connect_to_qdrant(
 
 
 def ingest_to_qdrant(
-    chunks: List[Dict],
+    chunks: list[dict],
     file_path: Path,
-    file_metadata: Dict,
+    file_metadata: dict,
     collection: str,
     qdrant_url: str = "http://localhost:6333"
 ) -> int:

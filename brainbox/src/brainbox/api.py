@@ -559,7 +559,7 @@ async def api_stop_session(
                 "session.stop_failed.docker_error",
                 metadata={"container": name, "error": str(docker_exc)},
             )
-            raise HTTPException(status_code=500, detail=f"Docker error: {docker_exc}")
+            raise HTTPException(status_code=500, detail="Failed to stop session due to a Docker error.")
         except Exception as fallback_exc:
             _audit_log(
                 request,
@@ -569,7 +569,7 @@ async def api_stop_session(
                 error=str(fallback_exc),
             )
             log.exception("session.stop_failed.unexpected")
-            raise HTTPException(status_code=500, detail=f"Failed to stop session: {fallback_exc}")
+            raise HTTPException(status_code=500, detail="Failed to stop session.")
 
 
 @app.post("/api/delete")
@@ -621,7 +621,7 @@ async def api_delete_session(
                 "session.delete_failed.docker_error",
                 metadata={"container": name, "error": str(docker_exc)},
             )
-            raise HTTPException(status_code=500, detail=f"Docker error: {docker_exc}")
+            raise HTTPException(status_code=500, detail="Failed to delete session due to a Docker error.")
         except Exception as fallback_exc:
             _audit_log(
                 request,
@@ -631,7 +631,7 @@ async def api_delete_session(
                 error=str(fallback_exc),
             )
             log.exception("session.delete_failed.unexpected")
-            raise HTTPException(status_code=500, detail=f"Failed to delete session: {fallback_exc}")
+            raise HTTPException(status_code=500, detail="Failed to delete session.")
 
 
 @app.post("/api/start")
@@ -695,7 +695,7 @@ async def api_start_session(
                 "session.start_failed.docker_error",
                 metadata={"container": name, "error": str(docker_exc)},
             )
-            raise HTTPException(status_code=500, detail=f"Docker error: {docker_exc}")
+            raise HTTPException(status_code=500, detail="Failed to start session due to a Docker error.")
         except Exception as fallback_exc:
             _audit_log(
                 request,
@@ -705,7 +705,7 @@ async def api_start_session(
                 error=str(fallback_exc),
             )
             log.exception("session.start_failed.unexpected")
-            raise HTTPException(status_code=500, detail=f"Failed to start session: {fallback_exc}")
+            raise HTTPException(status_code=500, detail="Failed to start session.")
 
 
 @app.post("/api/create")
@@ -788,8 +788,8 @@ async def api_create_session(
             }
     except Exception as exc:
         _audit_log(request, "session.create", session_name=body.name, success=False, error=str(exc))
-        log.error("session.create.failed", metadata={"error": str(exc)})
-        return {"success": False, "error": str(exc)}
+        log.error("session.create.failed", metadata={"session": body.name, "error": str(exc)})
+        raise HTTPException(status_code=500, detail="Failed to create session. Check server logs for details.")
 
 
 @app.post("/api/sessions/{name}/exec")
@@ -867,7 +867,8 @@ async def api_refresh_secrets(request: Request, name: str, _key=Depends(require_
         _audit_log(
             request, "session.refresh_secrets", session_name=name, success=False, error=str(exc)
         )
-        raise HTTPException(status_code=500, detail=f"Secret refresh failed: {exc}")
+        log.error("session.refresh_secrets_failed", metadata={"session": name, "error": str(exc)})
+        raise HTTPException(status_code=500, detail="Secret refresh failed. Check server logs for details.")
 
 
 @app.post("/api/sessions/{name}/query")
@@ -1164,9 +1165,10 @@ async def _query_via_tmux(request: Request, name: str, body: QuerySessionRequest
         )
     except Exception as e:
         _audit_log(request, "session.query", session_name=name, success=False, error=str(e))
+        log.error("session.query_failed", metadata={"session": name, "error": str(e)})
         raise HTTPException(
             status_code=500,
-            detail=f"Query execution failed: {e}",
+            detail="Query execution failed. Check server logs for details.",
         )
 
 

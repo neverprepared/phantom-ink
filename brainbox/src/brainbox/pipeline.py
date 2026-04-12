@@ -647,13 +647,14 @@ async def _wait_for_session(
     exec command and wait until it succeeds.
     """
     max_wait = min(timeout, 120)
-    deadline = asyncio.get_event_loop().time() + max_wait
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max_wait
     _log.info(
         "pipeline.waiting_for_session", metadata={"session": session_name, "max_wait": max_wait}
     )
 
     tmux_started = False
-    while asyncio.get_event_loop().time() < deadline:
+    while loop.time() < deadline:
         try:
             # First check if container is responsive
             resp = await client.post(

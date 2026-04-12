@@ -2,7 +2,6 @@
 
 import re
 from pathlib import Path
-from typing import Tuple
 
 
 class ValidationError(Exception):
@@ -90,7 +89,7 @@ def validate_artifact_key(key: str) -> str:
     return normalized
 
 
-def validate_volume_mount(volume_spec: str) -> Tuple[str, str, str]:
+def validate_volume_mount(volume_spec: str) -> tuple[str, str, str]:
     """
     Validate and parse volume mount specification.
 

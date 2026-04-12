@@ -17,7 +17,6 @@ import sys
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 
 # =============================================================================
@@ -63,7 +62,7 @@ class Match:
 # Default Patterns
 # =============================================================================
 
-DEFAULT_PATTERNS: List[Dict] = [
+DEFAULT_PATTERNS: list[dict] = [
     # =========================================================================
     # CRITICAL - Block entirely (system destruction)
     # =========================================================================
@@ -431,7 +430,7 @@ def get_config_dir() -> Path:
     return Path(claude_dir) / "reflex"
 
 
-def load_patterns() -> List[Pattern]:
+def load_patterns() -> list[Pattern]:
     """Load patterns from default + user config."""
     patterns = []
 
@@ -485,7 +484,7 @@ def load_patterns() -> List[Pattern]:
 # Pattern Matching
 # =============================================================================
 
-def extract_field(tool_name: str, tool_input: Dict, field: str) -> Optional[str]:
+def extract_field(tool_name: str, tool_input: dict, field: str) -> str | None:
     """Extract the field to match from tool input."""
     if field == "command" and tool_name == "Bash":
         return tool_input.get("command", "")
@@ -520,9 +519,9 @@ def tool_matches(pattern_tool: str, actual_tool: str) -> bool:
 
 def match_patterns(
     tool_name: str,
-    tool_input: Dict,
-    patterns: List[Pattern]
-) -> List[Match]:
+    tool_input: dict,
+    patterns: list[Pattern]
+) -> list[Match]:
     """Match tool input against patterns."""
     matches = []
 
@@ -557,7 +556,7 @@ def match_patterns(
     return matches
 
 
-def determine_decision(matches: List[Match]) -> Tuple[Decision, Optional[Match]]:
+def determine_decision(matches: list[Match]) -> tuple[Decision, Match | None]:
     """Determine the overall decision based on matches."""
     if not matches:
         return Decision.ALLOW, None
@@ -580,7 +579,7 @@ def determine_decision(matches: List[Match]) -> Tuple[Decision, Optional[Match]]
 # Output Generation
 # =============================================================================
 
-def format_output(decision: Decision, match: Optional[Match]) -> str:
+def format_output(decision: Decision, match: Match | None) -> str:
     """Format the hook output JSON."""
     if decision == Decision.ALLOW:
         return ""
@@ -624,7 +623,7 @@ def list_patterns():
     """Print all active patterns grouped by severity."""
     patterns = load_patterns()
 
-    groups: Dict[Severity, List[Pattern]] = {}
+    groups: dict[Severity, list[Pattern]] = {}
     for p in patterns:
         groups.setdefault(p.severity, []).append(p)
 

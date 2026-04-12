@@ -16,7 +16,6 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 
@@ -80,7 +79,7 @@ FRAMEWORKS = [
 ]
 
 
-def extract_domain(url: str) -> Optional[str]:
+def extract_domain(url: str) -> str | None:
     """Extract domain from URL."""
     try:
         parsed = urlparse(url)
@@ -93,7 +92,7 @@ def extract_domain(url: str) -> Optional[str]:
         return None
 
 
-def categorize_by_keywords(text: str) -> Tuple[str, Optional[str]]:
+def categorize_by_keywords(text: str) -> tuple[str, str | None]:
     """
     Categorize query/results using keyword matching.
 
@@ -145,7 +144,7 @@ def infer_type_from_query(query: str) -> str:
     return "reference"
 
 
-def extract_language(text: str) -> Optional[str]:
+def extract_language(text: str) -> str | None:
     """Extract programming language from text."""
     text_lower = text.lower()
     for lang in LANGUAGES:
@@ -154,7 +153,7 @@ def extract_language(text: str) -> Optional[str]:
     return None
 
 
-def extract_framework(text: str) -> Optional[str]:
+def extract_framework(text: str) -> str | None:
     """Extract framework from text."""
     text_lower = text.lower()
     for fw in FRAMEWORKS:
@@ -163,7 +162,7 @@ def extract_framework(text: str) -> Optional[str]:
     return None
 
 
-def extract_related_topics(query: str, results: List[Dict]) -> List[str]:
+def extract_related_topics(query: str, results: list[dict]) -> list[str]:
     """
     Extract related topics from query and result titles.
 
@@ -192,7 +191,7 @@ def extract_related_topics(query: str, results: List[Dict]) -> List[str]:
     return [word for word, _ in sorted_words[:5]]
 
 
-def calculate_confidence(results: List[Dict]) -> str:
+def calculate_confidence(results: list[dict]) -> str:
     """
     Calculate confidence level based on result quality.
 
@@ -241,7 +240,7 @@ def infer_freshness(query: str) -> str:
     return "recent"
 
 
-def build_metadata(tool_input: Dict, tool_response: List[Dict]) -> Dict:
+def build_metadata(tool_input: dict, tool_response: list[dict]) -> dict:
     """Build metadata from WebSearch tool input and response."""
     query = tool_input.get("query", "")
     results = tool_response if isinstance(tool_response, list) else []
@@ -296,7 +295,7 @@ def build_metadata(tool_input: Dict, tool_response: List[Dict]) -> Dict:
     return metadata
 
 
-def synthesize_content(tool_input: Dict, tool_response: List[Dict]) -> str:
+def synthesize_content(tool_input: dict, tool_response: list[dict]) -> str:
     """
     Synthesize search results into a markdown document.
 
@@ -340,7 +339,7 @@ def synthesize_content(tool_input: Dict, tool_response: List[Dict]) -> str:
 # Qdrant Storage
 # =============================================================================
 
-def store_to_qdrant(content: str, metadata: Dict) -> None:
+def store_to_qdrant(content: str, metadata: dict) -> None:
     """
     Store content to Qdrant with metadata.
 
@@ -404,7 +403,7 @@ def store_to_qdrant(content: str, metadata: Dict) -> None:
 # Main
 # =============================================================================
 
-def parse_tool_response(tool_response) -> List[Dict]:
+def parse_tool_response(tool_response) -> list[dict]:
     """
     Normalize tool_response to a list of result dicts.
 
