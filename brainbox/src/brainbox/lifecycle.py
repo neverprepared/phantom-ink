@@ -457,7 +457,8 @@ def _find_available_port(start: int = 7681) -> int:
         while port in used:
             port += 1
         return port
-    except Exception:
+    except Exception as exc:
+        log.warning("lifecycle.port_scan_failed", metadata={"reason": str(exc)})
         return start
 
 

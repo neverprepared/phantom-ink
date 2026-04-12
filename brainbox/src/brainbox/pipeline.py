@@ -521,8 +521,11 @@ async def _exec_claude_session(
                     json={"name": session_name},
                     headers={"X-API-Key": api_key},
                 )
-            except Exception:
-                pass  # Best-effort cleanup
+            except Exception as _cleanup_exc:
+                _log.warning(
+                    "pipeline.session_cleanup_failed",
+                    metadata={"session": session_name, "reason": str(_cleanup_exc)},
+                )
 
 
 async def _exec_session(
@@ -630,8 +633,11 @@ async def _exec_session(
                     json={"name": session_name},
                     headers={"X-API-Key": api_key},
                 )
-            except Exception:
-                pass  # Best-effort cleanup
+            except Exception as _cleanup_exc:
+                _log.warning(
+                    "pipeline.session_cleanup_failed",
+                    metadata={"session": session_name, "reason": str(_cleanup_exc)},
+                )
 
 
 async def _wait_for_session(
@@ -692,8 +698,11 @@ async def _wait_for_session(
                 if "claude_ready" in body.get("output", ""):
                     _log.info("pipeline.session_ready", metadata={"session": session_name})
                     return
-        except Exception:
-            pass
+        except Exception as _poll_exc:
+            _log.debug(
+                "pipeline.session_poll_error",
+                metadata={"session": session_name, "reason": str(_poll_exc)},
+            )
         await asyncio.sleep(3)
     raise RuntimeError(f"Session '{session_name}' did not become ready within {max_wait}s")
 
@@ -720,7 +729,11 @@ async def _exec_api_call(
         resp.raise_for_status()
         try:
             return resp.json()
-        except Exception:
+        except Exception as _json_exc:
+            _log.debug(
+                "pipeline.api_call_json_parse_failed",
+                metadata={"url": url, "reason": str(_json_exc)},
+            )
             return resp.text
 
 
