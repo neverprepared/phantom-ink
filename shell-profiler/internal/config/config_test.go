@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -106,10 +105,9 @@ func TestLoadConfig_ValidKeyValue(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	configPath := filepath.Join(tmpDir, ".profile-manager")
-	content := "profiles_dir=/custom/profiles\n"
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write config: %v", err)
+	// Save via SQLite and load back (round-trip test)
+	if err := SaveConfig(&Config{ProfilesDir: "/custom/profiles"}); err != nil {
+		t.Fatalf("SaveConfig() error: %v", err)
 	}
 
 	cfg, err := LoadConfig()
@@ -122,19 +120,13 @@ func TestLoadConfig_ValidKeyValue(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_CommentsAndBlankLines(t *testing.T) {
+func TestLoadConfig_RoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	configPath := filepath.Join(tmpDir, ".profile-manager")
-	content := `# this is a comment
-
-# another comment
-profiles_dir=/my/profiles
-
-`
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write config: %v", err)
+	// Save a value and verify it round-trips through LoadConfig
+	if err := SaveConfig(&Config{ProfilesDir: "/my/profiles"}); err != nil {
+		t.Fatalf("SaveConfig() error: %v", err)
 	}
 
 	cfg, err := LoadConfig()
@@ -151,10 +143,9 @@ func TestLoadConfig_TildeExpansion(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	configPath := filepath.Join(tmpDir, ".profile-manager")
-	content := "profiles_dir=~/my-profiles\n"
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write config: %v", err)
+	// Save a tilde-prefixed path and verify it is expanded on load
+	if err := SaveConfig(&Config{ProfilesDir: "~/my-profiles"}); err != nil {
+		t.Fatalf("SaveConfig() error: %v", err)
 	}
 
 	cfg, err := LoadConfig()
@@ -168,37 +159,32 @@ func TestLoadConfig_TildeExpansion(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_EmptyProfilesDir(t *testing.T) {
+func TestLoadConfig_EmptyDB_ReturnsDefault(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	configPath := filepath.Join(tmpDir, ".profile-manager")
-	// expandPath("") returns "." via filepath.Clean, which is non-empty,
-	// so the default fallback does not trigger. This is the actual code behavior.
-	content := "profiles_dir=\n"
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write config: %v", err)
-	}
-
+	// With no DB present, LoadConfig should return the default profiles dir
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() error: %v", err)
 	}
 
-	// expandPath("") → filepath.Clean("") → "."
-	if cfg.ProfilesDir != "." {
-		t.Errorf("ProfilesDir = %q, want %q (expandPath of empty string)", cfg.ProfilesDir, ".")
+	want := filepath.Join(tmpDir, "workspaces", "profiles")
+	if cfg.ProfilesDir != want {
+		t.Errorf("ProfilesDir = %q, want %q (expected default)", cfg.ProfilesDir, want)
 	}
 }
 
-func TestLoadConfig_MalformedLines(t *testing.T) {
+func TestLoadConfig_Overwrite(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	configPath := filepath.Join(tmpDir, ".profile-manager")
-	content := "no-equals-sign\nprofiles_dir=/good/path\njust-a-word\n"
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write config: %v", err)
+	// Save once then overwrite; the last value should win
+	if err := SaveConfig(&Config{ProfilesDir: "/first/path"}); err != nil {
+		t.Fatalf("SaveConfig() first write error: %v", err)
+	}
+	if err := SaveConfig(&Config{ProfilesDir: "/good/path"}); err != nil {
+		t.Fatalf("SaveConfig() second write error: %v", err)
 	}
 
 	cfg, err := LoadConfig()
@@ -211,65 +197,52 @@ func TestLoadConfig_MalformedLines(t *testing.T) {
 	}
 }
 
-func TestSaveConfig_WritesCorrectFormat(t *testing.T) {
+func TestSaveConfig_WritesCorrectValue(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	cfg := &Config{ProfilesDir: "/custom/profiles"}
-	if err := SaveConfig(cfg); err != nil {
+	if err := SaveConfig(&Config{ProfilesDir: "/custom/profiles"}); err != nil {
 		t.Fatalf("SaveConfig() error: %v", err)
 	}
 
-	configPath := filepath.Join(tmpDir, ".profile-manager")
-	data, err := os.ReadFile(configPath)
+	cfg, err := LoadConfig()
 	if err != nil {
-		t.Fatalf("failed to read config: %v", err)
+		t.Fatalf("LoadConfig() error: %v", err)
 	}
 
-	content := string(data)
-	if !strings.Contains(content, "profiles_dir=/custom/profiles") {
-		t.Errorf("config file should contain profiles_dir=/custom/profiles, got:\n%s", content)
+	if cfg.ProfilesDir != "/custom/profiles" {
+		t.Errorf("ProfilesDir = %q, want /custom/profiles", cfg.ProfilesDir)
 	}
 }
 
-func TestSaveConfig_AbbreviatesHomePath(t *testing.T) {
+func TestSaveConfig_CreatesDBDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	cfg := &Config{ProfilesDir: filepath.Join(tmpDir, "my-profiles")}
-	if err := SaveConfig(cfg); err != nil {
+	if err := SaveConfig(&Config{ProfilesDir: "/opt/profiles"}); err != nil {
 		t.Fatalf("SaveConfig() error: %v", err)
 	}
 
-	configPath := filepath.Join(tmpDir, ".profile-manager")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("failed to read config: %v", err)
-	}
-
-	content := string(data)
-	if !strings.Contains(content, "profiles_dir=~/my-profiles") {
-		t.Errorf("config should abbreviate home dir with ~, got:\n%s", content)
+	dbFile := filepath.Join(tmpDir, ".config", "phantom-ink", "phantom-ink.db")
+	if _, err := os.Stat(dbFile); err != nil {
+		t.Errorf("expected DB file at %s, got: %v", dbFile, err)
 	}
 }
 
-func TestSaveConfig_NonHomePathStaysAbsolute(t *testing.T) {
+func TestSaveConfig_AbsolutePathRoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	cfg := &Config{ProfilesDir: "/opt/profiles"}
-	if err := SaveConfig(cfg); err != nil {
+	if err := SaveConfig(&Config{ProfilesDir: "/opt/profiles"}); err != nil {
 		t.Fatalf("SaveConfig() error: %v", err)
 	}
 
-	configPath := filepath.Join(tmpDir, ".profile-manager")
-	data, err := os.ReadFile(configPath)
+	cfg, err := LoadConfig()
 	if err != nil {
-		t.Fatalf("failed to read config: %v", err)
+		t.Fatalf("LoadConfig() error: %v", err)
 	}
 
-	content := string(data)
-	if !strings.Contains(content, "profiles_dir=/opt/profiles") {
-		t.Errorf("config should keep absolute path, got:\n%s", content)
+	if cfg.ProfilesDir != "/opt/profiles" {
+		t.Errorf("ProfilesDir = %q, want /opt/profiles", cfg.ProfilesDir)
 	}
 }

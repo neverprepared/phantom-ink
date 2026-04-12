@@ -22,7 +22,7 @@ func TestRenderEnvrc(t *testing.T) {
 				"export WORKSPACE_PROFILE=\"test-profile\"",
 				"export WORKSPACE_HOME=\"$PWD\"",
 				"PATH_add bin",
-				"dotenv_if_exists \"$_sp_env\"",
+				"dotenv_if_exists .env",
 				"dotenv_if_exists .envrc.local",
 				"log_status \"Loaded workspace profile: $WORKSPACE_PROFILE\"",
 				"echo \"   CLAUDE_CONFIG_DIR: $CLAUDE_CONFIG_DIR\"",
