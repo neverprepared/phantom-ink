@@ -3,6 +3,8 @@
 # Started as a background daemon by langfuse-hook.sh.
 # Polls the queue file every 2 seconds and processes batches via langfuse-trace.py.
 
+set -eu
+
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 QUEUE_FILE="${CLAUDE_DIR}/reflex/.langfuse-queue.jsonl"
@@ -24,7 +26,8 @@ while true; do
         mv "$QUEUE_FILE" "$PROC_FILE"
         # shellcheck disable=SC2086
         uvx --quiet $PYTHON_FLAG --with "langfuse>=3,<4" python \
-            "$SCRIPT_DIR/langfuse-trace.py" --batch "$PROC_FILE" 2>/dev/null
+            "$SCRIPT_DIR/langfuse-trace.py" --batch "$PROC_FILE" || \
+            echo "langfuse-drainer: batch processing failed for $PROC_FILE" >&2
         rm -f "$PROC_FILE"
     fi
 done
