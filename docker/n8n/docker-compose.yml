@@ -5,6 +5,7 @@ services:
     image: n8nio/n8n:latest
     ports:
       - "127.0.0.1:5678:5678"
+    user: "1000:1000"
     volumes:
       - n8n-data:/home/node/.n8n
     environment:
