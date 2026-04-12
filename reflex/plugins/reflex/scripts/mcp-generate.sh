@@ -13,6 +13,8 @@
 # This script is kept as a stub for backwards compatibility.
 #
 
+set -euo pipefail
+
 echo "mcp-generate.sh is deprecated. Use /reflex:mcp to manage MCP servers." >&2
 echo "See: /reflex:mcp list | select | enable | disable | generate" >&2
 exit 0

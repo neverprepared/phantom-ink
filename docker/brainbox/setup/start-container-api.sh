@@ -6,7 +6,7 @@ set -euo pipefail
 
 # Configuration
 PORT="${CONTAINER_API_PORT:-9000}"
-LOG_FILE="/home/developer/.container-api.log"
+LOG_FILE="${HOME}/.container-api.log"
 
 # Ensure we're running as developer user
 if [ "$(id -u)" = "0" ]; then
@@ -27,7 +27,7 @@ python3 -m brainbox.container_api \
     > "${LOG_FILE}" 2>&1 &
 
 # Save PID
-echo $! > /home/developer/.container-api.pid
+echo $! > "${HOME}/.container-api.pid"
 
 echo "Container API server started (PID: $!, logs: ${LOG_FILE})"
 echo "Health check: curl http://localhost:${PORT}/health"

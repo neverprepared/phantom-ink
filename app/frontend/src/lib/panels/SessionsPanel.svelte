@@ -210,18 +210,13 @@
     mountPaths = mountPaths.filter(p => p !== path);
   }
 
-  // Set a sensible default model when switching LLM provider
-  let prevLLM = '';
+  // Set a sensible default model when switching LLM provider.
+  // Uses $state so the previous-value comparison is tracked reactively.
+  let prevLLM = $state('');
   $effect(() => {
     if (newLLM !== prevLLM) {
       prevLLM = newLLM;
-      if (newLLM === 'codex') {
-        newModel = 'codex-mini-latest';
-      } else if (newLLM === 'ollama') {
-        newModel = '';
-      } else {
-        newModel = '';
-      }
+      newModel = newLLM === 'codex' ? 'codex-mini-latest' : '';
     }
   });
 

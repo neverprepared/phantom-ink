@@ -3,6 +3,8 @@
 # Writes tool call data to a queue file and exits immediately.
 # A background drainer (langfuse-drainer.sh) processes the queue asynchronously.
 
+set -eu
+
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 QUEUE_FILE="${CLAUDE_DIR}/reflex/.langfuse-queue.jsonl"

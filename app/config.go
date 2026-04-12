@@ -1,5 +1,19 @@
 package main
 
+import (
+	"fmt"
+	"os"
+)
+
+// Setting key constants — single source of truth for database key names.
+const (
+	settingBaseURL        = "base_url"
+	settingAPIKey         = "api_key"
+	settingActiveProfile  = "active_profile"
+	settingWorkspacesRoot = "workspaces_root"
+	settingTheme          = "theme"
+)
+
 // Config is the in-memory representation of app settings.
 // All persistence is handled by the SQLite database.
 type Config struct {
@@ -20,19 +34,19 @@ func loadConfigFromDB(db *DB) *Config {
 	if db == nil {
 		return cfg
 	}
-	if v := db.GetSetting("base_url", ""); v != "" {
+	if v := db.GetSetting(settingBaseURL, ""); v != "" {
 		cfg.BaseURL = v
 	}
-	if v := db.GetSetting("api_key", ""); v != "" {
+	if v := db.GetSetting(settingAPIKey, ""); v != "" {
 		cfg.APIKey = v
 	}
-	if v := db.GetSetting("active_profile", ""); v != "" {
+	if v := db.GetSetting(settingActiveProfile, ""); v != "" {
 		cfg.ActiveProfile = v
 	}
-	if v := db.GetSetting("workspaces_root", ""); v != "" {
+	if v := db.GetSetting(settingWorkspacesRoot, ""); v != "" {
 		cfg.WorkspacesRoot = v
 	}
-	if v := db.GetSetting("theme", ""); v != "" {
+	if v := db.GetSetting(settingTheme, ""); v != "" {
 		cfg.Theme = v
 	}
 	// Fall back to file-based API key if not in DB
@@ -40,7 +54,9 @@ func loadConfigFromDB(db *DB) *Config {
 		if key := readDeveloperAPIKey(); key != "" {
 			cfg.APIKey = key
 			// Persist to DB so we don't need the file next time
-			_ = db.SetSetting("api_key", key)
+			if err := db.SetSetting(settingAPIKey, key); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to persist api_key to database: %v\n", err)
+			}
 		}
 	}
 	return cfg

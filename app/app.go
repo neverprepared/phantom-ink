@@ -90,7 +90,7 @@ func (a *App) GetConfig() Config {
 func (a *App) SetTheme(theme string) error {
 	a.config.Theme = theme
 	if a.db != nil {
-		return a.db.SetSetting("theme", theme)
+		return a.db.SetSetting(settingTheme, theme)
 	}
 	return nil
 }
@@ -110,15 +110,15 @@ func (a *App) SetConfig(baseURL, apiKey, workspacesRoot string) error {
 		a.sse.Restart()
 	}
 	if a.db != nil {
-		if err := a.db.SetSetting("base_url", baseURL); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to save setting %q: %v\n", "base_url", err)
+		if err := a.db.SetSetting(settingBaseURL, baseURL); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to save setting %q: %v\n", settingBaseURL, err)
 		}
-		if err := a.db.SetSetting("api_key", apiKey); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to save setting %q: %v\n", "api_key", err)
+		if err := a.db.SetSetting(settingAPIKey, apiKey); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to save setting %q: %v\n", settingAPIKey, err)
 		}
 		if workspacesRoot != "" {
-			if err := a.db.SetSetting("workspaces_root", workspacesRoot); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: failed to save setting %q: %v\n", "workspaces_root", err)
+			if err := a.db.SetSetting(settingWorkspacesRoot, workspacesRoot); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to save setting %q: %v\n", settingWorkspacesRoot, err)
 			}
 		}
 	}
