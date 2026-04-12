@@ -17,9 +17,14 @@ build_role() {
     local image_name="brainbox-${role}"
     local dockerfile="$REPO_ROOT/docker/brainbox/Dockerfile.${role}"
 
+    # The developer role uses the base Dockerfile (no separate role Dockerfile needed)
+    if [ "$role" = "developer" ] && [ ! -f "$dockerfile" ]; then
+        dockerfile="$REPO_ROOT/docker/brainbox/Dockerfile"
+    fi
+
     if [ ! -f "$dockerfile" ]; then
-        echo "Error: Dockerfile not found: $dockerfile"
-        exit 1
+        echo "Skipping ${role}: Dockerfile not found: $dockerfile"
+        return 0
     fi
 
     echo "Building ${image_name}..."

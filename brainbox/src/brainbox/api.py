@@ -357,6 +357,36 @@ def _extract_session_name(container_name: str) -> str:
     return container_name
 
 
+def _find_container_name(client: Any, name: str) -> str:
+    """Resolve a session name to a container name across all role prefixes.
+
+    Tries the default prefix first for backward compatibility, then falls back
+    to all known role prefixes so that supervisor/worker task containers are
+    found when callers pass just the session name (e.g. 'task-abc123').
+
+    Returns the matching container name, or raises HTTPException(404).
+    """
+    # If already a full container name (starts with a known prefix), use as-is
+    for prefix in _ROLE_PREFIXES:
+        if name.startswith(prefix):
+            return name
+
+    candidates = [f"{settings.resolved_prefix}{name}"]
+    for prefix in _ROLE_PREFIXES:
+        candidate = f"{prefix}{name}"
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    for candidate in candidates:
+        try:
+            client.containers.get(candidate)
+            return candidate
+        except docker.errors.NotFound:
+            continue
+
+    raise HTTPException(status_code=404, detail=f"Container '{name}' not found")
+
+
 def _extract_role(container: Any) -> str:
     """Get the role label from a container, defaulting to 'developer'."""
     labels = container.labels or {}
@@ -811,15 +841,13 @@ async def api_exec_session(
     if len(body.command) > 10_000:
         raise HTTPException(status_code=400, detail="Command too long (max 10000 chars)")
 
-    prefix = settings.resolved_prefix
-    container_name = f"{prefix}{name}"
-
+    client = _docker()
     try:
-        client = _docker()
+        container_name = _find_container_name(client, name)
         container = client.containers.get(container_name)
-    except docker.errors.NotFound:
+    except HTTPException:
         _audit_log(request, "session.exec", session_name=name, success=False, error="not_found")
-        raise HTTPException(status_code=404, detail=f"Container '{name}' not found")
+        raise
 
     loop = asyncio.get_running_loop()
     exit_code, output = await loop.run_in_executor(
@@ -1108,12 +1136,16 @@ def _tmux_parse_output(raw_output: str, start_marker: str, end_marker: str) -> s
 
 async def _query_via_tmux(request: Request, name: str, body: QuerySessionRequest):
     """Query container via tmux (legacy fallback)."""
-    prefix = settings.resolved_prefix
-    container_name = f"{prefix}{name}"
     start_time = time.time()
 
-    # Verify container exists and is running
     client = _docker()
+    try:
+        container_name = _find_container_name(client, name)
+    except HTTPException as exc:
+        _audit_log(request, "session.query", session_name=name, success=False, error="not_found")
+        raise
+
+    # Verify container exists and is running
     try:
         container = _tmux_verify_container(client, container_name)
     except HTTPException as exc:
