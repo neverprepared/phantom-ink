@@ -1,0 +1,122 @@
+name: Test Reflex
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'reflex/**'
+      - '.github/workflows/test-reflex.yml'
+  pull_request:
+    paths:
+      - 'reflex/**'
+      - '.github/workflows/test-reflex.yml'
+  workflow_dispatch:
+
+jobs:
+  test-python:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install base test dependencies
+        run: pip install pytest pytest-asyncio pytest-cov
+
+      - name: Install extra test dependencies
+        if: hashFiles('reflex/plugins/reflex/scripts/tests/requirements-test.txt') != ''
+        run: pip install -r reflex/plugins/reflex/scripts/tests/requirements-test.txt
+
+      - name: Run pytest
+        run: |
+          if [ -d "reflex/plugins/reflex/scripts/tests" ] && ls reflex/plugins/reflex/scripts/tests/test_*.py 1>/dev/null 2>&1; then
+            pytest reflex/plugins/reflex/scripts/tests/ -v --tb=short
+          else
+            echo "No Python test files found yet — skipping"
+          fi
+
+  test-shell:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          git clone https://github.com/bats-core/bats-core /tmp/bats
+          sudo /tmp/bats/install.sh /usr/local
+          bats --version
+
+      - name: Run bats tests
+        run: |
+          if ls reflex/plugins/reflex/scripts/tests/*.bats 1>/dev/null 2>&1; then
+            bats reflex/plugins/reflex/scripts/tests/*.bats
+          else
+            echo "No bats test files found yet — skipping"
+          fi
+
+  skill-validation:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate SKILL.md files
+        run: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          # Every SKILL.md must have YAML frontmatter with 'name:' and 'description:'
+          # and at least one top-level H1 heading — these are present in all 51 skills.
+          REQUIRED_PATTERNS=(
+            "^name:"
+            "^description:"
+            "^# "
+          )
+
+          PASS=0
+          FAIL=0
+          FAILURES=()
+
+          mapfile -t SKILL_FILES < <(find . -name "SKILL.md" -path "*/skills/*" | sort)
+
+          if [[ ${#SKILL_FILES[@]} -eq 0 ]]; then
+            echo "WARNING: No SKILL.md files found."
+            exit 0
+          fi
+
+          for file in "${SKILL_FILES[@]}"; do
+            file_ok=true
+            missing=()
+
+            for pattern in "${REQUIRED_PATTERNS[@]}"; do
+              if ! grep -qP "$pattern" "$file" 2>/dev/null; then
+                file_ok=false
+                missing+=("$pattern")
+              fi
+            done
+
+            if $file_ok; then
+              echo "PASS: $file"
+              PASS=$((PASS + 1))
+            else
+              echo "FAIL: $file  (missing: ${missing[*]})"
+              FAILURES+=("$file")
+              FAIL=$((FAIL + 1))
+            fi
+          done
+
+          echo ""
+          echo "Results: ${PASS} passed, ${FAIL} failed (${#SKILL_FILES[@]} total)"
+
+          if [[ ${#FAILURES[@]} -gt 0 ]]; then
+            echo ""
+            echo "Failed files:"
+            for f in "${FAILURES[@]}"; do
+              echo "  - $f"
+            done
+            exit 1
+          fi
