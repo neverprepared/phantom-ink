@@ -1,0 +1,17 @@
+name: Test brainbox
+on:
+  push:
+    paths: ['brainbox/**', '.github/workflows/test-brainbox.yml']
+  pull_request:
+    paths: ['brainbox/**', '.github/workflows/test-brainbox.yml']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: brainbox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync
+      - run: uv run pytest tests/ -v --tb=short --cov=src/brainbox --cov-report=term-missing
