@@ -163,6 +163,11 @@ USER developer
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
 # =============================================================================
+# OpenAI Codex CLI — installed via npm (for codex LLM provider support)
+# =============================================================================
+RUN bash -c '. "$NVM_DIR/nvm.sh" && npm install -g @openai/codex || true'
+
+# =============================================================================
 # Playwright MCP — browser automation for Claude Code
 # =============================================================================
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
