@@ -31,8 +31,8 @@ def _emit(event: str, task: Task) -> None:
     for fn in _listeners:
         try:
             fn(event, task)
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("router.event_listener_error", metadata={"event": event, "reason": str(exc)})
 
 
 def on_event(fn: Callable[[str, Task], None]) -> None:

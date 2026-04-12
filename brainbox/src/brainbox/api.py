@@ -988,7 +988,16 @@ async def _tmux_send_and_wait(
 
     # Change to working directory if specified
     if working_dir:
-        cd_cmd = f"cd {working_dir}"
+        # Validate working_dir to prevent path traversal / shell injection.
+        # Reject null bytes, ".." sequences, and use shlex.quote so the path is
+        # safe when embedded in the shell command sent through tmux send-keys.
+        import shlex as _shlex
+        if "\x00" in working_dir or ".." in working_dir:
+            raise HTTPException(
+                status_code=400,
+                detail="working_dir must not contain null bytes or '..' path components",
+            )
+        cd_cmd = f"cd {_shlex.quote(working_dir)}"
         await loop.run_in_executor(
             None,
             lambda: container.exec_run(["tmux", "send-keys", "-t", "main", cd_cmd, "Enter"]),
@@ -1255,7 +1264,8 @@ def _get_container_metrics() -> list[dict[str, Any]]:
                     "trace_count": trace_counts["trace_count"],
                     "error_count": trace_counts["error_count"],
                 }
-            except Exception:
+            except Exception as exc:
+                log.debug("metrics.container_stat_failed", metadata={"container": c.name, "reason": str(exc)})
                 return None
 
         # Process containers in parallel with a timeout per container
@@ -1266,11 +1276,11 @@ def _get_container_metrics() -> list[dict[str, Any]]:
                     result = future.result(timeout=2)
                     if result:
                         results.append(result)
-                except (Exception, concurrent.futures.TimeoutError):
-                    pass
+                except (Exception, concurrent.futures.TimeoutError) as exc:
+                    log.debug("metrics.container_future_failed", metadata={"reason": str(exc)})
 
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning("metrics.containers_failed", metadata={"reason": str(exc)})
 
     results.sort(key=lambda r: r["name"])
     return results
@@ -1650,8 +1660,13 @@ async def api_download_artifact(request: Request, key: str):
 @limiter.limit("30/minute")
 async def api_delete_artifact(request: Request, key: str, _key=Depends(require_api_key)):
     """Delete an artifact by key."""
-    await _artifact_op(delete_artifact, key)
-    return {"deleted": True, "key": key}
+    try:
+        validated_key = validate_artifact_key(key)
+    except ValidationError as val_err:
+        log.error("artifact.delete.validation_failed", metadata={"key": key, "error": str(val_err)})
+        raise HTTPException(status_code=400, detail=str(val_err))
+    await _artifact_op(delete_artifact, validated_key)
+    return {"deleted": True, "key": validated_key}
 
 
 # ---------------------------------------------------------------------------
@@ -2065,8 +2080,8 @@ async def api_ssh_agent_relay(websocket):
             async for data in ws.iter_bytes():
                 writer.write(data)
                 await writer.drain()
-        except Exception:
-            pass
+        except Exception as exc:
+            log.debug("ssh_relay.forward_in_closed", metadata={"reason": str(exc)})
 
     async def forward_out() -> None:
         """SSH agent → WebSocket."""
@@ -2077,8 +2092,8 @@ async def api_ssh_agent_relay(websocket):
                     break
                 if ws.client_state == WebSocketState.CONNECTED:
                     await ws.send_bytes(chunk)
-        except Exception:
-            pass
+        except Exception as exc:
+            log.debug("ssh_relay.forward_out_closed", metadata={"reason": str(exc)})
 
     try:
         await asyncio.gather(forward_in(), forward_out())
