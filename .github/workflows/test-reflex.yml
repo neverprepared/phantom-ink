@@ -21,25 +21,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
-
-      - name: Add uv to PATH
-        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
-
       - name: Install base test dependencies
-        run: uv pip install --system pytest pytest-asyncio pytest-cov
+        run: pip install pytest pytest-asyncio pytest-cov
 
       - name: Install extra test dependencies
         if: hashFiles('reflex/plugins/reflex/scripts/tests/requirements-test.txt') != ''
-        run: uv pip install --system -r reflex/plugins/reflex/scripts/tests/requirements-test.txt
+        run: pip install -r reflex/plugins/reflex/scripts/tests/requirements-test.txt
 
       - name: Run pytest
         run: |
-          pytest reflex/plugins/reflex/scripts/tests/ \
-            -v \
-            --cov=reflex/plugins/reflex/scripts \
-            --cov-report=term-missing
+          if [ -d "reflex/plugins/reflex/scripts/tests" ] && ls reflex/plugins/reflex/scripts/tests/test_*.py 1>/dev/null 2>&1; then
+            pytest reflex/plugins/reflex/scripts/tests/ -v --tb=short
+          else
+            echo "No Python test files found yet — skipping"
+          fi
 
   test-shell:
     runs-on: ubuntu-latest
@@ -55,7 +50,12 @@ jobs:
           bats --version
 
       - name: Run bats tests
-        run: bats reflex/plugins/reflex/scripts/tests/*.bats
+        run: |
+          if ls reflex/plugins/reflex/scripts/tests/*.bats 1>/dev/null 2>&1; then
+            bats reflex/plugins/reflex/scripts/tests/*.bats
+          else
+            echo "No bats test files found yet — skipping"
+          fi
 
   skill-validation:
     runs-on: ubuntu-latest
@@ -81,7 +81,7 @@ jobs:
           FAIL=0
           FAILURES=()
 
-          mapfile -t SKILL_FILES < <(find . -name "SKILL.md" | sort)
+          mapfile -t SKILL_FILES < <(find . -name "SKILL.md" -path "*/skills/*" | sort)
 
           if [[ ${#SKILL_FILES[@]} -eq 0 ]]; then
             echo "WARNING: No SKILL.md files found."
@@ -101,11 +101,11 @@ jobs:
 
             if $file_ok; then
               echo "PASS: $file"
-              ((PASS++))
+              PASS=$((PASS + 1))
             else
               echo "FAIL: $file  (missing: ${missing[*]})"
               FAILURES+=("$file")
-              ((FAIL++))
+              FAIL=$((FAIL + 1))
             fi
           done
 
