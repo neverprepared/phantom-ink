@@ -1,6 +1,7 @@
 
-# Load env vars from .env file (written by run.sh)
-[ -f /home/developer/.env ] && . /home/developer/.env
+# Load env vars from profile files (bind-mounted from host)
+[ -f /home/developer/.env ] && set -a && . /home/developer/.env && set +a
+[ -e /home/developer/.env.secrets ] && set -a && . /home/developer/.env.secrets && set +a
 
 # Claude Code aliases
 alias c='claude'

@@ -298,31 +298,6 @@ class DockerBackend:
                         "container.wrapper_autostart_failed", metadata={"reason": str(exc)}
                     )
 
-        # Write profile env to /run/profile/.env (after start)
-        profile_env = _resolve_profile_env(
-            workspace_profile=ctx.workspace_profile,
-            workspace_home=ctx.workspace_home,
-        )
-        if profile_env:
-            from ..configure import inject_profile_env_docker
-            from ..executor import DockerExecExecutor
-
-            # Root access for /run/profile — use a root executor for the mkdir,
-            # then the shared function handles the rest via default user.
-            try:
-                await _run(
-                    container.exec_run,
-                    ["sh", "-c", "mkdir -p /run/profile && chmod 777 /run/profile"],
-                    user="root",
-                )
-            except Exception as exc:
-                slog.warning(
-                    "container.profile_env_root_mkdir_failed", metadata={"reason": str(exc)}
-                )
-
-            executor = DockerExecExecutor(container)
-            await inject_profile_env_docker(executor, profile_env, slog=slog)
-
         ctx.state = SessionState.RUNNING
         slog.info("container.started", metadata={"port": ctx.port})
         return ctx

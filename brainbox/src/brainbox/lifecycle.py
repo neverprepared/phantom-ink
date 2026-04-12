@@ -745,6 +745,27 @@ async def configure(ctx_or_name: SessionContext | str) -> SessionContext:
     if ctx.repo_url:
         resolved["BRAINBOX_REPO_URL"] = ctx.repo_url
 
+    # Read profile .env.secrets (1Password FIFO or plaintext) and merge
+    if ctx.workspace_home:
+        secrets_path = Path(ctx.workspace_home) / ".env.secrets"
+        if secrets_path.exists():
+            try:
+                for line in secrets_path.read_text().splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if line.startswith("export "):
+                        line = line[7:]
+                    key, _, value = line.partition("=")
+                    key = key.strip()
+                    value = value.strip()
+                    if key and key not in _HOST_ONLY_VARS and key not in resolved:
+                        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                            value = value[1:-1]
+                        resolved[key] = value
+            except OSError:
+                pass  # FIFO may not be readable if 1Password is locked
+
     ctx.secrets.update(resolved)
     if not ctx.hardened:
         ctx.env_content = "\n".join(f"export {k}={v}" for k, v in resolved.items())
