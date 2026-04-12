@@ -157,3 +157,25 @@ def pull_model(name: str) -> str:
         )
     except httpx.HTTPError as exc:
         raise OllamaError("pull_model", str(exc))
+
+
+def delete_model(name: str) -> str:
+    """Delete a model from the Ollama server.
+
+    Args:
+        name: Model name to delete (e.g. 'llama3.2', 'qwen3:8b').
+
+    Returns:
+        Status string confirming deletion.
+    """
+    try:
+        c = _client()
+        resp = c.request("DELETE", "/api/delete", json={"name": name})
+        resp.raise_for_status()
+        return "deleted"
+    except httpx.ConnectError as exc:
+        raise OllamaError(
+            "delete_model", f"could not connect to Ollama at {settings.ollama.host}: {exc}"
+        )
+    except httpx.HTTPError as exc:
+        raise OllamaError("delete_model", str(exc))

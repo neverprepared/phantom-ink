@@ -49,7 +49,10 @@
     }
   }
 
-  onMount(() => { refresh(); });
+  onMount(async () => {
+    await refresh();
+    if (featureFlags.isEnabled('ollama')) refreshOllamaModels();
+  });
 
   function setBusy(name: string) { busyServices = new Set([...busyServices, name]); }
   function clearBusy(name: string) { const next = new Set(busyServices); next.delete(name); busyServices = next; }
@@ -153,6 +156,64 @@
       notifications.success('Secrets template copied to clipboard');
     } catch (err: any) { notifications.error(`Failed to copy template: ${err}`); }
   }
+
+  // ---------------------------------------------------------------------------
+  // Ollama model management
+  // ---------------------------------------------------------------------------
+
+  interface OllamaModel { name: string; size: number; modified_at: string; digest: string; }
+
+  let ollamaModels = $state<OllamaModel[]>([]);
+  let ollamaLoading = $state(false);
+  let ollamaPullName = $state('');
+  let ollamaPulling = $state(false);
+  let ollamaDeleting = $state<Set<string>>(new Set());
+
+  async function refreshOllamaModels() {
+    ollamaLoading = true;
+    const a = await getApi();
+    if (!a) { ollamaLoading = false; return; }
+    try {
+      ollamaModels = (await a.ListOllamaModels()) ?? [];
+    } catch (err: any) {
+      notifications.error(`Failed to list Ollama models: ${err}`);
+    } finally { ollamaLoading = false; }
+  }
+
+  async function handleOllamaPull() {
+    const name = ollamaPullName.trim();
+    if (!name) return;
+    ollamaPulling = true;
+    const a = await getApi();
+    if (!a) { ollamaPulling = false; return; }
+    try {
+      await a.PullOllamaModel(name);
+      notifications.success(`Pulled ${name}`);
+      ollamaPullName = '';
+      await refreshOllamaModels();
+    } catch (err: any) {
+      notifications.error(`Failed to pull ${name}: ${err}`);
+    } finally { ollamaPulling = false; }
+  }
+
+  async function handleOllamaDelete(name: string) {
+    ollamaDeleting = new Set([...ollamaDeleting, name]);
+    const a = await getApi();
+    if (!a) { const next = new Set(ollamaDeleting); next.delete(name); ollamaDeleting = next; return; }
+    try {
+      await a.DeleteOllamaModel(name);
+      notifications.success(`Deleted ${name}`);
+      await refreshOllamaModels();
+    } catch (err: any) {
+      notifications.error(`Failed to delete ${name}: ${err}`);
+    } finally { const next = new Set(ollamaDeleting); next.delete(name); ollamaDeleting = next; }
+  }
+
+  function formatBytes(bytes: number): string {
+    if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`;
+    if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(0)} MB`;
+    return `${bytes} B`;
+  }
 </script>
 
 <div class="panel" aria-busy={loading}>
@@ -254,6 +315,64 @@
       </div>
     {/if}
   </div>
+
+  <!-- Ollama model management (only visible when ollama is enabled) -->
+  {#if featureFlags.isEnabled('ollama')}
+    <div class="service-card ollama-card">
+      <div class="card-top">
+        <div class="card-identity">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+          <span class="svc-name">Ollama Models</span>
+        </div>
+        <button class="btn-refresh" onclick={refreshOllamaModels} title="Refresh models" aria-label="Refresh Ollama models">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+        </button>
+      </div>
+
+      <!-- Pull row -->
+      <div class="ollama-pull-row">
+        <input
+          class="ollama-pull-input"
+          type="text"
+          placeholder="model name (e.g. llama3.2)"
+          bind:value={ollamaPullName}
+          onkeydown={(e) => { if (e.key === 'Enter') handleOllamaPull(); }}
+          disabled={ollamaPulling}
+        />
+        <button class="btn-primary btn-sm" onclick={handleOllamaPull} disabled={ollamaPulling || !ollamaPullName.trim()}>
+          {ollamaPulling ? 'pulling...' : 'pull'}
+        </button>
+      </div>
+
+      <!-- Model list -->
+      {#if ollamaLoading}
+        <p class="hint">loading models...</p>
+      {:else if ollamaModels.length === 0}
+        <p class="hint">no models — use pull to download one</p>
+      {:else}
+        <div class="ollama-model-list">
+          {#each ollamaModels as model (model.name)}
+            {@const deleting = ollamaDeleting.has(model.name)}
+            <div class="ollama-model-row">
+              <div class="ollama-model-info">
+                <span class="ollama-model-name">{model.name}</span>
+                <span class="ollama-model-size">{formatBytes(model.size)}</span>
+              </div>
+              <button
+                class="btn-danger btn-sm btn-xs"
+                onclick={() => handleOllamaDelete(model.name)}
+                disabled={deleting}
+                title="Delete model"
+                aria-label="Delete {model.name}"
+              >
+                {deleting ? '...' : 'delete'}
+              </button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   <!-- Service cards -->
   {#if loading}
@@ -483,4 +602,38 @@
     padding-left: 20px; margin: 6px 0;
   }
   .op-steps li { margin-bottom: 4px; }
+
+  /* Ollama model management */
+  .ollama-card { margin-bottom: 20px; border-left-color: var(--color-accent); }
+
+  .ollama-pull-row {
+    display: flex; gap: 8px; margin-bottom: 10px;
+  }
+  .ollama-pull-input {
+    flex: 1; font-size: 12px; padding: 5px 10px;
+    font-family: var(--font-mono);
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+  }
+  .ollama-pull-input:disabled { opacity: 0.5; }
+  .ollama-pull-input::placeholder { color: var(--color-text-tertiary); }
+
+  .ollama-model-list { display: flex; flex-direction: column; gap: 2px; }
+  .ollama-model-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 8px; border-radius: var(--radius-sm);
+  }
+  .ollama-model-row:nth-child(odd) { background: rgba(255, 255, 255, 0.015); }
+
+  .ollama-model-info { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .ollama-model-name {
+    font-family: var(--font-mono); font-size: 12px;
+    color: var(--color-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ollama-model-size { font-size: 11px; color: var(--color-text-tertiary); flex-shrink: 0; }
+
+  .btn-xs { padding: 2px 8px !important; font-size: 10px !important; }
+  .hint { font-size: 12px; color: var(--color-text-tertiary); font-style: italic; margin: 6px 0; }
 </style>
