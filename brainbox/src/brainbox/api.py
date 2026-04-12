@@ -521,6 +521,7 @@ async def api_stop_session(
     try:
         await recycle(session_name, reason="dashboard_stop")
         _audit_log(request, "session.stop", session_name=session_name, success=True)
+        _broadcast_sse(json.dumps({"action": "session.stop", "session": session_name}))
         return {"success": True}
     except Exception as exc:
         # Fallback to direct Docker stop
@@ -533,6 +534,7 @@ async def api_stop_session(
             container = client.containers.get(name)
             container.stop(timeout=1)
             _audit_log(request, "session.stop", session_name=session_name, success=True)
+            _broadcast_sse(json.dumps({"action": "session.stop", "session": session_name}))
             return {"success": True}
         except docker.errors.NotFound:
             _audit_log(
@@ -575,6 +577,7 @@ async def api_delete_session(
     try:
         await recycle(session_name, reason="dashboard_delete")
         _audit_log(request, "session.delete", session_name=session_name, success=True)
+        _broadcast_sse(json.dumps({"action": "session.delete", "session": session_name}))
         return {"success": True}
     except Exception as exc:
         log.warning(
@@ -591,6 +594,7 @@ async def api_delete_session(
             container = client.containers.get(container_name)
             container.remove(force=True)
             _audit_log(request, "session.delete", session_name=session_name, success=True)
+            _broadcast_sse(json.dumps({"action": "session.delete", "session": session_name}))
             return {"success": True}
         except docker.errors.NotFound:
             _audit_log(
@@ -640,6 +644,7 @@ async def api_start_session(
         await lifecycle_start(ctx)
         await lifecycle_monitor(ctx)
         _audit_log(request, "session.start", session_name=session_name, success=True)
+        _broadcast_sse(json.dumps({"action": "session.start", "session": session_name}))
         return {"success": True, "url": f"http://localhost:{ctx.port}"}
     except Exception as exc:
         log.error(
@@ -663,6 +668,7 @@ async def api_start_session(
                             break
 
             _audit_log(request, "session.start", session_name=session_name, success=True)
+            _broadcast_sse(json.dumps({"action": "session.start", "session": session_name}))
             return {"success": True, "url": f"http://localhost:{port}"}
         except docker.errors.NotFound:
             _audit_log(
@@ -737,6 +743,7 @@ async def api_create_session(
             task_description=body.task,
         )
         _audit_log(request, "session.create", session_name=body.name, success=True)
+        _broadcast_sse(json.dumps({"action": "session.create", "session": body.name, "profile": body.workspace_profile or ""}))
 
         # Response format depends on backend
         if ctx.backend == "utm":
@@ -1280,6 +1287,7 @@ async def hub_submit_task(body: TaskCreate, _key=Depends(require_api_key)):
             body.agent_name,
             repo_url=getattr(body, "repo_url", None),
         )
+        _broadcast_sse(json.dumps({"action": "task.submit", "agent": body.agent_name, "repo": body.repo_url or ""}))
         return task.model_dump()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -1303,6 +1311,7 @@ async def hub_get_task(task_id: str, _key=Depends(require_api_key)):
 async def hub_cancel_task(task_id: str, _key=Depends(require_api_key)):
     try:
         task = await cancel_task(task_id)
+        _broadcast_sse(json.dumps({"action": "task.cancel", "task_id": task_id}))
         return task.model_dump()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -1413,6 +1422,7 @@ async def hub_add_repo(body: CreateRepoRequest, _key=Depends(require_api_key)):
             metadata={"repo": repo.name, "reason": str(exc)},
         )
 
+    _broadcast_sse(json.dumps({"action": "repo.add", "name": repo.name, "profile": body.workspace_profile or ""}))
     return {
         "repo": repo.model_dump(),
         "launched_tasks": [t.model_dump() for t in launched],
@@ -1459,6 +1469,7 @@ async def hub_update_repo(name: str, body: UpdateRepoRequest, _key=Depends(requi
 async def hub_remove_repo(name: str, _key=Depends(require_api_key)):
     if not remove_repo(name):
         raise HTTPException(status_code=404, detail=f"Repository '{name}' not found")
+    _broadcast_sse(json.dumps({"action": "repo.delete", "name": name}))
     return {"deleted": True}
 
 
