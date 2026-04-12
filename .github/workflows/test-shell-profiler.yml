@@ -1,0 +1,24 @@
+name: Test shell-profiler
+on:
+  push:
+    paths: ['shell-profiler/**', '.github/workflows/test-shell-profiler.yml']
+  pull_request:
+    paths: ['shell-profiler/**', '.github/workflows/test-shell-profiler.yml']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: shell-profiler/go.mod
+          cache-dependency-path: shell-profiler/go.sum
+      - name: Run tests
+        working-directory: shell-profiler
+        run: go test ./... -v -race -coverprofile=coverage.out
+      - name: Coverage report
+        working-directory: shell-profiler
+        run: go tool cover -func=coverage.out
+      - name: Build binary
+        working-directory: shell-profiler
+        run: go build ./cmd/shell-profiler/...
