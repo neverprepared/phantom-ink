@@ -76,7 +76,7 @@
 
   async function refresh() {
     const a = await getApi();
-    if (!a) return;
+    if (!a) { loading = false; return; }
     try {
       const [sess, hubState, stats, procs] = await Promise.all([
         a.GetSessions(),
