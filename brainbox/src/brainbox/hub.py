@@ -11,6 +11,9 @@ import json
 
 from .config import settings
 from .log import get_logger
+from .channels import get_state as channels_get_state
+from .channels import ollama_watcher
+from .channels import restore_state as channels_restore_state
 from .messages import get_state as messages_get_state
 from .messages import restore_state as messages_restore_state
 from .registry import (
@@ -37,6 +40,7 @@ log = get_logger()
 
 _flush_task: asyncio.Task[None] | None = None
 _check_task: asyncio.Task[None] | None = None
+_ollama_watcher_task: asyncio.Task[None] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -50,9 +54,10 @@ async def init() -> None:
     await _restore_state()
 
     loop = asyncio.get_running_loop()
-    global _flush_task, _check_task
+    global _flush_task, _check_task, _ollama_watcher_task
     _flush_task = loop.create_task(_periodic_flush())
     _check_task = loop.create_task(_periodic_check())
+    _ollama_watcher_task = loop.create_task(ollama_watcher())
 
     # Ensure persistent repo agents are running after state restore
     for repo in list_repos():
@@ -76,13 +81,16 @@ async def init() -> None:
 
 async def shutdown() -> None:
     """Stop background tasks and flush state."""
-    global _flush_task, _check_task
+    global _flush_task, _check_task, _ollama_watcher_task
     if _flush_task and not _flush_task.done():
         _flush_task.cancel()
         _flush_task = None
     if _check_task and not _check_task.done():
         _check_task.cancel()
         _check_task = None
+    if _ollama_watcher_task and not _ollama_watcher_task.done():
+        _ollama_watcher_task.cancel()
+        _ollama_watcher_task = None
 
     await _flush_state()
     log.info("hub.shutdown")
@@ -102,6 +110,7 @@ async def _flush_state() -> None:
         "router": router_get_state(),
         "messages": messages_get_state(),
         "pipelines": pipeline_get_state(),
+        "channels": channels_get_state(),
     }
 
     state_file = settings.state_file
@@ -134,6 +143,7 @@ async def _restore_state() -> None:
     router_restore_state(state.get("router"))
     messages_restore_state(state.get("messages"))
     pipeline_restore_state(state.get("pipelines"))
+    channels_restore_state(state.get("channels"))
 
     log.info(
         "hub.state_restored",

@@ -129,3 +129,33 @@ func (a *App) GetSessionTraces(sessionName string, limit int) ([]brainbox.Trace,
 func (a *App) GetTraceDetail(traceID string) (brainbox.TraceDetail, error) {
 	return a.client.GetTraceDetail(traceID)
 }
+
+// ListChannels returns all group chat channels.
+func (a *App) ListChannels() ([]brainbox.Channel, error) {
+	return a.client.ListChannels()
+}
+
+// GetChannel returns a single channel by ID.
+func (a *App) GetChannel(id string) (brainbox.Channel, error) {
+	return a.client.GetChannel(id)
+}
+
+// CreateChannel creates a new group chat channel.
+func (a *App) CreateChannel(req brainbox.CreateChannelRequest) (brainbox.Channel, error) {
+	return a.client.CreateChannel(req)
+}
+
+// GetChannelMessages returns messages for a channel, optionally since a given message ID.
+func (a *App) GetChannelMessages(id, sinceID string) ([]brainbox.ChannelMessage, error) {
+	return a.client.GetChannelMessages(id, sinceID)
+}
+
+// PostChannelMessage posts a message to a channel.
+func (a *App) PostChannelMessage(id string, req brainbox.PostChannelMessageRequest) (brainbox.ChannelMessage, error) {
+	return a.client.PostChannelMessage(id, req)
+}
+
+// CompleteChannel signals that a channel discussion is complete.
+func (a *App) CompleteChannel(id string, req brainbox.CompleteChannelRequest) (brainbox.Channel, error) {
+	return a.client.CompleteChannel(id, req)
+}

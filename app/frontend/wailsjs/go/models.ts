@@ -66,6 +66,131 @@ export namespace brainbox {
 	        this.content_type = source["content_type"];
 	    }
 	}
+	export class ChannelParticipant {
+	    name: string;
+	    type: string;
+	    session_name?: string;
+	    ollama_model?: string;
+	    system_prompt?: string;
+	    joined_at: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChannelParticipant(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.type = source["type"];
+	        this.session_name = source["session_name"];
+	        this.ollama_model = source["ollama_model"];
+	        this.system_prompt = source["system_prompt"];
+	        this.joined_at = source["joined_at"];
+	    }
+	}
+	export class Channel {
+	    id: string;
+	    name: string;
+	    participants: ChannelParticipant[];
+	    status: string;
+	    created_at: number;
+	    completed_at?: number;
+	    completed_by?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Channel(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.participants = this.convertValues(source["participants"], ChannelParticipant);
+	        this.status = source["status"];
+	        this.created_at = source["created_at"];
+	        this.completed_at = source["completed_at"];
+	        this.completed_by = source["completed_by"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ChannelMessage {
+	    id: string;
+	    channel_id: string;
+	    from_participant: string;
+	    content: string;
+	    summary?: string;
+	    addressed_to?: string;
+	    type: string;
+	    timestamp: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChannelMessage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.channel_id = source["channel_id"];
+	        this.from_participant = source["from_participant"];
+	        this.content = source["content"];
+	        this.summary = source["summary"];
+	        this.addressed_to = source["addressed_to"];
+	        this.type = source["type"];
+	        this.timestamp = source["timestamp"];
+	    }
+	}
+	
+	export class ChannelParticipantRequest {
+	    name: string;
+	    type: string;
+	    session_name?: string;
+	    ollama_model?: string;
+	    system_prompt?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChannelParticipantRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.type = source["type"];
+	        this.session_name = source["session_name"];
+	        this.ollama_model = source["ollama_model"];
+	        this.system_prompt = source["system_prompt"];
+	    }
+	}
+	export class CompleteChannelRequest {
+	    by: string;
+	    reason?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CompleteChannelRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.by = source["by"];
+	        this.reason = source["reason"];
+	    }
+	}
 	export class ContainerMetrics {
 	    name: string;
 	    cpu_percent: number;
@@ -83,6 +208,38 @@ export namespace brainbox {
 	        this.memory_bytes = source["memory_bytes"];
 	        this.uptime = source["uptime"];
 	    }
+	}
+	export class CreateChannelRequest {
+	    name: string;
+	    participants: ChannelParticipantRequest[];
+	
+	    static createFrom(source: any = {}) {
+	        return new CreateChannelRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.participants = this.convertValues(source["participants"], ChannelParticipantRequest);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class CreateSessionRequest {
 	    name: string;
@@ -310,6 +467,24 @@ export namespace brainbox {
 	        this.started_at = source["started_at"];
 	        this.finished_at = source["finished_at"];
 	        this.error = source["error"];
+	    }
+	}
+	export class PostChannelMessageRequest {
+	    from_participant: string;
+	    content: string;
+	    summary?: string;
+	    addressed_to?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PostChannelMessageRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.from_participant = source["from_participant"];
+	        this.content = source["content"];
+	        this.summary = source["summary"];
+	        this.addressed_to = source["addressed_to"];
 	    }
 	}
 	

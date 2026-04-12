@@ -46,10 +46,13 @@ from .validation import (
 from .log import get_logger, setup_logging
 from .models import TaskCreate, Token
 from .models_api import (
+    CompleteChannelRequest,
+    CreateChannelRequest,
     CreateRepoRequest,
     CreateSessionRequest,
     DeleteSessionRequest,
     ExecSessionRequest,
+    PostChannelMessageRequest,
     QuerySessionRequest,
     StartSessionRequest,
     StopSessionRequest,
@@ -86,6 +89,16 @@ from .langfuse_client import (
     list_traces as langfuse_list_traces,
 )
 from .messages import get_message_log, get_messages, route as route_message
+from .channels import (
+    complete_channel,
+    create_channel,
+    get_channel,
+    get_messages as channel_get_messages,
+    list_channels,
+    on_event as channel_on_event,
+    post_message as channel_post_message,
+)
+from .models import ChannelParticipant
 from .models_api import OllamaChatRequest, OllamaPullRequest, StartPipelineRunRequest
 from .pipeline import (
     cancel_run as pipeline_cancel_run,
@@ -147,6 +160,7 @@ def _audit_log(
 
 _sse_queues: set[asyncio.Queue] = set()
 _sse_drops: int = 0
+_channel_queues: dict[str, set[asyncio.Queue]] = {}
 
 
 def _broadcast_sse(data: str) -> None:
@@ -163,6 +177,15 @@ def _broadcast_sse(data: str) -> None:
                     "sse.queue_full",
                     metadata={"total_drops": _sse_drops, "connected_clients": len(_sse_queues)},
                 )
+
+
+def _broadcast_to_channel(channel_id: str, data: str) -> None:
+    for q in list(_channel_queues.get(channel_id, set())):
+        try:
+            q.put_nowait(data)
+        except asyncio.QueueFull:
+            pass
+    _broadcast_sse(json.dumps({"action": "channel.message", "channel_id": channel_id}))
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +295,26 @@ async def lifespan(app: FastAPI):
             )
         )
     )
+
+    # Forward channel events to per-channel SSE queues
+    def _on_channel_event(event: str, data: object) -> None:
+        if event == "channel.message":
+            cid = data.get("channel_id") if isinstance(data, dict) else None  # type: ignore[union-attr]
+            msg = data.get("message") if isinstance(data, dict) else None  # type: ignore[union-attr]
+            if cid:
+                payload = json.dumps({
+                    "event": event,
+                    "channel_id": cid,
+                    "message": msg.model_dump() if hasattr(msg, "model_dump") else msg,
+                })
+                _broadcast_to_channel(cid, payload)
+        elif event in ("channel.created", "channel.completed"):
+            _broadcast_sse(json.dumps({
+                "action": event,
+                "data": data.model_dump() if hasattr(data, "model_dump") else data,
+            }))
+
+    channel_on_event(_on_channel_event)
 
     # Start Docker events watcher
     global _docker_events_task
@@ -1576,6 +1619,163 @@ async def hub_remove_repo(name: str, _key=Depends(require_api_key)):
         raise HTTPException(status_code=404, detail=f"Repository '{name}' not found")
     _broadcast_sse(json.dumps({"action": "repo.delete", "name": name}))
     return {"deleted": True}
+
+
+# ---------------------------------------------------------------------------
+# Group chat channels
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/hub/channels")
+async def hub_create_channel(body: CreateChannelRequest, request: Request, _key=Depends(require_api_key)):
+    """Create a group chat channel and bootstrap session participants."""
+    participants = [
+        ChannelParticipant(
+            name=p.name,
+            type=p.type,
+            session_name=p.session_name,
+            ollama_model=p.ollama_model,
+            system_prompt=p.system_prompt,
+        )
+        for p in body.participants
+    ]
+    channel = create_channel(body.name, participants)
+
+    # Bootstrap session participants with channel instructions
+    api_port = settings.api_port
+    api_key_val = get_api_key()
+    for p in participants:
+        if p.type != "session" or not p.session_name:
+            continue
+        bootstrap = (
+            f"# Group Channel: {channel.name}\n\n"
+            f"You are **{p.name}** in a group discussion.\n\n"
+            f"**Channel ID:** `{channel.id}`\n"
+            f"**API URL:** `http://host.docker.internal:{api_port}`\n"
+            f"**Your API key:** `{api_key_val}`\n\n"
+            "## How to participate\n\n"
+            "Use these MCP tools (already available in your session):\n"
+            f'- `channel_read(channel_id="{channel.id}", since_id=<last_id>)` — get new messages\n'
+            f'- `channel_send(channel_id="{channel.id}", content=<msg>, summary=<brief>)` — post a message\n'
+            f'- `channel_complete(channel_id="{channel.id}", reason=<why>)` — signal discussion is done\n\n'
+            "## Rules\n"
+            "1. Poll `channel_read` every few seconds to check for new messages\n"
+            "2. Respond to broadcast messages and messages addressed to @" + p.name + "\n"
+            "3. When sending, always include `summary=` with a 1-2 sentence brief of your key point\n"
+            "4. Use `addressed_to=` to direct a response at a specific participant\n"
+            "5. Call `channel_complete` when you believe the discussion has concluded\n"
+        )
+        if p.system_prompt:
+            bootstrap += f"6. Your role: {p.system_prompt}\n"
+
+        try:
+            client = _docker()
+            container_name = _find_container_name(client, p.session_name)
+            container = client.containers.get(container_name)
+            loop = asyncio.get_running_loop()
+            # Write CHANNEL.md into container
+            escaped = bootstrap.replace("'", "'\\''")
+            await loop.run_in_executor(
+                None,
+                lambda c=container, b=escaped: c.exec_run(
+                    ["sh", "-c", f"printf '%s' '{b}' > /home/developer/CHANNEL.md"]
+                ),
+            )
+        except Exception as exc:
+            log.warning(
+                "channel.bootstrap_exec_failed",
+                metadata={"session": p.session_name, "reason": str(exc)},
+            )
+
+    return channel.model_dump()
+
+
+@app.get("/api/hub/channels")
+async def hub_list_channels(_key=Depends(require_api_key)):
+    return [c.model_dump() for c in list_channels()]
+
+
+@app.get("/api/hub/channels/{channel_id}")
+async def hub_get_channel(channel_id: str, _key=Depends(require_api_key)):
+    channel = get_channel(channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' not found")
+    return channel.model_dump()
+
+
+@app.get("/api/hub/channels/{channel_id}/messages")
+async def hub_get_channel_messages(
+    channel_id: str,
+    since_id: str | None = Query(default=None),
+    _key=Depends(require_api_key),
+):
+    channel = get_channel(channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' not found")
+    msgs = channel_get_messages(channel_id, since_id=since_id)
+    return [m.model_dump() for m in msgs]
+
+
+@app.post("/api/hub/channels/{channel_id}/messages")
+async def hub_post_channel_message(
+    channel_id: str,
+    body: PostChannelMessageRequest,
+    _key=Depends(require_api_key),
+):
+    channel = get_channel(channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' not found")
+    try:
+        msg = channel_post_message(
+            channel_id,
+            from_participant=body.from_participant,
+            content=body.content,
+            summary=body.summary,
+            addressed_to=body.addressed_to,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return msg.model_dump()
+
+
+@app.post("/api/hub/channels/{channel_id}/complete")
+async def hub_complete_channel(
+    channel_id: str,
+    body: CompleteChannelRequest,
+    _key=Depends(require_api_key),
+):
+    channel = get_channel(channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' not found")
+    try:
+        updated = complete_channel(channel_id, by=body.by, reason=body.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return updated.model_dump()
+
+
+@app.get("/api/hub/channels/{channel_id}/stream")
+async def hub_channel_stream(channel_id: str, request: Request, _key=Depends(require_api_key)):
+    """SSE stream for a single channel — delivers new messages in real-time."""
+    channel = get_channel(channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' not found")
+
+    q: asyncio.Queue = asyncio.Queue(maxsize=100)
+    _channel_queues.setdefault(channel_id, set()).add(q)
+
+    async def event_generator():
+        try:
+            yield {"data": "connected"}
+            while True:
+                data = await q.get()
+                yield {"data": data}
+        except asyncio.CancelledError:
+            pass
+        finally:
+            _channel_queues.get(channel_id, set()).discard(q)
+
+    return EventSourceResponse(event_generator())
 
 
 # ---------------------------------------------------------------------------

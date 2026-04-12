@@ -11,6 +11,7 @@
   import PipelinesPanel from '../panels/PipelinesPanel.svelte';
   import ServicesPanel from '../panels/ServicesPanel.svelte';
   import ObservabilityPanel from '../panels/ObservabilityPanel.svelte';
+  import ChannelsPanel from '../panels/ChannelsPanel.svelte';
   import EventFeedPanel from '../panels/EventFeedPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
 </script>
@@ -32,6 +33,8 @@
         <ServicesPanel />
       {:else if currentPanel.value === 'observability'}
         <ObservabilityPanel />
+      {:else if currentPanel.value === 'channels'}
+        <ChannelsPanel />
       {:else if currentPanel.value === 'events'}
         <EventFeedPanel />
       {:else if currentPanel.value === 'settings'}

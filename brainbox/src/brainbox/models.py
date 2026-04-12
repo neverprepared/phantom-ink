@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import time
+import uuid
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
 
 
 # ---------------------------------------------------------------------------
@@ -240,3 +246,38 @@ class HubState(BaseModel):
     registry: RegistryState = Field(default_factory=RegistryState)
     router: RouterState = Field(default_factory=RouterState)
     messages: MessagesState = Field(default_factory=MessagesState)
+
+
+# ---------------------------------------------------------------------------
+# Channels (group chat)
+# ---------------------------------------------------------------------------
+
+
+class ChannelParticipant(BaseModel):
+    name: str  # display name in channel
+    type: Literal["session", "ollama", "user"]
+    session_name: str | None = None  # for type="session"
+    ollama_model: str | None = None  # for type="ollama"
+    system_prompt: str | None = None  # role instructions for Ollama
+    joined_at: int = Field(default_factory=_now_ms)
+
+
+class ChannelMessage(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
+    channel_id: str
+    from_participant: str
+    content: str
+    summary: str | None = None  # sender-authored brief for context management
+    addressed_to: str | None = None  # None = broadcast, name = directed
+    type: Literal["message", "join", "completion"] = "message"
+    timestamp: int = Field(default_factory=_now_ms)
+
+
+class Channel(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
+    name: str
+    participants: list[ChannelParticipant] = Field(default_factory=list)
+    status: Literal["active", "completed"] = "active"
+    created_at: int = Field(default_factory=_now_ms)
+    completed_at: int | None = None
+    completed_by: str | None = None

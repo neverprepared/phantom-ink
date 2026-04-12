@@ -603,6 +603,73 @@ def multiclaude_status() -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Group chat channel tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def channel_read(channel_id: str, since_id: str | None = None) -> list[dict[str, Any]]:
+    """Read new messages from a group channel. Poll every few seconds.
+
+    Returns messages since since_id (or all messages if omitted).
+    Each message has: id, from_participant, content, summary, addressed_to, type, timestamp.
+
+    Args:
+        channel_id: The channel ID to read from
+        since_id: Return only messages after this message ID (use the last id you received)
+    """
+    path = f"/api/hub/channels/{channel_id}/messages"
+    if since_id:
+        path += f"?since_id={since_id}"
+    return _request("GET", path)
+
+
+@mcp.tool()
+def channel_send(
+    channel_id: str,
+    from_participant: str,
+    content: str,
+    summary: str | None = None,
+    addressed_to: str | None = None,
+) -> dict[str, Any]:
+    """Send a message to a group channel.
+
+    Args:
+        channel_id: The channel ID to post to
+        from_participant: Your participant name in this channel
+        content: The message content
+        summary: Brief 1-2 sentence summary of your key point (used for context management)
+        addressed_to: Participant name for a directed message, omit for broadcast
+    """
+    body: dict[str, Any] = {
+        "from_participant": from_participant,
+        "content": content,
+    }
+    if summary:
+        body["summary"] = summary
+    if addressed_to:
+        body["addressed_to"] = addressed_to
+    return _request("POST", f"/api/hub/channels/{channel_id}/messages", body)
+
+
+@mcp.tool()
+def channel_complete(channel_id: str, by: str, reason: str | None = None) -> dict[str, Any]:
+    """Signal that a group channel discussion is complete.
+
+    Call this when you believe the conversation has reached a conclusion.
+
+    Args:
+        channel_id: The channel ID to complete
+        by: Your participant name
+        reason: Optional reason or summary of the conclusion
+    """
+    body: dict[str, Any] = {"by": by}
+    if reason:
+        body["reason"] = reason
+    return _request("POST", f"/api/hub/channels/{channel_id}/complete", body)
+
+
 def run() -> None:
     """Run the MCP server on stdio transport."""
     mcp.run(transport="stdio")

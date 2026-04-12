@@ -214,3 +214,43 @@ class StartPipelineRunRequest(BaseModel):
     """Request model for POST /api/pipelines/{name}/run endpoint."""
 
     params: dict = Field(default_factory=dict, description="Parameters passed to pipeline steps")
+
+
+# ---------------------------------------------------------------------------
+# Channel request models
+# ---------------------------------------------------------------------------
+
+
+class ChannelParticipantRequest(BaseModel):
+    """One participant in a CreateChannelRequest."""
+
+    name: str = Field(..., description="Display name in channel")
+    type: str = Field(..., description="'session', 'ollama', or 'user'")
+    session_name: str | None = Field(None, description="Brainbox session name (type=session)")
+    ollama_model: str | None = Field(None, description="Ollama model name (type=ollama)")
+    system_prompt: str | None = Field(None, description="Role instructions for this participant")
+
+
+class CreateChannelRequest(BaseModel):
+    """Request model for POST /api/hub/channels."""
+
+    name: str = Field(..., min_length=1, max_length=128, description="Channel name")
+    participants: list[ChannelParticipantRequest] = Field(
+        ..., min_length=1, description="Participants to add at creation"
+    )
+
+
+class PostChannelMessageRequest(BaseModel):
+    """Request model for POST /api/hub/channels/{id}/messages."""
+
+    from_participant: str = Field(..., description="Sender's participant name")
+    content: str = Field(..., min_length=1, description="Message content")
+    summary: str | None = Field(None, description="Brief for other agents' context management")
+    addressed_to: str | None = Field(None, description="Recipient name, or None for broadcast")
+
+
+class CompleteChannelRequest(BaseModel):
+    """Request model for POST /api/hub/channels/{id}/complete."""
+
+    by: str = Field(..., description="Name of participant signalling completion")
+    reason: str | None = Field(None, description="Optional reason / summary")

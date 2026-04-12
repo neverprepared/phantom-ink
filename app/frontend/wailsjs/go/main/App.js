@@ -18,6 +18,14 @@ export function CancelTask(arg1) {
   return window['go']['main']['App']['CancelTask'](arg1);
 }
 
+export function CompleteChannel(arg1, arg2) {
+  return window['go']['main']['App']['CompleteChannel'](arg1, arg2);
+}
+
+export function CreateChannel(arg1) {
+  return window['go']['main']['App']['CreateChannel'](arg1);
+}
+
 export function CreateProfile(arg1) {
   return window['go']['main']['App']['CreateProfile'](arg1);
 }
@@ -64,6 +72,14 @@ export function FocusTerminalTab(arg1) {
 
 export function GetActiveProfile() {
   return window['go']['main']['App']['GetActiveProfile']();
+}
+
+export function GetChannel(arg1) {
+  return window['go']['main']['App']['GetChannel'](arg1);
+}
+
+export function GetChannelMessages(arg1, arg2) {
+  return window['go']['main']['App']['GetChannelMessages'](arg1, arg2);
 }
 
 export function GetConfig() {
@@ -126,6 +142,10 @@ export function ListBackups() {
   return window['go']['main']['App']['ListBackups']();
 }
 
+export function ListChannels() {
+  return window['go']['main']['App']['ListChannels']();
+}
+
 export function ListOllamaModels() {
   return window['go']['main']['App']['ListOllamaModels']();
 }
@@ -152,6 +172,10 @@ export function ListServices() {
 
 export function ListTasks(arg1) {
   return window['go']['main']['App']['ListTasks'](arg1);
+}
+
+export function PostChannelMessage(arg1, arg2) {
+  return window['go']['main']['App']['PostChannelMessage'](arg1, arg2);
 }
 
 export function PullOllamaModel(arg1) {

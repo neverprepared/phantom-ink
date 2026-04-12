@@ -11,6 +11,10 @@ export function CancelPipelineRun(arg1:string):Promise<void>;
 
 export function CancelTask(arg1:string):Promise<void>;
 
+export function CompleteChannel(arg1:string,arg2:brainbox.CompleteChannelRequest):Promise<brainbox.Channel>;
+
+export function CreateChannel(arg1:brainbox.CreateChannelRequest):Promise<brainbox.Channel>;
+
 export function CreateProfile(arg1:string):Promise<main.Profile>;
 
 export function CreateSession(arg1:brainbox.CreateSessionRequest):Promise<brainbox.SessionActionResponse>;
@@ -34,6 +38,10 @@ export function FindClaudeProcesses():Promise<Array<main.LocalProcess>>;
 export function FocusTerminalTab(arg1:string):Promise<void>;
 
 export function GetActiveProfile():Promise<main.Profile>;
+
+export function GetChannel(arg1:string):Promise<brainbox.Channel>;
+
+export function GetChannelMessages(arg1:string,arg2:string):Promise<Array<brainbox.ChannelMessage>>;
 
 export function GetConfig():Promise<main.Config>;
 
@@ -65,6 +73,8 @@ export function ListArtifacts(arg1:string):Promise<Array<brainbox.Artifact>>;
 
 export function ListBackups():Promise<Array<string>>;
 
+export function ListChannels():Promise<Array<brainbox.Channel>>;
+
 export function ListOllamaModels():Promise<Array<brainbox.OllamaModel>>;
 
 export function ListPipelineRuns():Promise<Array<brainbox.PipelineRun>>;
@@ -78,6 +88,8 @@ export function ListRepos():Promise<Array<brainbox.Repo>>;
 export function ListServices():Promise<Array<main.ServiceStatus>>;
 
 export function ListTasks(arg1:string):Promise<Array<brainbox.Task>>;
+
+export function PostChannelMessage(arg1:string,arg2:brainbox.PostChannelMessageRequest):Promise<brainbox.ChannelMessage>;
 
 export function PullOllamaModel(arg1:string):Promise<string>;
 
