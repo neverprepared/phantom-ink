@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
 import threading
 import time
 import uuid
@@ -342,7 +343,10 @@ async def api_get_key(request: Request):
 # ---------------------------------------------------------------------------
 
 
-_ROLE_PREFIXES = ("developer-", "researcher-", "performer-")
+_ROLE_PREFIXES = (
+    "developer-", "researcher-", "performer-",
+    "supervisor-", "worker-", "merge-queue-", "pr-shepherd-", "reviewer-",
+)
 
 
 def _extract_session_name(container_name: str) -> str:
@@ -591,22 +595,20 @@ async def api_delete_session(
         )
         try:
             client = _docker()
-            container_name = f"{settings.resolved_prefix}{session_name}"
-            container = client.containers.get(container_name)
-            container.remove(force=True)
+            # Try the original name first (full container name), then the prefix+session pattern
+            for candidate in [name, f"{settings.resolved_prefix}{session_name}"]:
+                try:
+                    container = client.containers.get(candidate)
+                    container.remove(force=True)
+                    _audit_log(request, "session.delete", session_name=session_name, success=True)
+                    _broadcast_sse(json.dumps({"action": "session.delete", "session": session_name}))
+                    return {"success": True}
+                except docker.errors.NotFound:
+                    continue
+            # Neither name found — container already gone
             _audit_log(request, "session.delete", session_name=session_name, success=True)
             _broadcast_sse(json.dumps({"action": "session.delete", "session": session_name}))
             return {"success": True}
-        except docker.errors.NotFound:
-            _audit_log(
-                request,
-                "session.delete",
-                session_name=session_name,
-                success=False,
-                error="not_found",
-            )
-            log.error("session.delete_failed.not_found", metadata={"container": session_name})
-            raise HTTPException(status_code=404, detail=f"Container not found: {session_name}")
         except docker.errors.DockerException as docker_exc:
             _audit_log(
                 request,
@@ -712,16 +714,39 @@ async def api_create_session(
     request: Request, body: CreateSessionRequest, _key=Depends(require_api_key)
 ):
     try:
-        # ci-ratchet: register as a hub task so complete.sh → recycle() works
+        # Register as a hub task when a task description is provided
         hub_token = None
+        task_id = None
         if body.repo and body.repo.mode == "ci-ratchet":
             from .router import register_ci_ratchet_task
-
-            _, hub_token = register_ci_ratchet_task(
+            task_id_result, hub_token = register_ci_ratchet_task(
                 description=body.repo.task,
                 repo_url=body.repo.url,
                 session_name=body.name,
             )
+            task_id = task_id_result
+        elif body.task:
+            # Regular session with a task — register in hub so it shows in dashboard
+            from .router import _tasks, _now_ms
+            from .models import Task as HubTask, TaskStatus
+            from .registry import issue_token
+            tid = str(uuid.uuid4())
+            role = body.role or "developer"
+            token = issue_token(role, tid, ttl=settings.hub.token_ttl)
+            hub_token = token
+            task_id = tid
+            _tasks[tid] = HubTask(
+                id=tid,
+                description=body.task,
+                agent_name=role,
+                status=TaskStatus.RUNNING,
+                created_at=_now_ms(),
+                updated_at=_now_ms(),
+                token_id=token.token_id,
+                session_name=body.name,
+                repo_url=None,
+            )
+            _broadcast_sse(json.dumps({"action": "task.submit", "agent": role, "task_id": tid}))
 
         ctx = await run_pipeline(
             session_name=body.name,
@@ -742,6 +767,7 @@ async def api_create_session(
             token=hub_token,
             repo=body.repo,
             task_description=body.task,
+            task_id=task_id,
         )
         _audit_log(request, "session.create", session_name=body.name, success=True)
         _broadcast_sse(json.dumps({"action": "session.create", "session": body.name, "profile": body.workspace_profile or ""}))
@@ -1287,6 +1313,8 @@ async def hub_submit_task(body: TaskCreate, _key=Depends(require_api_key)):
             body.description,
             body.agent_name,
             repo_url=getattr(body, "repo_url", None),
+            workspace_profile=getattr(body, "workspace_profile", None),
+            workspace_home=getattr(body, "workspace_home", None),
         )
         _broadcast_sse(json.dumps({"action": "task.submit", "agent": body.agent_name, "repo": body.repo_url or ""}))
         return task.model_dump()
@@ -1321,9 +1349,44 @@ async def hub_cancel_task(task_id: str, _key=Depends(require_api_key)):
 # --- Messages ---
 
 
+def _require_token_or_api_key(request: Request) -> Token:
+    """Accept either Bearer token or X-API-Key for message routing."""
+    token = _extract_token(request)
+    if token:
+        return token
+    # Fall back to API key — create a synthetic hub token
+    api_key = request.headers.get("x-api-key", "")
+    if api_key and secrets.compare_digest(api_key, get_api_key()):
+        now = int(time.time() * 1000)
+        return Token(
+            token_id="api-key-fallback",
+            agent_name="hub",
+            task_id="",
+            capabilities=[],
+            issued=now,
+            expiry=now + 3600000,
+        )
+    raise HTTPException(status_code=401, detail="Missing or invalid Bearer token or API key")
+
+
 @app.post("/api/hub/messages")
-async def hub_route_message(request: Request, token: Token = Depends(require_token)):
+async def hub_route_message(request: Request, token: Token = Depends(_require_token_or_api_key)):
     body = await request.json()
+    payload = body.get("payload", {})
+
+    # API key fallback path — skip route_message validation, handle completion directly
+    if token.token_id == "api-key-fallback":
+        if isinstance(payload, dict) and payload.get("event") == "task.completed":
+            completion_result = payload.get("result", "done")
+            task_id = payload.get("task_id", "")
+            if task_id:
+                try:
+                    await complete_task(task_id, completion_result)
+                    return {"delivered": True, "message_id": "api-key-completion", "task_id": task_id}
+                except Exception as exc:
+                    log.warning("hub.task_completion_error", metadata={"task_id": task_id, "reason": str(exc)})
+            return {"delivered": True, "message_id": "api-key-no-task-id"}
+        return {"delivered": True, "message_id": "api-key-passthrough"}
 
     try:
         result = route_message(
@@ -1339,7 +1402,6 @@ async def hub_route_message(request: Request, token: Token = Depends(require_tok
         raise HTTPException(status_code=status, detail=str(exc))
 
     # Handle task completion side effect
-    payload = body.get("payload", {})
     if isinstance(payload, dict) and payload.get("event") == "task.completed":
         task_id = token.task_id
         completion_result = payload.get("result")

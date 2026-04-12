@@ -4,13 +4,16 @@ import "fmt"
 
 // Task represents a hub task.
 type Task struct {
-	ID          string `json:"id"`
-	Description string `json:"description"`
-	AgentName   string `json:"agent_name"`
-	Status      string `json:"status"`
-	RepoURL     string `json:"repo_url"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	ID          string      `json:"id"`
+	Description string      `json:"description"`
+	AgentName   string      `json:"agent_name"`
+	Status      string      `json:"status"`
+	RepoURL     interface{} `json:"repo_url"`
+	CreatedAt   interface{} `json:"created_at"`
+	UpdatedAt   interface{} `json:"updated_at"`
+	Result      interface{} `json:"result"`
+	Error       interface{} `json:"error"`
+	SessionName string      `json:"session_name"`
 }
 
 // Agent represents a registered agent definition.
@@ -55,9 +58,11 @@ type Repo struct {
 
 // SubmitTaskRequest is the payload for POST /api/hub/tasks.
 type SubmitTaskRequest struct {
-	Description string `json:"description"`
-	AgentName   string `json:"agent_name"`
-	RepoURL     string `json:"repo_url,omitempty"`
+	Description      string `json:"description"`
+	AgentName        string `json:"agent_name"`
+	RepoURL          string `json:"repo_url,omitempty"`
+	WorkspaceProfile string `json:"workspace_profile,omitempty"`
+	WorkspaceHome    string `json:"workspace_home,omitempty"`
 }
 
 // AddRepoRequest is the payload for POST /api/hub/repos.

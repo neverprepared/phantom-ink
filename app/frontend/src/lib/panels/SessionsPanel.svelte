@@ -43,6 +43,8 @@
     expandedMounts = next;
   }
 
+
+
   // Defer iframe src to let the panel render first, avoids blank frame on first open
   $effect(() => {
     if (terminalSession?.url) {
@@ -65,10 +67,11 @@
   let newProfile = $state('');
   let isCreating = $state(false);
 
-  // Volume mount selection
-  let profileDirs = $state<string[]>([]);
-  let selectedDirs = $state<Set<string>>(new Set());
-  let loadingDirs = $state(false);
+  // Volume mounts (browse-based)
+  let mountPaths = $state<string[]>([]);
+
+  // Task (optional — runs after session starts)
+  let newTask = $state('');
 
   let activeProfile = $derived(profileState.active);
   let profiles = $derived(profileState.profiles);
@@ -185,43 +188,27 @@
     }
   }
 
-  async function loadProfileDirs(profileName: string) {
-    if (!profileName) { profileDirs = []; return; }
-    loadingDirs = true;
-    const a = await getApi();
-    if (!a) { loadingDirs = false; return; }
-    try {
-      profileDirs = (await a.ListProfileDirs(profileName)) ?? [];
-    } catch {
-      profileDirs = [];
-    } finally {
-      loadingDirs = false;
-    }
-  }
-
   function openCreateModal() {
     newProfile = activeProfile?.name ?? profiles[0]?.name ?? '';
-    selectedDirs = new Set();
+    mountPaths = [];
+    newTask = '';
     showNewModal = true;
-    loadProfileDirs(newProfile);
   }
 
-  function toggleDir(dir: string) {
-    const next = new Set(selectedDirs);
-    if (next.has(dir)) next.delete(dir);
-    else next.add(dir);
-    selectedDirs = next;
+  async function browseAndAddMount() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const path = await a.BrowseFolder();
+      if (path && !mountPaths.includes(path)) {
+        mountPaths = [...mountPaths, path];
+      }
+    } catch {}
   }
 
-  // Reload dirs when profile selection changes in the modal
-  let prevProfile = '';
-  $effect(() => {
-    if (newProfile && newProfile !== prevProfile) {
-      prevProfile = newProfile;
-      selectedDirs = new Set();
-      loadProfileDirs(newProfile);
-    }
-  });
+  function removeMount(path: string) {
+    mountPaths = mountPaths.filter(p => p !== path);
+  }
 
   // Set a sensible default model when switching LLM provider
   let prevLLM = '';
@@ -246,9 +233,10 @@
     try {
       const profile = profiles.find(p => p.name === newProfile);
       const wsHome = profile?.workspace_home ?? '';
-      const volumes = [...selectedDirs].map(dir =>
-        `${wsHome}/${dir}:/home/developer/${dir}`
-      );
+      const volumes = mountPaths.map(p => {
+        const name = p.split('/').pop() || p;
+        return `${p}:/home/developer/${name}`;
+      });
       const req: Record<string, any> = {
         name: newName.trim().replace(/\s+/g, '-').toLowerCase(),
         role: newRole,
@@ -258,6 +246,7 @@
         backend: newBackend,
         workspace_profile: newProfile,
         workspace_home: wsHome,
+        task: newTask.trim() || undefined,
       };
       if (newBackend === 'utm') {
         req.vm_template = newVMTemplate;
@@ -267,7 +256,7 @@
       if (resp.success ?? resp.Success) {
         notifications.success(`Created session: ${newName}`);
         showNewModal = false;
-        newName = ''; newVMTemplate = ''; selectedDirs = new Set();
+        newName = ''; newVMTemplate = ''; mountPaths = []; newTask = '';
         refresh();
       } else {
         notifications.error(resp.error ?? resp.Error ?? 'Failed to create session');
@@ -521,29 +510,31 @@
 
       {#if newBackend === 'docker'}
         <div class="field">
-          <label for="smounts">mount directories</label>
-          {#if loadingDirs}
-            <p class="hint">scanning directories...</p>
-          {:else if profileDirs.length === 0}
-            <p class="hint">{newProfile ? 'no directories found under workspace home' : 'select a profile first'}</p>
-          {:else}
-            <div class="dir-list" id="smounts">
-              {#each profileDirs as dir (dir)}
-                <label class="dir-item" class:selected={selectedDirs.has(dir)}>
-                  <input type="checkbox" checked={selectedDirs.has(dir)} onchange={() => toggleDir(dir)} />
-                  <span class="dir-icon">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
-                  </span>
-                  <span class="dir-name">{dir}</span>
-                </label>
-              {/each}
-            </div>
-            {#if selectedDirs.size > 0}
-              <p class="hint">{selectedDirs.size} director{selectedDirs.size === 1 ? 'y' : 'ies'} will be mounted into /home/developer/</p>
-            {/if}
-          {/if}
+          <label for="smounts">mounts</label>
+          <div class="mount-list" id="smounts">
+            {#each mountPaths as path (path)}
+              <div class="mount-row">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+                <span class="mount-path" title={path}>{truncatePath(path, 40)}</span>
+                <button class="mount-remove" onclick={() => removeMount(path)} title="Remove mount" aria-label="Remove {path}">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            {/each}
+            <button class="mount-add" onclick={browseAndAddMount}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+              add folder
+            </button>
+          </div>
         </div>
       {/if}
+
+      <!-- Optional task -->
+      <div class="field">
+        <label for="stask">task (optional)</label>
+        <textarea id="stask" bind:value={newTask} rows="3" placeholder="Describe what the agent should do after starting..."></textarea>
+        <p class="hint">if provided, the agent will start working on this immediately</p>
+      </div>
 
       <div class="modal-actions">
         <button class="btn-cancel" onclick={() => showNewModal = false} disabled={isCreating}>cancel</button>
@@ -881,49 +872,63 @@
 
   .toggle-icon { font-size: 16px; }
 
-  /* Directory list */
-  .dir-list {
+  /* Mount list */
+  .mount-list {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    max-height: 180px;
-    overflow-y: auto;
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-md);
-    padding: 4px;
-    background: var(--color-bg-primary);
+    gap: 4px;
   }
 
-  .dir-item {
+  .mount-row {
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 6px 8px;
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-sm);
-    font-size: 13px;
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    transition: background 0.1s;
-    text-transform: none;
-    letter-spacing: normal;
-    font-weight: normal;
-    margin-bottom: 0;
-  }
-  .dir-item:hover { background: rgba(255, 255, 255, 0.03); }
-  .dir-item.selected {
-    background: rgba(59, 130, 246, 0.08);
-    color: var(--color-text-primary);
-  }
-  .dir-item input[type="checkbox"] { width: auto; flex-shrink: 0; }
-
-  .dir-icon {
     color: var(--color-text-tertiary);
-    display: flex;
-    flex-shrink: 0;
   }
-  .dir-item.selected .dir-icon { color: var(--color-info); }
 
-  .dir-name { font-family: var(--font-mono); font-size: 12px; }
+  .mount-path {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mount-remove {
+    background: transparent;
+    border: none;
+    color: var(--color-text-tertiary);
+    padding: 2px;
+    display: flex;
+    border-radius: var(--radius-sm);
+    transition: all 0.15s;
+  }
+  .mount-remove:hover { color: var(--color-error); }
+
+  .mount-add {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px;
+    background: transparent;
+    border: 1px dashed var(--color-border-secondary);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-tertiary);
+    font-size: 12px;
+    transition: all 0.15s;
+  }
+  .mount-add:hover {
+    border-color: var(--color-text-tertiary);
+    color: var(--color-text-secondary);
+    background: rgba(255, 255, 255, 0.02);
+  }
 
   /* Profile picker */
   .modal-actions {

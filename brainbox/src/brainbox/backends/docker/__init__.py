@@ -238,7 +238,7 @@ class DockerBackend:
         # Inject task description + completion helper for hub-spawned workers
         if ctx.task_description:
             executor = DockerExecExecutor(container)
-            await inject_task(executor, ctx.task_description, slog=slog)
+            await inject_task(executor, ctx.task_description, task_id=ctx.task_id or "", slog=slog)
 
         # Claude config is delivered via inject_config_bundle() before configure() runs —
         # no staging copy needed here. bypassPermissions is already forced in the bundle.

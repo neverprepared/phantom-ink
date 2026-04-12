@@ -50,6 +50,8 @@ async def submit_task(
     agent_name: str,
     *,
     repo_url: str | None = None,
+    workspace_profile: str | None = None,
+    workspace_home: str | None = None,
 ) -> Task:
     """Create and launch a task for the given agent.
 
@@ -96,14 +98,14 @@ async def submit_task(
     task.updated_at = _now_ms()
     _tasks[task_id] = task
 
-    # Resolve workspace context from registered repo (for credential mounts)
-    repo_workspace_home = None
-    repo_workspace_profile = None
-    if repo_url:
+    # Resolve workspace context: task-level overrides repo-level
+    repo_workspace_home = workspace_home
+    repo_workspace_profile = workspace_profile
+    if not repo_workspace_home and repo_url:
         repo = _repos.get(_repo_name(repo_url))
         if repo:
-            repo_workspace_home = repo.workspace_home
-            repo_workspace_profile = repo.workspace_profile
+            repo_workspace_home = repo_workspace_home or repo.workspace_home
+            repo_workspace_profile = repo_workspace_profile or repo.workspace_profile
 
     # Launch container with role-specific configuration
     try:
@@ -114,6 +116,7 @@ async def submit_task(
             token=token,
             repo_url=repo_url,
             task_description=description,
+            task_id=task_id,
             workspace_home=repo_workspace_home,
             workspace_profile=repo_workspace_profile,
         )
@@ -481,11 +484,8 @@ def restore_state(state: dict | None) -> None:
         return
     # Restore tasks
     if "tasks" in state:
-        _terminal = {"completed", "failed", "cancelled"}
         for tid, data in state["tasks"]:
             task = Task(**data)
-            if task.status in _terminal:
-                continue
             _tasks[tid] = task
     # Restore repos
     if "repos" in state:

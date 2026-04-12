@@ -92,6 +92,7 @@ export namespace brainbox {
 	    llm_provider?: string;
 	    llm_model?: string;
 	    ollama_host?: string;
+	    codex_api_key?: string;
 	    backend?: string;
 	    vm_template?: string;
 	    guest_os?: string;
@@ -114,6 +115,7 @@ export namespace brainbox {
 	        this.llm_provider = source["llm_provider"];
 	        this.llm_model = source["llm_model"];
 	        this.ollama_host = source["ollama_host"];
+	        this.codex_api_key = source["codex_api_key"];
 	        this.backend = source["backend"];
 	        this.vm_template = source["vm_template"];
 	        this.guest_os = source["guest_os"];
@@ -171,9 +173,12 @@ export namespace brainbox {
 	    description: string;
 	    agent_name: string;
 	    status: string;
-	    repo_url: string;
-	    created_at: string;
-	    updated_at: string;
+	    repo_url: any;
+	    created_at: any;
+	    updated_at: any;
+	    result: any;
+	    error: any;
+	    session_name: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Task(source);
@@ -188,6 +193,9 @@ export namespace brainbox {
 	        this.repo_url = source["repo_url"];
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
+	        this.result = source["result"];
+	        this.error = source["error"];
+	        this.session_name = source["session_name"];
 	    }
 	}
 	export class HubState {
@@ -246,6 +254,24 @@ export namespace brainbox {
 	        this.type = source["type"];
 	        this.payload = source["payload"];
 	        this.timestamp = source["timestamp"];
+	    }
+	}
+	export class OllamaModel {
+	    name: string;
+	    size: number;
+	    modified_at: string;
+	    digest: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new OllamaModel(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.size = source["size"];
+	        this.modified_at = source["modified_at"];
+	        this.digest = source["digest"];
 	    }
 	}
 	export class Pipeline {
@@ -343,6 +369,8 @@ export namespace brainbox {
 	    description: string;
 	    agent_name: string;
 	    repo_url?: string;
+	    workspace_profile?: string;
+	    workspace_home?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SubmitTaskRequest(source);
@@ -353,6 +381,8 @@ export namespace brainbox {
 	        this.description = source["description"];
 	        this.agent_name = source["agent_name"];
 	        this.repo_url = source["repo_url"];
+	        this.workspace_profile = source["workspace_profile"];
+	        this.workspace_home = source["workspace_home"];
 	    }
 	}
 	

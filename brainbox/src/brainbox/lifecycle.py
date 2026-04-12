@@ -584,6 +584,7 @@ async def provision(
     ports: dict[str, int] | None = None,
     repo_url: str | None = None,
     task_description: str | None = None,
+    task_id: str | None = None,
     docker_host: str | None = None,
 ) -> SessionContext:
     from .backends import create_backend
@@ -638,6 +639,7 @@ async def provision(
         role_prompt_file=role_prompt_file,
         repo_url=repo_url,
         task_description=task_description,
+        task_id=task_id,
         docker_host=docker_host,
     )
 
@@ -1013,6 +1015,7 @@ async def run_pipeline(
     ports: dict[str, int] | None = None,
     repo_url: str | None = None,
     task_description: str | None = None,
+    task_id: str | None = None,
     docker_host: str | None = None,
     repo: Any = None,  # RepoConfig | None — avoid circular import
 ) -> SessionContext:
@@ -1054,6 +1057,7 @@ async def run_pipeline(
         ports=ports,
         repo_url=repo_url,
         task_description=task_description,
+        task_id=task_id,
         docker_host=docker_host,
     )
 

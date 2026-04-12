@@ -162,7 +162,7 @@ class ProfileSettings(BaseSettings):
 class OllamaSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="OLLAMA_")
 
-    host: str = "http://host.docker.internal:11434"
+    host: str = "http://localhost:11434"
     model: str = "qwen3:8b"
 
 

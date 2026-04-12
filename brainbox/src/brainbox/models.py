@@ -77,6 +77,7 @@ class SessionContext(BaseModel):
     role_prompt_file: str | None = None  # Path to role prompt injected into container
     repo_url: str | None = None  # Associated repository URL
     task_description: str | None = None  # Task description for hub-spawned workers
+    task_id: str | None = None  # Hub task ID for completion callbacks
     state: SessionState = SessionState.PROVISIONING
     created_at: int  # epoch ms
     ttl: int  # seconds
@@ -125,7 +126,9 @@ class TaskStatus(str, Enum):
 class TaskCreate(BaseModel):
     description: str
     agent_name: str
-    repo_url: str | None = None  # Optional repo association
+    repo_url: str | None = None
+    workspace_profile: str | None = None
+    workspace_home: str | None = None
 
 
 class Task(BaseModel):

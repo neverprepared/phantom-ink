@@ -6,6 +6,10 @@ export function AddRepo(arg1) {
   return window['go']['main']['App']['AddRepo'](arg1);
 }
 
+export function BrowseFolder() {
+  return window['go']['main']['App']['BrowseFolder']();
+}
+
 export function CancelPipelineRun(arg1) {
   return window['go']['main']['App']['CancelPipelineRun'](arg1);
 }
@@ -24,6 +28,10 @@ export function CreateSession(arg1) {
 
 export function DeleteArtifact(arg1) {
   return window['go']['main']['App']['DeleteArtifact'](arg1);
+}
+
+export function DeleteOllamaModel(arg1) {
+  return window['go']['main']['App']['DeleteOllamaModel'](arg1);
 }
 
 export function DeleteProfile(arg1, arg2) {
@@ -118,6 +126,10 @@ export function ListBackups() {
   return window['go']['main']['App']['ListBackups']();
 }
 
+export function ListOllamaModels() {
+  return window['go']['main']['App']['ListOllamaModels']();
+}
+
 export function ListPipelineRuns() {
   return window['go']['main']['App']['ListPipelineRuns']();
 }
@@ -140,6 +152,10 @@ export function ListServices() {
 
 export function ListTasks(arg1) {
   return window['go']['main']['App']['ListTasks'](arg1);
+}
+
+export function PullOllamaModel(arg1) {
+  return window['go']['main']['App']['PullOllamaModel'](arg1);
 }
 
 export function PurgeBackup(arg1) {

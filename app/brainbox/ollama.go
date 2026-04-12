@@ -1,6 +1,10 @@
 package brainbox
 
-import "fmt"
+import (
+	"fmt"
+	"net/http"
+	"time"
+)
 
 // OllamaModel represents a model available on the Ollama server.
 type OllamaModel struct {
@@ -31,9 +35,11 @@ func (c *Client) ListOllamaModels() ([]OllamaModel, error) {
 }
 
 // PullOllamaModel pulls a model from the Ollama registry.
+// Uses a long timeout since model downloads can take several minutes.
 func (c *Client) PullOllamaModel(name string) (string, error) {
+	longClient := &http.Client{Timeout: 30 * time.Minute}
 	var resp ollamaActionResponse
-	if err := c.post("/api/ollama/pull", map[string]string{"name": name}, &resp); err != nil {
+	if err := c.doWith(longClient, "POST", "/api/ollama/pull", map[string]string{"name": name}, &resp); err != nil {
 		return "", err
 	}
 	return resp.Status, nil

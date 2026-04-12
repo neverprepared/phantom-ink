@@ -133,3 +133,10 @@ func (a *App) SetConfig(baseURL, apiKey, workspacesRoot string) error {
 func (a *App) GetPlatform() string {
 	return goruntime.GOOS
 }
+
+// BrowseFolder opens a native folder selection dialog and returns the path.
+func (a *App) BrowseFolder() (string, error) {
+	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select folder to mount",
+	})
+}

@@ -5,6 +5,8 @@ import {main} from '../models';
 
 export function AddRepo(arg1:brainbox.AddRepoRequest):Promise<brainbox.Repo>;
 
+export function BrowseFolder():Promise<string>;
+
 export function CancelPipelineRun(arg1:string):Promise<void>;
 
 export function CancelTask(arg1:string):Promise<void>;
@@ -14,6 +16,8 @@ export function CreateProfile(arg1:string):Promise<main.Profile>;
 export function CreateSession(arg1:brainbox.CreateSessionRequest):Promise<brainbox.SessionActionResponse>;
 
 export function DeleteArtifact(arg1:string):Promise<void>;
+
+export function DeleteOllamaModel(arg1:string):Promise<void>;
 
 export function DeleteProfile(arg1:string,arg2:boolean):Promise<void>;
 
@@ -61,6 +65,8 @@ export function ListArtifacts(arg1:string):Promise<Array<brainbox.Artifact>>;
 
 export function ListBackups():Promise<Array<string>>;
 
+export function ListOllamaModels():Promise<Array<brainbox.OllamaModel>>;
+
 export function ListPipelineRuns():Promise<Array<brainbox.PipelineRun>>;
 
 export function ListPipelines():Promise<Array<brainbox.Pipeline>>;
@@ -72,6 +78,8 @@ export function ListRepos():Promise<Array<brainbox.Repo>>;
 export function ListServices():Promise<Array<main.ServiceStatus>>;
 
 export function ListTasks(arg1:string):Promise<Array<brainbox.Task>>;
+
+export function PullOllamaModel(arg1:string):Promise<string>;
 
 export function PurgeBackup(arg1:string):Promise<void>;
 

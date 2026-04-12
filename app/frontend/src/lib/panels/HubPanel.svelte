@@ -6,7 +6,6 @@
   import { profileState } from '../stores.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Badge from '../components/Badge.svelte';
-  import Modal from '../components/Modal.svelte';
 
 
   // --- Data ---
@@ -19,12 +18,6 @@
   let systemInfo = $state<{ cpu_cores: number; mem_total_gib: number }>({ cpu_cores: 0, mem_total_gib: 0 });
   let loading = $state(true);
 
-  // --- Task submission ---
-  let showSubmitModal = $state(false);
-  let taskDesc = $state('');
-  let taskAgent = $state('');
-  let taskRepo = $state('');
-  let isSubmitting = $state(false);
 
   // --- Profile filtering ---
   let activeProfile = $derived(profileState.active);
@@ -135,29 +128,14 @@
     }
   }
 
-  async function handleSubmit() {
-    if (!taskDesc.trim() || !taskAgent.trim()) return;
-    isSubmitting = true;
-    const a = await getApi();
-    if (!a) { isSubmitting = false; return; }
-    try {
-      await a.SubmitTask({ description: taskDesc, agent_name: taskAgent, repo_url: taskRepo });
-      notifications.success('Task submitted');
-      showSubmitModal = false;
-      taskDesc = ''; taskAgent = ''; taskRepo = '';
-      refresh();
-    } catch (err: any) {
-      notifications.error(`Failed to submit: ${err}`);
-    } finally {
-      isSubmitting = false;
-    }
-  }
 </script>
 
 <div class="panel" aria-busy={loading}>
   <header>
     <h1><span class="accent">dashboard</span></h1>
-    <button class="new-btn" onclick={() => showSubmitModal = true}>+ submit task</button>
+    <button class="btn-refresh" onclick={refresh} title="Refresh" aria-label="Refresh dashboard">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+    </button>
   </header>
 
   {#if loading}
@@ -333,41 +311,6 @@
   {/if}
 </div>
 
-{#if showSubmitModal}
-  <Modal onClose={() => showSubmitModal = false}>
-    {#snippet children()}
-      <h2>submit task</h2>
-      <p class="modal-sub">dispatch a task to a registered agent</p>
-
-      <div class="field">
-        <label for="tdesc">description</label>
-        <textarea id="tdesc" bind:value={taskDesc} rows="3" placeholder="What should the agent do?"></textarea>
-      </div>
-
-      <div class="field">
-        <label for="tagent">agent</label>
-        <input id="tagent" type="text" bind:value={taskAgent} list="agent-names" placeholder="worker" />
-        <datalist id="agent-names">
-          {#each agents as agent}
-            <option value={agent.name}></option>
-          {/each}
-        </datalist>
-      </div>
-
-      <div class="field">
-        <label for="trepo">repo url (optional)</label>
-        <input id="trepo" type="url" bind:value={taskRepo} placeholder="https://github.com/org/repo" />
-      </div>
-
-      <div class="modal-actions">
-        <button class="btn-cancel-modal" onclick={() => showSubmitModal = false} disabled={isSubmitting}>cancel</button>
-        <button class="btn-submit" onclick={handleSubmit} disabled={isSubmitting || !taskDesc.trim() || !taskAgent.trim()}>
-          {isSubmitting ? 'submitting...' : 'submit'}
-        </button>
-      </div>
-    {/snippet}
-  </Modal>
-{/if}
 
 <style>
   .panel { padding-bottom: 24px; }

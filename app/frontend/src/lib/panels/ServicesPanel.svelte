@@ -316,64 +316,6 @@
     {/if}
   </div>
 
-  <!-- Ollama model management (only visible when ollama is enabled) -->
-  {#if featureFlags.isEnabled('ollama')}
-    <div class="service-card ollama-card">
-      <div class="card-top">
-        <div class="card-identity">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
-          <span class="svc-name">Ollama Models</span>
-        </div>
-        <button class="btn-refresh" onclick={refreshOllamaModels} title="Refresh models" aria-label="Refresh Ollama models">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
-        </button>
-      </div>
-
-      <!-- Pull row -->
-      <div class="ollama-pull-row">
-        <input
-          class="ollama-pull-input"
-          type="text"
-          placeholder="model name (e.g. llama3.2)"
-          bind:value={ollamaPullName}
-          onkeydown={(e) => { if (e.key === 'Enter') handleOllamaPull(); }}
-          disabled={ollamaPulling}
-        />
-        <button class="btn-primary btn-sm" onclick={handleOllamaPull} disabled={ollamaPulling || !ollamaPullName.trim()}>
-          {ollamaPulling ? 'pulling...' : 'pull'}
-        </button>
-      </div>
-
-      <!-- Model list -->
-      {#if ollamaLoading}
-        <p class="hint">loading models...</p>
-      {:else if ollamaModels.length === 0}
-        <p class="hint">no models — use pull to download one</p>
-      {:else}
-        <div class="ollama-model-list">
-          {#each ollamaModels as model (model.name)}
-            {@const deleting = ollamaDeleting.has(model.name)}
-            <div class="ollama-model-row">
-              <div class="ollama-model-info">
-                <span class="ollama-model-name">{model.name}</span>
-                <span class="ollama-model-size">{formatBytes(model.size)}</span>
-              </div>
-              <button
-                class="btn-danger btn-sm btn-xs"
-                onclick={() => handleOllamaDelete(model.name)}
-                disabled={deleting}
-                title="Delete model"
-                aria-label="Delete {model.name}"
-              >
-                {deleting ? '...' : 'delete'}
-              </button>
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </div>
-  {/if}
-
   <!-- Service cards -->
   {#if loading}
     <div class="loading">checking services...</div>
@@ -424,9 +366,7 @@
 
           <div class="card-actions">
             {#if svc.native || svc.remote}
-              <span class="native-hint">
-                {svc.running ? `running ${svc.remote ? 'remotely' : 'externally'}` : `not detected`}
-              </span>
+              <!-- Status shown in card header — no actions needed -->
             {:else if busy}
               <span class="busy-indicator">
                 <svg class="spinner" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
@@ -439,6 +379,46 @@
               <button class="btn-success btn-sm" onclick={() => handleStart(svc.name)}>start</button>
             {/if}
           </div>
+
+          <!-- Ollama models inline (inside the ollama service card) -->
+          {#if svc.name === 'ollama' && svc.enabled}
+            <div class="ollama-section">
+              <div class="ollama-header">
+                <span class="ollama-title">models</span>
+                <button class="btn-refresh" onclick={refreshOllamaModels} title="Refresh models" aria-label="Refresh Ollama models">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+                </button>
+              </div>
+              <div class="ollama-pull-row">
+                <input class="ollama-pull-input" type="text" placeholder="model name (e.g. llama3.2)"
+                  bind:value={ollamaPullName}
+                  onkeydown={(e) => { if (e.key === 'Enter') handleOllamaPull(); }}
+                  disabled={ollamaPulling} />
+                <button class="btn-primary btn-sm" onclick={handleOllamaPull} disabled={ollamaPulling || !ollamaPullName.trim()}>
+                  {ollamaPulling ? 'pulling...' : 'pull'}
+                </button>
+              </div>
+              {#if ollamaLoading}
+                <p class="hint">loading models...</p>
+              {:else if ollamaModels.length === 0}
+                <p class="hint">no models — use pull to download one</p>
+              {:else}
+                <div class="ollama-model-list">
+                  {#each ollamaModels as model (model.name)}
+                    {@const deleting = ollamaDeleting.has(model.name)}
+                    <div class="ollama-model-row">
+                      <span class="ollama-model-name">{model.name}</span>
+                      <span class="ollama-model-size">{formatBytes(model.size)}</span>
+                      <button class="btn-danger btn-sm btn-xs" onclick={() => handleOllamaDelete(model.name)}
+                        disabled={deleting} title="Delete model" aria-label="Delete {model.name}">
+                        {deleting ? '...' : 'delete'}
+                      </button>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
         </div>
       {/each}
     </div>
@@ -604,7 +584,26 @@
   .op-steps li { margin-bottom: 4px; }
 
   /* Ollama model management */
-  .ollama-card { margin-bottom: 20px; border-left-color: var(--color-accent); }
+  .ollama-section {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--color-border-primary);
+  }
+
+  .ollama-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .ollama-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-tertiary);
+  }
 
   .ollama-pull-row {
     display: flex; gap: 8px; margin-bottom: 10px;
@@ -627,8 +626,8 @@
   }
   .ollama-model-row:nth-child(odd) { background: rgba(255, 255, 255, 0.015); }
 
-  .ollama-model-info { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .ollama-model-name {
+    flex: 1; min-width: 0;
     font-family: var(--font-mono); font-size: 12px;
     color: var(--color-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }

@@ -443,6 +443,7 @@ async def inject_task(
     executor: GuestExecutor,
     task_description: str,
     *,
+    task_id: str = "",
     hub_url: str = "http://host.docker.internal:9999",
     slog: Any | None = None,
 ) -> None:
@@ -463,13 +464,28 @@ async def inject_task(
             "#!/bin/sh\n"
             "# Call this when your task is done to mark it complete in the hub.\n"
             f"TOKEN=$(cat {home}/.agent-token 2>/dev/null)\n"
+            f"TASK_ID=$(cat {brainbox_dir}/task-id.txt 2>/dev/null || echo '')\n"
             f"HUB=$(cat {brainbox_dir}/hub-url.txt 2>/dev/null || echo '{hub_url}')\n"
             'RESULT="${1:-done}"\n'
+            "# Try Bearer token auth first, fall back to API key with task ID\n"
             'curl -sf -X POST "${HUB}/api/hub/messages" \\\n'
             '  -H "Authorization: Bearer ${TOKEN}" \\\n'
             '  -H "Content-Type: application/json" \\\n'
             '  -d "{\\"payload\\": {\\"event\\": \\"task.completed\\", \\"result\\": \\"${RESULT}\\"}}" \\\n'
-            "  && echo 'Task marked complete.' || echo 'Warning: could not reach hub.'\n"
+            "  && echo 'Task marked complete.' \\\n"
+            "  || { \\\n"
+            f"    APIKEY=$(cat {home}/.brainbox-api-key 2>/dev/null || echo '')\n"
+            '    if [ -n "$APIKEY" ]; then \\\n'
+            '      curl -sf -X POST "${HUB}/api/hub/messages" \\\n'
+            '        -H "X-API-Key: ${APIKEY}" \\\n'
+            '        -H "Content-Type: application/json" \\\n'
+            '        -d "{\\"payload\\": {\\"event\\": \\"task.completed\\", \\"result\\": \\"${RESULT}\\", \\"task_id\\": \\"${TASK_ID}\\"}}" \\\n'
+            "        && echo 'Task marked complete (via API key).' \\\n"
+            "        || echo 'Warning: could not reach hub.'; \\\n"
+            "    else \\\n"
+            "      echo 'Warning: could not reach hub (token expired, no API key fallback).'; \\\n"
+            "    fi; \\\n"
+            "  }\n"
         )
         task_with_footer = (
             task_description
@@ -477,13 +493,19 @@ async def inject_task(
             'run this to notify the hub: ~/.brainbox/complete.sh "<brief result summary>"'
         )
 
+        # Get API key for fallback auth in complete.sh
+        from ..auth import get_api_key
+        api_key = get_api_key()
+
         await executor.exec_shell(
             f"mkdir -p {brainbox_dir}"
             f" && echo {shlex.quote(task_with_footer)} > {brainbox_dir}/task.txt"
             f" && chmod 644 {brainbox_dir}/task.txt"
             f" && echo {shlex.quote(hub_url)} > {brainbox_dir}/hub-url.txt"
-            f" && printf {shlex.quote(complete_script)} > {brainbox_dir}/complete.sh"
+            + (f" && echo {shlex.quote(task_id)} > {brainbox_dir}/task-id.txt" if task_id else "")
+            + f" && printf {shlex.quote(complete_script)} > {brainbox_dir}/complete.sh"
             f" && chmod 755 {brainbox_dir}/complete.sh"
+            + (f" && echo {shlex.quote(api_key)} > {home}/.brainbox-api-key && chmod 600 {home}/.brainbox-api-key" if api_key else "")
         )
 
         slog.info("configure.task_injected", metadata={"task_len": len(task_description)})
