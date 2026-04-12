@@ -15,9 +15,13 @@ import (
 var embeddedCompose embed.FS
 
 // integrationsDir returns ~/.config/phantom-ink/integrations, creating it if needed.
+// Errors creating the directory are logged to stderr; callers receive the path regardless
+// so that subsequent file operations will surface their own errors naturally.
 func integrationsDir() string {
 	dir := filepath.Join(os.Getenv("HOME"), ".config", "phantom-ink", "integrations")
-	_ = os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to create integrations dir %q: %v\n", dir, err)
+	}
 	return dir
 }
 
