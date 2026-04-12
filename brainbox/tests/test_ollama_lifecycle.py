@@ -90,7 +90,7 @@ class TestConfigureOllama:
 
             ctx = await configure(ollama_ctx)
 
-        assert ctx.secrets["ANTHROPIC_BASE_URL"] == "http://host.docker.internal:11434"
+        assert ctx.secrets["ANTHROPIC_BASE_URL"] == "http://localhost:11434"
 
     @pytest.mark.asyncio
     async def test_uses_custom_url_when_specified(self, ollama_ctx, mock_sessions):

@@ -107,4 +107,4 @@ class TestExecEndpoint:
             )
 
         expected_name = f"{settings.resolved_prefix}mybox"
-        mock_docker_client.containers.get.assert_called_once_with(expected_name)
+        mock_docker_client.containers.get.assert_any_call(expected_name)

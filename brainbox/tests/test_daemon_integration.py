@@ -16,12 +16,12 @@ from brainbox.daemon import DaemonManager
 @pytest.fixture
 def temp_config_dir(tmp_path: Path, monkeypatch) -> Path:
     """Create a temporary config directory and set it in environment."""
-    config_dir = tmp_path / "config"
+    config_dir = tmp_path / "phantom-ink" / "brainbox"
     config_dir.mkdir(parents=True)
 
     # Mock the config directory
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    return tmp_path / "developer"
+    return config_dir
 
 
 def run_cli(*args: str, timeout: int = 10) -> subprocess.CompletedProcess:
