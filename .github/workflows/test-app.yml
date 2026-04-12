@@ -1,0 +1,23 @@
+name: Test app
+on:
+  push:
+    paths: ['app/**', '.github/workflows/test-app.yml']
+  pull_request:
+    paths: ['app/**', '.github/workflows/test-app.yml']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - name: Create frontend/dist stub for Go embed
+        run: mkdir -p app/frontend/dist && touch app/frontend/dist/.keep
+      - name: Run tests
+        working-directory: app
+        run: go test ./... -v -race -coverprofile=coverage.out
+      - name: Coverage report
+        working-directory: app
+        run: go tool cover -func=coverage.out
