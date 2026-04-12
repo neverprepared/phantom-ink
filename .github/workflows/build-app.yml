@@ -25,14 +25,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.25'
           cache: true
           cache-dependency-path: app/go.sum
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: app/frontend/package-lock.json
 
@@ -48,9 +48,16 @@ jobs:
       - name: Create DMG
         id: dmg
         run: |
-          APP_NAME=$(ls app/build/bin/*.app | head -1 | xargs basename | sed 's/\.app//')
+          # Find the .app bundle — Wails puts it in app/build/bin/
+          APP_PATH=$(find app/build/bin -maxdepth 1 -name "*.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: No .app bundle found in app/build/bin/"
+            ls -la app/build/bin/
+            exit 1
+          fi
+          APP_NAME=$(basename "$APP_PATH" .app)
           mkdir -p dmg-staging
-          cp -r "app/build/bin/${APP_NAME}.app" "dmg-staging/${APP_NAME}.app"
+          cp -r "$APP_PATH" "dmg-staging/${APP_NAME}.app"
           hdiutil create \
             -volname "${APP_NAME}" \
             -srcfolder dmg-staging \

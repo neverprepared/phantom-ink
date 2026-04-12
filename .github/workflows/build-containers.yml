@@ -15,6 +15,10 @@ concurrency:
   group: containers-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build-brainbox:
     name: Build brainbox
