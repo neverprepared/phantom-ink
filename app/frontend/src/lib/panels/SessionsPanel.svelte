@@ -17,6 +17,31 @@
   let terminalSession = $state<any | null>(null);
   let terminalUrl = $state('');
   let busySessions = $state<Set<string>>(new Set());
+  let expandedMounts = $state<Set<string>>(new Set());
+
+  function parseMounts(volume: string): { host: string; container: string }[] {
+    if (!volume) return [];
+    return volume.split(',').map(s => s.trim()).filter(Boolean).map(pair => {
+      const idx = pair.indexOf(':');
+      if (idx === -1) return { host: pair, container: pair };
+      return { host: pair.slice(0, idx), container: pair.slice(idx + 1) };
+    });
+  }
+
+  function truncatePath(p: string, max = 28): string {
+    if (p.length <= max) return p;
+    const parts = p.split('/');
+    // Keep last 2 segments visible
+    const tail = parts.slice(-2).join('/');
+    return tail.length + 4 >= max ? '…/' + parts[parts.length - 1] : '…/' + tail;
+  }
+
+  function toggleMounts(name: string) {
+    const next = new Set(expandedMounts);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    expandedMounts = next;
+  }
 
   // Defer iframe src to let the panel render first, avoids blank frame on first open
   $effect(() => {
@@ -291,6 +316,8 @@
         {@const role = session.role ?? 'developer'}
         {@const backend = session.backend ?? 'docker'}
         {@const busy = busySessions.has(session.name)}
+        {@const mounts = parseMounts(session.volume ?? '')}
+        {@const mountsExpanded = expandedMounts.has(session.name)}
 
         <div class="session-card" class:active class:inactive={!active}>
           <div class="card-header">
@@ -313,6 +340,28 @@
               <a class="meta-url" href={session.url} target="_blank">{session.url.replace('http://', '')}</a>
             {/if}
           </div>
+
+          {#if mounts.length > 0}
+            <div class="card-mounts">
+              <button class="mounts-toggle" onclick={() => toggleMounts(session.name)} aria-expanded={mountsExpanded}>
+                <svg class="chevron" class:expanded={mountsExpanded} xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+                <span class="mounts-label">{mounts.length} mount{mounts.length !== 1 ? 's' : ''}</span>
+              </button>
+              {#if mountsExpanded}
+                <div class="mounts-list">
+                  {#each mounts as mount}
+                    <div class="mount-row">
+                      <svg class="mount-icon" xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+                      <span class="mount-host" title={mount.host}>{truncatePath(mount.host)}</span>
+                      <span class="mount-arrow">→</span>
+                      <span class="mount-container">{mount.container}</span>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
 
           <div class="card-actions">
             {#if busy}
@@ -674,6 +723,73 @@
     font-size: 11px;
   }
   .meta-url:hover { text-decoration: underline; }
+
+  /* Mounts section */
+  .card-mounts {
+    margin-top: 6px;
+    margin-bottom: 2px;
+  }
+
+  .mounts-toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: none;
+    border: none;
+    color: var(--color-text-tertiary);
+    font-size: 11px;
+    padding: 2px 0;
+    cursor: pointer;
+    transition: color 0.15s;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: normal;
+  }
+  .mounts-toggle:hover { color: var(--color-text-secondary); }
+
+  .chevron { color: var(--color-text-tertiary); transition: transform 0.15s; flex-shrink: 0; }
+  .chevron.expanded { transform: rotate(90deg); }
+
+  .mounts-label { font-family: var(--font-mono); }
+
+  .mounts-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 6px;
+    padding-left: 16px;
+  }
+
+  .mount-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--color-text-tertiary);
+  }
+
+  .mount-icon { color: var(--color-text-tertiary); flex-shrink: 0; }
+
+  .mount-host {
+    font-family: var(--font-mono);
+    color: var(--color-text-secondary);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: default;
+  }
+
+  .mount-arrow { color: var(--color-text-tertiary); flex-shrink: 0; }
+
+  .mount-container {
+    font-family: var(--font-mono);
+    color: var(--color-text-tertiary);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
   .card-actions {
     margin-top: 10px;
