@@ -33,9 +33,9 @@ COPY --chown=developer:developer reflex/plugins/reflex/skills/youtube-harvester/
 COPY --chown=developer:developer reflex/plugins/reflex/skills/site-crawler/SKILL.md /home/developer/.claude/skills/site-crawler/SKILL.md
 
 # MCP servers (research-focused: Qdrant, Brave Search, Memory only)
-RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add qdrant -- uvx --python 3.12 --with fastembed mcp-server-qdrant'
-RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add brave-search -- npx -y @anthropic-ai/mcp-brave-search'
-RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add memory -- npx -y @modelcontextprotocol/server-memory'
+RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add qdrant -- uvx --python 3.12 --with fastembed mcp-server-qdrant || true'
+RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add brave-search -- npx -y @anthropic-ai/mcp-brave-search || true'
+RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add memory -- npx -y @modelcontextprotocol/server-memory || true'
 
 # Skip onboarding
 RUN bash -c 'if [ -f /home/developer/.claude.json ]; then \

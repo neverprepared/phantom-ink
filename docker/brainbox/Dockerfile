@@ -220,6 +220,16 @@ RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add github -- npx -y @modelcontex
 RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add brave-search -- npx -y @anthropic-ai/mcp-brave-search'
 RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add qdrant -- uvx --python 3.12 --with fastembed mcp-server-qdrant'
 
+# Brainbox MCP server — copy source and install so the MCP server runs natively.
+# BRAINBOX_URL is set to the Docker host gateway; sessions override via env at provision.
+COPY --chown=developer:developer brainbox/pyproject.toml /home/developer/.brainbox-mcp/pyproject.toml
+COPY --chown=developer:developer brainbox/src /home/developer/.brainbox-mcp/src
+RUN uv pip install --system /home/developer/.brainbox-mcp --no-deps --quiet 2>/dev/null || \
+    pip install /home/developer/.brainbox-mcp --no-deps --quiet 2>/dev/null || true
+RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add brainbox \
+    --env BRAINBOX_URL=http://host.docker.internal:9999 \
+    -- python3 -m brainbox mcp' || true
+
 # Skip onboarding and pre-trust common working directories
 RUN bash -c 'if [ -f /home/developer/.claude.json ]; then \
       jq ". + {hasCompletedOnboarding: true, bypassPermissionsModeAccepted: true} | .projects[\"/home/developer/workspace\"] = (.projects[\"/home/developer/workspace\"] // {} | . + {hasTrustDialogAccepted: true}) | .projects[\"/home/developer/task-repo\"] = {allowedTools:[],mcpContextUris:[],hasTrustDialogAccepted:true,projectOnboardingSeenCount:0} | .projects[\"/home/developer\"] = {allowedTools:[],mcpContextUris:[],hasTrustDialogAccepted:true,projectOnboardingSeenCount:0}" /home/developer/.claude.json > /tmp/.claude.json.tmp && \
