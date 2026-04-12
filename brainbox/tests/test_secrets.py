@@ -358,7 +358,7 @@ class TestDefaultConfigDir:
 
         from brainbox.config import _default_config_dir
 
-        assert _default_config_dir() == Path("/xdg/config/developer")
+        assert _default_config_dir() == Path("/xdg/config/phantom-ink/brainbox")
 
     def test_workspace_home_fallback(self, monkeypatch):
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
@@ -366,7 +366,7 @@ class TestDefaultConfigDir:
 
         from brainbox.config import _default_config_dir
 
-        assert _default_config_dir() == Path("/ws/.config/developer")
+        assert _default_config_dir() == Path("/ws/.config/phantom-ink/brainbox")
 
     def test_home_fallback(self, monkeypatch):
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
@@ -375,4 +375,4 @@ class TestDefaultConfigDir:
         from brainbox.config import _default_config_dir
 
         result = _default_config_dir()
-        assert result == Path.home() / ".config" / "developer"
+        assert result == Path.home() / ".config" / "phantom-ink" / "brainbox"
