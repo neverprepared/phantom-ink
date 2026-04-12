@@ -166,6 +166,13 @@ class OllamaSettings(BaseSettings):
     model: str = "qwen3:8b"
 
 
+class CodexSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="CODEX_")
+
+    api_key: str = ""  # Falls back to OPENAI_API_KEY in env
+    model: str = "codex-mini-latest"
+
+
 class UTMSettings(BaseSettings):
     default_template: str = "brainbox-macos-template"
     ssh_base_port: int = 2200
@@ -224,6 +231,7 @@ class Settings(BaseSettings):
     profile: ProfileSettings = Field(default_factory=ProfileSettings)
     hub: HubSettings = Field(default_factory=HubSettings)
     ollama: OllamaSettings = Field(default_factory=OllamaSettings)
+    codex: CodexSettings = Field(default_factory=CodexSettings)
     utm: UTMSettings = Field(default_factory=UTMSettings)
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     docker: DockerSettings = Field(default_factory=DockerSettings)

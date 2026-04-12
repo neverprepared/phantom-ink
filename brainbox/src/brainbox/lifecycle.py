@@ -575,6 +575,7 @@ async def provision(
     llm_provider: str = "claude",
     llm_model: str | None = None,
     ollama_host: str | None = None,
+    codex_api_key: str | None = None,
     workspace_profile: str | None = None,
     workspace_home: str | None = None,
     backend: str = "docker",
@@ -626,6 +627,7 @@ async def provision(
         llm_provider=llm_provider,
         llm_model=llm_model,
         ollama_host=ollama_host,
+        codex_api_key=codex_api_key,
         workspace_profile=resolved_workspace_profile,
         workspace_home=workspace_home,
         backend=backend,
@@ -733,6 +735,12 @@ async def configure(ctx_or_name: SessionContext | str) -> SessionContext:
         resolved["ANTHROPIC_API_KEY"] = ""
         resolved["ANTHROPIC_BASE_URL"] = ctx.ollama_host or settings.ollama.host
         resolved["CLAUDE_MODEL"] = ctx.llm_model or settings.ollama.model
+
+    # Inject Codex/OpenAI env vars when provider is codex
+    elif ctx.llm_provider == "codex":
+        api_key = ctx.codex_api_key or settings.codex.api_key
+        resolved["OPENAI_API_KEY"] = api_key
+        resolved["CODEX_MODEL"] = ctx.llm_model or settings.codex.model
 
     # Phase 1: Enable Claude Code Teams experimental feature
     if ctx.teams_enabled:
@@ -996,6 +1004,7 @@ async def run_pipeline(
     llm_provider: str = "claude",
     llm_model: str | None = None,
     ollama_host: str | None = None,
+    codex_api_key: str | None = None,
     workspace_profile: str | None = None,
     workspace_home: str | None = None,
     backend: str = "docker",
@@ -1036,6 +1045,7 @@ async def run_pipeline(
         llm_provider=llm_provider,
         llm_model=llm_model,
         ollama_host=ollama_host,
+        codex_api_key=codex_api_key,
         workspace_profile=workspace_profile,
         workspace_home=workspace_home,
         backend=backend,

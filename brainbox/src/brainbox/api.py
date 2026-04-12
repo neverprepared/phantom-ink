@@ -724,6 +724,7 @@ async def api_create_session(
             llm_provider=body.llm_provider,
             llm_model=body.llm_model,
             ollama_host=body.ollama_host,
+            codex_api_key=body.codex_api_key,
             workspace_profile=body.workspace_profile,
             workspace_home=body.workspace_home,
             backend=body.backend,

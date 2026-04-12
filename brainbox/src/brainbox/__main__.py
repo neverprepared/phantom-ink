@@ -24,9 +24,10 @@ def main() -> None:
         p.add_argument("--hardened", action="store_true", default=False)
         p.add_argument("--ttl", type=int, default=None)
         p.add_argument("--volume", action="append", default=[])
-        p.add_argument("--llm-provider", choices=["claude", "ollama"], default="claude")
+        p.add_argument("--llm-provider", choices=["claude", "ollama", "codex"], default="claude")
         p.add_argument("--llm-model", default=None)
         p.add_argument("--ollama-host", default=None)
+        p.add_argument("--codex-api-key", default=None)
 
     # provision
     p_prov = sub.add_parser("provision")
@@ -109,6 +110,7 @@ async def _provision(args: argparse.Namespace) -> None:
         llm_provider=args.llm_provider,
         llm_model=args.llm_model,
         ollama_host=args.ollama_host,
+        codex_api_key=args.codex_api_key,
     )
     print(json.dumps({"ok": True, "session": ctx.session_name, "port": ctx.port}))
 
@@ -126,6 +128,7 @@ async def _run_pipeline(args: argparse.Namespace) -> None:
         llm_provider=args.llm_provider,
         llm_model=args.llm_model,
         ollama_host=args.ollama_host,
+        codex_api_key=args.codex_api_key,
     )
     print(
         json.dumps(

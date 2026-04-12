@@ -86,9 +86,10 @@ class SessionContext(BaseModel):
     health_failures: int = 0
     token: Token | None = None
     env_content: str | None = None  # legacy mode .env body
-    llm_provider: str = "claude"  # "claude" or "ollama"
+    llm_provider: str = "claude"  # "claude", "ollama", or "codex"
     llm_model: str | None = None  # e.g. "qwen3-coder"
     ollama_host: str | None = None  # per-session override
+    codex_api_key: str | None = None  # per-session override
     profile_mounts: set[str] = Field(default_factory=set)  # {"aws", "azure", "kube", "ssh", ...}
     workspace_profile: str | None = None  # Caller's profile name
     workspace_home: str | None = None  # Caller's workspace home path

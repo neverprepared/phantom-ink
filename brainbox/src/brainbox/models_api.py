@@ -49,6 +49,7 @@ class CreateSessionRequest(BaseModel):
     llm_provider: str = "claude"
     llm_model: str | None = None
     ollama_host: str | None = None
+    codex_api_key: str | None = None
     workspace_profile: str | None = None
     workspace_home: str | None = None
     backend: str = "docker"  # "docker" or "utm"
