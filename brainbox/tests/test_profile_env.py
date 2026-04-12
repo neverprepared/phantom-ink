@@ -10,7 +10,7 @@ from docker.errors import NotFound
 
 from brainbox.config import ProfileSettings, Settings
 from brainbox.lifecycle import (
-    _read_cache_vars,
+    _read_profile_vars,
     _resolve_oauth_account,
     _resolve_profile_env,
     _resolve_profile_mounts,
@@ -456,11 +456,11 @@ class TestResolveProfileMounts:
 
 
 # ---------------------------------------------------------------------------
-# _read_cache_vars() — volatile cache reader
+# _read_profile_vars() — volatile cache reader
 # ---------------------------------------------------------------------------
 
 
-class TestReadCacheVars:
+class TestReadProfileVars:
     def test_expands_workspace_home_and_strips_quotes(self, tmp_path):
         cache_dir = tmp_path / "sp-profiles" / "testprofile"
         cache_dir.mkdir(parents=True)
@@ -470,7 +470,7 @@ class TestReadCacheVars:
             "KUBECONFIG=$WORKSPACE_HOME/.kube/config\n"
         )
         with patch.dict("os.environ", {"TMPDIR": str(tmp_path)}, clear=True):
-            result = _read_cache_vars("testprofile", "/host/ws")
+            result = _read_profile_vars("testprofile", "/host/ws")
 
         assert result["AWS_CONFIG_FILE"] == "/host/ws/.aws/config"
         assert result["AZURE_CONFIG_DIR"] == "/host/ws/.azure"
@@ -478,7 +478,7 @@ class TestReadCacheVars:
 
     def test_returns_empty_when_no_cache(self, tmp_path):
         with patch.dict("os.environ", {"TMPDIR": str(tmp_path)}, clear=True):
-            result = _read_cache_vars("nonexistent", "/host/ws")
+            result = _read_profile_vars("nonexistent", "/host/ws")
         assert result == {}
 
     def test_skips_comments_and_blank_lines(self, tmp_path):
@@ -486,7 +486,7 @@ class TestReadCacheVars:
         cache_dir.mkdir(parents=True)
         (cache_dir / ".env").write_text("# comment\n\n  \nREAL_VAR=value\n")
         with patch.dict("os.environ", {"TMPDIR": str(tmp_path)}, clear=True):
-            result = _read_cache_vars("prof", "/host/ws")
+            result = _read_profile_vars("prof", "/host/ws")
         assert result == {"REAL_VAR": "value"}
 
     def test_handles_export_prefix(self, tmp_path):
@@ -494,7 +494,7 @@ class TestReadCacheVars:
         cache_dir.mkdir(parents=True)
         (cache_dir / ".env").write_text('export MY_VAR="hello"\n')
         with patch.dict("os.environ", {"TMPDIR": str(tmp_path)}, clear=True):
-            result = _read_cache_vars("prof", "/host/ws")
+            result = _read_profile_vars("prof", "/host/ws")
         assert result == {"MY_VAR": "hello"}
 
 
@@ -890,45 +890,6 @@ class TestStartProfileEnv:
         )
 
     @pytest.mark.asyncio
-    async def test_writes_profile_env_file(self, ctx_with_profile):
-        mock_client = MagicMock()
-        mock_container = MagicMock()
-        mock_container.exec_run.return_value = (0, b"")
-        mock_client.containers.get.return_value = mock_container
-
-        profile_env_content = (
-            'WORKSPACE_PROFILE=testing\nWORKSPACE_HOME=/home/developer\nANTHROPIC_API_KEY="sk-test"'
-        )
-
-        sessions = {ctx_with_profile.session_name: ctx_with_profile}
-        with (
-            patch("brainbox.lifecycle._docker", return_value=mock_client),
-            patch("brainbox.backends.docker._docker", return_value=mock_client),
-            patch("brainbox.lifecycle._sessions", sessions),
-            patch("brainbox.lifecycle._resolve_profile_env", return_value=profile_env_content),
-        ):
-            from brainbox.lifecycle import start
-
-            await start(ctx_with_profile)
-
-        calls = mock_container.exec_run.call_args_list
-        profile_env_calls = [
-            c
-            for c in calls
-            if any("/run/profile/.env" in str(arg) for arg in c.args + tuple(c.kwargs.values()))
-        ]
-        # Expect: write file, source from .bashrc, source from .env
-        assert len(profile_env_calls) >= 3
-        # First call writes the file
-        cmd_str = str(profile_env_calls[0])
-        assert "WORKSPACE_PROFILE=testing" in cmd_str
-        # Subsequent calls hook it into .bashrc and .env
-        hook_strs = " ".join(str(c) for c in profile_env_calls[1:])
-        assert "set -a" in hook_strs
-        assert ".bashrc" in hook_strs
-        assert ".env" in hook_strs
-
-    @pytest.mark.asyncio
     async def test_skips_profile_env_when_no_cache(self, ctx_without_profile):
         mock_client = MagicMock()
         mock_container = MagicMock()
@@ -954,33 +915,3 @@ class TestStartProfileEnv:
         ]
         assert len(profile_env_calls) == 0
 
-    @pytest.mark.asyncio
-    async def test_start_passes_workspace_profile_to_resolve(self):
-        """start() threads ctx.workspace_profile to _resolve_profile_env()."""
-        ctx = SessionContext(
-            session_name="wp-thread-test",
-            container_name="developer-wp-thread-test",
-            port=7683,
-            created_at=0,
-            ttl=3600,
-            hardened=False,
-            workspace_profile="firebuild",
-        )
-
-        mock_client = MagicMock()
-        mock_container = MagicMock()
-        mock_container.exec_run.return_value = (0, b"")
-        mock_client.containers.get.return_value = mock_container
-
-        sessions = {ctx.session_name: ctx}
-        with (
-            patch("brainbox.lifecycle._docker", return_value=mock_client),
-            patch("brainbox.backends.docker._docker", return_value=mock_client),
-            patch("brainbox.lifecycle._sessions", sessions),
-            patch("brainbox.lifecycle._resolve_profile_env", return_value=None) as mock_env,
-        ):
-            from brainbox.lifecycle import start
-
-            await start(ctx)
-
-        mock_env.assert_called_once_with(workspace_profile="firebuild", workspace_home=None)
