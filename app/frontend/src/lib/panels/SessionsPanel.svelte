@@ -196,6 +196,21 @@
     }
   });
 
+  // Set a sensible default model when switching LLM provider
+  let prevLLM = '';
+  $effect(() => {
+    if (newLLM !== prevLLM) {
+      prevLLM = newLLM;
+      if (newLLM === 'codex') {
+        newModel = 'codex-mini-latest';
+      } else if (newLLM === 'ollama') {
+        newModel = '';
+      } else {
+        newModel = '';
+      }
+    }
+  });
+
   async function handleCreate() {
     if (!newName.trim() || !newProfile) return;
     isCreating = true;
@@ -212,7 +227,7 @@
         role: newRole,
         volumes: volumes.length > 0 ? volumes : undefined,
         llm_provider: newLLM,
-        llm_model: newLLM === 'ollama' ? newModel : '',
+        llm_model: newLLM === 'ollama' || newLLM === 'codex' ? newModel : '',
         backend: newBackend,
         workspace_profile: newProfile,
         workspace_home: wsHome,
@@ -439,6 +454,13 @@
         <div class="field">
           <label for="smodel">model</label>
           <input id="smodel" type="text" bind:value={newModel} placeholder="qwen3-coder" />
+        </div>
+      {/if}
+
+      {#if newLLM === 'codex'}
+        <div class="field">
+          <label for="scodexmodel">model</label>
+          <input id="scodexmodel" type="text" bind:value={newModel} placeholder="codex-mini-latest" />
         </div>
       {/if}
 

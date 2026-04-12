@@ -30,6 +30,7 @@ type CreateSessionRequest struct {
 	LLMProvider      string            `json:"llm_provider,omitempty"`
 	LLMModel         string            `json:"llm_model,omitempty"`
 	OllamaHost       string            `json:"ollama_host,omitempty"`
+	CodexApiKey      string            `json:"codex_api_key,omitempty"`
 	Backend          string            `json:"backend,omitempty"`
 	VMTemplate       string            `json:"vm_template,omitempty"`
 	GuestOS          string            `json:"guest_os,omitempty"`
