@@ -100,6 +100,7 @@ from .pipeline import (
 from .ollama import (
     OllamaError,
     chat as ollama_chat,
+    delete_model as ollama_delete_model,
     health_check as ollama_health_check,
     list_models as ollama_list_models,
     pull_model as ollama_pull_model,
@@ -1777,6 +1778,17 @@ async def api_ollama_pull(body: OllamaPullRequest, _key=Depends(require_api_key)
         loop = asyncio.get_running_loop()
         status = await loop.run_in_executor(None, lambda: ollama_pull_model(body.name))
         return {"status": status, "model": body.name}
+    except OllamaError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.delete("/api/ollama/models/{name:path}")
+async def api_ollama_delete_model(name: str, _key=Depends(require_api_key)):
+    """Delete a model from the Ollama server."""
+    try:
+        loop = asyncio.get_running_loop()
+        status = await loop.run_in_executor(None, lambda: ollama_delete_model(name))
+        return {"status": status, "model": name}
     except OllamaError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
