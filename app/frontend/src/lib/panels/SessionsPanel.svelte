@@ -59,8 +59,10 @@
     });
   });
 
+  let showStopped = $state(false);
   let activeSessions = $derived(filtered.filter(s => s.active));
-  let stoppedCount = $derived(filtered.length - activeSessions.length);
+  let stoppedSessions = $derived(filtered.filter(s => !s.active));
+  let visibleSessions = $derived(showStopped ? filtered : activeSessions);
   let filteredLocal = $derived.by(() => {
     if (!activeProfile) return localProcesses;
     return localProcesses.filter(p => p.workspace_profile?.toLowerCase() === activeProfile.name.toLowerCase());
@@ -266,9 +268,13 @@
 
   {#if filtered.length > 0}
     <div class="stats-row">
-      <span class="stat"><span class="stat-num">{filtered.length}</span> total</span>
-      <span class="stat active"><span class="stat-num">{activeSessions.length}</span> active</span>
-      <span class="stat stopped"><span class="stat-num">{stoppedCount}</span> stopped</span>
+      <span class="stat"><span class="stat-num">{activeSessions.length}</span> active</span>
+      {#if stoppedSessions.length > 0}
+        <button class="stat-toggle" class:active={showStopped} onclick={() => showStopped = !showStopped}>
+          <span class="stat-num">{stoppedSessions.length}</span> stopped
+          <svg class="toggle-chevron" class:open={showStopped} xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      {/if}
     </div>
   {/if}
 
@@ -276,11 +282,11 @@
     <div class="loading">loading sessions...</div>
   {:else if allSessions.length === 0}
     <EmptyState title="No sessions" message="Create a new session to get started." />
-  {:else if filtered.length === 0}
-    <EmptyState title="No sessions in this profile" />
+  {:else if visibleSessions.length === 0 && filteredLocal.length === 0}
+    <EmptyState title="No active sessions" message={stoppedSessions.length > 0 ? 'Toggle "stopped" above to view stopped sessions.' : 'Create a new session to get started.'} />
   {:else}
     <div class="session-list">
-      {#each filtered as session (session.name)}
+      {#each visibleSessions as session (session.name)}
         {@const active = session.active}
         {@const role = session.role ?? 'developer'}
         {@const backend = session.backend ?? 'docker'}
@@ -540,14 +546,39 @@
 
   .stats-row {
     display: flex;
-    gap: 20px;
+    align-items: center;
+    gap: 16px;
     margin-bottom: 20px;
     font-size: 13px;
   }
   .stat { color: var(--color-text-tertiary); }
   .stat-num { font-weight: 600; color: var(--color-text-secondary); }
   .stat.active .stat-num { color: var(--color-success); }
-  .stat.stopped .stat-num { color: var(--color-text-tertiary); }
+
+  .stat-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-md);
+    color: var(--color-text-tertiary);
+    font-size: 12px;
+    padding: 3px 10px;
+    transition: all 0.15s;
+  }
+  .stat-toggle:hover { color: var(--color-text-secondary); border-color: var(--color-text-tertiary); }
+  .stat-toggle.active {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--color-text-secondary);
+    border-color: var(--color-text-tertiary);
+  }
+  .stat-toggle .stat-num { font-weight: 600; color: inherit; }
+
+  .toggle-chevron {
+    transition: transform 0.15s;
+  }
+  .toggle-chevron.open { transform: rotate(180deg); }
 
   .loading { color: var(--color-text-tertiary); font-size: 13px; padding: 24px 0; }
 

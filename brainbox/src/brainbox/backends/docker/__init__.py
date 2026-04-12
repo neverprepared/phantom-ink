@@ -260,9 +260,33 @@ class DockerBackend:
         if container.status != "running":
             await _run(container.start)
 
-        # Launch ttyd + tmux (skip in hardened mode - ttyd is handled elsewhere)
+        # Launch tmux + claude, then ttyd for web terminal access.
+        # For task containers: run the wrapper first to create the tmux session
+        # with the task injected, THEN start ttyd which attaches to it.
+        # For interactive: ttyd starts the wrapper on first browser connection.
         if not ctx.hardened:
             title = f"{ctx.role.capitalize()} - {ctx.session_name}"
+
+            if ctx.task_description:
+                # Start wrapper first — creates tmux session + launches claude with task
+                try:
+                    await _run(
+                        container.exec_run,
+                        ["/home/developer/ttyd-wrapper.sh"],
+                        detach=True,
+                        user="developer",
+                    )
+                    slog.info("container.wrapper_autostarted")
+                except Exception as exc:
+                    slog.warning(
+                        "container.wrapper_autostart_failed", metadata={"reason": str(exc)}
+                    )
+
+                # Brief pause to let tmux session establish before ttyd attaches
+                import asyncio
+                await asyncio.sleep(1)
+
+            # Start ttyd — attaches to existing tmux session (task) or starts new one (interactive)
             try:
                 await _run(
                     container.exec_run,
@@ -279,24 +303,6 @@ class DockerBackend:
                 )
             except Exception as exc:
                 slog.warning("container.ttyd_start_failed", metadata={"reason": str(exc)})
-
-            # For autonomous containers (ci-ratchet workers), also start the wrapper
-            # directly so task injection fires without requiring a browser connection.
-            # When someone later opens the web terminal, ttyd re-runs the wrapper which
-            # detects the existing tmux session and simply attaches.
-            if ctx.task_description:
-                try:
-                    await _run(
-                        container.exec_run,
-                        ["/home/developer/ttyd-wrapper.sh"],
-                        detach=True,
-                        user="developer",
-                    )
-                    slog.info("container.wrapper_autostarted")
-                except Exception as exc:
-                    slog.warning(
-                        "container.wrapper_autostart_failed", metadata={"reason": str(exc)}
-                    )
 
         ctx.state = SessionState.RUNNING
         slog.info("container.started", metadata={"port": ctx.port})
