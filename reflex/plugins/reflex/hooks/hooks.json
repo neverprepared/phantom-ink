@@ -27,6 +27,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "WebSearch|WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/memory-first-hook.sh",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -55,6 +65,16 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/memory-hook.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__obsidian-second-brain__memory_search",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/memory-first-set.sh",
             "timeout": 5
           }
         ]
