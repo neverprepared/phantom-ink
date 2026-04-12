@@ -13,6 +13,8 @@ jobs:
         with:
           go-version-file: app/go.mod
           cache-dependency-path: app/go.sum
+      - name: Create frontend/dist stub for Go embed
+        run: mkdir -p app/frontend/dist && touch app/frontend/dist/.keep
       - name: Run tests
         working-directory: app
         run: go test ./... -v -race -coverprofile=coverage.out
