@@ -3,8 +3,16 @@ package main
 import (
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 )
+
+// ttyPattern matches valid TTY paths returned by ps (e.g. "s001", "ttys003", "pts/0").
+// Only alphanumeric characters, dots, forward slashes, and hyphens are permitted.
+var ttyPattern = regexp.MustCompile(`^[a-zA-Z0-9./\-]+$`)
+
+// pidPattern matches a valid numeric process ID.
+var pidPattern = regexp.MustCompile(`^\d+$`)
 
 // LocalProcess represents a running process we can link to a terminal tab.
 type LocalProcess struct {
@@ -85,6 +93,10 @@ func (a *App) FindClaudeProcesses() ([]LocalProcess, error) {
 // readProcessEnv reads WORKSPACE_PROFILE and WORKSPACE_HOME from a process's
 // environment using `ps eww` (macOS). Returns empty strings if not found.
 func readProcessEnv(pid string) (profile, wsHome string) {
+	// Validate pid is purely numeric before using it in an exec call.
+	if !pidPattern.MatchString(pid) {
+		return "", ""
+	}
 	cmd := exec.Command("ps", "eww", "-o", "command=", "-p", pid)
 	out, err := cmd.Output()
 	if err != nil {
@@ -105,6 +117,18 @@ func readProcessEnv(pid string) (profile, wsHome string) {
 // FocusTerminalTab finds and activates the terminal tab that owns the given TTY.
 // Tries iTerm2 first, then Terminal.app.
 func (a *App) FocusTerminalTab(tty string) error {
+	// Validate the tty path before embedding it in AppleScript to prevent
+	// script injection. TTY paths from ps output consist only of alphanumeric
+	// characters, dots, forward slashes, and hyphens (e.g. "/dev/ttys001").
+	// Strip a leading "/dev/" prefix that the caller may include, then
+	// re-normalise so we always embed the full path ourselves.
+	stripped := strings.TrimPrefix(tty, "/dev/")
+	if !ttyPattern.MatchString(stripped) {
+		return fmt.Errorf("invalid tty path: %q", tty)
+	}
+	// Re-build the canonical path used in AppleScript.
+	safeTTY := "/dev/" + stripped
+
 	// Try iTerm2
 	itermScript := fmt.Sprintf(`
 tell application "System Events"
@@ -125,7 +149,7 @@ tell application "System Events"
 		end tell
 	end if
 end tell
-return "not_found"`, tty)
+return "not_found"`, safeTTY)
 
 	cmd := exec.Command("osascript", "-e", itermScript)
 	out, err := cmd.Output()
@@ -151,7 +175,7 @@ tell application "System Events"
 		end tell
 	end if
 end tell
-return "not_found"`, tty)
+return "not_found"`, safeTTY)
 
 	cmd = exec.Command("osascript", "-e", termScript)
 	out, err = cmd.Output()
@@ -159,5 +183,5 @@ return "not_found"`, tty)
 		return nil
 	}
 
-	return fmt.Errorf("could not find terminal tab for %s", tty)
+	return fmt.Errorf("could not find terminal tab for %s", safeTTY)
 }

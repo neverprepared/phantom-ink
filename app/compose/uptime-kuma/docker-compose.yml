@@ -5,6 +5,7 @@ services:
     image: louislam/uptime-kuma:latest
     ports:
       - "127.0.0.1:3001:3001"
+    user: "1000:1000"
     volumes:
       - uptime-kuma-data:/app/data
     restart: unless-stopped
