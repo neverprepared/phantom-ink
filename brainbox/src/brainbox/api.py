@@ -98,6 +98,7 @@ from .channels import (
     list_channels,
     on_event as channel_on_event,
     post_message as channel_post_message,
+    register_session_query,
 )
 from .playbooks import (
     cancel_playbook,
@@ -289,6 +290,15 @@ async def lifespan(app: FastAPI):
     setup_logging()
     await hub_init()
     load_or_create_key()
+
+    # Inject session query function into channel watcher (avoids circular import)
+    async def _internal_query_session(session_name: str, prompt: str, timeout: float = 120.0) -> str:
+        client = _docker()
+        container_name = _find_container_name(client, session_name)
+        raw = await _tmux_send_and_wait(container_name, prompt, timeout)
+        return _tmux_parse_output(raw, prompt[:40], "")
+
+    register_session_query(_internal_query_session)
 
     # Forward hub events to SSE
     on_event(
@@ -988,64 +998,63 @@ async def api_query_session(
 
 
 def _parse_claude_output(raw_output: str) -> str:
-    """Parse Claude CLI output to extract just the assistant's response.
+    """Extract the response text from Claude Code tmux output.
 
-    Removes box drawing, ANSI codes, prompts, and extracts clean content.
+    Claude Code's TUI layout in tmux:
+      ❯ <prompt>
+      ╭─ banner ─╮   │ ✻ Claude Code ...  │   ╰──────────╯
+      ⏺ Tool(args)   ⎿  tool result
+      <response text>
+      ● Done (N tokens · Xs)
+      ❯
+
+    The response is free-form text lines before "● Done".
+    Everything else (banner, tool markers, prompts, permission UI) is noise.
     """
     import re
 
-    # First, strip out the welcome box (everything before the first ❯)
-    if "❯" in raw_output:
-        # Find the first occurrence of ❯ and remove everything before it
-        first_prompt_idx = raw_output.find("❯")
-        raw_output = raw_output[first_prompt_idx:]
+    # Strip ANSI escape codes
+    raw_output = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", raw_output)
+    raw_output = re.sub(r"\x1b.", "", raw_output)
 
-    # Split by the prompt marker (❯) to get command/response sections
-    sections = raw_output.split("❯")
+    lines = raw_output.splitlines()
+    result_lines: list[str] = []
 
-    # Find the LAST section that contains Claude's response (marked with ●)
-    response_text = ""
-    for section in reversed(sections):
-        # Skip empty sections
-        if not section.strip():
+    for line in lines:
+        stripped = line.strip()
+
+        # Stop at completion marker — response is before this
+        if re.match(r"^●\s*(Done|Complete|Error|Failed)", stripped):
+            break
+
+        # Skip shell prompt lines
+        if stripped.startswith("❯"):
             continue
 
-        # Skip sections that are just navigation commands (cd /)
-        lines = section.strip().splitlines()
-        if lines and lines[0].strip().startswith("cd /"):
+        # Skip box-drawing banner lines (╭ │ ╰ and pure ─ separators)
+        if re.match(r"^[╭╰│]", stripped) or re.match(r"^─{5,}$", stripped):
             continue
 
-        # Look for Claude's response marker (●)
-        if "●" in section:
-            # Split on ● and take everything after the LAST ●
-            parts = section.split("●")
-            # Get the last non-empty part
-            for part in reversed(parts):
-                if part.strip():
-                    response_text = part.strip()
-                    break
-            if response_text:
-                break
+        # Skip tool-use / result / permission UI markers
+        if stripped.startswith(("⏺", "⎿", "⏵", "✻", "✓")):
+            continue
+        if "bypass permissions" in stripped.lower():
+            continue
 
-    if not response_text:
-        # Fallback: return original if we can't parse
-        return raw_output.strip()
+        # Skip pure timing lines (e.g. "22s", "2.3s")
+        if re.match(r"^\d+(\.\d+)?s$", stripped):
+            continue
 
-    # Clean up artifacts
-    # Remove "Web Search(...)" lines
-    response_text = re.sub(r"Web Search\([^)]+\)\n", "", response_text)
-    # Remove search timing indicators like "⎿  Did 1 search in 7s"
-    response_text = re.sub(r"⎿\s*Did \d+ search.*?\n", "", response_text)
-    # Remove completion timing like "✻ Churned for 37s"
-    response_text = re.sub(r"✻\s*(?:Brewed|Churned|Percolated|Simmered).*?\n", "", response_text)
-    # Remove separator lines
-    response_text = re.sub(r"─{10,}", "", response_text)
-    # Remove permission UI indicators
-    response_text = re.sub(r"⏵.*?bypass permissions.*?\n", "", response_text, flags=re.IGNORECASE)
-    # Normalize whitespace
-    response_text = re.sub(r"\n{3,}", "\n\n", response_text)
+        # Skip web search annotation lines
+        if re.match(r"^Web Search\(", stripped) or re.match(r"^Did \d+ search", stripped):
+            continue
 
-    return response_text.strip()
+        result_lines.append(line)
+
+    # Strip leading/trailing blank lines from collected content
+    result = "\n".join(result_lines).strip()
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    return result
 
 
 def _tmux_verify_container(client, container_name: str):
@@ -1188,22 +1197,28 @@ async def _tmux_send_and_wait(
 def _tmux_parse_output(raw_output: str, start_marker: str, end_marker: str) -> str:
     """Extract and clean Claude's response from raw tmux pane output.
 
-    Finds the response by locating *start_marker* in the prompt line, then
-    applies the regex cleanup chain via _parse_claude_output.
+    Locates *start_marker* on a prompt line (❯), captures content until the
+    next empty prompt (❯ alone), then passes those lines to _parse_claude_output
+    to strip banner/tool-use noise.  Falls back to _parse_claude_output on the
+    full capture when the prompt line cannot be located.
     """
+    import re
+
     lines = raw_output.splitlines()
-    response_lines = []
+    response_lines: list[str] = []
     found_prompt = False
 
     for line in lines:
-        if start_marker in line and "❯" in line:
-            found_prompt = True
+        if not found_prompt:
+            if start_marker in line and "❯" in line:
+                found_prompt = True
             continue
-        if found_prompt:
-            response_lines.append(line)
+        # Stop at the next shell prompt (empty ❯ line = Claude back at shell)
+        if re.match(r"^\s*❯\s*$", line):
+            break
+        response_lines.append(line)
 
-    cleaned_output = "\n".join(response_lines).strip()
-    raw = cleaned_output or raw_output
+    raw = "\n".join(response_lines) if response_lines else raw_output
     return _parse_claude_output(raw) if raw else ""
 
 

@@ -25,8 +25,18 @@ func (a *App) getIntegrationConfig(name string) ServiceConfig {
 }
 
 // ListServices returns all known infrastructure services with their status.
+// It merges the static knownServices catalog with any containers discovered via
+// the com.neverprepared.service Docker label (e.g. services started by MCP servers).
 func (a *App) ListServices() []ServiceStatus {
 	var result []ServiceStatus
+
+	// Build a set of statically-known names so discovery skips them.
+	staticNames := make(map[string]bool, len(knownServices))
+	for _, def := range knownServices {
+		staticNames[def.Name] = true
+	}
+
+	// Static services — full management (start/stop/config).
 	for _, def := range knownServices {
 		cfg := a.getIntegrationConfig(def.Name)
 		result = append(result, ServiceStatus{
@@ -39,6 +49,17 @@ func (a *App) ListServices() []ServiceStatus {
 			Running:    isServiceRunning(def, cfg),
 		})
 	}
+
+	// Docker-label-discovered services — status only (Native=true, no start/stop).
+	for _, def := range discoverDockerServices(staticNames) {
+		result = append(result, ServiceStatus{
+			ServiceDef: def,
+			Enabled:    true,
+			URL:        def.DefaultURL,
+			Running:    def.Port > 0 && isPortOpen(def.Port),
+		})
+	}
+
 	return result
 }
 

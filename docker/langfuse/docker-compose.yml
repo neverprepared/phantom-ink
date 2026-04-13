@@ -73,6 +73,11 @@ services:
     depends_on: *langfuse-depends-on
     ports:
       - 3000:3000
+    labels:
+      com.neverprepared.service: "true"
+      com.neverprepared.service.name: "langfuse"
+      com.neverprepared.service.url: "http://localhost:3000"
+      com.neverprepared.service.description: "LLM observability (traces, costs)"
     environment:
       <<: *langfuse-worker-env
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}

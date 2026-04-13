@@ -21,6 +21,18 @@ _listeners: list[Callable] = []
 # Tracks the last message ID each Ollama participant has responded to
 _ollama_last_read: dict[str, dict[str, str]] = {}  # channel_id -> {participant_name -> msg_id}
 
+# Tracks the last message ID each session participant has responded to
+_session_last_read: dict[str, dict[str, str]] = {}  # channel_id -> {participant_name -> msg_id}
+
+# Injected by api.py on startup — avoids circular import
+_query_session_fn: "Callable | None" = None
+
+
+def register_session_query(fn: "Callable") -> None:
+    """Register the internal session query function (injected by api.py)."""
+    global _query_session_fn
+    _query_session_fn = fn
+
 
 # ---------------------------------------------------------------------------
 # Event emission
@@ -239,6 +251,75 @@ async def _ollama_respond(
             "channels.ollama_respond_failed",
             metadata={"channel": channel.id, "participant": participant.name, "reason": str(exc)},
         )
+
+
+def _build_session_prompt(channel: Channel, participant: ChannelParticipant) -> str:
+    """Build a channel-context prompt for a Claude Code session participant."""
+    msgs = _messages.get(channel.id, [])
+    role_instruction = participant.system_prompt or (
+        f"You are '{participant.name}' participating in a group discussion called '{channel.name}'. "
+        "Respond thoughtfully and concisely to the conversation."
+    )
+    lines = [role_instruction, "", "Recent channel messages:"]
+    for m in msgs[-15:]:
+        if m.type != "message":
+            continue
+        addressed = f" (@{m.addressed_to})" if m.addressed_to else ""
+        lines.append(f"[{m.from_participant}]{addressed}: {m.content}")
+    lines.extend(["", f"Please respond as '{participant.name}'. Be concise."])
+    return "\n".join(lines)
+
+
+async def _session_respond(channel: Channel, participant: ChannelParticipant) -> None:
+    """Query a Claude Code session and post its response to the channel."""
+    if not _query_session_fn or not participant.session_name:
+        return
+    prompt = _build_session_prompt(channel, participant)
+    try:
+        response = await _query_session_fn(participant.session_name, prompt)
+        if response and response.strip():
+            post_message(
+                channel.id,
+                from_participant=participant.name,
+                content=response.strip(),
+                summary=_auto_summary(response),
+            )
+    except Exception as exc:
+        log.warning(
+            "channels.session_respond_failed",
+            metadata={"channel": channel.id, "participant": participant.name, "reason": str(exc)},
+        )
+
+
+async def session_watcher() -> None:
+    """Background task: watch channels and drive session participant responses."""
+    try:
+        while True:
+            try:
+                if _query_session_fn:
+                    for channel in list(_channels.values()):
+                        if channel.status != "active":
+                            continue
+                        for p in channel.participants:
+                            if p.type != "session" or not p.session_name:
+                                continue
+                            last_id = _session_last_read.get(channel.id, {}).get(p.name)
+                            new_msgs = get_messages(channel.id, since_id=last_id)
+                            relevant = [
+                                m for m in new_msgs
+                                if m.from_participant != p.name
+                                and (m.addressed_to is None or m.addressed_to == p.name)
+                                and m.type == "message"
+                            ]
+                            if relevant:
+                                await _session_respond(channel, p)
+                            if new_msgs:
+                                _session_last_read.setdefault(channel.id, {})[p.name] = new_msgs[-1].id
+            except Exception as exc:
+                log.warning("channels.session_watcher_error", metadata={"reason": str(exc)})
+            await asyncio.sleep(3)
+    except asyncio.CancelledError:
+        pass
 
 
 async def ollama_watcher() -> None:

@@ -14,6 +14,11 @@ services:
       - QDRANT__SERVICE__GRPC_PORT=6334
       - QDRANT__SERVICE__HTTP_PORT=6333
       - QDRANT__LOG_LEVEL=INFO
+    labels:
+      com.neverprepared.service: "true"
+      com.neverprepared.service.name: "qdrant"
+      com.neverprepared.service.url: "http://localhost:6333"
+      com.neverprepared.service.description: "Vector database (RAG, memory)"
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
       interval: 30s

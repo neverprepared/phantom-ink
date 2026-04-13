@@ -126,6 +126,25 @@ graph TB
     class GitHub,Atlassian,Azure,Google,K8s,Spacelift,Playwright,SQLServer,UptimeKuma mcp
 ```
 
+## Workspace Profile Model — Apartment Building
+
+The platform is designed for **multiple workspace profiles running simultaneously**, each with full isolation from the others.
+
+Think of it as an **apartment building**:
+
+- **The building** — `~/.config/neverprepared/` and the shared Docker infrastructure running on the host
+- **Building services** — shared Docker containers (Qdrant, LangFuse, MinIO, Kroki, etc.): plumbing and electricity that all tenants use, with one instance per machine
+- **Apartments** — workspace profiles (`personal`, `work`, `client-a`, …): isolated rooms with their own keys, credentials, and agent sessions
+- **Tenant isolation** — enforced at the application layer, not the container layer:
+  - Separate LangFuse organisations (each profile has its own org API key)
+  - Separate Qdrant collections
+  - Brainbox sessions labeled with `workspace_profile` for per-tenant filtering
+  - Shell-profiler injects per-profile env vars so MCP servers and Claude Code instances load the right credentials automatically
+
+**Multiple profiles are active at the same time** — each runs its own set of agent sessions and MCP server connections. Switching profiles is not required; isolation is always on.
+
+**No per-profile Docker containers** — isolation never requires a separate copy of the building's plumbing. A service like Atlassian MCP runs one process per active profile, each loading its own env vars, all pointing at the same shared infrastructure.
+
 ## Package Summary
 
 | Package | Language | What It Does |

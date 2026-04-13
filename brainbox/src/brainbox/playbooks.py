@@ -205,7 +205,7 @@ async def _run_task(pb: Playbook, task: PlaybookTask) -> None:
                 )
                 resp.raise_for_status()
                 body = resp.json()
-                task.output = body.get("output") or body.get("response", "")
+                task.output = body.get("response") or body.get("output", "")
                 task.status = "completed"
 
             finally:

@@ -12,7 +12,7 @@ import json
 from .config import settings
 from .log import get_logger
 from .channels import get_state as channels_get_state
-from .channels import ollama_watcher
+from .channels import ollama_watcher, session_watcher
 from .channels import restore_state as channels_restore_state
 from .playbooks import get_state as playbooks_get_state
 from .playbooks import restore_state as playbooks_restore_state
@@ -42,6 +42,7 @@ log = get_logger()
 _flush_task: asyncio.Task[None] | None = None
 _check_task: asyncio.Task[None] | None = None
 _ollama_watcher_task: asyncio.Task[None] | None = None
+_session_watcher_task: asyncio.Task[None] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -60,10 +61,11 @@ async def init() -> None:
     recover_sessions_from_docker()
 
     loop = asyncio.get_running_loop()
-    global _flush_task, _check_task, _ollama_watcher_task
+    global _flush_task, _check_task, _ollama_watcher_task, _session_watcher_task
     _flush_task = loop.create_task(_periodic_flush())
     _check_task = loop.create_task(_periodic_check())
     _ollama_watcher_task = loop.create_task(ollama_watcher())
+    _session_watcher_task = loop.create_task(session_watcher())
 
     # Ensure persistent repo agents are running after state restore
     for repo in list_repos():
@@ -97,6 +99,9 @@ async def shutdown() -> None:
     if _ollama_watcher_task and not _ollama_watcher_task.done():
         _ollama_watcher_task.cancel()
         _ollama_watcher_task = None
+    if _session_watcher_task and not _session_watcher_task.done():
+        _session_watcher_task.cancel()
+        _session_watcher_task = None
 
     await _flush_state()
     log.info("hub.shutdown")

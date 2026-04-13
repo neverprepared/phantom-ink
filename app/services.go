@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -114,13 +115,6 @@ var knownServices = []ServiceDef{
 		Port:        9090,
 	},
 	{
-		Name:        "uptime-kuma",
-		Label:       "Uptime Kuma",
-		Description: "Lightweight service health monitoring and alerting",
-		DefaultURL:  "http://localhost:3001",
-		Port:        3001,
-	},
-	{
 		Name:        "ollama",
 		Label:       "Ollama",
 		Description: "Local LLM inference server for private model hosting",
@@ -128,13 +122,64 @@ var knownServices = []ServiceDef{
 		Port:        11434,
 		Native:      true,
 	},
-	{
-		Name:        "n8n",
-		Label:       "n8n",
-		Description: "Workflow automation — webhooks, integrations, and scheduled tasks",
-		DefaultURL:  "http://localhost:5678",
-		Port:        5678,
-	},
+
+}
+
+// discoverDockerServices finds containers carrying com.neverprepared.service=true
+// labels and converts them into ServiceDef entries. Containers already covered
+// by knownServices (matched by name label) are skipped — the static definition
+// wins. Discovered-only services are marked Native=true so the UI shows status
+// but does not offer start/stop controls (phantom-ink doesn't own their compose).
+func discoverDockerServices(known map[string]bool) []ServiceDef {
+	type labelResult struct {
+		Labels map[string]string `json:"Labels"`
+		State  string            `json:"State"`
+	}
+
+	cmd := exec.Command("docker", "ps", "-a",
+		"--filter", "label=com.neverprepared.service=true",
+		"--format", "{{json .Labels}}",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	var discovered []ServiceDef
+	seen := map[string]bool{}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var labels map[string]string
+		if err := json.Unmarshal([]byte(line), &labels); err != nil {
+			continue
+		}
+		name := labels["com.neverprepared.service.name"]
+		if name == "" || known[name] || seen[name] {
+			continue
+		}
+		seen[name] = true
+
+		url := labels["com.neverprepared.service.url"]
+		port := 0
+		if url != "" {
+			if _, portStr, err := net.SplitHostPort(strings.TrimPrefix(strings.TrimPrefix(url, "http://"), "https://")); err == nil {
+				fmt.Sscanf(portStr, "%d", &port)
+			}
+		}
+		discovered = append(discovered, ServiceDef{
+			Name:        name,
+			Label:       labels["com.neverprepared.service.name"],
+			Description: labels["com.neverprepared.service.description"],
+			DefaultURL:  url,
+			Port:        port,
+			Native:      true, // managed externally — no start/stop from here
+		})
+	}
+	return discovered
 }
 
 // isPortOpen checks if a TCP port is accepting connections.

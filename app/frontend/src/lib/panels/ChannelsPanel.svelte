@@ -66,6 +66,7 @@
     system_prompt: string;
   }>>([]);
   let isCreating = $state(false);
+  let ollamaModels = $state<string[]>([]);
 
   // --- SSE subscription ---
   $effect(() => {
@@ -154,6 +155,9 @@
     if (!a) return;
     try {
       availableSessions = ((await a.GetSessions()) ?? []).filter((s: any) => s.active);
+    } catch { /* ignore */ }
+    try {
+      ollamaModels = ((await a.ListOllamaModels()) ?? []).map((m: any) => m.name ?? m).filter(Boolean);
     } catch { /* ignore */ }
   }
 
@@ -310,19 +314,19 @@
   }
 </script>
 
-<div class="channels-layout">
+<div class="panel">
   <!-- Left: channel list -->
-  <div class="channel-list">
-    <div class="list-header">
+  <div class="sidebar">
+    <div class="sidebar-header">
       {#if someSelected}
         <input type="checkbox" class="select-all-cb" checked={allSelected} onclick={toggleSelectAll} title="Select all" />
-        <span class="list-title">{selectedIds.size} selected</span>
+        <span class="sidebar-title">{selectedIds.size} selected</span>
         <button class="btn-batch-delete" onclick={handleBatchDelete} disabled={isBatchDeleting} title="Delete selected">
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
           {isBatchDeleting ? 'Deleting…' : 'Delete'}
         </button>
       {:else}
-        <span class="list-title">Channels</span>
+        <span class="sidebar-title">Channels</span>
         <button class="btn-icon" onclick={openCreateModal} title="New channel">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
         </button>
@@ -330,9 +334,9 @@
     </div>
 
     {#if loading}
-      <div class="list-empty">Loading…</div>
+      <div class="sidebar-empty">Loading…</div>
     {:else if channels.length === 0}
-      <div class="list-empty">No channels yet</div>
+      <div class="sidebar-empty">No channels yet</div>
     {:else}
       <ul class="channel-items">
         {#each channels as ch (ch.id)}
@@ -370,7 +374,7 @@
   </div>
 
   <!-- Right: channel view -->
-  <div class="channel-view">
+  <div class="detail">
     {#if !selected}
       <EmptyState
         title="No channel selected"
@@ -473,6 +477,13 @@
                   <option value={s.name}>{s.name}</option>
                 {/each}
               </select>
+            {:else if ollamaModels.length > 0}
+              <select class="p-detail" bind:value={row.ollama_model}>
+                <option value="">— model —</option>
+                {#each ollamaModels as m}
+                  <option value={m}>{m}</option>
+                {/each}
+              </select>
             {:else}
               <input class="p-detail" bind:value={row.ollama_model} placeholder="Model (e.g. llama3)" />
             {/if}
@@ -494,23 +505,23 @@
 {/if}
 
 <style>
-  .channels-layout {
-    display: grid;
-    grid-template-columns: 220px 1fr;
+  .panel {
+    display: flex;
     height: 100%;
-    gap: 0;
     overflow: hidden;
   }
 
-  /* Channel list */
-  .channel-list {
+  /* Sidebar */
+  .sidebar {
+    width: 220px;
+    flex-shrink: 0;
     border-right: 1px solid var(--color-border-primary);
     display: flex;
     flex-direction: column;
     overflow: hidden;
   }
 
-  .list-header {
+  .sidebar-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -519,7 +530,7 @@
     flex-shrink: 0;
   }
 
-  .list-title {
+  .sidebar-title {
     font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
@@ -539,15 +550,14 @@
   }
 
   .btn-icon:hover {
-    background: rgba(255,255,255,0.07);
+    background: var(--color-surface-hover);
     color: var(--color-text-primary);
   }
 
-  .list-empty {
-    padding: 16px;
-    font-size: 12px;
-    color: var(--color-text-tertiary);
-    text-align: center;
+  .sidebar-empty {
+    padding: 24px 14px;
+    font-size: 13px;
+    color: var(--color-text-muted);
   }
 
   .channel-items {
@@ -712,8 +722,9 @@
     color: var(--color-text-tertiary);
   }
 
-  /* Channel view */
-  .channel-view {
+  /* Detail pane */
+  .detail {
+    flex: 1;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -952,7 +963,6 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    min-width: 560px;
   }
 
   .field-label {
@@ -971,6 +981,7 @@
     border-radius: var(--radius-md);
     color: var(--color-text-primary);
     box-sizing: border-box;
+    min-width: 0;
   }
 
   .participants-section {
@@ -987,9 +998,13 @@
 
   .participant-row {
     display: grid;
-    grid-template-columns: 120px 90px 1fr 1fr auto;
+    grid-template-columns: 1fr 80px 1fr auto;
     gap: 6px;
     align-items: center;
+  }
+
+  .p-prompt {
+    grid-column: 1 / -1;
   }
 
   .p-name, .p-type, .p-detail, .p-prompt {
@@ -1000,6 +1015,9 @@
     border-radius: var(--radius-sm);
     color: var(--color-text-primary);
     font-family: inherit;
+    min-width: 0;
+    box-sizing: border-box;
+    width: 100%;
   }
 
   .btn-remove {
