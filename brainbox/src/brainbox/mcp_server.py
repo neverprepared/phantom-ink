@@ -670,6 +670,137 @@ def channel_complete(channel_id: str, by: str, reason: str | None = None) -> dic
     return _request("POST", f"/api/hub/channels/{channel_id}/complete", body)
 
 
+# ---------------------------------------------------------------------------
+# Playbook tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def list_playbooks(workspace_profile: str = "global") -> list[dict[str, Any]]:
+    """List playbooks, optionally filtered by workspace profile.
+
+    Args:
+        workspace_profile: Filter by profile name, or 'global' for all-profile playbooks
+    """
+    path = "/api/hub/playbooks"
+    if workspace_profile:
+        path += f"?profile={workspace_profile}"
+    return _request("GET", path)
+
+
+@mcp.tool()
+def get_playbook(playbook_id: str) -> dict[str, Any]:
+    """Get a single playbook by ID, including its task list and status.
+
+    Args:
+        playbook_id: The playbook ID
+    """
+    return _request("GET", f"/api/hub/playbooks/{playbook_id}")
+
+
+@mcp.tool()
+def create_playbook(name: str, markdown: str, workspace_profile: str = "global") -> dict[str, Any]:
+    """Create a new playbook from a markdown checklist.
+
+    Each `- [ ] task description` line becomes a sequential step dispatched
+    to a fresh ephemeral worker session.
+
+    Args:
+        name: Display name for the playbook
+        markdown: Markdown content with `- [ ]` checklist items as steps
+        workspace_profile: Profile scope, or 'global' for all profiles
+    """
+    return _request("POST", "/api/hub/playbooks", {
+        "name": name,
+        "markdown": markdown,
+        "workspace_profile": workspace_profile,
+    })
+
+
+@mcp.tool()
+def run_playbook(playbook_id: str) -> dict[str, Any]:
+    """Start sequential execution of a playbook's checklist steps.
+
+    Each step runs in a fresh ephemeral worker session. Progress can be
+    tracked by polling get_playbook().
+
+    Args:
+        playbook_id: The playbook ID to run
+    """
+    return _request("POST", f"/api/hub/playbooks/{playbook_id}/run", {})
+
+
+@mcp.tool()
+def cancel_playbook(playbook_id: str) -> dict[str, Any]:
+    """Cancel a running playbook, stopping after the current step completes.
+
+    Args:
+        playbook_id: The playbook ID to cancel
+    """
+    return _request("POST", f"/api/hub/playbooks/{playbook_id}/cancel", {})
+
+
+# ---------------------------------------------------------------------------
+# Worktree tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def list_worktrees(repo: str = "") -> list[dict[str, Any]]:
+    """List git worktrees, optionally filtered by repo name.
+
+    Args:
+        repo: Filter by registered repository name (omit for all worktrees)
+    """
+    path = "/api/hub/worktrees"
+    if repo:
+        path += f"?repo={repo}"
+    return _request("GET", path)
+
+
+@mcp.tool()
+def create_worktree(repo_name: str, branch: str) -> dict[str, Any]:
+    """Create a new git worktree for a registered repository branch.
+
+    Runs `git worktree add -B <branch> <path>` on the host. The worktree
+    persists independently of sessions — ideal for parallel agent work or
+    staged PR branches.
+
+    Args:
+        repo_name: Name of the registered repository
+        branch: Git branch name to create or checkout in the worktree
+    """
+    return _request("POST", "/api/hub/worktrees", {
+        "repo_name": repo_name,
+        "branch": branch,
+    })
+
+
+@mcp.tool()
+def delete_worktree(worktree_id: str) -> dict[str, Any]:
+    """Remove a git worktree from disk and deregister it.
+
+    Runs `git worktree remove --force`. The branch itself is not deleted.
+
+    Args:
+        worktree_id: The worktree ID to remove
+    """
+    return _request("DELETE", f"/api/hub/worktrees/{worktree_id}")
+
+
+@mcp.tool()
+def create_worktree_session(worktree_id: str) -> dict[str, Any]:
+    """Start a brainbox session mounted on a git worktree.
+
+    The worktree path is mounted at /home/developer/workspace/repo inside
+    the container. Session name is derived from the worktree ID.
+
+    Args:
+        worktree_id: The worktree ID to create a session for
+    """
+    return _request("POST", f"/api/hub/worktrees/{worktree_id}/session", {})
+
+
 def run() -> None:
     """Run the MCP server on stdio transport."""
     mcp.run(transport="stdio")

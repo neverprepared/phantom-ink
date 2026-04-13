@@ -203,7 +203,7 @@
       }
     },
     "brainbox": {
-      "description": "Container session management — isolated dev environments with web terminal",
+      "description": "PhantomInk platform — sandboxed sessions, hub tasks, playbooks, git worktrees, channels, repos, and artifacts",
       "category": "development",
       "url": "https://github.com/neverprepared/ink-bunny",
       "requires": [],

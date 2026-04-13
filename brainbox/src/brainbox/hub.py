@@ -14,6 +14,10 @@ from .log import get_logger
 from .channels import get_state as channels_get_state
 from .channels import ollama_watcher
 from .channels import restore_state as channels_restore_state
+from .playbooks import get_state as playbooks_get_state
+from .playbooks import restore_state as playbooks_restore_state
+from .worktrees import get_state as worktrees_get_state
+from .worktrees import restore_state as worktrees_restore_state
 from .messages import get_state as messages_get_state
 from .messages import restore_state as messages_restore_state
 from .registry import (
@@ -22,10 +26,6 @@ from .registry import (
     list_tokens,
     load_agents,
     restore_state as registry_restore_state,
-)
-from .pipeline import (
-    get_state as pipeline_get_state,
-    restore_state as pipeline_restore_state,
 )
 from .router import (
     check_running_tasks,
@@ -109,8 +109,9 @@ async def _flush_state() -> None:
         "registry": registry_get_state(),
         "router": router_get_state(),
         "messages": messages_get_state(),
-        "pipelines": pipeline_get_state(),
         "channels": channels_get_state(),
+        "playbooks": playbooks_get_state(),
+        "worktrees": worktrees_get_state(),
     }
 
     state_file = settings.state_file
@@ -142,8 +143,9 @@ async def _restore_state() -> None:
     registry_restore_state(state.get("registry"))
     router_restore_state(state.get("router"))
     messages_restore_state(state.get("messages"))
-    pipeline_restore_state(state.get("pipelines"))
     channels_restore_state(state.get("channels"))
+    playbooks_restore_state(state.get("playbooks"))
+    worktrees_restore_state(state.get("worktrees"))
 
     log.info(
         "hub.state_restored",

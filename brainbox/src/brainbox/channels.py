@@ -123,6 +123,15 @@ def complete_channel(channel_id: str, by: str, reason: str | None = None) -> Cha
     return channel
 
 
+def delete_channel(channel_id: str) -> None:
+    if channel_id not in _channels:
+        raise ValueError(f"Channel '{channel_id}' not found")
+    del _channels[channel_id]
+    _messages.pop(channel_id, None)
+    _ollama_last_read.pop(channel_id, None)
+    log.info("channel.deleted", metadata={"channel_id": channel_id})
+
+
 # ---------------------------------------------------------------------------
 # Hub state persistence
 # ---------------------------------------------------------------------------

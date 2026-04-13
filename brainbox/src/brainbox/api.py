@@ -92,25 +92,33 @@ from .messages import get_message_log, get_messages, route as route_message
 from .channels import (
     complete_channel,
     create_channel,
+    delete_channel,
     get_channel,
     get_messages as channel_get_messages,
     list_channels,
     on_event as channel_on_event,
     post_message as channel_post_message,
 )
-from .models import ChannelParticipant
-from .models_api import OllamaChatRequest, OllamaPullRequest, StartPipelineRunRequest
-from .pipeline import (
-    cancel_run as pipeline_cancel_run,
-    get_pipeline as pipeline_get,
-    get_run as pipeline_get_run,
-    list_pipelines as pipeline_list,
-    list_runs as pipeline_list_runs,
-    load_pipelines,
-    resolve_pipeline as pipeline_resolve,
-    resolve_pipelines as pipeline_resolve_all,
-    start_run as pipeline_start_run,
+from .playbooks import (
+    cancel_playbook,
+    create_playbook,
+    delete_playbook,
+    get_playbook,
+    list_playbooks,
+    on_event as playbook_on_event,
+    run_playbook,
 )
+from .worktrees import (
+    attach_session as worktree_attach_session,
+    create_worktree,
+    delete_worktree,
+    get_worktree,
+    list_worktrees,
+    on_event as worktree_on_event,
+    resolved_local_path,
+)
+from .models import ChannelParticipant
+from .models_api import OllamaChatRequest, OllamaPullRequest, CreatePlaybookRequest, CreateWorktreeRequest
 from .ollama import (
     OllamaError,
     chat as ollama_chat,
@@ -281,7 +289,6 @@ async def lifespan(app: FastAPI):
     setup_logging()
     await hub_init()
     load_or_create_key()
-    load_pipelines()
 
     # Forward hub events to SSE
     on_event(
@@ -316,15 +323,38 @@ async def lifespan(app: FastAPI):
 
     channel_on_event(_on_channel_event)
 
+    # Forward playbook events to global SSE
+    playbook_on_event(
+        lambda event, data: _broadcast_sse(
+            json.dumps({
+                "action": event,
+                "data": data.model_dump() if hasattr(data, "model_dump") else data,
+            })
+        )
+    )
+
+    # Forward worktree events to global SSE
+    worktree_on_event(
+        lambda event, data: _broadcast_sse(
+            json.dumps({
+                "action": event,
+                "data": data.model_dump() if hasattr(data, "model_dump") else data,
+            })
+        )
+    )
+
     # Start Docker events watcher
-    global _docker_events_task
+    global _docker_events_task, _metrics_sample_task
     _docker_events_task = asyncio.create_task(_watch_docker_events())
+    _metrics_sample_task = asyncio.create_task(_metrics_sample_loop())
 
     log.info("api.started", metadata={"port": settings.api_port})
     yield
 
     if _docker_events_task:
         _docker_events_task.cancel()
+    if _metrics_sample_task:
+        _metrics_sample_task.cancel()
 
     await hub_shutdown()
 
@@ -797,7 +827,7 @@ async def api_create_session(
                 repo_url=body.repo.url,
                 session_name=body.name,
             )
-            task_id = task_id_result
+            task_id = task_id_result.id
         elif body.task:
             # Regular session with a task — register in hub so it shows in dashboard
             from .router import _tasks, _now_ms
@@ -1369,6 +1399,58 @@ async def api_container_metrics():
 
 
 # ---------------------------------------------------------------------------
+# Metrics history — in-memory ring buffer
+# ---------------------------------------------------------------------------
+
+import collections as _collections
+
+_metrics_history: _collections.deque[dict[str, Any]] = _collections.deque(maxlen=360)
+_session_metrics_history: dict[str, _collections.deque[dict[str, Any]]] = {}
+_metrics_sample_task: asyncio.Task[None] | None = None
+
+
+async def _metrics_sample_loop() -> None:
+    """Sample aggregate and per-session metrics every 10 s."""
+    loop = asyncio.get_running_loop()
+    while True:
+        await asyncio.sleep(10)
+        try:
+            container_metrics = await loop.run_in_executor(None, _get_container_metrics)
+            ts = time.time()
+            _metrics_history.append({
+                "ts": ts,
+                "agent_count": len(container_metrics),
+                "total_cpu": round(sum(m.get("cpu_percent", 0) for m in container_metrics), 2),
+                "total_mem": sum(m.get("mem_usage", 0) for m in container_metrics),
+            })
+            for m in container_metrics:
+                sname = m.get("session_name") or m.get("name", "")
+                if not sname:
+                    continue
+                if sname not in _session_metrics_history:
+                    _session_metrics_history[sname] = _collections.deque(maxlen=360)
+                _session_metrics_history[sname].append({
+                    "ts": ts,
+                    "mem_usage": m.get("mem_usage", 0),
+                    "cpu_percent": m.get("cpu_percent", 0),
+                })
+        except Exception:
+            pass
+
+
+@app.get("/api/metrics/history")
+async def api_metrics_history():
+    """Aggregate metrics ring buffer — last hour at 10 s resolution."""
+    return list(_metrics_history)
+
+
+@app.get("/api/metrics/sessions/history")
+async def api_session_metrics_history():
+    """Per-session metrics ring buffers — last hour at 10 s resolution."""
+    return {k: list(v) for k, v in _session_metrics_history.items()}
+
+
+# ---------------------------------------------------------------------------
 # Hub API routes (from hub-api.js)
 # ---------------------------------------------------------------------------
 
@@ -1681,6 +1763,24 @@ async def hub_create_channel(body: CreateChannelRequest, request: Request, _key=
                     ["sh", "-c", f"printf '%s' '{b}' > /home/developer/CHANNEL.md"]
                 ),
             )
+            # Send bootstrap prompt to Claude via tmux so the agent starts participating
+            tmux_prompt = (
+                f"Read /home/developer/CHANNEL.md carefully. "
+                f"You are now a participant in group channel '{channel.name}' (ID: {channel.id}). "
+                f"Begin participating autonomously: use channel_read to poll for messages, "
+                f"respond using channel_send (always include a summary=), and call channel_complete "
+                f"when the discussion has concluded. Start now by reading the channel and introducing yourself."
+            )
+            await loop.run_in_executor(
+                None,
+                lambda c=container, prompt=tmux_prompt: c.exec_run(
+                    ["tmux", "send-keys", "-t", "main", prompt, "Enter"]
+                ),
+            )
+            log.info(
+                "channel.bootstrap_sent",
+                metadata={"session": p.session_name, "channel_id": channel.id},
+            )
         except Exception as exc:
             log.warning(
                 "channel.bootstrap_exec_failed",
@@ -1701,6 +1801,16 @@ async def hub_get_channel(channel_id: str, _key=Depends(require_api_key)):
     if not channel:
         raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' not found")
     return channel.model_dump()
+
+
+@app.delete("/api/hub/channels/{channel_id}")
+async def hub_delete_channel(channel_id: str, _key=Depends(require_api_key)):
+    try:
+        delete_channel(channel_id)
+        _broadcast_sse(json.dumps({"action": "channel.deleted", "channel_id": channel_id}))
+        return {"ok": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.get("/api/hub/channels/{channel_id}/messages")
@@ -1776,6 +1886,181 @@ async def hub_channel_stream(channel_id: str, request: Request, _key=Depends(req
             _channel_queues.get(channel_id, set()).discard(q)
 
     return EventSourceResponse(event_generator())
+
+
+# ---------------------------------------------------------------------------
+# Playbooks
+# ---------------------------------------------------------------------------
+
+_playbook_queues: dict[str, set[asyncio.Queue]] = {}
+
+
+def _broadcast_to_playbook(playbook_id: str, data: str) -> None:
+    for q in list(_playbook_queues.get(playbook_id, set())):
+        try:
+            q.put_nowait(data)
+        except asyncio.QueueFull:
+            pass
+
+
+@app.post("/api/hub/playbooks")
+async def hub_create_playbook(body: CreatePlaybookRequest, _key=Depends(require_api_key)):
+    pb = create_playbook(name=body.name, markdown=body.markdown, workspace_profile=body.workspace_profile)
+    return pb.model_dump()
+
+
+@app.get("/api/hub/playbooks")
+async def hub_list_playbooks(profile: str | None = None, _key=Depends(require_api_key)):
+    return [pb.model_dump() for pb in list_playbooks(profile=profile)]
+
+
+@app.get("/api/hub/playbooks/{playbook_id}")
+async def hub_get_playbook(playbook_id: str, _key=Depends(require_api_key)):
+    pb = get_playbook(playbook_id)
+    if not pb:
+        raise HTTPException(status_code=404, detail=f"Playbook '{playbook_id}' not found")
+    return pb.model_dump()
+
+
+@app.delete("/api/hub/playbooks/{playbook_id}")
+async def hub_delete_playbook(playbook_id: str, _key=Depends(require_api_key)):
+    try:
+        delete_playbook(playbook_id)
+        _broadcast_sse(json.dumps({"action": "playbook.deleted", "playbook_id": playbook_id}))
+        return {"ok": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/hub/playbooks/{playbook_id}/run")
+async def hub_run_playbook(playbook_id: str, _key=Depends(require_api_key)):
+    try:
+        pb = await run_playbook(playbook_id)
+        return pb.model_dump()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/hub/playbooks/{playbook_id}/cancel")
+async def hub_cancel_playbook(playbook_id: str, _key=Depends(require_api_key)):
+    pb = get_playbook(playbook_id)
+    if not pb:
+        raise HTTPException(status_code=404, detail=f"Playbook '{playbook_id}' not found")
+    cancel_playbook(playbook_id)
+    return {"ok": True}
+
+
+@app.get("/api/hub/playbooks/{playbook_id}/stream")
+async def hub_playbook_stream(playbook_id: str, request: Request, _key=Depends(require_api_key)):
+    """SSE stream for a single playbook — delivers task progress events in real-time."""
+    pb = get_playbook(playbook_id)
+    if not pb:
+        raise HTTPException(status_code=404, detail=f"Playbook '{playbook_id}' not found")
+
+    q: asyncio.Queue = asyncio.Queue(maxsize=100)
+    _playbook_queues.setdefault(playbook_id, set()).add(q)
+
+    # Wire this playbook's events to the per-playbook queue
+    def _on_playbook_event(event: str, data: object) -> None:
+        pid = None
+        if isinstance(data, dict):
+            pid = data.get("playbook_id")
+        elif hasattr(data, "id"):
+            pid = data.id  # type: ignore[union-attr]
+        if pid == playbook_id:
+            payload = json.dumps({
+                "event": event,
+                "data": data.model_dump() if hasattr(data, "model_dump") else data,
+            })
+            _broadcast_to_playbook(playbook_id, payload)
+
+    playbook_on_event(_on_playbook_event)
+
+    async def event_generator():
+        try:
+            yield {"data": "connected"}
+            while True:
+                data = await q.get()
+                yield {"data": data}
+        except asyncio.CancelledError:
+            pass
+        finally:
+            _playbook_queues.get(playbook_id, set()).discard(q)
+
+    return EventSourceResponse(event_generator())
+
+
+# ---------------------------------------------------------------------------
+# Worktrees
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/hub/worktrees")
+async def hub_create_worktree(body: CreateWorktreeRequest, _key=Depends(require_api_key)):
+    try:
+        wt = await asyncio.to_thread(create_worktree, body.repo_name, body.branch)
+        return wt.model_dump()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/hub/worktrees")
+async def hub_list_worktrees(repo: str | None = None, _key=Depends(require_api_key)):
+    return [wt.model_dump() for wt in list_worktrees(repo_name=repo)]
+
+
+@app.get("/api/hub/worktrees/{worktree_id}")
+async def hub_get_worktree(worktree_id: str, _key=Depends(require_api_key)):
+    wt = get_worktree(worktree_id)
+    if not wt:
+        raise HTTPException(status_code=404, detail=f"Worktree '{worktree_id}' not found")
+    return wt.model_dump()
+
+
+@app.delete("/api/hub/worktrees/{worktree_id}")
+async def hub_delete_worktree(worktree_id: str, _key=Depends(require_api_key)):
+    try:
+        await asyncio.to_thread(delete_worktree, worktree_id)
+        _broadcast_sse(json.dumps({"action": "worktree.deleted", "worktree_id": worktree_id}))
+        return {"ok": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/hub/worktrees/{worktree_id}/session")
+async def hub_worktree_session(worktree_id: str, request: Request, _key=Depends(require_api_key)):
+    """Create a brainbox session mounted on the given worktree."""
+    from .lifecycle import run_pipeline
+    from .router import get_repo
+
+    wt = get_worktree(worktree_id)
+    if not wt:
+        raise HTTPException(status_code=404, detail=f"Worktree '{worktree_id}' not found")
+    if wt.status == "in_use":
+        raise HTTPException(status_code=409, detail=f"Worktree '{worktree_id}' already has an active session")
+
+    repo = get_repo(wt.repo_name)
+    if not repo:
+        raise HTTPException(status_code=404, detail=f"Repository '{wt.repo_name}' not found")
+
+    session_name = f"wt-{wt.id[:6]}"
+    volume = f"{wt.worktree_path}:/home/developer/workspace/repo:rw"
+
+    try:
+        ctx = await run_pipeline(
+            session_name=session_name,
+            role="developer",
+            workspace_profile=repo.workspace_profile,
+            workspace_home=repo.workspace_home,
+            volume_mounts=[volume],
+            repo_url=repo.url,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    worktree_attach_session(worktree_id, ctx.session_name)
+    _broadcast_sse(json.dumps({"action": "worktree.updated", "worktree_id": worktree_id}))
+    return {"worktree_id": worktree_id, "session": ctx.session_name}
 
 
 # ---------------------------------------------------------------------------
@@ -2100,142 +2385,6 @@ async def api_ollama_delete_model(name: str, _key=Depends(require_api_key)):
         return {"status": status, "model": name}
     except OllamaError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
-
-
-# ---------------------------------------------------------------------------
-# Pipeline orchestration
-# ---------------------------------------------------------------------------
-
-
-def _pipeline_summary(p):
-    """Build a summary dict for a pipeline definition."""
-    step_types = sorted({s.type.value for s in p.steps})
-    provider = "private"
-    if "claude-session" in step_types or "claude-chat" in step_types:
-        provider = "cloud" if "ollama-chat" not in step_types else "mixed"
-    return {
-        "name": p.name,
-        "description": p.description,
-        "version": p.version,
-        "steps": len(p.steps),
-        "step_types": step_types,
-        "provider": provider,
-        "source_tier": p.source_tier,
-        "source_file": p.source_file,
-    }
-
-
-@app.get("/api/pipelines")
-async def api_list_pipelines(
-    workspace: str | None = Query(None),
-    repo: str | None = Query(None),
-    _key=Depends(require_api_key),
-):
-    """List pipeline definitions from all tiers (generic + workspace + repo)."""
-    all_pipelines = pipeline_resolve_all(workspace=workspace, repo=repo)
-    return {"pipelines": [_pipeline_summary(p) for p in all_pipelines.values()]}
-
-
-# Runs routes MUST come before /api/pipelines/{name} to avoid path collision
-@app.get("/api/pipelines/runs")
-async def api_list_pipeline_runs(
-    pipeline_name: str | None = Query(None),
-    status: str | None = Query(None),
-    workspace: str | None = Query(None),
-    repo: str | None = Query(None),
-    _key=Depends(require_api_key),
-):
-    """List pipeline runs, optionally filtered. Enriched with definition metadata."""
-    runs = pipeline_list_runs(pipeline_name=pipeline_name, status=status)
-    # Cache resolved definitions for enrichment
-    all_defs = pipeline_resolve_all(workspace=workspace, repo=repo)
-    result = []
-    for r in runs:
-        defn = all_defs.get(r.pipeline_name)
-        summary = _pipeline_summary(defn) if defn else {}
-        step_summary = {
-            name: {"status": sr.status, "duration_ms": sr.duration_ms}
-            for name, sr in r.steps.items()
-        }
-        result.append(
-            {
-                "id": r.id,
-                "pipeline_name": r.pipeline_name,
-                "status": r.status,
-                "created_at": r.created_at,
-                "started_at": r.started_at,
-                "finished_at": r.finished_at,
-                "error": r.error,
-                "title": r.params.get("title", ""),
-                "provider": summary.get("provider", "private"),
-                "step_types": summary.get("step_types", []),
-                "source_tier": summary.get("source_tier", "generic"),
-                "steps": step_summary,
-                "description": summary.get("description", ""),
-            }
-        )
-    return {"runs": result}
-
-
-@app.get("/api/pipelines/runs/{run_id}")
-async def api_get_pipeline_run(run_id: str, _key=Depends(require_api_key)):
-    """Get full pipeline run status including step results."""
-    run = pipeline_get_run(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail=f"Pipeline run '{run_id}' not found")
-    return run.model_dump()
-
-
-@app.post("/api/pipelines/runs/{run_id}/cancel")
-async def api_cancel_pipeline_run(run_id: str, _key=Depends(require_api_key)):
-    """Cancel a running pipeline."""
-    try:
-        run = await pipeline_cancel_run(run_id)
-        return {"run_id": run.id, "status": run.status}
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@app.get("/api/pipelines/runs/{run_id}/steps/{step_name}")
-async def api_get_pipeline_step(run_id: str, step_name: str, _key=Depends(require_api_key)):
-    """Get a specific step result from a pipeline run."""
-    run = pipeline_get_run(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail=f"Pipeline run '{run_id}' not found")
-    sr = run.steps.get(step_name)
-    if not sr:
-        raise HTTPException(status_code=404, detail=f"Step '{step_name}' not found in run")
-    return sr.model_dump()
-
-
-@app.get("/api/pipelines/{name}")
-async def api_get_pipeline(
-    name: str,
-    workspace: str | None = Query(None),
-    repo: str | None = Query(None),
-    _key=Depends(require_api_key),
-):
-    """Get a pipeline definition by name, resolved across all tiers."""
-    p = pipeline_resolve(name, workspace=workspace, repo=repo)
-    if not p:
-        raise HTTPException(status_code=404, detail=f"Pipeline '{name}' not found")
-    return p.model_dump()
-
-
-@app.post("/api/pipelines/{name}/run")
-async def api_start_pipeline_run(
-    name: str,
-    body: StartPipelineRunRequest,
-    workspace: str | None = Query(None),
-    repo: str | None = Query(None),
-    _key=Depends(require_api_key),
-):
-    """Start a new pipeline run, resolved across all tiers."""
-    try:
-        run = await pipeline_start_run(name, params=body.params, workspace=workspace, repo=repo)
-        return {"run_id": run.id, "status": run.status, "pipeline": run.pipeline_name}
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
 
 
 # ---------------------------------------------------------------------------

@@ -121,3 +121,8 @@ func (c *Client) CompleteChannel(id string, req CompleteChannelRequest) (Channel
 	}
 	return channel, nil
 }
+
+// DeleteChannel deletes a channel and all its messages.
+func (c *Client) DeleteChannel(id string) error {
+	return c.delete(fmt.Sprintf("/api/hub/channels/%s", id), nil)
+}

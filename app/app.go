@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"phantom-ink/brainbox"
 	goruntime "runtime"
+	"strings"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -128,6 +131,81 @@ func (a *App) SetConfig(baseURL, apiKey, workspacesRoot string) error {
 // ---------------------------------------------------------------------------
 // Platform
 // ---------------------------------------------------------------------------
+
+// RestartBrainboxAPI restarts the brainbox API and reconnects the SSE listener.
+// It tries Docker first (container with the brainbox-api compose label), then
+// falls back to the Homebrew-installed daemon CLI.
+func (a *App) RestartBrainboxAPI() error {
+	if err := a.restartViaDocker(); err == nil {
+		return a.waitAndReconnect()
+	}
+	if err := a.restartViaDaemon(); err != nil {
+		return err
+	}
+	return a.waitAndReconnect()
+}
+
+func (a *App) restartViaDocker() error {
+	out, err := exec.Command("docker", "ps",
+		"--filter", "label=com.docker.compose.service=brainbox-api",
+		"-q").Output()
+	if err != nil {
+		return err
+	}
+	containerID := strings.TrimSpace(string(out))
+	if containerID == "" {
+		return fmt.Errorf("no brainbox-api container running")
+	}
+	cmd := exec.Command("docker", "restart", containerID)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func (a *App) restartViaDaemon() error {
+	// Find the running brainbox API process.
+	pgrepOut, err := exec.Command("pgrep", "-f", "python.*-m brainbox api").Output()
+	if err != nil || strings.TrimSpace(string(pgrepOut)) == "" {
+		return fmt.Errorf("no brainbox daemon process found")
+	}
+	pid := strings.TrimSpace(strings.SplitN(string(pgrepOut), "\n", 2)[0])
+
+	// Resolve the process working directory so we can restart via uv.
+	lsofOut, err := exec.Command("lsof", "-p", pid, "-d", "cwd", "-Fn").Output()
+	if err != nil {
+		return fmt.Errorf("could not resolve daemon cwd: %w", err)
+	}
+	cwd := ""
+	for _, line := range strings.Split(string(lsofOut), "\n") {
+		if strings.HasPrefix(line, "n") {
+			cwd = strings.TrimPrefix(line, "n")
+			break
+		}
+	}
+	if cwd == "" {
+		return fmt.Errorf("could not determine brainbox process working directory")
+	}
+
+	cmd := exec.Command("uv", "run", "--directory", cwd, "python", "-m", "brainbox", "restart")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("daemon restart failed: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func (a *App) waitAndReconnect() error {
+	for i := 0; i < 30; i++ {
+		time.Sleep(1 * time.Second)
+		if isPortOpen(9999) {
+			break
+		}
+	}
+	if a.sse != nil {
+		a.sse.Restart()
+	}
+	return nil
+}
 
 // GetPlatform returns the OS: "darwin", "windows", or "linux".
 func (a *App) GetPlatform() string {

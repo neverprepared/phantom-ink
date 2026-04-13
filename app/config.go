@@ -17,11 +17,11 @@ const (
 // Config is the in-memory representation of app settings.
 // All persistence is handled by the SQLite database.
 type Config struct {
-	BaseURL        string
-	APIKey         string
-	ActiveProfile  string
-	WorkspacesRoot string
-	Theme          string
+	BaseURL        string `json:"base_url"`
+	APIKey         string `json:"api_key"`
+	ActiveProfile  string `json:"active_profile"`
+	WorkspacesRoot string `json:"workspaces_root"`
+	Theme          string `json:"theme"`
 }
 
 // loadConfigFromDB populates a Config from the database with sensible defaults.
