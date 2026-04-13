@@ -19,6 +19,7 @@
   let history = $state<any[]>([]);
   let localHistory = $state<Record<string, {ts: number, cpu: number, mem: number}[]>>({});
   let combinedHistory = $state<{ts: number, agent_count: number, total_cpu: number, total_mem: number}[]>([]);
+  let aggregateHoverIdx = $state<number | null>(null);
   let loading = $state(true);
   let showNewModal = $state(false);
   let terminalSession = $state<any | null>(null);
@@ -397,6 +398,9 @@
         current={latestAgents}
         color="var(--color-accent)"
         formatY={(v) => String(Math.round(v))}
+        hoverIdx={aggregateHoverIdx}
+        onHover={(idx) => aggregateHoverIdx = idx}
+        onHoverEnd={() => aggregateHoverIdx = null}
       />
       <MetricsChart
         data={cpuData}
@@ -404,6 +408,9 @@
         current={latestCPU}
         color="var(--color-info)"
         formatY={(v) => `${v.toFixed(1)}%`}
+        hoverIdx={aggregateHoverIdx}
+        onHover={(idx) => aggregateHoverIdx = idx}
+        onHoverEnd={() => aggregateHoverIdx = null}
       />
       <MetricsChart
         data={memData}
@@ -411,6 +418,9 @@
         current={latestMem}
         color="var(--color-success)"
         formatY={fmtMB}
+        hoverIdx={aggregateHoverIdx}
+        onHover={(idx) => aggregateHoverIdx = idx}
+        onHoverEnd={() => aggregateHoverIdx = null}
       />
     </div>
   {/if}
