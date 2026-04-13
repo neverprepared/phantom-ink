@@ -46,7 +46,14 @@
   let stoppedSessions = $derived(filteredSessions.filter(s => !s.active));
   let totalSessionCount = $derived(filteredSessions.length + filteredLocal.length);
   let activeSessionCount = $derived(activeSessions.length + filteredLocal.length);
-  let runningTasks = $derived(tasks.filter(t => (t.status ?? t.Status) === 'running'));
+  // Filter tasks to those whose session belongs to the active profile.
+  // Tasks with no session_name are always included (e.g. ci-ratchet tasks).
+  let filteredSessionNames = $derived(new Set(filteredSessions.map((s: any) => s.name)));
+  let filteredTasks = $derived.by(() => {
+    if (!activeProfile) return tasks;
+    return tasks.filter((t: any) => !t.session_name || filteredSessionNames.has(t.session_name));
+  });
+  let runningTasks = $derived(filteredTasks.filter((t: any) => (t.status ?? t.Status) === 'running'));
 
   let containerCPU = $derived(filteredDockerStats.reduce((sum, s) => sum + parseFloat(s.cpu_perc || '0'), 0));
   let containerMem = $derived(filteredDockerStats.reduce((sum, s) => {
@@ -160,7 +167,7 @@
         </div>
         <div class="stat-body">
           <span class="stat-label">Tasks</span>
-          <span class="stat-value">{runningTasks.length}<span class="stat-sub"> / {tasks.length}</span></span>
+          <span class="stat-value">{runningTasks.length}<span class="stat-sub"> / {filteredTasks.length}</span></span>
           <span class="stat-detail">{runningTasks.length} running, {agents.length} agents</span>
         </div>
       </div>
@@ -263,11 +270,11 @@
     <!-- Active tasks -->
     <div class="section">
       <h2>tasks</h2>
-      {#if tasks.length === 0}
+      {#if filteredTasks.length === 0}
         <EmptyState title="No tasks" message="Submit a task to start an agent." />
       {:else}
         <div class="list">
-          {#each tasks as task (task.id)}
+          {#each filteredTasks as task (task.id)}
             {@const status = task.status}
             <div class="row">
               <div class="row-main">
