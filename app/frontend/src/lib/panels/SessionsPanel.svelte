@@ -3,6 +3,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { brainboxEvents } from '../events.svelte';
   import { notifications } from '../notifications.svelte';
+  import { combinedHistory as combinedHistoryStore, localHistory as localHistoryStore } from '../metricsHistory.svelte';
   import { profileState, featureFlags } from '../stores.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Badge from '../components/Badge.svelte';
@@ -17,8 +18,6 @@
   let localProcesses = $state<any[]>([]);
   let sessionHistory = $state<Record<string, any[]>>({});
   let history = $state<any[]>([]);
-  let localHistory = $state<Record<string, {ts: number, cpu: number, mem: number}[]>>({});
-  let combinedHistory = $state<{ts: number, agent_count: number, total_cpu: number, total_mem: number}[]>([]);
   let aggregateHoverIdx = $state<number | null>(null);
   let loading = $state(true);
   let showNewModal = $state(false);
@@ -162,36 +161,36 @@
       const now = Date.now();
 
       // Per-process history (for local agent cards)
-      const next = { ...localHistory };
+      const activeKeys = new Set<string>();
       for (const p of (procs ?? [])) {
         const key = p.tty || p.pid;
+        activeKeys.add(key);
         const cpu = parseFloat(p.cpu_perc) || 0;
         const mem = parseFloat(p.mem_mb) || 0;
-        const prev = next[key] ?? [];
-        next[key] = [...prev, { ts: now, cpu, mem }].slice(-60);
+        localHistoryStore.update(key, { ts: now, cpu, mem });
       }
-      localHistory = next;
+      localHistoryStore.pruneKeys(activeKeys);
 
       // Combined aggregate: Docker containers + local processes
       const localAgents = (procs ?? []).length;
       const localCPU    = (procs ?? []).reduce((s, p) => s + (parseFloat(p.cpu_perc) || 0), 0);
       const localMemB   = (procs ?? []).reduce((s, p) => s + (parseFloat(p.mem_mb) || 0) * 1024 * 1024, 0);
       const latestDocker = history.length ? history[history.length - 1] : null;
-      combinedHistory = [...combinedHistory, {
+      combinedHistoryStore.push({
         ts: now / 1000,
         agent_count: (latestDocker?.agent_count ?? 0) + localAgents,
         total_cpu:   (latestDocker?.total_cpu ?? 0) + localCPU,
         total_mem:   (latestDocker?.total_mem ?? 0) + localMemB,
-      }].slice(-60);
+      });
     } catch { /* non-critical */ }
   }
 
-  let agentData  = $derived(combinedHistory.map(s => ({ ts: s.ts, value: s.agent_count })));
-  let cpuData    = $derived(combinedHistory.map(s => ({ ts: s.ts, value: s.total_cpu })));
-  let memData    = $derived(combinedHistory.map(s => ({ ts: s.ts, value: s.total_mem / 1024 / 1024 })));
-  let latestAgents = $derived(combinedHistory.length ? String(combinedHistory[combinedHistory.length - 1].agent_count) : '–');
-  let latestCPU    = $derived(combinedHistory.length ? `${combinedHistory[combinedHistory.length - 1].total_cpu.toFixed(1)}%` : '–');
-  let latestMem    = $derived(combinedHistory.length ? formatBytes(combinedHistory[combinedHistory.length - 1].total_mem) : '–');
+  let agentData  = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.agent_count })));
+  let cpuData    = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.total_cpu })));
+  let memData    = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.total_mem / 1024 / 1024 })));
+  let latestAgents = $derived(combinedHistoryStore.value.length ? String(combinedHistoryStore.value[combinedHistoryStore.value.length - 1].agent_count) : '–');
+  let latestCPU    = $derived(combinedHistoryStore.value.length ? `${combinedHistoryStore.value[combinedHistoryStore.value.length - 1].total_cpu.toFixed(1)}%` : '–');
+  let latestMem    = $derived(combinedHistoryStore.value.length ? formatBytes(combinedHistoryStore.value[combinedHistoryStore.value.length - 1].total_mem) : '–');
 
   async function handleFocusTab(tty: string) {
     const a = await getApi();
@@ -390,7 +389,7 @@
     </div>
   {/if}
 
-  {#if combinedHistory.length >= 2}
+  {#if combinedHistoryStore.value.length >= 2}
     <div class="charts-row">
       <MetricsChart
         data={agentData}
@@ -583,7 +582,7 @@
       <div class="local-list">
         {#each filteredLocal as proc (proc.pid)}
           {@const lkey = proc.tty || proc.pid}
-          {@const lhist = localHistory[lkey] ?? []}
+          {@const lhist = localHistoryStore.value[lkey] ?? []}
           {@const lcpuData = lhist.map(s => ({ ts: s.ts, value: s.cpu }))}
           {@const lmemData = lhist.map(s => ({ ts: s.ts, value: s.mem }))}
           {@const latestLCPU = lhist.length ? `${lhist[lhist.length-1].cpu.toFixed(1)}%` : proc.cpu_perc}
