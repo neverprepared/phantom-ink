@@ -1149,6 +1149,80 @@ def list_sessions() -> list[SessionContext]:
     return list(_sessions.values())
 
 
+def recover_sessions_from_docker() -> int:
+    """Scan Docker for managed containers not in _sessions and re-register them.
+
+    Called on API startup so that containers started before a restart are not
+    orphaned — check_running_tasks() can then find them and recycle properly.
+    Returns the number of sessions recovered.
+    """
+    try:
+        import docker as _docker_sdk
+        from .models import SessionContext, SessionState
+
+        client = _docker_sdk.from_env()
+        containers = client.containers.list(
+            filters={"label": "brainbox.managed=true", "status": "running"}
+        )
+    except Exception as exc:
+        log.warning("lifecycle.recover_sessions_failed", metadata={"reason": str(exc)})
+        return 0
+
+    recovered = 0
+    for container in containers:
+        labels = container.labels or {}
+        session_name = labels.get("brainbox.session_name", "")
+        if not session_name:
+            # Fallback: derive from container name using known role prefixes
+            name = container.name or ""
+            _PREFIXES = (
+                "developer-", "researcher-", "performer-",
+                "supervisor-", "worker-", "merge-queue-", "pr-shepherd-", "reviewer-",
+            )
+            for pfx in _PREFIXES:
+                if name.startswith(pfx):
+                    session_name = name[len(pfx):]
+                    break
+            if not session_name:
+                session_name = name
+
+        if session_name in _sessions:
+            continue  # already registered
+
+        # Reconstruct a minimal SessionContext so recycle() can find the session
+        port_bindings = container.ports or {}
+        port = 7681
+        for binding in port_bindings.values():
+            if binding:
+                try:
+                    port = int(binding[0]["HostPort"])
+                    break
+                except (KeyError, IndexError, ValueError):
+                    pass
+
+        ctx = SessionContext(
+            session_name=session_name,
+            container_name=container.name,
+            port=port,
+            role=labels.get("brainbox.role", "developer"),
+            backend="docker",
+            state=SessionState.RUNNING,
+            created_at=_now_ms(),
+            ttl=0,  # no TTL enforcement for recovered sessions
+            hardened=False,
+        )
+        _sessions[session_name] = ctx
+        recovered += 1
+        log.info(
+            "lifecycle.session_recovered",
+            metadata={"session": session_name, "container": container.name},
+        )
+
+    if recovered:
+        log.info("lifecycle.sessions_recovered", metadata={"count": recovered})
+    return recovered
+
+
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------

@@ -136,6 +136,7 @@ class DockerBackend:
             "ports": port_bindings,
             "labels": {
                 "brainbox.managed": "true",
+                "brainbox.session_name": ctx.session_name,
                 "brainbox.role": ctx.role,
                 "brainbox.llm_provider": ctx.llm_provider,
                 "brainbox.llm_model": ctx.llm_model or "",
