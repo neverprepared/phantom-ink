@@ -149,6 +149,7 @@ class Task(BaseModel):
     result: Any = None
     error: str | None = None
     repo_url: str | None = None  # Associated repository
+    workspace_profile: str | None = None  # Profile that submitted this task
 
 
 # ---------------------------------------------------------------------------

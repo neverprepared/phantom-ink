@@ -4,16 +4,17 @@ import "fmt"
 
 // Task represents a hub task.
 type Task struct {
-	ID          string      `json:"id"`
-	Description string      `json:"description"`
-	AgentName   string      `json:"agent_name"`
-	Status      string      `json:"status"`
-	RepoURL     interface{} `json:"repo_url"`
-	CreatedAt   interface{} `json:"created_at"`
-	UpdatedAt   interface{} `json:"updated_at"`
-	Result      interface{} `json:"result"`
-	Error       interface{} `json:"error"`
-	SessionName string      `json:"session_name"`
+	ID               string      `json:"id"`
+	Description      string      `json:"description"`
+	AgentName        string      `json:"agent_name"`
+	Status           string      `json:"status"`
+	RepoURL          interface{} `json:"repo_url"`
+	CreatedAt        interface{} `json:"created_at"`
+	UpdatedAt        interface{} `json:"updated_at"`
+	Result           interface{} `json:"result"`
+	Error            interface{} `json:"error"`
+	SessionName      string      `json:"session_name"`
+	WorkspaceProfile string      `json:"workspace_profile"`
 }
 
 // Agent represents a registered agent definition.

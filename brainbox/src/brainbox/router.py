@@ -79,6 +79,7 @@ async def submit_task(
         created_at=now,
         updated_at=now,
         repo_url=repo_url,
+        workspace_profile=workspace_profile,
     )
 
     # Policy check

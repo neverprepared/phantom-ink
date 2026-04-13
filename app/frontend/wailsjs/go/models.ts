@@ -366,11 +366,12 @@ export namespace brainbox {
 	    result: any;
 	    error: any;
 	    session_name: string;
-	
+	    workspace_profile: string;
+
 	    static createFrom(source: any = {}) {
 	        return new Task(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -383,6 +384,7 @@ export namespace brainbox {
 	        this.result = source["result"];
 	        this.error = source["error"];
 	        this.session_name = source["session_name"];
+	        this.workspace_profile = source["workspace_profile"];
 	    }
 	}
 	export class HubState {

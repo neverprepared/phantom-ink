@@ -46,7 +46,19 @@
   let stoppedSessions = $derived(filteredSessions.filter(s => !s.active));
   let totalSessionCount = $derived(filteredSessions.length + filteredLocal.length);
   let activeSessionCount = $derived(activeSessions.length + filteredLocal.length);
-  let runningTasks = $derived(tasks.filter(t => (t.status ?? t.Status) === 'running'));
+  // session name → workspace_profile lookup (covers tasks that pre-date the workspace_profile field)
+  let sessionProfileMap = $derived(new Map(sessions.map((s: any) => [s.name, (s.workspace_profile ?? '').toLowerCase()])));
+
+  // Filter tasks: use task's own workspace_profile, fall back to its session's profile.
+  let filteredTasks = $derived.by(() => {
+    if (!activeProfile) return tasks;
+    const target = activeProfile.name.toLowerCase();
+    return tasks.filter((t: any) => {
+      const profile = (t.workspace_profile || sessionProfileMap.get(t.session_name) || '').toLowerCase();
+      return profile === target;
+    });
+  });
+  let runningTasks = $derived(filteredTasks.filter((t: any) => (t.status ?? t.Status) === 'running'));
 
   let containerCPU = $derived(filteredDockerStats.reduce((sum, s) => sum + parseFloat(s.cpu_perc || '0'), 0));
   let containerMem = $derived(filteredDockerStats.reduce((sum, s) => {
@@ -160,7 +172,7 @@
         </div>
         <div class="stat-body">
           <span class="stat-label">Tasks</span>
-          <span class="stat-value">{runningTasks.length}<span class="stat-sub"> / {tasks.length}</span></span>
+          <span class="stat-value">{runningTasks.length}<span class="stat-sub"> / {filteredTasks.length}</span></span>
           <span class="stat-detail">{runningTasks.length} running, {agents.length} agents</span>
         </div>
       </div>
@@ -263,11 +275,11 @@
     <!-- Active tasks -->
     <div class="section">
       <h2>tasks</h2>
-      {#if tasks.length === 0}
+      {#if filteredTasks.length === 0}
         <EmptyState title="No tasks" message="Submit a task to start an agent." />
       {:else}
         <div class="list">
-          {#each tasks as task (task.id)}
+          {#each filteredTasks as task (task.id)}
             {@const status = task.status}
             <div class="row">
               <div class="row-main">
