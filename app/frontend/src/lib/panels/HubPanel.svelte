@@ -46,12 +46,17 @@
   let stoppedSessions = $derived(filteredSessions.filter(s => !s.active));
   let totalSessionCount = $derived(filteredSessions.length + filteredLocal.length);
   let activeSessionCount = $derived(activeSessions.length + filteredLocal.length);
-  // Filter tasks by workspace_profile stored on each task.
+  // session name → workspace_profile lookup (covers tasks that pre-date the workspace_profile field)
+  let sessionProfileMap = $derived(new Map(sessions.map((s: any) => [s.name, (s.workspace_profile ?? '').toLowerCase()])));
+
+  // Filter tasks: use task's own workspace_profile, fall back to its session's profile.
   let filteredTasks = $derived.by(() => {
     if (!activeProfile) return tasks;
-    return tasks.filter((t: any) =>
-      (t.workspace_profile ?? '').toLowerCase() === activeProfile.name.toLowerCase()
-    );
+    const target = activeProfile.name.toLowerCase();
+    return tasks.filter((t: any) => {
+      const profile = (t.workspace_profile || sessionProfileMap.get(t.session_name) || '').toLowerCase();
+      return profile === target;
+    });
   });
   let runningTasks = $derived(filteredTasks.filter((t: any) => (t.status ?? t.Status) === 'running'));
 
