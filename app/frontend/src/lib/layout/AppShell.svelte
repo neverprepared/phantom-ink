@@ -62,7 +62,6 @@
   }
 
   .content {
-    padding: 24px clamp(16px, 3vw, 32px);
     overflow-y: auto;
     min-width: 0;
   }
