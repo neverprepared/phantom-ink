@@ -16,6 +16,7 @@
   let agents = $state<any[]>([]);
   let localProcesses = $state<any[]>([]);
   let sessionHistory = $state<Record<string, any[]>>({});
+  let history = $state<any[]>([]);
   let loading = $state(true);
   let showNewModal = $state(false);
   let terminalSession = $state<any | null>(null);
@@ -127,13 +128,36 @@
     }
   }
 
+  function formatBytes(bytes: number): string {
+    if (!bytes) return '–';
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+
+  function fmtMB(mb: number): string {
+    if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+    return `${mb.toFixed(0)} MB`;
+  }
+
   async function refreshMetrics() {
     const a = await getApi();
     if (!a) return;
     try {
-      sessionHistory = (await a.GetSessionsMetricsHistory()) ?? {};
+      const [sh, hist] = await Promise.all([
+        a.GetSessionsMetricsHistory(),
+        a.GetMetricsHistory(),
+      ]);
+      sessionHistory = sh ?? {};
+      history = hist ?? [];
     } catch { /* non-critical */ }
   }
+
+  let agentData  = $derived(history.map((s: any) => ({ ts: s.ts, value: s.agent_count ?? 0 })));
+  let cpuData    = $derived(history.map((s: any) => ({ ts: s.ts, value: s.total_cpu ?? 0 })));
+  let memData    = $derived(history.map((s: any) => ({ ts: s.ts, value: (s.total_mem ?? 0) / 1024 / 1024 })));
+  let latestAgents = $derived(history.length ? String(history[history.length - 1].agent_count) : '–');
+  let latestCPU    = $derived(history.length ? `${history[history.length - 1].total_cpu.toFixed(1)}%` : '–');
+  let latestMem    = $derived(history.length ? formatBytes(history[history.length - 1].total_mem) : '–');
 
   async function handleFocusTab(tty: string) {
     const a = await getApi();
@@ -329,6 +353,32 @@
           <svg class="toggle-chevron" class:open={showStopped} xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       {/if}
+    </div>
+  {/if}
+
+  {#if history.length >= 2}
+    <div class="charts-row">
+      <MetricsChart
+        data={agentData}
+        label="agents"
+        current={latestAgents}
+        color="var(--color-accent)"
+        formatY={(v) => String(Math.round(v))}
+      />
+      <MetricsChart
+        data={cpuData}
+        label="total cpu"
+        current={latestCPU}
+        color="var(--color-info)"
+        formatY={(v) => `${v.toFixed(1)}%`}
+      />
+      <MetricsChart
+        data={memData}
+        label="total memory"
+        current={latestMem}
+        color="var(--color-success)"
+        formatY={fmtMB}
+      />
     </div>
   {/if}
 
@@ -671,6 +721,12 @@
   .accent { color: var(--color-accent); }
 
   .header-actions { display: flex; gap: 8px; align-items: center; }
+
+  .charts-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
 
   .new-btn {
     background: rgba(59, 130, 246, 0.1);
