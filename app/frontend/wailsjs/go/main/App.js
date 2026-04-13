@@ -10,8 +10,8 @@ export function BrowseFolder() {
   return window['go']['main']['App']['BrowseFolder']();
 }
 
-export function CancelPipelineRun(arg1) {
-  return window['go']['main']['App']['CancelPipelineRun'](arg1);
+export function CancelPlaybook(arg1) {
+  return window['go']['main']['App']['CancelPlaybook'](arg1);
 }
 
 export function CancelTask(arg1) {
@@ -26,6 +26,10 @@ export function CreateChannel(arg1) {
   return window['go']['main']['App']['CreateChannel'](arg1);
 }
 
+export function CreatePlaybook(arg1) {
+  return window['go']['main']['App']['CreatePlaybook'](arg1);
+}
+
 export function CreateProfile(arg1) {
   return window['go']['main']['App']['CreateProfile'](arg1);
 }
@@ -34,12 +38,28 @@ export function CreateSession(arg1) {
   return window['go']['main']['App']['CreateSession'](arg1);
 }
 
+export function CreateWorktree(arg1) {
+  return window['go']['main']['App']['CreateWorktree'](arg1);
+}
+
+export function CreateWorktreeSession(arg1) {
+  return window['go']['main']['App']['CreateWorktreeSession'](arg1);
+}
+
 export function DeleteArtifact(arg1) {
   return window['go']['main']['App']['DeleteArtifact'](arg1);
 }
 
+export function DeleteChannel(arg1) {
+  return window['go']['main']['App']['DeleteChannel'](arg1);
+}
+
 export function DeleteOllamaModel(arg1) {
   return window['go']['main']['App']['DeleteOllamaModel'](arg1);
+}
+
+export function DeletePlaybook(arg1) {
+  return window['go']['main']['App']['DeletePlaybook'](arg1);
 }
 
 export function DeleteProfile(arg1, arg2) {
@@ -52,6 +72,10 @@ export function DeleteRepo(arg1) {
 
 export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
+}
+
+export function DeleteWorktree(arg1) {
+  return window['go']['main']['App']['DeleteWorktree'](arg1);
 }
 
 export function DownloadArtifact(arg1) {
@@ -106,8 +130,16 @@ export function GetMessageLog() {
   return window['go']['main']['App']['GetMessageLog']();
 }
 
+export function GetMetricsHistory() {
+  return window['go']['main']['App']['GetMetricsHistory']();
+}
+
 export function GetPlatform() {
   return window['go']['main']['App']['GetPlatform']();
+}
+
+export function GetPlaybook(arg1) {
+  return window['go']['main']['App']['GetPlaybook'](arg1);
 }
 
 export function GetProfileSecrets(arg1) {
@@ -122,12 +154,20 @@ export function GetSessions() {
   return window['go']['main']['App']['GetSessions']();
 }
 
+export function GetSessionsMetricsHistory() {
+  return window['go']['main']['App']['GetSessionsMetricsHistory']();
+}
+
 export function GetSystemInfo() {
   return window['go']['main']['App']['GetSystemInfo']();
 }
 
 export function GetTraceDetail(arg1) {
   return window['go']['main']['App']['GetTraceDetail'](arg1);
+}
+
+export function GetWorktree(arg1) {
+  return window['go']['main']['App']['GetWorktree'](arg1);
 }
 
 export function ListAgents() {
@@ -150,12 +190,8 @@ export function ListOllamaModels() {
   return window['go']['main']['App']['ListOllamaModels']();
 }
 
-export function ListPipelineRuns() {
-  return window['go']['main']['App']['ListPipelineRuns']();
-}
-
-export function ListPipelines() {
-  return window['go']['main']['App']['ListPipelines']();
+export function ListPlaybooks(arg1) {
+  return window['go']['main']['App']['ListPlaybooks'](arg1);
 }
 
 export function ListProfileDirs(arg1) {
@@ -174,6 +210,10 @@ export function ListTasks(arg1) {
   return window['go']['main']['App']['ListTasks'](arg1);
 }
 
+export function ListWorktrees(arg1) {
+  return window['go']['main']['App']['ListWorktrees'](arg1);
+}
+
 export function PostChannelMessage(arg1, arg2) {
   return window['go']['main']['App']['PostChannelMessage'](arg1, arg2);
 }
@@ -186,8 +226,16 @@ export function PurgeBackup(arg1) {
   return window['go']['main']['App']['PurgeBackup'](arg1);
 }
 
+export function RestartBrainboxAPI() {
+  return window['go']['main']['App']['RestartBrainboxAPI']();
+}
+
 export function RestoreProfile(arg1) {
   return window['go']['main']['App']['RestoreProfile'](arg1);
+}
+
+export function RunPlaybook(arg1) {
+  return window['go']['main']['App']['RunPlaybook'](arg1);
 }
 
 export function RunPreflightChecks() {
@@ -212,10 +260,6 @@ export function SetServiceConfig(arg1, arg2, arg3, arg4, arg5) {
 
 export function SetTheme(arg1) {
   return window['go']['main']['App']['SetTheme'](arg1);
-}
-
-export function StartPipelineRun(arg1, arg2) {
-  return window['go']['main']['App']['StartPipelineRun'](arg1, arg2);
 }
 
 export function StartService(arg1) {

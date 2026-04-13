@@ -7,7 +7,7 @@ export function AddRepo(arg1:brainbox.AddRepoRequest):Promise<brainbox.Repo>;
 
 export function BrowseFolder():Promise<string>;
 
-export function CancelPipelineRun(arg1:string):Promise<void>;
+export function CancelPlaybook(arg1:string):Promise<void>;
 
 export function CancelTask(arg1:string):Promise<void>;
 
@@ -15,19 +15,31 @@ export function CompleteChannel(arg1:string,arg2:brainbox.CompleteChannelRequest
 
 export function CreateChannel(arg1:brainbox.CreateChannelRequest):Promise<brainbox.Channel>;
 
+export function CreatePlaybook(arg1:brainbox.CreatePlaybookRequest):Promise<brainbox.Playbook>;
+
 export function CreateProfile(arg1:string):Promise<main.Profile>;
 
 export function CreateSession(arg1:brainbox.CreateSessionRequest):Promise<brainbox.SessionActionResponse>;
 
+export function CreateWorktree(arg1:brainbox.CreateWorktreeRequest):Promise<brainbox.Worktree>;
+
+export function CreateWorktreeSession(arg1:string):Promise<brainbox.WorktreeSessionResponse>;
+
 export function DeleteArtifact(arg1:string):Promise<void>;
 
+export function DeleteChannel(arg1:string):Promise<void>;
+
 export function DeleteOllamaModel(arg1:string):Promise<void>;
+
+export function DeletePlaybook(arg1:string):Promise<void>;
 
 export function DeleteProfile(arg1:string,arg2:boolean):Promise<void>;
 
 export function DeleteRepo(arg1:string):Promise<void>;
 
 export function DeleteSession(arg1:string):Promise<brainbox.SessionActionResponse>;
+
+export function DeleteWorktree(arg1:string):Promise<void>;
 
 export function DownloadArtifact(arg1:string):Promise<Array<number>>;
 
@@ -55,7 +67,11 @@ export function GetLangfuseHealth():Promise<brainbox.HealthStatus>;
 
 export function GetMessageLog():Promise<Array<brainbox.Message>>;
 
+export function GetMetricsHistory():Promise<Array<brainbox.MetricsSample>>;
+
 export function GetPlatform():Promise<string>;
+
+export function GetPlaybook(arg1:string):Promise<brainbox.Playbook>;
 
 export function GetProfileSecrets(arg1:string):Promise<Array<main.SecretKeyStatus>>;
 
@@ -63,9 +79,13 @@ export function GetSessionTraces(arg1:string,arg2:number):Promise<Array<brainbox
 
 export function GetSessions():Promise<Array<brainbox.Session>>;
 
+export function GetSessionsMetricsHistory():Promise<Record<string, Array<brainbox.SessionMetricsSample>>>;
+
 export function GetSystemInfo():Promise<main.SystemInfo>;
 
 export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;
+
+export function GetWorktree(arg1:string):Promise<brainbox.Worktree>;
 
 export function ListAgents():Promise<Array<brainbox.Agent>>;
 
@@ -77,9 +97,7 @@ export function ListChannels():Promise<Array<brainbox.Channel>>;
 
 export function ListOllamaModels():Promise<Array<brainbox.OllamaModel>>;
 
-export function ListPipelineRuns():Promise<Array<brainbox.PipelineRun>>;
-
-export function ListPipelines():Promise<Array<brainbox.Pipeline>>;
+export function ListPlaybooks(arg1:string):Promise<Array<brainbox.Playbook>>;
 
 export function ListProfileDirs(arg1:string):Promise<Array<string>>;
 
@@ -89,13 +107,19 @@ export function ListServices():Promise<Array<main.ServiceStatus>>;
 
 export function ListTasks(arg1:string):Promise<Array<brainbox.Task>>;
 
+export function ListWorktrees(arg1:string):Promise<Array<brainbox.Worktree>>;
+
 export function PostChannelMessage(arg1:string,arg2:brainbox.PostChannelMessageRequest):Promise<brainbox.ChannelMessage>;
 
 export function PullOllamaModel(arg1:string):Promise<string>;
 
 export function PurgeBackup(arg1:string):Promise<void>;
 
+export function RestartBrainboxAPI():Promise<void>;
+
 export function RestoreProfile(arg1:string):Promise<void>;
+
+export function RunPlaybook(arg1:string):Promise<brainbox.Playbook>;
 
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
 
@@ -108,8 +132,6 @@ export function SetConfig(arg1:string,arg2:string,arg3:string):Promise<void>;
 export function SetServiceConfig(arg1:string,arg2:boolean,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 
 export function SetTheme(arg1:string):Promise<void>;
-
-export function StartPipelineRun(arg1:string,arg2:Record<string, any>):Promise<brainbox.PipelineRun>;
 
 export function StartService(arg1:string):Promise<void>;
 

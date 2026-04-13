@@ -39,6 +39,21 @@ type ContainerMetrics struct {
 	Uptime string  `json:"uptime"`
 }
 
+// MetricsSample is one data point in the aggregate metrics history ring buffer.
+type MetricsSample struct {
+	Timestamp  float64 `json:"ts"`
+	AgentCount int     `json:"agent_count"`
+	TotalCPU   float64 `json:"total_cpu"`
+	TotalMem   int64   `json:"total_mem"`
+}
+
+// SessionMetricsSample is one per-session data point in the metrics history.
+type SessionMetricsSample struct {
+	Timestamp  float64 `json:"ts"`
+	MemUsage   int64   `json:"mem_usage"`
+	CPUPercent float64 `json:"cpu_percent"`
+}
+
 // GetLangfuseHealth checks the LangFuse service health.
 func (c *Client) GetLangfuseHealth() (HealthStatus, error) {
 	var h HealthStatus
@@ -95,4 +110,22 @@ func (c *Client) GetContainerMetrics() ([]ContainerMetrics, error) {
 		return nil, err
 	}
 	return metrics, nil
+}
+
+// GetMetricsHistory returns the aggregate metrics ring buffer (last hour at 10 s resolution).
+func (c *Client) GetMetricsHistory() ([]MetricsSample, error) {
+	var samples []MetricsSample
+	if err := c.get("/api/metrics/history", &samples); err != nil {
+		return nil, err
+	}
+	return samples, nil
+}
+
+// GetSessionsMetricsHistory returns per-session metrics ring buffers keyed by session name.
+func (c *Client) GetSessionsMetricsHistory() (map[string][]SessionMetricsSample, error) {
+	var result map[string][]SessionMetricsSample
+	if err := c.get("/api/metrics/sessions/history", &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }

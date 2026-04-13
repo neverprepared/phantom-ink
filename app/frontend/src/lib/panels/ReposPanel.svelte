@@ -3,10 +3,21 @@
   import { onMount } from 'svelte';
   import { notifications } from '../notifications.svelte';
   import { profileState } from '../stores.svelte';
+  import { brainboxEvents } from '../events.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Modal from '../components/Modal.svelte';
   import ProfilePicker from '../components/ProfilePicker.svelte';
 
+  interface Worktree {
+    id: string;
+    repo_name: string;
+    branch: string;
+    worktree_path: string;
+    session_name?: string;
+    status: string; // "ready", "in_use", "error"
+    created_at: number;
+    error?: string;
+  }
 
   let allRepos = $state<any[]>([]);
   let loading = $state(true);
@@ -18,10 +29,17 @@
   let selectedProfile = $state('');
   let isAdding = $state(false);
 
+  // Worktree state
+  let worktrees = $state<Record<string, Worktree[]>>({});       // repo_name -> worktrees
+  let expandedRepos = $state<Set<string>>(new Set());
+  let newBranch = $state<Record<string, string>>({});            // repo_name -> branch input
+  let creatingWorktree = $state<Record<string, boolean>>({});
+  let launchingSession = $state<Record<string, boolean>>({});    // worktree_id -> loading
+  let confirmDeleteWt = $state<string | null>(null);             // worktree id
+
   let activeProfile = $derived(profileState.active);
   let profiles = $derived(profileState.profiles);
 
-  // Filter: active profile shows only that profile's repos; "all" shows everything
   let filteredRepos = $derived.by(() => {
     if (!activeProfile) return allRepos;
     return allRepos.filter(r => {
@@ -30,7 +48,6 @@
     });
   });
 
-  // Group repos by profile for display
   let groupedRepos = $derived.by(() => {
     const groups: Record<string, any[]> = {};
     for (const r of filteredRepos) {
@@ -38,6 +55,22 @@
       (groups[key] ??= []).push(r);
     }
     return groups;
+  });
+
+  // SSE: reload worktrees on relevant events
+  $effect(() => {
+    const lastEvent = brainboxEvents.last;
+    if (!lastEvent) return;
+    try {
+      const parsed = typeof lastEvent === 'string' ? JSON.parse(lastEvent) : lastEvent;
+      const action = parsed?.action;
+      if (action === 'worktree.created' || action === 'worktree.deleted' || action === 'worktree.updated') {
+        const repoName = parsed?.data?.repo_name;
+        if (repoName && expandedRepos.has(repoName)) {
+          loadWorktrees(repoName);
+        }
+      }
+    } catch {}
   });
 
   async function refresh() {
@@ -49,6 +82,72 @@
       console.error('Failed to fetch repos:', err);
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadWorktrees(repoName: string) {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const result = await a.ListWorktrees(repoName);
+      worktrees = { ...worktrees, [repoName]: result ?? [] };
+    } catch (err) {
+      console.error('Failed to fetch worktrees:', err);
+    }
+  }
+
+  function toggleExpand(repoName: string) {
+    const next = new Set(expandedRepos);
+    if (next.has(repoName)) {
+      next.delete(repoName);
+    } else {
+      next.add(repoName);
+      loadWorktrees(repoName);
+    }
+    expandedRepos = next;
+  }
+
+  async function createWorktree(repoName: string) {
+    const branch = (newBranch[repoName] ?? '').trim();
+    if (!branch) return;
+    creatingWorktree = { ...creatingWorktree, [repoName]: true };
+    const a = await getApi();
+    if (!a) { creatingWorktree = { ...creatingWorktree, [repoName]: false }; return; }
+    try {
+      await a.CreateWorktree({ repo_name: repoName, branch });
+      newBranch = { ...newBranch, [repoName]: '' };
+      await loadWorktrees(repoName);
+    } catch (err: any) {
+      notifications.error(`Failed to create worktree: ${err?.message ?? err}`);
+    } finally {
+      creatingWorktree = { ...creatingWorktree, [repoName]: false };
+    }
+  }
+
+  async function deleteWorktree(id: string, repoName: string) {
+    confirmDeleteWt = null;
+    const a = await getApi();
+    if (!a) return;
+    try {
+      await a.DeleteWorktree(id);
+      await loadWorktrees(repoName);
+    } catch (err: any) {
+      notifications.error(`Failed to delete worktree: ${err?.message ?? err}`);
+    }
+  }
+
+  async function launchSession(wt: Worktree) {
+    launchingSession = { ...launchingSession, [wt.id]: true };
+    const a = await getApi();
+    if (!a) { launchingSession = { ...launchingSession, [wt.id]: false }; return; }
+    try {
+      const resp = await a.CreateWorktreeSession(wt.id);
+      notifications.success(`Session started: ${resp.session}`);
+      await loadWorktrees(wt.repo_name);
+    } catch (err: any) {
+      notifications.error(`Failed to launch session: ${err?.message ?? err}`);
+    } finally {
+      launchingSession = { ...launchingSession, [wt.id]: false };
     }
   }
 
@@ -96,6 +195,12 @@
       notifications.error(`Failed to remove: ${err}`);
     }
   }
+
+  function wtStatusClass(status: string) {
+    if (status === 'in_use') return 'wt-in-use';
+    if (status === 'error') return 'wt-error';
+    return 'wt-ready';
+  }
 </script>
 
 <div class="panel" aria-busy={loading}>
@@ -118,9 +223,14 @@
         {#each repos as repo (repo.name)}
           {@const mq = repo.merge_queue_enabled}
           {@const ps = repo.pr_shepherd_enabled}
-          <div class="row">
+          {@const expanded = expandedRepos.has(repo.name)}
+          {@const repoWorktrees = worktrees[repo.name] ?? []}
+          <div class="row" class:expanded>
             <div class="row-main">
               <div class="row-title">
+                <button class="expand-btn" onclick={() => toggleExpand(repo.name)} title={expanded ? 'Collapse' : 'Expand worktrees'}>
+                  {expanded ? '▼' : '▶'}
+                </button>
                 <button class="repo-name" onclick={() => openInBrowser(repo.url)}>{repo.name}</button>
                 {#if !activeProfile}
                   <span class="scope-badge">{repo.workspace_profile}</span>
@@ -134,6 +244,61 @@
             </div>
             <button class="btn-remove" onclick={() => handleDelete(repo.name)}>remove</button>
           </div>
+
+          {#if expanded}
+            <div class="worktrees-section">
+              <!-- New worktree input -->
+              <div class="wt-new-row">
+                <input
+                  class="wt-branch-input"
+                  type="text"
+                  placeholder="branch name (e.g. feature/my-task)"
+                  bind:value={newBranch[repo.name]}
+                  onkeydown={(e) => e.key === 'Enter' && createWorktree(repo.name)}
+                />
+                <button
+                  class="btn-wt-add"
+                  onclick={() => createWorktree(repo.name)}
+                  disabled={creatingWorktree[repo.name] || !(newBranch[repo.name] ?? '').trim()}
+                >
+                  {creatingWorktree[repo.name] ? '…' : '+ worktree'}
+                </button>
+              </div>
+
+              {#if repoWorktrees.length === 0}
+                <div class="wt-empty">No worktrees — create one above</div>
+              {:else}
+                {#each repoWorktrees as wt (wt.id)}
+                  <div class="wt-row">
+                    <span class="wt-dot {wtStatusClass(wt.status)}"></span>
+                    <span class="wt-branch">{wt.branch}</span>
+                    <span class="wt-status-label {wtStatusClass(wt.status)}">{wt.status}</span>
+                    {#if wt.session_name}
+                      <span class="wt-session">{wt.session_name}</span>
+                    {/if}
+                    <div class="wt-actions">
+                      {#if confirmDeleteWt === wt.id}
+                        <span class="wt-confirm-label">delete?</span>
+                        <button class="btn-wt-confirm-yes" onclick={() => deleteWorktree(wt.id, repo.name)}>yes</button>
+                        <button class="btn-wt-cancel" onclick={() => (confirmDeleteWt = null)}>no</button>
+                      {:else}
+                        {#if wt.status !== 'in_use'}
+                          <button
+                            class="btn-wt-launch"
+                            onclick={() => launchSession(wt)}
+                            disabled={launchingSession[wt.id]}
+                          >
+                            {launchingSession[wt.id] ? '…' : 'Launch'}
+                          </button>
+                        {/if}
+                        <button class="btn-wt-delete" onclick={() => (confirmDeleteWt = wt.id)}>✕</button>
+                      {/if}
+                    </div>
+                  </div>
+                {/each}
+              {/if}
+            </div>
+          {/if}
         {/each}
       </div>
     {/each}
@@ -228,7 +393,7 @@
     border-radius: 9999px;
   }
 
-  .list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+  .list { display: flex; flex-direction: column; gap: 0; margin-bottom: 16px; }
 
   .row {
     display: flex;
@@ -238,6 +403,13 @@
     border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-lg);
     padding: 12px 14px;
+    margin-bottom: 4px;
+  }
+  .row.expanded {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    border-bottom-color: transparent;
+    margin-bottom: 0;
   }
 
   .row-main { flex: 1; min-width: 0; }
@@ -248,6 +420,18 @@
     gap: 8px;
     margin-bottom: 6px;
   }
+
+  .expand-btn {
+    background: none;
+    border: none;
+    padding: 0 2px;
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    cursor: pointer;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+  .expand-btn:hover { color: var(--color-text-primary); }
 
   .repo-name {
     font-size: 14px;
@@ -311,6 +495,152 @@
   }
   .btn-remove:hover { background: rgba(239, 68, 68, 0.15); }
 
+  /* Worktrees section */
+  .worktrees-section {
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-primary);
+    border-top: none;
+    border-bottom-left-radius: var(--radius-lg);
+    border-bottom-right-radius: var(--radius-lg);
+    padding: 10px 14px 12px;
+    margin-bottom: 4px;
+  }
+
+  .wt-new-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .wt-branch-input {
+    flex: 1;
+    padding: 5px 9px;
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    color: var(--color-text-primary);
+    font-size: 12px;
+    font-family: var(--font-mono, monospace);
+  }
+
+  .btn-wt-add {
+    padding: 5px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    background: rgba(59, 130, 246, 0.08);
+    color: var(--color-info);
+    font-size: 12px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .btn-wt-add:hover:not(:disabled) { background: rgba(59, 130, 246, 0.15); }
+  .btn-wt-add:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .wt-empty {
+    font-size: 12px;
+    color: var(--color-text-tertiary);
+    padding: 4px 0;
+  }
+
+  .wt-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    border-top: 1px solid var(--color-border-primary);
+  }
+  .wt-row:first-of-type { border-top: none; }
+
+  .wt-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .wt-dot.wt-ready   { background: #6ee7b7; }
+  .wt-dot.wt-in-use  { background: var(--color-info); }
+  .wt-dot.wt-error   { background: #f87171; }
+
+  .wt-branch {
+    font-size: 12px;
+    font-family: var(--font-mono, monospace);
+    color: var(--color-text-primary);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .wt-status-label {
+    font-size: 10px;
+    flex-shrink: 0;
+  }
+  .wt-status-label.wt-ready   { color: #6ee7b7; }
+  .wt-status-label.wt-in-use  { color: var(--color-info); }
+  .wt-status-label.wt-error   { color: #f87171; }
+
+  .wt-session {
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    font-family: var(--font-mono, monospace);
+    flex-shrink: 0;
+  }
+
+  .wt-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .btn-wt-launch {
+    padding: 3px 10px;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    background: rgba(59, 130, 246, 0.08);
+    color: var(--color-info);
+    font-size: 11px;
+  }
+  .btn-wt-launch:hover:not(:disabled) { background: rgba(59, 130, 246, 0.15); }
+  .btn-wt-launch:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .btn-wt-delete {
+    background: none;
+    border: none;
+    color: var(--color-text-tertiary);
+    font-size: 12px;
+    padding: 2px 4px;
+    cursor: pointer;
+    border-radius: 3px;
+  }
+  .btn-wt-delete:hover { color: #f87171; background: rgba(239, 68, 68, 0.1); }
+
+  .wt-confirm-label {
+    font-size: 11px;
+    color: var(--color-text-secondary);
+  }
+
+  .btn-wt-confirm-yes {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    background: rgba(239, 68, 68, 0.1);
+    color: #f87171;
+    cursor: pointer;
+  }
+
+  .btn-wt-cancel {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    border: 1px solid var(--color-border-primary);
+    background: none;
+    color: var(--color-text-tertiary);
+    cursor: pointer;
+  }
+
   /* Modal */
   h2 { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
   .modal-sub { font-size: 12px; color: var(--color-text-muted); margin-bottom: 20px; }
@@ -333,7 +663,22 @@
   }
   .checkbox input[type="checkbox"] { width: auto; }
 
-  /* Profile picker */
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 20px;
+  }
+
+  .btn-cancel {
+    background: none;
+    border: 1px solid var(--color-border-primary);
+    color: var(--color-text-secondary);
+    padding: 7px 14px;
+    border-radius: var(--radius-md);
+    font-size: 13px;
+  }
+
   .btn-submit {
     background: rgba(59, 130, 246, 0.1);
     border: 1px solid rgba(59, 130, 246, 0.3);

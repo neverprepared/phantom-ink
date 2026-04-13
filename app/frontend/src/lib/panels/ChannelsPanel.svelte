@@ -47,6 +47,12 @@
   let myName = $state('user');
   let isSending = $state(false);
   let isCompleting = $state(false);
+  let confirmDeleteId = $state<string | null>(null);
+  let selectedIds = $state<Set<string>>(new Set());
+  let isBatchDeleting = $state(false);
+
+  const allSelected = $derived(channels.length > 0 && channels.every(c => selectedIds.has(c.id)));
+  const someSelected = $derived(selectedIds.size > 0);
 
   // Create channel modal
   let showCreateModal = $state(false);
@@ -235,11 +241,68 @@
     }
   }
 
+  function requestDelete(ch: Channel, e: MouseEvent) {
+    e.stopPropagation();
+    confirmDeleteId = ch.id;
+  }
+
+  function cancelDelete(e: MouseEvent) {
+    e.stopPropagation();
+    confirmDeleteId = null;
+  }
+
+  async function confirmDelete(ch: Channel, e: MouseEvent) {
+    e.stopPropagation();
+    confirmDeleteId = null;
+    const a = await getApi();
+    if (!a) return;
+    try {
+      await a.DeleteChannel(ch.id);
+      notifications.success(`Channel "${ch.name}" deleted`);
+      if (selected?.id === ch.id) { selected = null; messages = []; lastMessageId = null; }
+      await loadChannels();
+    } catch (err: any) {
+      notifications.error(`Failed to delete channel: ${err}`);
+    }
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
+  }
+
+  function toggleSelect(id: string) {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    selectedIds = next;
+  }
+
+  function toggleSelectAll() {
+    selectedIds = allSelected ? new Set() : new Set(channels.map(c => c.id));
+  }
+
+  async function handleBatchDelete() {
+    if (selectedIds.size === 0 || isBatchDeleting) return;
+    isBatchDeleting = true;
+    const a = await getApi();
+    if (!a) { isBatchDeleting = false; return; }
+    const ids = [...selectedIds];
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await a.DeleteChannel(id);
+        if (selected?.id === id) { selected = null; messages = []; lastMessageId = null; }
+      } catch {
+        failed++;
+      }
+    }
+    selectedIds = new Set();
+    isBatchDeleting = false;
+    if (failed > 0) notifications.error(`${failed} channel(s) failed to delete`);
+    else notifications.success(`${ids.length} channel(s) deleted`);
+    await loadChannels();
   }
 
   function formatTime(ts: number) {
@@ -251,10 +314,19 @@
   <!-- Left: channel list -->
   <div class="channel-list">
     <div class="list-header">
-      <span class="list-title">Channels</span>
-      <button class="btn-icon" onclick={openCreateModal} title="New channel">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-      </button>
+      {#if someSelected}
+        <input type="checkbox" class="select-all-cb" checked={allSelected} onclick={toggleSelectAll} title="Select all" />
+        <span class="list-title">{selectedIds.size} selected</span>
+        <button class="btn-batch-delete" onclick={handleBatchDelete} disabled={isBatchDeleting} title="Delete selected">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          {isBatchDeleting ? 'Deleting…' : 'Delete'}
+        </button>
+      {:else}
+        <span class="list-title">Channels</span>
+        <button class="btn-icon" onclick={openCreateModal} title="New channel">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        </button>
+      {/if}
     </div>
 
     {#if loading}
@@ -264,16 +336,33 @@
     {:else}
       <ul class="channel-items">
         {#each channels as ch (ch.id)}
-          <li>
-            <button
-              class="channel-item"
-              class:active={selected?.id === ch.id}
-              onclick={() => selectChannel(ch)}
-            >
-              <span class="status-dot" class:completed={ch.status === 'completed'}></span>
-              <span class="channel-name">{ch.name}</span>
-              <span class="participant-count">{ch.participants.length}</span>
-            </button>
+          <li class="channel-item-row" class:row-selecting={someSelected}>
+            <input
+              type="checkbox"
+              class="row-cb"
+              checked={selectedIds.has(ch.id)}
+              onclick={(e) => { e.stopPropagation(); toggleSelect(ch.id); }}
+            />
+            {#if confirmDeleteId === ch.id}
+              <div class="delete-confirm">
+                <span>Delete?</span>
+                <button class="btn-confirm-yes" onclick={(e) => confirmDelete(ch, e)}>Yes</button>
+                <button class="btn-confirm-no" onclick={cancelDelete}>No</button>
+              </div>
+            {:else}
+              <button
+                class="channel-item"
+                class:active={selected?.id === ch.id}
+                onclick={() => selectChannel(ch)}
+              >
+                <span class="status-dot" class:completed={ch.status === 'completed'}></span>
+                <span class="channel-name">{ch.name}</span>
+                <span class="participant-count">{ch.participants.length}</span>
+              </button>
+              <button class="btn-delete-channel" onclick={(e) => requestDelete(ch, e)} title="Delete channel">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+              </button>
+            {/if}
           </li>
         {/each}
       </ul>
@@ -468,11 +557,117 @@
     padding: 8px;
   }
 
+  .channel-item-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .row-cb {
+    flex-shrink: 0;
+    margin: 0 2px 0 6px;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.1s;
+  }
+
+  .channel-item-row:hover .row-cb,
+  .channel-item-row.row-selecting .row-cb {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .select-all-cb {
+    flex-shrink: 0;
+    margin: 0 2px 0 6px;
+    cursor: pointer;
+  }
+
+  .btn-batch-delete {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--color-error, #ef4444);
+    color: #fff;
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .btn-batch-delete:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .channel-item-row:not(:hover):not(.row-selecting) .btn-delete-channel {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .delete-confirm {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--color-text-secondary);
+  }
+
+  .delete-confirm span {
+    flex: 1;
+  }
+
+  .btn-confirm-yes {
+    padding: 2px 8px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--color-error, #ef4444);
+    color: #fff;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .btn-confirm-no {
+    padding: 2px 8px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-tertiary, rgba(255,255,255,0.08));
+    color: var(--color-text-secondary);
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .btn-delete-channel {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--color-text-tertiary);
+    transition: opacity 0.1s, color 0.1s, background 0.1s;
+  }
+
+  .btn-delete-channel:hover {
+    color: var(--color-error, #ef4444);
+    background: rgba(239, 68, 68, 0.1);
+  }
+
   .channel-item {
     display: flex;
     align-items: center;
     gap: 8px;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     padding: 8px 10px;
     border: none;
     background: none;

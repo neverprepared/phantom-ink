@@ -172,6 +172,7 @@ class Repository(BaseModel):
     upstream_url: str | None = None
     workspace_home: str | None = None  # Caller's workspace home (for credential mounts)
     workspace_profile: str | None = None  # Caller's workspace profile name
+    local_path_override: str | None = None  # Override for local checkout path; default: {workspace_home}/code/{name}/
 
 
 # ---------------------------------------------------------------------------
@@ -281,3 +282,38 @@ class Channel(BaseModel):
     created_at: int = Field(default_factory=_now_ms)
     completed_at: int | None = None
     completed_by: str | None = None
+
+
+class PlaybookTask(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
+    index: int
+    content: str  # the raw checklist item text — sent as the agent prompt
+    status: Literal["pending", "running", "completed", "failed"] = "pending"
+    session_name: str | None = None  # ephemeral session that ran this task
+    output: str | None = None
+    error: str | None = None
+    started_at: int | None = None
+    finished_at: int | None = None
+
+
+class Worktree(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
+    repo_name: str  # references Repository.name
+    branch: str  # git branch name
+    worktree_path: str  # absolute host path
+    session_name: str | None = None  # associated brainbox session (None = available)
+    status: Literal["ready", "in_use", "error"] = "ready"
+    created_at: int = Field(default_factory=_now_ms)
+    error: str | None = None
+
+
+class Playbook(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
+    name: str
+    markdown: str  # raw user-supplied markdown
+    tasks: list[PlaybookTask] = Field(default_factory=list)
+    status: Literal["idle", "running", "completed", "failed", "cancelled"] = "idle"
+    workspace_profile: str = "global"  # profile name or "global" for all profiles
+    created_at: int = Field(default_factory=_now_ms)
+    started_at: int | None = None
+    finished_at: int | None = None

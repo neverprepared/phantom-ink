@@ -75,26 +75,6 @@ func (a *App) DeleteRepo(name string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Pipelines
-// ---------------------------------------------------------------------------
-
-func (a *App) ListPipelines() ([]brainbox.Pipeline, error) {
-	return a.client.ListPipelines()
-}
-
-func (a *App) ListPipelineRuns() ([]brainbox.PipelineRun, error) {
-	return a.client.ListPipelineRuns()
-}
-
-func (a *App) StartPipelineRun(name string, params map[string]interface{}) (brainbox.PipelineRun, error) {
-	return a.client.StartPipelineRun(name, params)
-}
-
-func (a *App) CancelPipelineRun(runID string) error {
-	return a.client.CancelPipelineRun(runID)
-}
-
-// ---------------------------------------------------------------------------
 // Artifacts
 // ---------------------------------------------------------------------------
 
@@ -120,6 +100,14 @@ func (a *App) GetLangfuseHealth() (brainbox.HealthStatus, error) {
 
 func (a *App) GetContainerMetrics() ([]brainbox.ContainerMetrics, error) {
 	return a.client.GetContainerMetrics()
+}
+
+func (a *App) GetMetricsHistory() ([]brainbox.MetricsSample, error) {
+	return a.client.GetMetricsHistory()
+}
+
+func (a *App) GetSessionsMetricsHistory() (map[string][]brainbox.SessionMetricsSample, error) {
+	return a.client.GetSessionsMetricsHistory()
 }
 
 func (a *App) GetSessionTraces(sessionName string, limit int) ([]brainbox.Trace, error) {
@@ -158,4 +146,64 @@ func (a *App) PostChannelMessage(id string, req brainbox.PostChannelMessageReque
 // CompleteChannel signals that a channel discussion is complete.
 func (a *App) CompleteChannel(id string, req brainbox.CompleteChannelRequest) (brainbox.Channel, error) {
 	return a.client.CompleteChannel(id, req)
+}
+
+// DeleteChannel deletes a channel and all its messages.
+func (a *App) DeleteChannel(id string) error {
+	return a.client.DeleteChannel(id)
+}
+
+// ListPlaybooks returns playbooks, optionally filtered by profile.
+func (a *App) ListPlaybooks(profile string) ([]brainbox.Playbook, error) {
+	return a.client.ListPlaybooks(profile)
+}
+
+// GetPlaybook returns a single playbook by ID.
+func (a *App) GetPlaybook(id string) (brainbox.Playbook, error) {
+	return a.client.GetPlaybook(id)
+}
+
+// CreatePlaybook creates a new playbook from markdown.
+func (a *App) CreatePlaybook(req brainbox.CreatePlaybookRequest) (brainbox.Playbook, error) {
+	return a.client.CreatePlaybook(req)
+}
+
+// DeletePlaybook deletes a playbook (cancels it first if running).
+func (a *App) DeletePlaybook(id string) error {
+	return a.client.DeletePlaybook(id)
+}
+
+// RunPlaybook starts sequential execution of a playbook.
+func (a *App) RunPlaybook(id string) (brainbox.Playbook, error) {
+	return a.client.RunPlaybook(id)
+}
+
+// CancelPlaybook cancels a running playbook.
+func (a *App) CancelPlaybook(id string) error {
+	return a.client.CancelPlaybook(id)
+}
+
+// ListWorktrees returns all worktrees, optionally filtered by repo name.
+func (a *App) ListWorktrees(repo string) ([]brainbox.Worktree, error) {
+	return a.client.ListWorktrees(repo)
+}
+
+// GetWorktree returns a single worktree by ID.
+func (a *App) GetWorktree(id string) (brainbox.Worktree, error) {
+	return a.client.GetWorktree(id)
+}
+
+// CreateWorktree creates a new worktree for a repo branch.
+func (a *App) CreateWorktree(req brainbox.CreateWorktreeRequest) (brainbox.Worktree, error) {
+	return a.client.CreateWorktree(req)
+}
+
+// DeleteWorktree removes a worktree from disk and deregisters it.
+func (a *App) DeleteWorktree(id string) error {
+	return a.client.DeleteWorktree(id)
+}
+
+// CreateWorktreeSession starts a brainbox session mounted on the given worktree.
+func (a *App) CreateWorktreeSession(id string) (brainbox.WorktreeSessionResponse, error) {
+	return a.client.CreateWorktreeSession(id)
 }

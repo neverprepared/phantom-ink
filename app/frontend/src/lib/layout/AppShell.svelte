@@ -8,10 +8,10 @@
   import SessionsPanel from '../panels/SessionsPanel.svelte';
   import HubPanel from '../panels/HubPanel.svelte';
   import ReposPanel from '../panels/ReposPanel.svelte';
-  import PipelinesPanel from '../panels/PipelinesPanel.svelte';
   import ServicesPanel from '../panels/ServicesPanel.svelte';
   import ObservabilityPanel from '../panels/ObservabilityPanel.svelte';
   import ChannelsPanel from '../panels/ChannelsPanel.svelte';
+  import PlaybooksPanel from '../panels/PlaybooksPanel.svelte';
   import EventFeedPanel from '../panels/EventFeedPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
 </script>
@@ -27,14 +27,14 @@
         <HubPanel />
       {:else if currentPanel.value === 'repos'}
         <ReposPanel />
-      {:else if currentPanel.value === 'pipelines'}
-        <PipelinesPanel />
       {:else if currentPanel.value === 'integrations'}
         <ServicesPanel />
       {:else if currentPanel.value === 'observability'}
         <ObservabilityPanel />
       {:else if currentPanel.value === 'channels'}
         <ChannelsPanel />
+      {:else if currentPanel.value === 'playbooks'}
+        <PlaybooksPanel />
       {:else if currentPanel.value === 'events'}
         <EventFeedPanel />
       {:else if currentPanel.value === 'settings'}

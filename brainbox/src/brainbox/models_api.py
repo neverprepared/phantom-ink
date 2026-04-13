@@ -210,12 +210,6 @@ class OllamaPullRequest(BaseModel):
     name: str = Field(..., description="Model name to pull (e.g. 'llama3.2')")
 
 
-class StartPipelineRunRequest(BaseModel):
-    """Request model for POST /api/pipelines/{name}/run endpoint."""
-
-    params: dict = Field(default_factory=dict, description="Parameters passed to pipeline steps")
-
-
 # ---------------------------------------------------------------------------
 # Channel request models
 # ---------------------------------------------------------------------------
@@ -254,3 +248,18 @@ class CompleteChannelRequest(BaseModel):
 
     by: str = Field(..., description="Name of participant signalling completion")
     reason: str | None = Field(None, description="Optional reason / summary")
+
+
+class CreatePlaybookRequest(BaseModel):
+    """Request model for POST /api/hub/playbooks."""
+
+    name: str = Field(..., min_length=1, max_length=128, description="Playbook name")
+    markdown: str = Field(..., min_length=1, description="Markdown with - [ ] checklist items")
+    workspace_profile: str = Field("global", description="Profile scope, or 'global' for all profiles")
+
+
+class CreateWorktreeRequest(BaseModel):
+    """Request model for POST /api/hub/worktrees."""
+
+    repo_name: str = Field(..., min_length=1, description="Repository name (must be registered)")
+    branch: str = Field(..., min_length=1, max_length=128, description="Git branch name to create")

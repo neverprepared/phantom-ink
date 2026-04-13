@@ -241,6 +241,22 @@ export namespace brainbox {
 		    return a;
 		}
 	}
+	export class CreatePlaybookRequest {
+	    name: string;
+	    markdown: string;
+	    workspace_profile?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CreatePlaybookRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.markdown = source["markdown"];
+	        this.workspace_profile = source["workspace_profile"];
+	    }
+	}
 	export class CreateSessionRequest {
 	    name: string;
 	    role?: string;
@@ -281,6 +297,20 @@ export namespace brainbox {
 	        this.task = source["task"];
 	        this.ports = source["ports"];
 	        this.docker_host = source["docker_host"];
+	    }
+	}
+	export class CreateWorktreeRequest {
+	    repo_name: string;
+	    branch: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CreateWorktreeRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.repo_name = source["repo_name"];
+	        this.branch = source["branch"];
 	    }
 	}
 	export class HealthStatus {
@@ -413,6 +443,24 @@ export namespace brainbox {
 	        this.timestamp = source["timestamp"];
 	    }
 	}
+	export class MetricsSample {
+	    ts: number;
+	    agent_count: number;
+	    total_cpu: number;
+	    total_mem: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MetricsSample(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ts = source["ts"];
+	        this.agent_count = source["agent_count"];
+	        this.total_cpu = source["total_cpu"];
+	        this.total_mem = source["total_mem"];
+	    }
+	}
 	export class OllamaModel {
 	    name: string;
 	    size: number;
@@ -431,44 +479,81 @@ export namespace brainbox {
 	        this.digest = source["digest"];
 	    }
 	}
-	export class Pipeline {
-	    name: string;
-	    description: string;
-	    steps: any;
-	
-	    static createFrom(source: any = {}) {
-	        return new Pipeline(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.description = source["description"];
-	        this.steps = source["steps"];
-	    }
-	}
-	export class PipelineRun {
+	export class PlaybookTask {
 	    id: string;
-	    pipeline: string;
+	    index: number;
+	    content: string;
 	    status: string;
-	    started_at: string;
-	    finished_at: string;
-	    error: string;
+	    session_name?: string;
+	    output?: string;
+	    error?: string;
+	    started_at?: number;
+	    finished_at?: number;
 	
 	    static createFrom(source: any = {}) {
-	        return new PipelineRun(source);
+	        return new PlaybookTask(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
-	        this.pipeline = source["pipeline"];
+	        this.index = source["index"];
+	        this.content = source["content"];
 	        this.status = source["status"];
+	        this.session_name = source["session_name"];
+	        this.output = source["output"];
+	        this.error = source["error"];
 	        this.started_at = source["started_at"];
 	        this.finished_at = source["finished_at"];
-	        this.error = source["error"];
 	    }
 	}
+	export class Playbook {
+	    id: string;
+	    name: string;
+	    markdown: string;
+	    tasks: PlaybookTask[];
+	    status: string;
+	    workspace_profile: string;
+	    created_at: number;
+	    started_at?: number;
+	    finished_at?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Playbook(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.markdown = source["markdown"];
+	        this.tasks = this.convertValues(source["tasks"], PlaybookTask);
+	        this.status = source["status"];
+	        this.workspace_profile = source["workspace_profile"];
+	        this.created_at = source["created_at"];
+	        this.started_at = source["started_at"];
+	        this.finished_at = source["finished_at"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class PostChannelMessageRequest {
 	    from_participant: string;
 	    content: string;
@@ -621,17 +706,57 @@ export namespace brainbox {
 	        this.target_branch = source["target_branch"];
 	    }
 	}
+	export class Worktree {
+	    id: string;
+	    repo_name: string;
+	    branch: string;
+	    worktree_path: string;
+	    session_name?: string;
+	    status: string;
+	    created_at: number;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Worktree(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.repo_name = source["repo_name"];
+	        this.branch = source["branch"];
+	        this.worktree_path = source["worktree_path"];
+	        this.session_name = source["session_name"];
+	        this.status = source["status"];
+	        this.created_at = source["created_at"];
+	        this.error = source["error"];
+	    }
+	}
+	export class WorktreeSessionResponse {
+	    worktree_id: string;
+	    session: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorktreeSessionResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.worktree_id = source["worktree_id"];
+	        this.session = source["session"];
+	    }
+	}
 
 }
 
 export namespace main {
 	
 	export class Config {
-	    BaseURL: string;
-	    APIKey: string;
-	    ActiveProfile: string;
-	    WorkspacesRoot: string;
-	    Theme: string;
+	    base_url: string;
+	    api_key: string;
+	    active_profile: string;
+	    workspaces_root: string;
+	    theme: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -639,11 +764,11 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.BaseURL = source["BaseURL"];
-	        this.APIKey = source["APIKey"];
-	        this.ActiveProfile = source["ActiveProfile"];
-	        this.WorkspacesRoot = source["WorkspacesRoot"];
-	        this.Theme = source["Theme"];
+	        this.base_url = source["base_url"];
+	        this.api_key = source["api_key"];
+	        this.active_profile = source["active_profile"];
+	        this.workspaces_root = source["workspaces_root"];
+	        this.theme = source["theme"];
 	    }
 	}
 	export class ContainerStat {

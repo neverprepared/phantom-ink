@@ -1,24 +1,30 @@
 <script lang="ts">
   import { getApi } from '../utils/api';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import EmptyState from '../components/EmptyState.svelte';
-  import Badge from '../components/Badge.svelte';
-
+  import MetricsChart from '../components/MetricsChart.svelte';
 
   let langfuseHealth = $state<any>(null);
   let metrics = $state<any[]>([]);
+  let history = $state<any[]>([]);
   let traces = $state<any[]>([]);
   let selectedSession = $state('');
   let loading = $state(true);
   let activeTab = $state<'metrics' | 'traces'>('metrics');
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   async function refresh() {
     const a = await getApi();
     if (!a) return;
     try {
-      const [h, m] = await Promise.all([a.GetLangfuseHealth(), a.GetContainerMetrics()]);
+      const [h, m, hist] = await Promise.all([
+        a.GetLangfuseHealth(),
+        a.GetContainerMetrics(),
+        a.GetMetricsHistory(),
+      ]);
       langfuseHealth = h;
       metrics = m ?? [];
+      history = hist ?? [];
     } catch (err) {
       console.error('Observability refresh failed:', err);
     } finally {
@@ -37,13 +43,34 @@
     }
   }
 
-  onMount(() => { refresh(); });
+  onMount(() => {
+    refresh();
+    pollTimer = setInterval(refresh, 10_000);
+  });
+
+  onDestroy(() => {
+    if (pollTimer) clearInterval(pollTimer);
+  });
 
   function formatBytes(bytes: number): string {
     if (!bytes) return '–';
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   }
+
+  function fmtMB(mb: number): string {
+    if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+    return `${mb.toFixed(0)} MB`;
+  }
+
+  // Shape data for charts
+  let agentData = $derived(history.map((s: any) => ({ ts: s.ts, value: s.agent_count ?? 0 })));
+  let cpuData   = $derived(history.map((s: any) => ({ ts: s.ts, value: s.total_cpu ?? 0 })));
+  let memData   = $derived(history.map((s: any) => ({ ts: s.ts, value: (s.total_mem ?? 0) / 1024 / 1024 })));
+
+  let latestAgents = $derived(history.length ? String(history[history.length - 1].agent_count) : '–');
+  let latestCPU    = $derived(history.length ? `${history[history.length - 1].total_cpu.toFixed(1)}%` : '–');
+  let latestMem    = $derived(history.length ? formatBytes(history[history.length - 1].total_mem) : '–');
 </script>
 
 <div class="panel" aria-busy={loading}>
@@ -57,6 +84,31 @@
       {/if}
     </div>
   </header>
+
+  <!-- Trend charts -->
+  <div class="charts-row">
+    <MetricsChart
+      data={agentData}
+      label="agents"
+      current={latestAgents}
+      color="var(--color-accent)"
+      formatY={(v) => String(Math.round(v))}
+    />
+    <MetricsChart
+      data={cpuData}
+      label="total cpu"
+      current={latestCPU}
+      color="var(--color-info)"
+      formatY={(v) => `${v.toFixed(1)}%`}
+    />
+    <MetricsChart
+      data={memData}
+      label="total memory"
+      current={latestMem}
+      color="var(--color-success)"
+      formatY={fmtMB}
+    />
+  </div>
 
   <div class="tabs">
     <button class="tab" class:active={activeTab === 'metrics'} onclick={() => activeTab = 'metrics'}>
@@ -84,7 +136,7 @@
               </span>
               <span class="metric-val">
                 <span class="metric-label">MEM</span>
-                {formatBytes(m.Memory ?? m.memory_bytes ?? 0)}
+                {formatBytes(m.Memory ?? m.memory_bytes ?? m.mem_usage ?? 0)}
               </span>
               {#if m.Uptime ?? m.uptime}
                 <span class="metric-val">
@@ -147,6 +199,12 @@
     background: rgba(16, 185, 129, 0.1);
     color: #6ee7b7;
     border-color: rgba(16, 185, 129, 0.2);
+  }
+
+  .charts-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
   }
 
   .tabs {
