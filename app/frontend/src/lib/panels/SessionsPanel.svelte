@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getApi, openInBrowser } from '../utils/api';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { brainboxEvents } from '../events.svelte';
   import { notifications } from '../notifications.svelte';
   import { profileState, featureFlags } from '../stores.svelte';
@@ -8,16 +8,21 @@
   import Badge from '../components/Badge.svelte';
   import Modal from '../components/Modal.svelte';
   import ProfilePicker from '../components/ProfilePicker.svelte';
+  import MetricsChart from '../components/MetricsChart.svelte';
 
 
   let allSessions = $state<any[]>([]);
+  let tasks = $state<any[]>([]);
+  let agents = $state<any[]>([]);
   let localProcesses = $state<any[]>([]);
+  let sessionHistory = $state<Record<string, any[]>>({});
   let loading = $state(true);
   let showNewModal = $state(false);
   let terminalSession = $state<any | null>(null);
   let terminalUrl = $state('');
   let busySessions = $state<Set<string>>(new Set());
   let expandedMounts = $state<Set<string>>(new Set());
+  let metricsTimer: ReturnType<typeof setInterval> | null = null;
 
   function parseMounts(volume: string): { host: string; container: string }[] {
     if (!volume) return [];
@@ -96,18 +101,38 @@
     return localProcesses.filter(p => p.workspace_profile?.toLowerCase() === activeProfile.name.toLowerCase());
   });
 
+  // Map session name → running task, and agent name → agent def
+  let taskBySession = $derived(
+    new Map(tasks.filter(t => t.session_name).map((t: any) => [t.session_name, t]))
+  );
+  let agentByName = $derived(new Map(agents.map((a: any) => [a.name, a])));
+
   async function refresh() {
     const a = await getApi();
     if (!a) return;
     try {
-      const [sess, procs] = await Promise.all([a.GetSessions(), a.FindClaudeProcesses()]);
+      const [sess, hubState, procs] = await Promise.all([
+        a.GetSessions(),
+        a.GetHubState(),
+        a.FindClaudeProcesses(),
+      ]);
       allSessions = sess ?? [];
+      tasks = hubState?.tasks ?? [];
+      agents = hubState?.agents ?? [];
       localProcesses = procs ?? [];
     } catch (err: any) {
       console.error('Failed to fetch sessions:', err);
     } finally {
       loading = false;
     }
+  }
+
+  async function refreshMetrics() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      sessionHistory = (await a.GetSessionsMetricsHistory()) ?? {};
+    } catch { /* non-critical */ }
   }
 
   async function handleFocusTab(tty: string) {
@@ -120,7 +145,15 @@
     }
   }
 
-  onMount(() => { refresh(); });
+  onMount(() => {
+    refresh();
+    refreshMetrics();
+    metricsTimer = setInterval(refreshMetrics, 10_000);
+  });
+
+  onDestroy(() => {
+    if (metricsTimer) clearInterval(metricsTimer);
+  });
 
   $effect(() => {
     const ev = brainboxEvents.last;
@@ -185,6 +218,18 @@
       notifications.error(`Failed to delete: ${err}`);
     } finally {
       clearBusy(name);
+    }
+  }
+
+  async function handleCancelTask(taskId: string) {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      await a.CancelTask(taskId);
+      notifications.success('Task cancelled');
+      refresh();
+    } catch (err: any) {
+      notifications.error(`Failed to cancel: ${err}`);
     }
   }
 
@@ -302,6 +347,12 @@
         {@const busy = busySessions.has(session.name)}
         {@const mounts = parseMounts(session.volume ?? '')}
         {@const mountsExpanded = expandedMounts.has(session.name)}
+        {@const task = taskBySession.get(session.name)}
+        {@const agent = task ? agentByName.get(task.agent_name) : null}
+        {@const isPersistent = agent?.persistent ?? false}
+        {@const isWorktree = session.name.startsWith('wt-')}
+        {@const isPlaybook = session.name.startsWith('pb-')}
+        {@const isManual = !task && !isWorktree && !isPlaybook}
 
         <div class="session-card" class:active class:inactive={!active}>
           <div class="card-header">
@@ -311,6 +362,21 @@
             <span class="backend-badge" class:vm={backend === 'utm'}>
               {backend === 'utm' ? 'vm' : 'container'}
             </span>
+            {#if isManual}
+              <span class="manual-badge">manual</span>
+            {/if}
+            {#if isWorktree}
+              <span class="worktree-badge">worktree</span>
+            {/if}
+            {#if isPlaybook}
+              <span class="playbook-badge">playbook</span>
+            {/if}
+            {#if task}
+              <span class="task-badge">task</span>
+              {#if isPersistent}
+                <span class="persistent-badge">persistent</span>
+              {/if}
+            {/if}
             {#if !activeProfile && session.workspace_profile}
               <span class="profile-badge">{session.workspace_profile}</span>
             {/if}
@@ -324,6 +390,51 @@
               <a class="meta-url" href={session.url} target="_blank">{session.url.replace('http://', '')}</a>
             {/if}
           </div>
+
+          {#if active}
+            {@const sname = session.session_name ?? session.name}
+            {@const hist = sessionHistory[sname] ?? []}
+            {@const memData = hist.map((s: any) => ({ ts: s.ts, value: s.mem_usage / 1024 / 1024 }))}
+            {@const cpuData = hist.map((s: any) => ({ ts: s.ts, value: s.cpu_percent }))}
+            {@const latestMem = hist.length ? (() => { const v = hist[hist.length-1].mem_usage; return v < 1024*1024 ? `${(v/1024).toFixed(0)} KB` : `${(v/1024/1024).toFixed(1)} MB`; })() : '–'}
+            {@const latestCPU = hist.length ? `${hist[hist.length-1].cpu_percent.toFixed(1)}%` : '–'}
+            {#if hist.length >= 2}
+              <div class="card-charts">
+                <div class="card-chart">
+                  <div class="card-chart-label">
+                    <span>memory</span>
+                    <span class="card-chart-current">{latestMem}</span>
+                  </div>
+                  <MetricsChart
+                    data={memData}
+                    label="{sname}-mem"
+                    current={latestMem}
+                    color="var(--color-success)"
+                    formatY={(v) => `${v.toFixed(0)}MB`}
+                    width={160}
+                    height={40}
+                    compact={true}
+                  />
+                </div>
+                <div class="card-chart">
+                  <div class="card-chart-label">
+                    <span>cpu</span>
+                    <span class="card-chart-current">{latestCPU}</span>
+                  </div>
+                  <MetricsChart
+                    data={cpuData}
+                    label="{sname}-cpu"
+                    current={latestCPU}
+                    color="var(--color-info)"
+                    formatY={(v) => `${v.toFixed(1)}%`}
+                    width={160}
+                    height={40}
+                    compact={true}
+                  />
+                </div>
+              </div>
+            {/if}
+          {/if}
 
           {#if mounts.length > 0}
             <div class="card-mounts">
@@ -357,7 +468,11 @@
               {#if session.url}
                 <button class="btn-terminal" onclick={() => terminalSession = session}>terminal</button>
               {/if}
-              <button class="btn-stop" onclick={() => handleStop(session.name)}>stop</button>
+              {#if task && (task.status === 'running' || task.status === 'pending')}
+                <button class="btn-cancel" onclick={() => handleCancelTask(task.id)}>cancel</button>
+              {:else}
+                <button class="btn-stop" onclick={() => handleStop(session.name)}>stop</button>
+              {/if}
             {:else}
               <button class="btn-start" onclick={() => handleStart(session.name)}>start</button>
               <button class="btn-delete" onclick={() => handleDelete(session.name)}>delete</button>
@@ -377,6 +492,7 @@
           <div class="local-row">
             <span class="local-dot"></span>
             <span class="local-name">{proc.name}</span>
+            <span class="local-type-badge">local</span>
             {#if !activeProfile && proc.workspace_profile}
               <span class="local-profile-badge">{proc.workspace_profile}</span>
             {/if}
@@ -641,7 +757,7 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #374151;
+    background: var(--color-text-muted);
     flex-shrink: 0;
   }
   .status-dot.active {
@@ -690,6 +806,71 @@
     flex-shrink: 0;
   }
 
+  .manual-badge {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 9999px;
+    background: rgba(148, 163, 184, 0.1);
+    color: var(--color-text-secondary);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    flex-shrink: 0;
+  }
+
+  .playbook-badge {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 9999px;
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--color-accent);
+    border: 1px solid rgba(245, 158, 11, 0.2);
+    flex-shrink: 0;
+  }
+
+  .worktree-badge {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 9999px;
+    background: rgba(20, 184, 166, 0.1);
+    color: #2dd4bf;
+    border: 1px solid rgba(20, 184, 166, 0.2);
+    flex-shrink: 0;
+  }
+
+  .task-badge {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 9999px;
+    background: rgba(34, 197, 94, 0.1);
+    color: var(--color-success);
+    border: 1px solid rgba(34, 197, 94, 0.2);
+    flex-shrink: 0;
+  }
+
+  .persistent-badge {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 9999px;
+    background: rgba(168, 85, 247, 0.1);
+    color: #d8b4fe;
+    border: 1px solid rgba(168, 85, 247, 0.2);
+    flex-shrink: 0;
+  }
+
   .card-meta {
     display: flex;
     align-items: center;
@@ -709,6 +890,40 @@
     font-size: 11px;
   }
   .meta-url:hover { text-decoration: underline; }
+
+  /* Charts row inside card */
+  .card-charts {
+    margin: 6px 0 4px;
+    display: flex;
+    gap: 16px;
+  }
+
+  .card-chart {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .card-chart-label {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex-shrink: 0;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-tertiary);
+  }
+
+  .card-chart-current {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-text-primary);
+    text-transform: none;
+    letter-spacing: 0;
+  }
 
   /* Mounts section */
   .card-mounts {
@@ -795,6 +1010,17 @@
     transition: all 0.15s;
   }
   .btn-stop { color: var(--color-error); border-color: rgba(239, 68, 68, 0.3); }
+  .btn-cancel {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: var(--color-error);
+    padding: 4px 10px;
+    border-radius: var(--radius-md);
+    font-size: 11px;
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+  .btn-cancel:hover { background: rgba(239, 68, 68, 0.2); border-color: var(--color-error); }
   .btn-stop:hover, .btn-delete:hover {
     background: rgba(239, 68, 68, 0.2);
     border-color: var(--color-error);
@@ -1005,6 +1231,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .local-type-badge {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 9999px;
+    background: rgba(148, 163, 184, 0.1);
+    color: var(--color-text-secondary);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    flex-shrink: 0;
   }
 
   .local-profile-badge {

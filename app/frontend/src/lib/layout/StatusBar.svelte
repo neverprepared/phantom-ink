@@ -27,7 +27,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 0 16px;
-    background: #0d1117;
+    background: var(--color-bg-primary);
     border-top: 1px solid var(--color-border-primary);
     flex-shrink: 0;
     font-size: 11px;

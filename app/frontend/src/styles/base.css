@@ -115,3 +115,17 @@ button:disabled {
 code {
   font-family: var(--font-mono);
 }
+
+/* Loading pulse */
+@keyframes pulse-opacity {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+.loading-pulse {
+  animation: pulse-opacity 1.6s ease-in-out infinite;
+}
+
+.loading {
+  animation: pulse-opacity 1.6s ease-in-out infinite;
+}

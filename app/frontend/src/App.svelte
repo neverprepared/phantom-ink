@@ -65,10 +65,11 @@
         '1': 'dashboard',
         '2': 'sessions',
         '3': 'repos',
-        '4': 'pipelines',
-        '5': 'integrations',
-        '6': 'observability',
-        '7': 'events',
+        '4': 'integrations',
+        '5': 'observability',
+        '6': 'channels',
+        '7': 'playbooks',
+        '8': 'events',
         ',': 'settings',
       };
 

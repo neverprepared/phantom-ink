@@ -1,9 +1,26 @@
 <script lang="ts">
   import { connectionState, commandPalette, profileState } from '../stores.svelte';
 
+  import { notifications } from '../notifications.svelte';
+
   let connected = $derived(connectionState.connected);
   let profiles = $derived(profileState.profiles);
   let activeProfile = $derived(profileState.active);
+  let restarting = $state(false);
+
+  async function restartAPI() {
+    let api: any;
+    try { api = await import('../../../wailsjs/go/main/App'); } catch { return; }
+    restarting = true;
+    try {
+      await api.RestartBrainboxAPI();
+      notifications.success('API restarted');
+    } catch (err: any) {
+      notifications.error(`Restart failed: ${err}`);
+    } finally {
+      restarting = false;
+    }
+  }
 
   async function selectProfile(name: string | null) {
     let api: any;
@@ -29,7 +46,7 @@
 
 <div class="titlebar">
   <div class="titlebar-left">
-    <span class="brand">phantom-ink</span>
+    <span class="brand">PhantomInk</span>
   </div>
 
   {#if profiles.length > 0}
@@ -55,6 +72,9 @@
   {/if}
 
   <div class="titlebar-right">
+    <button class="restart-btn" onclick={restartAPI} disabled={restarting} title="Restart brainbox API" aria-label="Restart API">
+      <svg class:spinning={restarting} xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+    </button>
     <span class="conn-status" class:connected>
       <span class="conn-dot"></span>
       {connected ? 'connected' : 'disconnected'}
@@ -210,5 +230,33 @@
   .palette-btn:hover {
     background: rgba(255, 255, 255, 0.08);
     color: var(--color-text-secondary);
+  }
+
+  .restart-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: var(--color-text-tertiary);
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .restart-btn:hover {
+    color: var(--color-text-secondary);
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .restart-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .restart-btn svg.spinning {
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
   }
 </style>
