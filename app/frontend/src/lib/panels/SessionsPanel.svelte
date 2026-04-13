@@ -506,6 +506,7 @@
                     width={80}
                     height={20}
                     compact={true}
+                    strokeWidth={0.75}
                   />
                 </div>
                 <div class="card-chart">
@@ -522,6 +523,7 @@
                     width={80}
                     height={20}
                     compact={true}
+                    strokeWidth={0.75}
                   />
                 </div>
               </div>
@@ -617,6 +619,7 @@
                     width={80}
                     height={20}
                     compact={true}
+                    strokeWidth={0.75}
                   />
                 </div>
                 <div class="card-chart">
@@ -633,6 +636,7 @@
                     width={80}
                     height={20}
                     compact={true}
+                    strokeWidth={0.75}
                   />
                 </div>
               </div>

@@ -17,6 +17,7 @@
     width?: number;
     height?: number;
     compact?: boolean;  // strip axes/labels, just line+area
+    strokeWidth?: number;
     hoverIdx?: number | null;          // externally synced hover position
     onHover?: (idx: number) => void;   // called on mousemove with nearest index
     onHoverEnd?: () => void;           // called on mouseleave
@@ -31,6 +32,7 @@
     width = 300,
     height = 80,
     compact = false,
+    strokeWidth = 1.5,
     hoverIdx = undefined,
     onHover = undefined,
     onHoverEnd = undefined,
@@ -183,7 +185,7 @@
             d={pathD}
             fill="none"
             stroke={color}
-            stroke-width="1.5"
+            stroke-width={strokeWidth}
             stroke-linejoin="round"
             stroke-linecap="round"
           />
