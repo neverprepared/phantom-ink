@@ -658,7 +658,7 @@
 {/if}
 
 <style>
-  .panel { padding-bottom: 24px; }
+  .panel { padding: var(--panel-padding); }
 
   header {
     display: flex;

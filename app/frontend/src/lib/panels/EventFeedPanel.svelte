@@ -97,7 +97,7 @@
 </div>
 
 <style>
-  .panel { padding-bottom: 24px; height: 100%; display: flex; flex-direction: column; }
+  .panel { padding: var(--panel-padding); height: 100%; display: flex; flex-direction: column; box-sizing: border-box; }
   header {
     display: flex;
     justify-content: space-between;

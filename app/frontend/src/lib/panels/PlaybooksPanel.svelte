@@ -374,7 +374,7 @@
   .sidebar {
     width: 220px;
     flex-shrink: 0;
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--color-border-primary);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -385,14 +385,14 @@
     align-items: center;
     justify-content: space-between;
     padding: 12px 14px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--color-border-primary);
     flex-shrink: 0;
   }
 
   .sidebar-title {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
-    color: var(--text-secondary);
+    color: var(--color-text-tertiary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -401,17 +401,17 @@
     background: none;
     border: none;
     cursor: pointer;
-    color: var(--text-secondary);
+    color: var(--color-text-secondary);
     font-size: 18px;
     line-height: 1;
     padding: 2px 4px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
   }
-  .icon-btn:hover { background: var(--surface-hover); color: var(--text-primary); }
+  .icon-btn:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
 
   .sidebar-empty {
     padding: 24px 14px;
-    color: var(--text-muted);
+    color: var(--color-text-muted);
     font-size: 13px;
   }
 
@@ -426,10 +426,10 @@
   .playbook-item {
     padding: 10px 14px;
     cursor: pointer;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--color-border-primary);
   }
-  .playbook-item:hover { background: var(--surface-hover); }
-  .playbook-item.selected { background: var(--surface-active); }
+  .playbook-item:hover { background: var(--color-surface-hover); }
+  .playbook-item.selected { background: var(--color-nav-active-bg); }
 
   .playbook-item-row {
     display: flex;
@@ -441,7 +441,7 @@
   .playbook-name {
     font-size: 13px;
     font-weight: 500;
-    color: var(--text-primary);
+    color: var(--color-text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -450,19 +450,19 @@
   .playbook-status-badge {
     font-size: 10px;
     padding: 1px 5px;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     flex-shrink: 0;
   }
 
   .playbook-meta {
     font-size: 11px;
-    color: var(--text-muted);
+    color: var(--color-text-muted);
     margin-top: 2px;
   }
 
   .confirm-label {
     font-size: 13px;
-    color: var(--text-secondary);
+    color: var(--color-text-secondary);
     flex: 1;
   }
 
@@ -476,7 +476,7 @@
 
   .detail-header {
     padding: 16px 20px 12px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--color-border-primary);
     flex-shrink: 0;
   }
 
@@ -489,27 +489,27 @@
   .detail-title {
     font-size: 16px;
     font-weight: 600;
-    color: var(--text-primary);
+    color: var(--color-text-primary);
     margin: 0;
   }
 
   .detail-status {
     font-size: 11px;
     padding: 2px 7px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
   }
 
   .detail-profile {
     font-size: 11px;
-    color: var(--text-muted);
-    background: var(--surface-hover);
+    color: var(--color-text-muted);
+    background: var(--color-surface-hover);
     padding: 2px 7px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
   }
 
   .detail-meta {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--color-text-muted);
     margin-top: 4px;
   }
 
@@ -524,8 +524,8 @@
   }
 
   .task-row {
-    border: 1px solid var(--border);
-    border-radius: 6px;
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md);
     overflow: hidden;
   }
 
@@ -548,25 +548,25 @@
   .task-content {
     flex: 1;
     font-size: 13px;
-    color: var(--text-primary);
+    color: var(--color-text-primary);
   }
 
   .task-duration {
     font-size: 11px;
-    color: var(--text-muted);
+    color: var(--color-text-muted);
     flex-shrink: 0;
   }
 
   .task-expand {
     font-size: 10px;
-    color: var(--text-muted);
+    color: var(--color-text-muted);
     flex-shrink: 0;
   }
 
   .task-output {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--color-border-primary);
     padding: 10px 12px;
-    background: var(--surface);
+    background: var(--color-bg-tertiary);
     max-height: 200px;
     overflow-y: auto;
   }
@@ -579,26 +579,26 @@
     font-family: var(--font-mono, monospace);
   }
 
-  .task-error { color: var(--color-danger); }
+  .task-error { color: var(--color-error); }
 
   /* Status colours */
   .status-completed { background: color-mix(in srgb, var(--color-success) 15%, transparent); border-color: color-mix(in srgb, var(--color-success) 40%, transparent); color: var(--color-success); }
   .status-running   { background: color-mix(in srgb, var(--color-info) 15%, transparent); border-color: color-mix(in srgb, var(--color-info) 40%, transparent); color: var(--color-info); }
-  .status-failed    { background: color-mix(in srgb, var(--color-danger) 15%, transparent); border-color: color-mix(in srgb, var(--color-danger) 40%, transparent); color: var(--color-danger); }
+  .status-failed    { background: color-mix(in srgb, var(--color-error) 15%, transparent); border-color: color-mix(in srgb, var(--color-error) 40%, transparent); color: var(--color-error); }
   .status-cancelled { background: color-mix(in srgb, var(--color-warning) 15%, transparent); border-color: color-mix(in srgb, var(--color-warning) 40%, transparent); color: var(--color-warning); }
-  .status-pending   { color: var(--text-muted); }
+  .status-pending   { color: var(--color-text-muted); }
 
   /* Detail pane status badge (inline, not as border) */
   .detail-status.status-completed { background: color-mix(in srgb, var(--color-success) 20%, transparent); color: var(--color-success); }
   .detail-status.status-running   { background: color-mix(in srgb, var(--color-info) 20%, transparent); color: var(--color-info); }
-  .detail-status.status-failed    { background: color-mix(in srgb, var(--color-danger) 20%, transparent); color: var(--color-danger); }
+  .detail-status.status-failed    { background: color-mix(in srgb, var(--color-error) 20%, transparent); color: var(--color-error); }
   .detail-status.status-cancelled { background: color-mix(in srgb, var(--color-warning) 20%, transparent); color: var(--color-warning); }
-  .detail-status.status-idle      { background: var(--surface-hover); color: var(--text-muted); }
+  .detail-status.status-idle      { background: var(--color-surface-hover); color: var(--color-text-muted); }
 
   /* Actions */
   .detail-actions {
     padding: 12px 20px;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--color-border-primary);
     display: flex;
     gap: 8px;
     flex-shrink: 0;
@@ -606,30 +606,33 @@
 
   .btn {
     padding: 6px 14px;
-    border-radius: 5px;
+    border-radius: var(--radius-md);
     font-size: 13px;
     cursor: pointer;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text-primary);
+    border: 1px solid var(--color-border-secondary);
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
+    font-family: inherit;
   }
-  .btn:hover { background: var(--surface-hover); }
+  .btn:hover { background: var(--color-surface-active); }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  .btn-primary { background: var(--color-accent); color: white; border-color: var(--color-accent); }
+  .btn-primary { background: var(--color-accent); color: #18181b; border-color: var(--color-accent); }
   .btn-primary:hover { opacity: 0.9; }
 
-  .btn-run { background: var(--color-accent); color: white; border-color: var(--color-accent); }
-  .btn-run:hover { opacity: 0.9; }
+  .btn-run { background: rgba(245, 158, 11, 0.12); color: var(--color-accent); border-color: rgba(245, 158, 11, 0.3); }
+  .btn-run:hover { background: rgba(245, 158, 11, 0.2); }
 
-  .btn-cancel { border-color: var(--color-warning); color: var(--color-warning); }
-  .btn-danger { border-color: var(--color-danger); color: var(--color-danger); }
+  .btn-cancel { border-color: rgba(234, 179, 8, 0.3); color: var(--color-warning); background: rgba(234, 179, 8, 0.08); }
+  .btn-cancel:hover { background: rgba(234, 179, 8, 0.15); }
+  .btn-danger { border-color: rgba(239, 68, 68, 0.3); color: var(--color-error); background: rgba(239, 68, 68, 0.08); }
+  .btn-danger:hover { background: rgba(239, 68, 68, 0.15); }
 
   /* Modal */
   .modal-title {
     font-size: 15px;
     font-weight: 600;
-    color: var(--text-primary);
+    color: var(--color-text-primary);
     margin: 0 0 4px;
   }
 
@@ -644,24 +647,25 @@
     flex-direction: column;
     gap: 6px;
     font-size: 13px;
-    color: var(--text-secondary);
+    color: var(--color-text-secondary);
   }
 
   .form-input {
     padding: 7px 10px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--surface);
-    color: var(--text-primary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
     font-size: 13px;
+    font-family: inherit;
   }
 
   .form-textarea {
     padding: 7px 10px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--surface);
-    color: var(--text-primary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
     font-size: 12px;
     font-family: var(--font-mono, monospace);
     resize: vertical;
@@ -682,18 +686,19 @@
   .scope-btn {
     flex: 1;
     padding: 6px 10px;
-    border-radius: 5px;
+    border-radius: var(--radius-md);
     font-size: 12px;
     cursor: pointer;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text-secondary);
+    border: 1px solid var(--color-border-secondary);
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-secondary);
     text-align: center;
+    font-family: inherit;
   }
   .scope-btn.active {
-    border-color: var(--color-accent);
+    border-color: rgba(245, 158, 11, 0.4);
     color: var(--color-accent);
-    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+    background: rgba(245, 158, 11, 0.1);
   }
   .scope-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>

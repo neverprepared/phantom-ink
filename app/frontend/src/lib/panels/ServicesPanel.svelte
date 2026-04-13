@@ -426,7 +426,7 @@
 </div>
 
 <style>
-  .panel { padding-bottom: 24px; }
+  .panel { padding: var(--panel-padding); }
 
   /* Service card */
   .service-list { display: flex; flex-direction: column; gap: 12px; }

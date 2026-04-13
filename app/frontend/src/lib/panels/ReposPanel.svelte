@@ -346,7 +346,7 @@
 {/if}
 
 <style>
-  .panel { padding-bottom: 24px; }
+  .panel { padding: var(--panel-padding); }
   header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
   h1 { font-size: 22px; font-weight: 600; }
   .accent { color: var(--color-accent); }
