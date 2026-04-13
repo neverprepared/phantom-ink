@@ -17,6 +17,7 @@
   let localProcesses = $state<any[]>([]);
   let sessionHistory = $state<Record<string, any[]>>({});
   let history = $state<any[]>([]);
+  let localHistory = $state<Record<string, {ts: number, cpu: number, mem: number}[]>>({});
   let loading = $state(true);
   let showNewModal = $state(false);
   let terminalSession = $state<any | null>(null);
@@ -143,12 +144,25 @@
     const a = await getApi();
     if (!a) return;
     try {
-      const [sh, hist] = await Promise.all([
+      const [sh, hist, procs] = await Promise.all([
         a.GetSessionsMetricsHistory(),
         a.GetMetricsHistory(),
+        a.FindClaudeProcesses(),
       ]);
       sessionHistory = sh ?? {};
       history = hist ?? [];
+
+      // Accumulate per-process history keyed by TTY (stable within a session)
+      const now = Date.now();
+      const next = { ...localHistory };
+      for (const p of (procs ?? [])) {
+        const key = p.tty || p.pid;
+        const cpu = parseFloat(p.cpu_perc) || 0;
+        const mem = parseFloat(p.mem_mb) || 0;
+        const prev = next[key] ?? [];
+        next[key] = [...prev, { ts: now, cpu, mem }].slice(-60);
+      }
+      localHistory = next;
     } catch { /* non-critical */ }
   }
 
@@ -539,19 +553,64 @@
       <h2 class="local-heading">local agents</h2>
       <div class="local-list">
         {#each filteredLocal as proc (proc.pid)}
-          <div class="local-row">
-            <span class="local-dot"></span>
-            <span class="local-name">{proc.name}</span>
-            <span class="local-type-badge">local</span>
-            {#if !activeProfile && proc.workspace_profile}
-              <span class="local-profile-badge">{proc.workspace_profile}</span>
+          {@const lkey = proc.tty || proc.pid}
+          {@const lhist = localHistory[lkey] ?? []}
+          {@const lcpuData = lhist.map(s => ({ ts: s.ts, value: s.cpu }))}
+          {@const lmemData = lhist.map(s => ({ ts: s.ts, value: s.mem }))}
+          {@const latestLCPU = lhist.length ? `${lhist[lhist.length-1].cpu.toFixed(1)}%` : proc.cpu_perc}
+          {@const latestLMem = lhist.length ? `${lhist[lhist.length-1].mem.toFixed(0)} MB` : proc.mem_mb}
+          <div class="local-card">
+            <div class="local-row">
+              <span class="local-dot"></span>
+              <span class="local-name">{proc.name}</span>
+              <span class="local-type-badge">local</span>
+              {#if !activeProfile && proc.workspace_profile}
+                <span class="local-profile-badge">{proc.workspace_profile}</span>
+              {/if}
+              <span class="local-meta">PID {proc.pid}</span>
+              <button class="btn-focus" onclick={() => handleFocusTab(proc.tty)} title="Focus terminal tab ({proc.tty})">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                focus
+              </button>
+            </div>
+            {#if lhist.length >= 2}
+              <div class="local-charts">
+                <div class="card-chart">
+                  <div class="card-chart-label">
+                    <span>cpu</span>
+                    <span class="card-chart-current">{latestLCPU}</span>
+                  </div>
+                  <MetricsChart
+                    data={lcpuData}
+                    label="{lkey}-cpu"
+                    current={latestLCPU}
+                    color="var(--color-info)"
+                    formatY={(v) => `${v.toFixed(1)}%`}
+                    width={160}
+                    height={40}
+                    compact={true}
+                  />
+                </div>
+                <div class="card-chart">
+                  <div class="card-chart-label">
+                    <span>memory</span>
+                    <span class="card-chart-current">{latestLMem}</span>
+                  </div>
+                  <MetricsChart
+                    data={lmemData}
+                    label="{lkey}-mem"
+                    current={latestLMem}
+                    color="var(--color-success)"
+                    formatY={(v) => `${v.toFixed(0)} MB`}
+                    width={160}
+                    height={40}
+                    compact={true}
+                  />
+                </div>
+              </div>
+            {:else}
+              <div class="local-stats-text">{proc.cpu_perc} cpu &middot; {proc.mem_mb} mem</div>
             {/if}
-            <span class="local-stats">{proc.cpu_perc} cpu &middot; {proc.mem_mb} mem</span>
-            <span class="local-meta">PID {proc.pid}</span>
-            <button class="btn-focus" onclick={() => handleFocusTab(proc.tty)} title="Focus terminal tab ({proc.tty})">
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-              focus
-            </button>
           </div>
         {/each}
       </div>
@@ -1258,15 +1317,30 @@
     gap: 6px;
   }
 
-  .local-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
+  .local-card {
     background: var(--color-bg-secondary);
     border: 1px solid var(--color-border-primary);
     border-left: 3px solid var(--color-success);
     border-radius: var(--radius-xl);
     padding: 10px 14px;
+  }
+
+  .local-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .local-charts {
+    display: flex;
+    gap: 16px;
+    margin-top: 10px;
+  }
+
+  .local-stats-text {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    margin-top: 6px;
   }
 
   .local-dot {
@@ -1312,13 +1386,6 @@
     background: rgba(245, 158, 11, 0.1);
     color: var(--color-accent);
     border: 1px solid rgba(245, 158, 11, 0.2);
-    flex-shrink: 0;
-  }
-
-  .local-stats {
-    font-size: 11px;
-    color: var(--color-text-secondary);
-    font-family: var(--font-mono);
     flex-shrink: 0;
   }
 
