@@ -436,14 +436,4 @@ if result.category.value == "agent":
 
 1. ✅ Create all prompt files
 2. ✅ Test agent loading
-3. Update `CLAUDE.md` status
-4. Integrate with orchestrator
-
-## Refinement Notes
-
-> Add notes here as we build and test agents.
-
-- [ ] Initial prompts created
-- [ ] Tested with real tasks
-- [ ] Refined prompts based on results
-- [ ] Added specialized tools per agent
+3. Integrate with orchestrator

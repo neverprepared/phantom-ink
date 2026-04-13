@@ -679,14 +679,3 @@ gh repo view owner/repo --json readme -q .readme.content
 # Get issues as JSON
 gh issue list --repo owner/repo --json title,body,comments --limit 50
 ```
-
-## Refinement Notes
-
-> Track improvements as you use this skill.
-
-- [ ] README extraction tested
-- [ ] Documentation crawling working
-- [ ] Code example chunking optimized
-- [ ] Issue extraction with comments
-- [ ] Rate limiting handled
-- [ ] Authentication working

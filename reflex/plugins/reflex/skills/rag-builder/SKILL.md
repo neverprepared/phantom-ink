@@ -347,14 +347,3 @@ CHUNK_OVERLAP=50
 ## After Building
 
 1. ✅ Run tests to verify
-2. Update `CLAUDE.md` status
-3. Proceed to `skills/router-builder/SKILL.md`
-
-## Refinement Notes
-
-> Add notes here as we build and discover what works/doesn't work.
-
-- [ ] Initial implementation
-- [ ] Tested with real documents
-- [ ] Integrated with MCP config
-- [ ] Performance tuned

@@ -366,10 +366,3 @@ end run
 ```
 
 ---
-
-## Refinement Notes
-
-- [ ] Add Mail.app patterns (compose, send, search)
-- [ ] Add Music.app automation (play/pause/track info)
-- [ ] Add Terminal.app patterns (new window, run commands)
-- [ ] Add window management patterns (resize, move, tile)

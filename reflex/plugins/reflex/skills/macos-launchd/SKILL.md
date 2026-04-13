@@ -492,10 +492,3 @@ echo "Installed and loaded: $LABEL"
 ```
 
 ---
-
-## Refinement Notes
-
-- [ ] Add on-demand socket activation patterns
-- [ ] Document `WatchPaths` for file-trigger jobs
-- [ ] Add `QueueDirectories` for mail queue patterns
-- [ ] Add SIP/TCC implications for daemons accessing protected locations

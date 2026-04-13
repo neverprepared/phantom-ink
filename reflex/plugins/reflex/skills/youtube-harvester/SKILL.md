@@ -542,14 +542,3 @@ result = await harvest_youtube_channel(
     max_videos=20
 )
 ```
-
-## Refinement Notes
-
-> Track improvements as you use this skill.
-
-- [ ] Transcript extraction tested
-- [ ] Chunking strategies compared
-- [ ] Metadata enrichment working
-- [ ] Playlist harvesting tested
-- [ ] Channel following implemented
-- [ ] Error handling robust

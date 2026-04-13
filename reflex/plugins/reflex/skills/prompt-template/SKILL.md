@@ -646,13 +646,3 @@ def migrate_prompt_version(
 
                 print(f"Updated {agent_file}")
 ```
-
-## Refinement Notes
-
-> Track improvements as you develop prompts.
-
-- [ ] Template engine tested
-- [ ] Component composition working
-- [ ] Test framework validated
-- [ ] Version control in place
-- [ ] Agent prompts migrated to templates

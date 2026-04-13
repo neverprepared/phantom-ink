@@ -807,14 +807,4 @@ on_workflow_error: continue  # Keep going even if steps fail
 ## After Building
 
 1. ✅ Run tests to verify
-2. Update `CLAUDE.md` status
-3. Add your own workflow definitions
-
-## Refinement Notes
-
-> Add notes here as you build and discover what works/doesn't work.
-
-- [ ] Initial implementation
-- [ ] Tested with example workflows
-- [ ] Integrated with MCP config
-- [ ] Connected to real agent executor
+2. Add your own workflow definitions

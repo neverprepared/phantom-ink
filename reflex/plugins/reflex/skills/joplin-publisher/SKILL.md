@@ -6,9 +6,6 @@ description: Import markdown documents and mermaid diagrams into Joplin using th
 
 # Joplin Publisher Skill
 
-## Purpose
-Import markdown documents and mermaid diagrams into Joplin using the Joplin CLI.
-
 ## When to Use
 - Exporting research to Joplin notebooks
 - Creating documentation in Joplin

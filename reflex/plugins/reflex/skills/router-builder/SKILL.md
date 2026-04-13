@@ -482,14 +482,3 @@ routes:
 ## After Building
 
 1. ✅ Run tests to verify
-2. Update `CLAUDE.md` status
-3. Proceed to slash commands or `skills/agent-builder/SKILL.md`
-
-## Refinement Notes
-
-> Add notes here as we discover what works.
-
-- [ ] Initial implementation
-- [ ] Tuned confidence thresholds
-- [ ] Added more utterance examples
-- [ ] Tested with real queries

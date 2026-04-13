@@ -376,11 +376,3 @@ def restore_archive(
 
     print(f"✅ Restored '{collection_name}' from archive")
 ```
-
-## Refinement Notes
-
-> Add notes as you use these migration tools.
-
-- [ ] Export/import tested
-- [ ] Merge with deduplication verified
-- [ ] Archive/restore workflow complete
