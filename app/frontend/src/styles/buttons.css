@@ -64,7 +64,7 @@
   font-size: 13px;
   transition: all 0.15s;
 }
-.btn-ghost:hover { background: rgba(255, 255, 255, 0.05); }
+.btn-ghost:hover { background: var(--color-surface-hover); border-color: var(--color-text-tertiary); }
 
 /* Small variants */
 .btn-sm {
@@ -75,7 +75,7 @@
 
 /* Icon button */
 .btn-icon {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--color-surface-hover);
   border: 1px solid var(--color-border-secondary);
   border-radius: var(--radius-md);
   color: var(--color-text-tertiary);
@@ -85,7 +85,7 @@
   justify-content: center;
   transition: all 0.15s;
 }
-.btn-icon:hover { color: var(--color-text-primary); border-color: var(--color-text-tertiary); }
+.btn-icon:hover { color: var(--color-text-primary); background: var(--color-surface-active); border-color: var(--color-text-tertiary); }
 
 /* Refresh icon button */
 .btn-refresh {
@@ -97,4 +97,4 @@
   display: flex;
   transition: all 0.15s;
 }
-.btn-refresh:hover { color: var(--color-text-primary); border-color: var(--color-text-tertiary); }
+.btn-refresh:hover { color: var(--color-text-primary); background: var(--color-surface-hover); border-color: var(--color-text-tertiary); }

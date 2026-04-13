@@ -206,15 +206,19 @@
   }
 
   .result.selected {
-    background: rgba(59, 130, 246, 0.15);
+    background: var(--color-nav-active-bg);
+    color: var(--color-accent);
+  }
+  .result.selected .result-label {
+    color: var(--color-accent);
   }
 
   .result:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--color-surface-hover);
   }
 
   .result.selected:hover {
-    background: rgba(59, 130, 246, 0.15);
+    background: var(--color-nav-active-bg);
   }
 
   .result-label {

@@ -658,7 +658,7 @@
 {/if}
 
 <style>
-  .panel { padding-bottom: 24px; }
+  .panel { padding: var(--panel-padding); }
 
   header {
     display: flex;
@@ -720,7 +720,7 @@
   }
   .stat-toggle:hover { color: var(--color-text-secondary); border-color: var(--color-text-tertiary); }
   .stat-toggle.active {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--color-surface-hover);
     color: var(--color-text-secondary);
     border-color: var(--color-text-tertiary);
   }

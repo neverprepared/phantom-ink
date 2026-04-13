@@ -374,7 +374,7 @@
     {#if !selected}
       <EmptyState
         title="No channel selected"
-        description="Select a channel from the list or create a new one."
+        message="Select a channel from the list or create a new one."
       />
     {:else}
       <div class="channel-header">
@@ -452,7 +452,7 @@
 
 <!-- Create channel modal -->
 {#if showCreateModal}
-  <Modal title="New Channel" onclose={() => showCreateModal = false}>
+  <Modal onClose={() => showCreateModal = false}>
     <div class="modal-body">
       <label class="field-label" for="ch-name">Channel name</label>
       <input id="ch-name" class="field-input" bind:value={newChannelName} placeholder="e.g. architecture-debate" />
@@ -761,7 +761,7 @@
     font-size: 11px;
     padding: 2px 8px;
     border-radius: 99px;
-    background: var(--color-bg-card);
+    background: var(--color-bg-tertiary);
     color: var(--color-text-secondary);
     border: 1px solid var(--color-border-primary);
   }
@@ -784,7 +784,7 @@
   }
 
   .message {
-    background: var(--color-bg-card);
+    background: var(--color-bg-tertiary);
     border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-lg);
     padding: 10px 14px;
@@ -864,7 +864,7 @@
     width: 140px;
     padding: 3px 8px;
     font-size: 12px;
-    background: var(--color-bg-card);
+    background: var(--color-bg-tertiary);
     border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-sm);
     color: var(--color-text-primary);
@@ -881,7 +881,7 @@
     padding: 8px 12px;
     font-size: 13px;
     font-family: inherit;
-    background: var(--color-bg-card);
+    background: var(--color-bg-tertiary);
     border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-md);
     color: var(--color-text-primary);
@@ -966,7 +966,7 @@
     width: 100%;
     padding: 8px 12px;
     font-size: 13px;
-    background: var(--color-bg-card);
+    background: var(--color-bg-tertiary);
     border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-md);
     color: var(--color-text-primary);
@@ -995,7 +995,7 @@
   .p-name, .p-type, .p-detail, .p-prompt {
     padding: 6px 8px;
     font-size: 12px;
-    background: var(--color-bg-card);
+    background: var(--color-bg-tertiary);
     border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-sm);
     color: var(--color-text-primary);

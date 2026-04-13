@@ -146,7 +146,7 @@
 
   .tab:hover {
     color: var(--color-text-secondary);
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--color-surface-hover);
   }
 
   .tab.active {
@@ -200,7 +200,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #374151;
+    background: var(--color-dot-offline);
     flex-shrink: 0;
   }
 
@@ -228,7 +228,7 @@
   }
 
   .palette-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--color-surface-active);
     color: var(--color-text-secondary);
   }
 
@@ -246,7 +246,7 @@
   }
   .restart-btn:hover {
     color: var(--color-text-secondary);
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--color-surface-hover);
   }
   .restart-btn:disabled {
     opacity: 0.4;

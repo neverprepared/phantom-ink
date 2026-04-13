@@ -22,11 +22,11 @@
 
 <style>
   .statusbar {
-    height: 28px;
+    height: 26px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 16px;
+    padding: 0 var(--spacing-lg);
     background: var(--color-bg-primary);
     border-top: 1px solid var(--color-border-primary);
     flex-shrink: 0;
@@ -37,7 +37,7 @@
   .status-left {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--spacing-md);
     min-width: 0;
     flex: 1;
   }
@@ -46,23 +46,24 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 11px;
+    color: var(--color-text-secondary);
   }
 
   .event-text.muted {
-    color: var(--color-text-tertiary);
-    opacity: 0.5;
+    color: var(--color-text-muted);
   }
 
   .status-right {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: var(--spacing-lg);
     flex-shrink: 0;
   }
 
   .stat {
     color: var(--color-text-tertiary);
+    font-variant-numeric: tabular-nums;
   }
 </style>

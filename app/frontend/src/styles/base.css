@@ -44,18 +44,21 @@ select:focus-visible {
 
 /* Scrollbar — thin, subtle */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--color-border-secondary);
-  border-radius: 3px;
+  border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-tertiary);
+  background: var(--color-text-muted);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* Form elements — soft style */

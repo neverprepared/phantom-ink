@@ -89,13 +89,14 @@
   }
 
   .nav-btn:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--color-surface-hover);
     color: var(--color-text-primary);
   }
 
   .nav-btn.active {
-    background: rgba(59, 130, 246, 0.1);
-    color: var(--color-info);
+    background: var(--color-nav-active-bg);
+    color: var(--color-accent);
+    box-shadow: inset 3px 0 0 var(--color-nav-active-border);
   }
 
   .nav-icon {
@@ -140,7 +141,7 @@
   }
 
   .collapse-btn:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--color-surface-hover);
     color: var(--color-text-secondary);
   }
 </style>

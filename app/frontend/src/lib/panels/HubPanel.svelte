@@ -313,7 +313,7 @@
 
 
 <style>
-  .panel { padding-bottom: 24px; }
+  .panel { padding: var(--panel-padding); }
   header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
   h1 { font-size: 22px; font-weight: 600; }
   .accent { color: var(--color-accent); }
@@ -614,28 +614,4 @@
     color: var(--color-text-tertiary);
   }
 
-  /* === Modal === */
-  h2 { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
-  .modal-sub { font-size: 12px; color: var(--color-text-muted); margin-bottom: 20px; }
-  .field { margin-bottom: 14px; }
-
-  .btn-cancel-modal {
-    background: none;
-    border: 1px solid var(--color-border-secondary);
-    color: var(--color-text-secondary);
-    padding: 7px 16px;
-    border-radius: var(--radius-md);
-    font-size: 13px;
-  }
-  .btn-submit {
-    background: rgba(59, 130, 246, 0.1);
-    border: 1px solid rgba(59, 130, 246, 0.3);
-    color: var(--color-info);
-    padding: 7px 16px;
-    border-radius: var(--radius-md);
-    font-size: 13px;
-    font-weight: 500;
-    transition: all 0.15s;
-  }
-  .btn-submit:hover { background: rgba(59, 130, 246, 0.2); border-color: var(--color-info); }
 </style>
