@@ -117,22 +117,22 @@
   }
 
   .filter-btn {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 11px;
     padding: 3px 10px;
-    border-radius: var(--radius-sm, 4px);
-    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border-secondary);
     background: transparent;
     color: var(--color-text-secondary);
     cursor: pointer;
     transition: background 0.1s, color 0.1s;
   }
-  .filter-btn:hover { background: rgba(255,255,255,0.05); }
-  .filter-btn.active { background: rgba(255,255,255,0.08); color: var(--color-text-primary, #fff); }
+  .filter-btn:hover { background: var(--color-surface-hover); }
+  .filter-btn.active { background: var(--color-surface-active); color: var(--color-text-primary); }
 
-  .filter-btn.session.active { border-color: #3b82f6; color: #3b82f6; }
-  .filter-btn.task.active    { border-color: #22c55e; color: #22c55e; }
-  .filter-btn.repo.active    { border-color: #a855f7; color: #a855f7; }
+  .filter-btn.session.active { border-color: var(--color-role-developer); color: var(--color-role-developer); background: rgba(59, 130, 246, 0.1); }
+  .filter-btn.task.active    { border-color: var(--color-role-worker);    color: var(--color-role-worker);    background: rgba(34, 197, 94, 0.1); }
+  .filter-btn.repo.active    { border-color: var(--color-role-researcher); color: var(--color-role-researcher); background: rgba(168, 85, 247, 0.1); }
 
   .empty {
     color: var(--color-text-tertiary);
@@ -159,21 +159,21 @@
     border-radius: var(--radius-sm, 4px);
     transition: background 0.1s;
   }
-  .event-row:hover { background: rgba(255, 255, 255, 0.03); }
+  .event-row:hover { background: var(--color-surface-hover); }
 
   .badge {
     flex-shrink: 0;
     padding: 1px 7px;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.03em;
   }
-  .badge.session { background: rgba(59,130,246,0.2); color: #3b82f6; }
-  .badge.task    { background: rgba(34,197,94,0.2);  color: #22c55e; }
-  .badge.repo    { background: rgba(168,85,247,0.2); color: #a855f7; }
-  .badge.other   { background: rgba(255,255,255,0.08); color: var(--color-text-secondary); }
+  .badge.session { background: rgba(59, 130, 246, 0.15); color: var(--color-role-developer); }
+  .badge.task    { background: rgba(34, 197, 94, 0.15);  color: var(--color-role-worker); }
+  .badge.repo    { background: rgba(168, 85, 247, 0.15); color: var(--color-role-researcher); }
+  .badge.other   { background: var(--color-surface-active); color: var(--color-text-secondary); }
 
   .ts {
     flex-shrink: 0;
