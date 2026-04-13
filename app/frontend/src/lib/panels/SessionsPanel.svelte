@@ -3,6 +3,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { brainboxEvents } from '../events.svelte';
   import { notifications } from '../notifications.svelte';
+  import { combinedHistory as combinedHistoryStore, localHistory as localHistoryStore } from '../metricsHistory.svelte';
   import { profileState, featureFlags } from '../stores.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Badge from '../components/Badge.svelte';
@@ -17,7 +18,7 @@
   let localProcesses = $state<any[]>([]);
   let sessionHistory = $state<Record<string, any[]>>({});
   let history = $state<any[]>([]);
-  let localHistory = $state<Record<string, {ts: number, cpu: number, mem: number}[]>>({});
+  let aggregateHoverIdx = $state<number | null>(null);
   let loading = $state(true);
   let showNewModal = $state(false);
   let terminalSession = $state<any | null>(null);
@@ -143,35 +144,53 @@
   async function refreshMetrics() {
     const a = await getApi();
     if (!a) return;
+
+    // Metrics fetch — must not be blocked by local process scan
     try {
-      const [sh, hist, procs] = await Promise.all([
+      const [sh, hist] = await Promise.all([
         a.GetSessionsMetricsHistory(),
         a.GetMetricsHistory(),
-        a.FindClaudeProcesses(),
       ]);
       sessionHistory = sh ?? {};
       history = hist ?? [];
+    } catch { /* non-critical */ }
 
-      // Accumulate per-process history keyed by TTY (stable within a session)
+    // Local process history + combined aggregate — isolated so failures don't affect metrics
+    try {
+      const procs = await a.FindClaudeProcesses();
       const now = Date.now();
-      const next = { ...localHistory };
+
+      // Per-process history (for local agent cards)
+      const activeKeys = new Set<string>();
       for (const p of (procs ?? [])) {
         const key = p.tty || p.pid;
+        activeKeys.add(key);
         const cpu = parseFloat(p.cpu_perc) || 0;
         const mem = parseFloat(p.mem_mb) || 0;
-        const prev = next[key] ?? [];
-        next[key] = [...prev, { ts: now, cpu, mem }].slice(-60);
+        localHistoryStore.update(key, { ts: now, cpu, mem });
       }
-      localHistory = next;
+      localHistoryStore.pruneKeys(activeKeys);
+
+      // Combined aggregate: Docker containers + local processes
+      const localAgents = (procs ?? []).length;
+      const localCPU    = (procs ?? []).reduce((s, p) => s + (parseFloat(p.cpu_perc) || 0), 0);
+      const localMemB   = (procs ?? []).reduce((s, p) => s + (parseFloat(p.mem_mb) || 0) * 1024 * 1024, 0);
+      const latestDocker = history.length ? history[history.length - 1] : null;
+      combinedHistoryStore.push({
+        ts: now / 1000,
+        agent_count: (latestDocker?.agent_count ?? 0) + localAgents,
+        total_cpu:   (latestDocker?.total_cpu ?? 0) + localCPU,
+        total_mem:   (latestDocker?.total_mem ?? 0) + localMemB,
+      });
     } catch { /* non-critical */ }
   }
 
-  let agentData  = $derived(history.map((s: any) => ({ ts: s.ts, value: s.agent_count ?? 0 })));
-  let cpuData    = $derived(history.map((s: any) => ({ ts: s.ts, value: s.total_cpu ?? 0 })));
-  let memData    = $derived(history.map((s: any) => ({ ts: s.ts, value: (s.total_mem ?? 0) / 1024 / 1024 })));
-  let latestAgents = $derived(history.length ? String(history[history.length - 1].agent_count) : '–');
-  let latestCPU    = $derived(history.length ? `${history[history.length - 1].total_cpu.toFixed(1)}%` : '–');
-  let latestMem    = $derived(history.length ? formatBytes(history[history.length - 1].total_mem) : '–');
+  let agentData  = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.agent_count })));
+  let cpuData    = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.total_cpu })));
+  let memData    = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.total_mem / 1024 / 1024 })));
+  let latestAgents = $derived(combinedHistoryStore.value.length ? String(combinedHistoryStore.value[combinedHistoryStore.value.length - 1].agent_count) : '–');
+  let latestCPU    = $derived(combinedHistoryStore.value.length ? `${combinedHistoryStore.value[combinedHistoryStore.value.length - 1].total_cpu.toFixed(1)}%` : '–');
+  let latestMem    = $derived(combinedHistoryStore.value.length ? formatBytes(combinedHistoryStore.value[combinedHistoryStore.value.length - 1].total_mem) : '–');
 
   async function handleFocusTab(tty: string) {
     const a = await getApi();
@@ -370,7 +389,7 @@
     </div>
   {/if}
 
-  {#if history.length >= 2}
+  {#if combinedHistoryStore.value.length >= 2}
     <div class="charts-row">
       <MetricsChart
         data={agentData}
@@ -378,6 +397,9 @@
         current={latestAgents}
         color="var(--color-accent)"
         formatY={(v) => String(Math.round(v))}
+        hoverIdx={aggregateHoverIdx}
+        onHover={(idx) => aggregateHoverIdx = idx}
+        onHoverEnd={() => aggregateHoverIdx = null}
       />
       <MetricsChart
         data={cpuData}
@@ -385,6 +407,9 @@
         current={latestCPU}
         color="var(--color-info)"
         formatY={(v) => `${v.toFixed(1)}%`}
+        hoverIdx={aggregateHoverIdx}
+        onHover={(idx) => aggregateHoverIdx = idx}
+        onHoverEnd={() => aggregateHoverIdx = null}
       />
       <MetricsChart
         data={memData}
@@ -392,6 +417,9 @@
         current={latestMem}
         color="var(--color-success)"
         formatY={fmtMB}
+        hoverIdx={aggregateHoverIdx}
+        onHover={(idx) => aggregateHoverIdx = idx}
+        onHoverEnd={() => aggregateHoverIdx = null}
       />
     </div>
   {/if}
@@ -475,8 +503,8 @@
                     current={latestMem}
                     color="var(--color-success)"
                     formatY={(v) => `${v.toFixed(0)}MB`}
-                    width={160}
-                    height={40}
+                    width={80}
+                    height={20}
                     compact={true}
                   />
                 </div>
@@ -491,8 +519,8 @@
                     current={latestCPU}
                     color="var(--color-info)"
                     formatY={(v) => `${v.toFixed(1)}%`}
-                    width={160}
-                    height={40}
+                    width={80}
+                    height={20}
                     compact={true}
                   />
                 </div>
@@ -554,7 +582,7 @@
       <div class="local-list">
         {#each filteredLocal as proc (proc.pid)}
           {@const lkey = proc.tty || proc.pid}
-          {@const lhist = localHistory[lkey] ?? []}
+          {@const lhist = localHistoryStore.value[lkey] ?? []}
           {@const lcpuData = lhist.map(s => ({ ts: s.ts, value: s.cpu }))}
           {@const lmemData = lhist.map(s => ({ ts: s.ts, value: s.mem }))}
           {@const latestLCPU = lhist.length ? `${lhist[lhist.length-1].cpu.toFixed(1)}%` : proc.cpu_perc}
@@ -586,8 +614,8 @@
                     current={latestLCPU}
                     color="var(--color-info)"
                     formatY={(v) => `${v.toFixed(1)}%`}
-                    width={160}
-                    height={40}
+                    width={80}
+                    height={20}
                     compact={true}
                   />
                 </div>
@@ -602,8 +630,8 @@
                     current={latestLMem}
                     color="var(--color-success)"
                     formatY={(v) => `${v.toFixed(0)} MB`}
-                    width={160}
-                    height={40}
+                    width={80}
+                    height={20}
                     compact={true}
                   />
                 </div>

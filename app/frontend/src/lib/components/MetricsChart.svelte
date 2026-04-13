@@ -17,6 +17,9 @@
     width?: number;
     height?: number;
     compact?: boolean;  // strip axes/labels, just line+area
+    hoverIdx?: number | null;          // externally synced hover position
+    onHover?: (idx: number) => void;   // called on mousemove with nearest index
+    onHoverEnd?: () => void;           // called on mouseleave
   }
 
   let {
@@ -28,6 +31,9 @@
     width = 300,
     height = 80,
     compact = false,
+    hoverIdx = undefined,
+    onHover = undefined,
+    onHoverEnd = undefined,
   }: Props = $props();
 
   const PAD = $derived(compact
@@ -83,29 +89,27 @@
     }));
   });
 
-  // Hover crosshair
-  let hoverIdx = $state<number | null>(null);
-  let hoverX = $state(0);
-  let hoverY = $state(0);
-  let hoverVal = $state('');
+  // Hover crosshair — internal index (from mouse), overridden by external hoverIdx prop
+  let _hoverIdx = $state<number | null>(null);
+  let activeIdx = $derived(hoverIdx !== undefined ? hoverIdx : _hoverIdx);
+  let hoverX  = $derived(activeIdx !== null && xScale && data[activeIdx] ? xScale(data[activeIdx].ts * 1000) : 0);
+  let hoverY  = $derived(activeIdx !== null && yScale && data[activeIdx] ? yScale(data[activeIdx].value) : 0);
+  let hoverVal = $derived(activeIdx !== null && data[activeIdx] ? formatY(data[activeIdx].value) : '');
 
   function onMouseMove(e: MouseEvent) {
     if (!xScale || !yScale || data.length < 2) return;
     const svg = (e.currentTarget as SVGElement);
     const rect = svg.getBoundingClientRect();
     const mx = e.clientX - rect.left - PAD.left;
-    // Find closest sample
     const ratio = mx / innerW;
-    const idx = Math.round(ratio * (data.length - 1));
-    const clamped = Math.max(0, Math.min(data.length - 1, idx));
-    hoverIdx = clamped;
-    hoverX = xScale(data[clamped].ts * 1000);
-    hoverY = yScale(data[clamped].value);
-    hoverVal = formatY(data[clamped].value);
+    const clamped = Math.max(0, Math.min(data.length - 1, Math.round(ratio * (data.length - 1))));
+    _hoverIdx = clamped;
+    onHover?.(clamped);
   }
 
   function onMouseLeave() {
-    hoverIdx = null;
+    _hoverIdx = null;
+    onHoverEnd?.();
   }
 </script>
 
@@ -186,7 +190,7 @@
         </g>
 
         <!-- Hover crosshair -->
-        {#if !compact && hoverIdx !== null}
+        {#if !compact && activeIdx !== null}
           <line
             x1={hoverX} y1="0"
             x2={hoverX} y2={innerH}
