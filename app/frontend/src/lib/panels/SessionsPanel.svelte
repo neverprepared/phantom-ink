@@ -590,8 +590,8 @@
                     current={latestLCPU}
                     color="var(--color-info)"
                     formatY={(v) => `${v.toFixed(1)}%`}
-                    width={160}
-                    height={40}
+                    width={80}
+                    height={20}
                     compact={true}
                   />
                 </div>
@@ -606,8 +606,8 @@
                     current={latestLMem}
                     color="var(--color-success)"
                     formatY={(v) => `${v.toFixed(0)} MB`}
-                    width={160}
-                    height={40}
+                    width={80}
+                    height={20}
                     compact={true}
                   />
                 </div>
