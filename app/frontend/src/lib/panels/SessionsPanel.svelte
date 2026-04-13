@@ -143,16 +143,20 @@
   async function refreshMetrics() {
     const a = await getApi();
     if (!a) return;
+
+    // Metrics fetch — must not be blocked by local process scan
     try {
-      const [sh, hist, procs] = await Promise.all([
+      const [sh, hist] = await Promise.all([
         a.GetSessionsMetricsHistory(),
         a.GetMetricsHistory(),
-        a.FindClaudeProcesses(),
       ]);
       sessionHistory = sh ?? {};
       history = hist ?? [];
+    } catch { /* non-critical */ }
 
-      // Accumulate per-process history keyed by TTY (stable within a session)
+    // Local process history — isolated so failures don't affect metrics
+    try {
+      const procs = await a.FindClaudeProcesses();
       const now = Date.now();
       const next = { ...localHistory };
       for (const p of (procs ?? [])) {
