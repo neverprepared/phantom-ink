@@ -18,6 +18,7 @@
   let sessionHistory = $state<Record<string, any[]>>({});
   let history = $state<any[]>([]);
   let localHistory = $state<Record<string, {ts: number, cpu: number, mem: number}[]>>({});
+  let combinedHistory = $state<{ts: number, agent_count: number, total_cpu: number, total_mem: number}[]>([]);
   let loading = $state(true);
   let showNewModal = $state(false);
   let terminalSession = $state<any | null>(null);
@@ -154,10 +155,12 @@
       history = hist ?? [];
     } catch { /* non-critical */ }
 
-    // Local process history — isolated so failures don't affect metrics
+    // Local process history + combined aggregate — isolated so failures don't affect metrics
     try {
       const procs = await a.FindClaudeProcesses();
       const now = Date.now();
+
+      // Per-process history (for local agent cards)
       const next = { ...localHistory };
       for (const p of (procs ?? [])) {
         const key = p.tty || p.pid;
@@ -167,15 +170,27 @@
         next[key] = [...prev, { ts: now, cpu, mem }].slice(-60);
       }
       localHistory = next;
+
+      // Combined aggregate: Docker containers + local processes
+      const localAgents = (procs ?? []).length;
+      const localCPU    = (procs ?? []).reduce((s, p) => s + (parseFloat(p.cpu_perc) || 0), 0);
+      const localMemB   = (procs ?? []).reduce((s, p) => s + (parseFloat(p.mem_mb) || 0) * 1024 * 1024, 0);
+      const latestDocker = history.length ? history[history.length - 1] : null;
+      combinedHistory = [...combinedHistory, {
+        ts: now / 1000,
+        agent_count: (latestDocker?.agent_count ?? 0) + localAgents,
+        total_cpu:   (latestDocker?.total_cpu ?? 0) + localCPU,
+        total_mem:   (latestDocker?.total_mem ?? 0) + localMemB,
+      }].slice(-60);
     } catch { /* non-critical */ }
   }
 
-  let agentData  = $derived(history.map((s: any) => ({ ts: s.ts, value: s.agent_count ?? 0 })));
-  let cpuData    = $derived(history.map((s: any) => ({ ts: s.ts, value: s.total_cpu ?? 0 })));
-  let memData    = $derived(history.map((s: any) => ({ ts: s.ts, value: (s.total_mem ?? 0) / 1024 / 1024 })));
-  let latestAgents = $derived(history.length ? String(history[history.length - 1].agent_count) : '–');
-  let latestCPU    = $derived(history.length ? `${history[history.length - 1].total_cpu.toFixed(1)}%` : '–');
-  let latestMem    = $derived(history.length ? formatBytes(history[history.length - 1].total_mem) : '–');
+  let agentData  = $derived(combinedHistory.map(s => ({ ts: s.ts, value: s.agent_count })));
+  let cpuData    = $derived(combinedHistory.map(s => ({ ts: s.ts, value: s.total_cpu })));
+  let memData    = $derived(combinedHistory.map(s => ({ ts: s.ts, value: s.total_mem / 1024 / 1024 })));
+  let latestAgents = $derived(combinedHistory.length ? String(combinedHistory[combinedHistory.length - 1].agent_count) : '–');
+  let latestCPU    = $derived(combinedHistory.length ? `${combinedHistory[combinedHistory.length - 1].total_cpu.toFixed(1)}%` : '–');
+  let latestMem    = $derived(combinedHistory.length ? formatBytes(combinedHistory[combinedHistory.length - 1].total_mem) : '–');
 
   async function handleFocusTab(tty: string) {
     const a = await getApi();
@@ -374,7 +389,7 @@
     </div>
   {/if}
 
-  {#if history.length >= 2}
+  {#if combinedHistory.length >= 2}
     <div class="charts-row">
       <MetricsChart
         data={agentData}
