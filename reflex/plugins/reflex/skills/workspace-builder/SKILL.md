@@ -218,21 +218,6 @@ print(f'Routed to: {result.category}/{result.resource_name}')
 # (use Claude Code to interact)
 ```
 
-## Refinement Process
-
-As we build, update docs when:
-1. Implementation differs from spec
-2. Better patterns emerge
-3. Edge cases are discovered
-
-```bash
-# After implementing a component:
-# 1. Test it works
-# 2. Update relevant SKILL.md with actual code
-# 3. Update CLAUDE.md status
-# 4. Commit with descriptive message
-```
-
 ## Dependencies
 
 ```
@@ -247,9 +232,3 @@ aiofiles>=23.0.0
 httpx>=0.25.0
 ```
 
-## Next Action
-
-To start building, use one of the component skills:
-- `view skills/rag-builder/SKILL.md` - Build RAG server first
-- `view skills/router-builder/SKILL.md` - Build semantic router
-- `view skills/agent-builder/SKILL.md` - Build sub-agents

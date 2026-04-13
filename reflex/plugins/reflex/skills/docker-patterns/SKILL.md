@@ -6,9 +6,6 @@ description: Best practices for containerizing applications with Docker.
 
 # Docker Patterns Skill
 
-## Purpose
-Best practices for containerizing applications with Docker.
-
 ## When to Use
 - Creating new Dockerfiles
 - Optimizing existing images

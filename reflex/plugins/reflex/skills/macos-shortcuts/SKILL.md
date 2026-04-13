@@ -365,10 +365,3 @@ In Shortcuts.app: right-click → Share → Copy iCloud Link
 Link format: `https://www.icloud.com/shortcuts/<uuid>`
 
 ---
-
-## Refinement Notes
-
-- [ ] Add Shortcut Automation triggers (app open, time of day, arrival/departure)
-- [ ] Add iOS/macOS cross-platform considerations
-- [ ] Add Focus filter shortcuts example
-- [ ] Document limitations: shortcuts run requires GUI session, not pure SSH

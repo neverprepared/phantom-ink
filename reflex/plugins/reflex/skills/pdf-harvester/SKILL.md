@@ -689,14 +689,3 @@ result = await harvest_pdf(
     use_ocr=True
 )
 ```
-
-## Refinement Notes
-
-> Track improvements as you use this skill.
-
-- [ ] Text extraction tested
-- [ ] Table extraction working
-- [ ] OCR fallback tested
-- [ ] Academic paper pattern validated
-- [ ] Chunking strategies compared
-- [ ] Large PDF handling optimized

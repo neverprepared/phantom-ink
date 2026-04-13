@@ -6,9 +6,6 @@ description: Write markdown documents and mermaid diagrams to Obsidian vaults.
 
 # Obsidian Publisher Skill
 
-## Purpose
-Write markdown documents and mermaid diagrams to Obsidian vaults.
-
 ## When to Use
 - Outputting research notes to Obsidian
 - Creating documentation in a vault
@@ -163,24 +160,6 @@ Related:
 - [[Database Schema]]
 
 See also: [[projects/2024/related-project|Related Project]]
-```
-
-## Frontmatter Patterns
-
-### Research Note
-```yaml
-```
-
-### Meeting Note
-```yaml
-```
-
-### Documentation
-```yaml
-```
-
-### Diagram Document
-```yaml
 ```
 
 ## Folder Organization Patterns

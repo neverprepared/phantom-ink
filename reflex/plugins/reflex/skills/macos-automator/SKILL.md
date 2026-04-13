@@ -307,10 +307,3 @@ done
 ```
 
 ---
-
-## Refinement Notes
-
-- [ ] Add PDF compression workflow example
-- [ ] Add "combine PDFs" step-by-step
-- [ ] Document troubleshooting Folder Actions (permissions, SIP, Full Disk Access)
-- [ ] Add Calendar Alarm workflow example for scheduled tasks

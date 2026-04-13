@@ -28,7 +28,7 @@ Different content types require different ingestion strategies. This skill docum
 ## Content Type Patterns
 
 
-### Pattern 2: PDF Documents
+### Pattern 1: PDF Documents
 
 **When to use**: Research papers, reports, ebooks, scanned documents
 
@@ -134,7 +134,7 @@ table_number: (for tables) which table on page
 ```
 
 
-### Pattern 4: Websites / Web Content
+### Pattern 2: Websites / Web Content
 
 **When to use**: Documentation sites, articles, blog posts
 
@@ -239,7 +239,7 @@ crawl_depth: (for crawls) how many links from start
 ```
 
 
-### Pattern 6: Research Notes
+### Pattern 3: Research Notes
 
 **When to use**: Personal notes, research findings, learnings
 

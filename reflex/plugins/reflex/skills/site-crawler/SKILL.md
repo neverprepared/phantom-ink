@@ -677,14 +677,3 @@ result = await harvest_site(
     max_pages=50
 )
 ```
-
-## Refinement Notes
-
-> Track improvements as you use this skill.
-
-- [ ] Robots.txt handling tested
-- [ ] Rate limiting working
-- [ ] Content extraction clean
-- [ ] Sitemap parsing working
-- [ ] Incremental updates implemented
-- [ ] Documentation structure preserved

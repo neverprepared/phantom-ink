@@ -498,12 +498,3 @@ class TTLCache:
     def set(self, key: str, value):
         self.cache[key] = (value, datetime.now() + self.ttl)
 ```
-
-## Refinement Notes
-
-> Add notes here as you build servers and discover improvements.
-
-- [ ] Template validated with real server
-- [ ] Async patterns confirmed working
-- [ ] Error handling comprehensive
-- [ ] Testing patterns sufficient

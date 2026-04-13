@@ -348,12 +348,3 @@ After onboarding:
 | Search returns nothing | Verify documents were ingested |
 | Routing not working | Reload router embeddings |
 | Code symlink broken | Check absolute path is correct |
-
-## Refinement Notes
-
-> Add notes here as you onboard projects and discover improvements.
-
-- [ ] Initial implementation
-- [ ] Tested with real project
-- [ ] Automated script working
-- [ ] Routing integration verified

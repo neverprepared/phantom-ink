@@ -6,9 +6,6 @@ description: Create complex graph visualizations using Graphviz DOT language, wi
 
 # Graphviz Diagrams Skill
 
-## Purpose
-Create complex graph visualizations using Graphviz DOT language, with both source code and pre-rendered images.
-
 ## When to Use
 - Complex dependency graphs
 - Call graphs and code flow

@@ -442,13 +442,3 @@ def main():
 if __name__ == "__main__":
     main()
 ```
-
-## Refinement Notes
-
-> Track findings from your benchmarks.
-
-- [ ] Created test dataset from real content
-- [ ] Ran benchmark on candidate models
-- [ ] Selected optimal model for use case
-- [ ] Re-embedded collections
-- [ ] Verified retrieval quality improved
