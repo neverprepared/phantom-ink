@@ -114,14 +114,14 @@ func (a *App) SetConfig(baseURL, apiKey, workspacesRoot string) error {
 	}
 	if a.db != nil {
 		if err := a.db.SetSetting(settingBaseURL, baseURL); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to save setting %q: %v\n", settingBaseURL, err)
+			return fmt.Errorf("save base URL: %w", err)
 		}
 		if err := a.db.SetSetting(settingAPIKey, apiKey); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to save setting %q: %v\n", settingAPIKey, err)
+			return fmt.Errorf("save API key: %w", err)
 		}
 		if workspacesRoot != "" {
 			if err := a.db.SetSetting(settingWorkspacesRoot, workspacesRoot); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: failed to save setting %q: %v\n", settingWorkspacesRoot, err)
+				return fmt.Errorf("save workspaces root: %w", err)
 			}
 		}
 	}
