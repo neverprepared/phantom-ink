@@ -252,7 +252,7 @@ COPY --chown=developer:developer docker/brainbox/setup/ttyd-wrapper.sh /home/dev
 RUN chmod +x /home/developer/ttyd-wrapper.sh
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD pgrep -x "claude" > /dev/null || pgrep -x "codex" > /dev/null || exit 1
+  CMD pgrep -x "claude" > /dev/null || pgrep -x "codex" > /dev/null || pgrep -x "ollama" > /dev/null || exit 1
 
 CMD ["/bin/bash", "-l"]
 

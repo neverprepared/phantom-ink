@@ -12,6 +12,7 @@ _secret() {
 _secret LLM_PROVIDER
 _secret CODEX_MODEL
 _secret CLAUDE_MODEL
+_secret ANTHROPIC_BASE_URL
 
 # Attach to existing session, or create new one
 if tmux has-session -t main 2>/dev/null; then
@@ -23,19 +24,27 @@ else
     tmux set -t main mouse on
 
     # Build agent command based on LLM_PROVIDER (defaults to claude)
-    if [ "${LLM_PROVIDER:-claude}" = "codex" ]; then
-        AGENT_CMD="codex --approval-mode full-auto"
-        if [ -n "$CODEX_MODEL" ]; then
-            AGENT_CMD="$AGENT_CMD --model \"$CODEX_MODEL\""
-        fi
-    else
-        # Default: Claude Code
-        # --plugin-dir mirrors the host wrapper: claude --plugin-dir .../reflex
-        AGENT_CMD="claude --plugin-dir /opt/reflex/share/reflex --dangerously-skip-permissions"
-        if [ -n "$CLAUDE_MODEL" ]; then
-            AGENT_CMD="$AGENT_CMD --model \"$CLAUDE_MODEL\""
-        fi
-    fi
+    case "${LLM_PROVIDER:-claude}" in
+        codex)
+            AGENT_CMD="codex --approval-mode full-auto"
+            if [ -n "$CODEX_MODEL" ]; then
+                AGENT_CMD="$AGENT_CMD --model \"$CODEX_MODEL\""
+            fi
+            ;;
+        ollama)
+            # CLAUDE_MODEL is set to the ollama model name by lifecycle.py
+            OLLAMA_MODEL="${CLAUDE_MODEL:-llama3}"
+            AGENT_CMD="ollama run \"$OLLAMA_MODEL\""
+            ;;
+        *)
+            # Default: Claude Code
+            # --plugin-dir mirrors the host wrapper: claude --plugin-dir .../reflex
+            AGENT_CMD="claude --plugin-dir /opt/reflex/share/reflex --dangerously-skip-permissions"
+            if [ -n "$CLAUDE_MODEL" ]; then
+                AGENT_CMD="$AGENT_CMD --model \"$CLAUDE_MODEL\""
+            fi
+            ;;
+    esac
 
     # If a task file exists, pass its content as the initial prompt so the
     # agent starts working immediately without any manual Enter press.
