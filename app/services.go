@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"embed"
 	"fmt"
 	"net"
@@ -25,25 +26,58 @@ func integrationsDir() string {
 	return dir
 }
 
-// ensureComposeFile extracts an embedded compose file to the integrations dir
-// if it doesn't already exist. Returns the absolute path.
+// ensureComposeFile extracts an embedded compose file to the integrations dir.
+// A SHA-256 hash of the embedded content is stored alongside the file; if the
+// stored hash differs from the embedded content the file is re-extracted so
+// updates to the bundled compose files are always applied.
 func ensureComposeFile(name string) (string, error) {
 	dir := filepath.Join(integrationsDir(), name)
 	dest := filepath.Join(dir, "docker-compose.yml")
-	if _, err := os.Stat(dest); err == nil {
-		return dest, nil // already extracted
-	}
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("create dir: %w", err)
-	}
+	hashDest := filepath.Join(dir, "docker-compose.hash")
+
 	data, err := embeddedCompose.ReadFile(fmt.Sprintf("compose/%s/docker-compose.yml", name))
 	if err != nil {
 		return "", fmt.Errorf("read embedded compose for %s: %w", name, err)
 	}
+
+	sum := sha256.Sum256(data)
+	currentHash := fmt.Sprintf("%x", sum)
+
+	if stored, err := os.ReadFile(hashDest); err == nil {
+		if strings.TrimSpace(string(stored)) == currentHash {
+			return dest, nil // already extracted and up to date
+		}
+	}
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("create dir: %w", err)
+	}
 	if err := os.WriteFile(dest, data, 0644); err != nil {
 		return "", fmt.Errorf("write compose file: %w", err)
 	}
+	if err := os.WriteFile(hashDest, []byte(currentHash), 0644); err != nil {
+		return "", fmt.Errorf("write compose hash: %w", err)
+	}
 	return dest, nil
+}
+
+// serviceEnv returns the environment variables needed for a named service's
+// compose stack. It starts from the current process environment and adds
+// service-specific defaults for any variables that are not already set.
+// For qdrant, it also ensures the data directory exists before compose runs.
+func serviceEnv(name string) []string {
+	env := os.Environ()
+	switch name {
+	case "qdrant":
+		if os.Getenv("QDRANT_DATA_DIR") == "" {
+			dir := filepath.Join(os.Getenv("HOME"), ".config", "phantom-ink", "qdrant", "storage")
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to create qdrant data dir %q: %v\n", dir, err)
+			}
+			env = append(env, "QDRANT_DATA_DIR="+dir)
+		}
+	}
+	return env
 }
 
 // ServiceDef describes a known infrastructure service.
@@ -177,6 +211,7 @@ func composeUp(name string) error {
 		return err
 	}
 	cmd := exec.Command("docker", "compose", "-f", composePath, "up", "-d")
+	cmd.Env = serviceEnv(name)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
 	}
@@ -190,6 +225,7 @@ func composeDown(name string) error {
 		return err
 	}
 	cmd := exec.Command("docker", "compose", "-f", composePath, "down")
+	cmd.Env = serviceEnv(name)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
 	}
