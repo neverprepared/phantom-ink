@@ -40,8 +40,15 @@ func (db *DB) Close() error {
 	return db.conn.Close()
 }
 
-func (db *DB) migrate() error {
-	_, err := db.conn.Exec(`
+// migrations is an ordered list of schema versions. Each entry's SQL is applied
+// exactly once and the version number is recorded in schema_version. New columns
+// must be added via ALTER TABLE … ADD COLUMN IF NOT EXISTS so that existing
+// databases are upgraded safely without dropping or recreating tables.
+var migrations = []struct {
+	version int
+	sql     string
+}{
+	{1, `
 		CREATE TABLE IF NOT EXISTS settings (
 			key   TEXT PRIMARY KEY,
 			value TEXT NOT NULL DEFAULT ''
@@ -56,18 +63,49 @@ func (db *DB) migrate() error {
 		);
 
 		CREATE TABLE IF NOT EXISTS repos (
-			name              TEXT PRIMARY KEY,
-			url               TEXT NOT NULL,
-			profile           TEXT NOT NULL DEFAULT '',
-			merge_queue       INTEGER NOT NULL DEFAULT 0,
-			pr_shepherd       INTEGER NOT NULL DEFAULT 0,
-			target_branch     TEXT NOT NULL DEFAULT 'main',
-			is_fork           INTEGER NOT NULL DEFAULT 0,
-			upstream_url      TEXT NOT NULL DEFAULT '',
-			workspace_home    TEXT NOT NULL DEFAULT ''
+			name          TEXT PRIMARY KEY,
+			url           TEXT NOT NULL,
+			profile       TEXT NOT NULL DEFAULT '',
+			merge_queue   INTEGER NOT NULL DEFAULT 0,
+			pr_shepherd   INTEGER NOT NULL DEFAULT 0,
+			target_branch TEXT NOT NULL DEFAULT 'main',
+			is_fork       INTEGER NOT NULL DEFAULT 0,
+			upstream_url  TEXT NOT NULL DEFAULT ''
 		);
-	`)
-	return err
+	`},
+	// v2: workspace_home was added to repos after the initial release.
+	// ALTER TABLE … ADD COLUMN IF NOT EXISTS is a no-op when the column already
+	// exists, so this is safe to run against both old and new databases.
+	{2, `ALTER TABLE repos ADD COLUMN IF NOT EXISTS workspace_home TEXT NOT NULL DEFAULT ''`},
+}
+
+func (db *DB) migrate() error {
+	// Ensure the version-tracking table exists before anything else.
+	if _, err := db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS schema_version (
+			version INTEGER NOT NULL
+		)
+	`); err != nil {
+		return fmt.Errorf("create schema_version table: %w", err)
+	}
+
+	var current int
+	if err := db.conn.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&current); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+
+	for _, m := range migrations {
+		if current >= m.version {
+			continue
+		}
+		if _, err := db.conn.Exec(m.sql); err != nil {
+			return fmt.Errorf("migration v%d: %w", m.version, err)
+		}
+		if _, err := db.conn.Exec("INSERT INTO schema_version (version) VALUES (?)", m.version); err != nil {
+			return fmt.Errorf("record schema version v%d: %w", m.version, err)
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

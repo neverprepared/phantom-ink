@@ -13,7 +13,10 @@ import (
 
 // findProfile scans and returns a single profile by name.
 func (a *App) findProfile(name string) (*Profile, error) {
-	profiles, err := scanProfiles(a.config.WorkspacesRoot)
+	a.mu.RLock()
+	root := a.config.WorkspacesRoot
+	a.mu.RUnlock()
+	profiles, err := scanProfiles(root)
 	if err != nil {
 		return nil, err
 	}
@@ -31,15 +34,21 @@ func (a *App) findProfile(name string) (*Profile, error) {
 
 // ScanProfiles scans the configured workspaces root for shell-profiler profiles.
 func (a *App) ScanProfiles() ([]Profile, error) {
-	return scanProfiles(a.config.WorkspacesRoot)
+	a.mu.RLock()
+	root := a.config.WorkspacesRoot
+	a.mu.RUnlock()
+	return scanProfiles(root)
 }
 
 // GetActiveProfile returns the currently selected profile (empty if none set).
 func (a *App) GetActiveProfile() Profile {
-	if a.config.ActiveProfile == "" {
+	a.mu.RLock()
+	active := a.config.ActiveProfile
+	a.mu.RUnlock()
+	if active == "" {
 		return Profile{}
 	}
-	p, err := a.findProfile(a.config.ActiveProfile)
+	p, err := a.findProfile(active)
 	if err != nil {
 		return Profile{}
 	}
@@ -48,7 +57,9 @@ func (a *App) GetActiveProfile() Profile {
 
 // SetActiveProfile saves the active profile selection to config.
 func (a *App) SetActiveProfile(name string) error {
+	a.mu.Lock()
 	a.config.ActiveProfile = name
+	a.mu.Unlock()
 	if a.db != nil {
 		return a.db.SetSetting(settingActiveProfile, name)
 	}
@@ -57,11 +68,16 @@ func (a *App) SetActiveProfile(name string) error {
 
 // CreateProfile creates a new workspace profile directory under the workspaces root.
 func (a *App) CreateProfile(name string) (Profile, error) {
-	p, err := createProfile(a.config.WorkspacesRoot, name)
+	a.mu.RLock()
+	root := a.config.WorkspacesRoot
+	a.mu.RUnlock()
+	p, err := createProfile(root, name)
 	if err != nil {
 		return Profile{}, err
 	}
+	a.mu.Lock()
 	a.config.ActiveProfile = p.Name
+	a.mu.Unlock()
 	if a.db != nil {
 		if err := a.db.SetSetting(settingActiveProfile, p.Name); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to save setting %q: %v\n", settingActiveProfile, err)
@@ -72,15 +88,21 @@ func (a *App) CreateProfile(name string) (Profile, error) {
 
 // DeleteProfile deletes a profile, optionally backing it up first.
 func (a *App) DeleteProfile(name string, backup bool) error {
-	if err := deleteProfile(a.config.WorkspacesRoot, name, backup); err != nil {
+	a.mu.RLock()
+	root := a.config.WorkspacesRoot
+	a.mu.RUnlock()
+	if err := deleteProfile(root, name, backup); err != nil {
 		return err
 	}
-	if a.config.ActiveProfile == name {
+	a.mu.Lock()
+	clearActive := a.config.ActiveProfile == name
+	if clearActive {
 		a.config.ActiveProfile = ""
-		if a.db != nil {
-			if err := a.db.SetSetting(settingActiveProfile, ""); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: failed to save setting %q: %v\n", settingActiveProfile, err)
-			}
+	}
+	a.mu.Unlock()
+	if clearActive && a.db != nil {
+		if err := a.db.SetSetting(settingActiveProfile, ""); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to save setting %q: %v\n", settingActiveProfile, err)
 		}
 	}
 	return nil
@@ -88,17 +110,26 @@ func (a *App) DeleteProfile(name string, backup bool) error {
 
 // RestoreProfile restores a profile from backup.
 func (a *App) RestoreProfile(name string) error {
-	return restoreProfile(a.config.WorkspacesRoot, name)
+	a.mu.RLock()
+	root := a.config.WorkspacesRoot
+	a.mu.RUnlock()
+	return restoreProfile(root, name)
 }
 
 // PurgeBackup permanently deletes a profile backup.
 func (a *App) PurgeBackup(name string) error {
-	return purgeBackup(a.config.WorkspacesRoot, name)
+	a.mu.RLock()
+	root := a.config.WorkspacesRoot
+	a.mu.RUnlock()
+	return purgeBackup(root, name)
 }
 
 // ListBackups returns names of profiles that have backups.
 func (a *App) ListBackups() ([]string, error) {
-	return listBackups(a.config.WorkspacesRoot)
+	a.mu.RLock()
+	root := a.config.WorkspacesRoot
+	a.mu.RUnlock()
+	return listBackups(root)
 }
 
 // ---------------------------------------------------------------------------

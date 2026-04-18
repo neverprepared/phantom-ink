@@ -8,6 +8,7 @@ import (
 	"phantom-ink/brainbox"
 	goruntime "runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -16,6 +17,7 @@ import (
 // App is the Wails-bound struct. All exported methods become callable from JS.
 type App struct {
 	ctx    context.Context
+	mu     sync.RWMutex // protects config
 	config *Config
 	db     *DB
 	client *brainbox.Client
@@ -79,7 +81,9 @@ func (a *App) shutdown(_ context.Context) {
 
 // GetConfig returns the current app configuration (API key masked).
 func (a *App) GetConfig() Config {
+	a.mu.RLock()
 	cfg := *a.config
+	a.mu.RUnlock()
 	if cfg.APIKey != "" {
 		cfg.APIKey = "••••••••"
 	}
@@ -91,7 +95,9 @@ func (a *App) GetConfig() Config {
 
 // SetTheme saves the theme preference ("dark" or "light").
 func (a *App) SetTheme(theme string) error {
+	a.mu.Lock()
 	a.config.Theme = theme
+	a.mu.Unlock()
 	if a.db != nil {
 		return a.db.SetSetting(settingTheme, theme)
 	}
@@ -100,6 +106,7 @@ func (a *App) SetTheme(theme string) error {
 
 // SetConfig updates and persists app configuration.
 func (a *App) SetConfig(baseURL, apiKey, workspacesRoot string) error {
+	a.mu.Lock()
 	if apiKey == "••••••••" {
 		apiKey = a.config.APIKey
 	}
@@ -108,6 +115,8 @@ func (a *App) SetConfig(baseURL, apiKey, workspacesRoot string) error {
 	if workspacesRoot != "" {
 		a.config.WorkspacesRoot = workspacesRoot
 	}
+	a.mu.Unlock()
+
 	a.client.Update(baseURL, apiKey)
 	if a.sse != nil {
 		a.sse.Restart()
