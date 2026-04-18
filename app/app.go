@@ -87,8 +87,16 @@ func (a *App) GetConfig() Config {
 	if cfg.APIKey != "" {
 		cfg.APIKey = "••••••••"
 	}
+	// Apply defaults for fields that must never be empty, even if a blank
+	// value was explicitly stored in the database by a previous run.
 	if cfg.Theme == "" {
 		cfg.Theme = "dark"
+	}
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = "http://127.0.0.1:9999"
+	}
+	if cfg.WorkspacesRoot == "" {
+		cfg.WorkspacesRoot = defaultWorkspacesRoot()
 	}
 	return cfg
 }
@@ -109,6 +117,11 @@ func (a *App) SetConfig(baseURL, apiKey, workspacesRoot string) error {
 	a.mu.Lock()
 	if apiKey == "••••••••" {
 		apiKey = a.config.APIKey
+	}
+	// Reject a blank baseURL rather than storing a value that would break
+	// the brainbox client on the next startup.
+	if baseURL == "" {
+		baseURL = "http://127.0.0.1:9999"
 	}
 	a.config.BaseURL = baseURL
 	a.config.APIKey = apiKey
