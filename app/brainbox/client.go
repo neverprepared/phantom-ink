@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
 // Client is a typed HTTP client for the brainbox REST API.
 type Client struct {
+	mu         sync.RWMutex
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
@@ -29,13 +31,32 @@ func NewClient(baseURL, apiKey string) *Client {
 
 // Update reconfigures the client's baseURL and apiKey.
 func (c *Client) Update(baseURL, apiKey string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.baseURL = baseURL
 	c.apiKey = apiKey
 }
 
 // BaseURL returns the current base URL.
 func (c *Client) BaseURL() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.baseURL
+}
+
+// APIKey returns the current API key.
+func (c *Client) APIKey() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.apiKey
+}
+
+// snapshot returns a consistent copy of baseURL and apiKey under a single lock
+// so callers building HTTP requests see a coherent pair of values.
+func (c *Client) snapshot() (baseURL, apiKey string) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.baseURL, c.apiKey
 }
 
 // do performs an HTTP request and unmarshals the JSON response into result.
@@ -50,7 +71,8 @@ func (c *Client) do(method, path string, body interface{}, result interface{}) e
 		bodyReader = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequest(method, c.baseURL+path, bodyReader)
+	baseURL, apiKey := c.snapshot()
+	req, err := http.NewRequest(method, baseURL+path, bodyReader)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
@@ -58,8 +80,8 @@ func (c *Client) do(method, path string, body interface{}, result interface{}) e
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.apiKey != "" {
-		req.Header.Set("X-API-Key", c.apiKey)
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -97,15 +119,16 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, body inter
 		bodyReader = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequest(method, c.baseURL+path, bodyReader)
+	baseURL, apiKey := c.snapshot()
+	req, err := http.NewRequest(method, baseURL+path, bodyReader)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.apiKey != "" {
-		req.Header.Set("X-API-Key", c.apiKey)
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
 	}
 
 	resp, err := httpClient.Do(req)

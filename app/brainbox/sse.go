@@ -103,8 +103,8 @@ func (s *SSEListener) connect(ctx context.Context) error {
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
-	if s.client.apiKey != "" {
-		req.Header.Set("X-API-Key", s.client.apiKey)
+	if key := s.client.APIKey(); key != "" {
+		req.Header.Set("X-API-Key", key)
 	}
 
 	resp, err := s.client.httpClient.Do(req)
