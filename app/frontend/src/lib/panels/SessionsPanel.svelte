@@ -485,7 +485,7 @@
 
           {#if active}
             {@const sname = session.session_name ?? session.name}
-            {@const hist = sessionHistory[sname] ?? []}
+            {@const hist = sessionHistory[session.name] ?? []}
             {@const memData = hist.map((s: any) => ({ ts: s.ts, value: s.mem_usage / 1024 / 1024 }))}
             {@const cpuData = hist.map((s: any) => ({ ts: s.ts, value: s.cpu_percent }))}
             {@const latestMem = hist.length ? (() => { const v = hist[hist.length-1].mem_usage; return v < 1024*1024 ? `${(v/1024).toFixed(0)} KB` : `${(v/1024/1024).toFixed(1)} MB`; })() : '–'}

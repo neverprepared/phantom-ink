@@ -102,7 +102,12 @@
     if (!xScale || !yScale || data.length < 2) return;
     const svg = (e.currentTarget as SVGElement);
     const rect = svg.getBoundingClientRect();
-    const mx = e.clientX - rect.left - PAD.left;
+    // Convert rendered-pixel mouse position into SVG viewBox units before
+    // subtracting the PAD (which is expressed in SVG units, not pixels).
+    // Without this scaling, charts whose CSS width differs from the viewBox
+    // width compute the wrong index and emit misaligned hover positions.
+    const scaleX = rect.width > 0 ? width / rect.width : 1;
+    const mx = (e.clientX - rect.left) * scaleX - PAD.left;
     const ratio = mx / innerW;
     const clamped = Math.max(0, Math.min(data.length - 1, Math.round(ratio * (data.length - 1))));
     _hoverIdx = clamped;
