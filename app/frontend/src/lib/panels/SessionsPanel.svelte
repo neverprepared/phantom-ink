@@ -112,7 +112,7 @@
 
   async function refresh() {
     const a = await getApi();
-    if (!a) return;
+    if (!a) { loading = false; return; }
     try {
       const [sess, hubState, procs] = await Promise.all([
         a.GetSessions(),
@@ -124,7 +124,7 @@
       agents = hubState?.agents ?? [];
       localProcesses = procs ?? [];
     } catch (err: any) {
-      console.error('Failed to fetch sessions:', err);
+      notifications.error(`Failed to load sessions: ${err?.message ?? err}`);
     } finally {
       loading = false;
     }

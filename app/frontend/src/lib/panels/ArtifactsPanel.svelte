@@ -11,11 +11,11 @@
 
   async function refresh() {
     const a = await getApi();
-    if (!a) return;
+    if (!a) { loading = false; return; }
     try {
       artifacts = (await a.ListArtifacts(prefix)) ?? [];
-    } catch (err) {
-      console.error('Artifacts refresh failed:', err);
+    } catch (err: any) {
+      notifications.error(`Failed to load artifacts: ${err?.message ?? err}`);
     } finally {
       loading = false;
     }

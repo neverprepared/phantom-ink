@@ -8,12 +8,13 @@
   let traces = $state<any[]>([]);
   let selectedSession = $state('');
   let loading = $state(true);
+  let errorMsg = $state('');
   let activeTab = $state<'metrics' | 'traces'>('metrics');
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   async function refresh() {
     const a = await getApi();
-    if (!a) return;
+    if (!a) { loading = false; return; }
     try {
       const [h, m] = await Promise.all([
         a.GetLangfuseHealth(),
@@ -21,7 +22,9 @@
       ]);
       langfuseHealth = h;
       metrics = m ?? [];
-    } catch (err) {
+      errorMsg = '';
+    } catch (err: any) {
+      errorMsg = `Failed to load observability data: ${err?.message ?? err}`;
       console.error('Observability refresh failed:', err);
     } finally {
       loading = false;
@@ -75,6 +78,10 @@
       LangFuse Traces
     </button>
   </div>
+
+  {#if errorMsg}
+    <div class="error-msg">{errorMsg}</div>
+  {/if}
 
   {#if loading}
     <div class="loading">loading...</div>
@@ -143,6 +150,7 @@
   header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
   h1 { font-size: 22px; font-weight: 600; }
   .accent { color: var(--color-accent); }
+  .error-msg { font-size: 12px; color: #f87171; padding: 6px 0; }
 
   .health-badge {
     font-size: 11px;

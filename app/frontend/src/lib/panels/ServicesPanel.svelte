@@ -34,7 +34,7 @@
 
   async function refresh() {
     const a = await getApi();
-    if (!a) return;
+    if (!a) { loading = false; return; }
     try {
       services = (await a.ListServices()) ?? [];
       featureFlags.services = services.map(s => ({
@@ -42,8 +42,8 @@
         enabled: s.enabled,
         running: s.running,
       }));
-    } catch (err) {
-      console.error('Failed to list services:', err);
+    } catch (err: any) {
+      notifications.error(`Failed to load services: ${err?.message ?? err}`);
     } finally {
       loading = false;
     }
