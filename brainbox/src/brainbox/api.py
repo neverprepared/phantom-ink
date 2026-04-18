@@ -1321,6 +1321,15 @@ def _get_trace_counts(session_name: str, timeout: float = 2.0) -> dict[str, int]
     return data
 
 
+def _new_docker_client() -> "docker.DockerClient":
+    """Create a fresh Docker client (not the shared lifecycle client)."""
+    from pathlib import Path
+    macos_sock = Path.home() / ".docker" / "run" / "docker.sock"
+    if macos_sock.is_socket():
+        return docker.DockerClient(base_url=f"unix://{macos_sock}", timeout=5)
+    return docker.from_env(timeout=5)
+
+
 def _get_container_metrics() -> list[dict[str, Any]]:
     """Collect per-container CPU %, memory usage, and uptime (blocking)."""
     import concurrent.futures
@@ -1330,10 +1339,18 @@ def _get_container_metrics() -> list[dict[str, Any]]:
         client = _docker()
         containers = client.containers.list(filters={"label": "brainbox.managed=true"})
 
+        if not containers:
+            return results
+
         def get_container_metrics(c):
-            """Get metrics for a single container."""
+            """Get metrics for a single container using a dedicated client."""
+            stats_client = None
             try:
-                stats = c.stats(stream=False)
+                # Use a dedicated client to avoid contention with the lifecycle
+                # monitor's shared client when both call c.stats() concurrently.
+                stats_client = _new_docker_client()
+                container = stats_client.containers.get(c.id)
+                stats = container.stats(stream=False)
                 cpu_pct = _calc_cpu(stats)
                 mem = stats.get("memory_stats", {})
                 mem_usage = mem.get("usage", 0)
@@ -1372,17 +1389,26 @@ def _get_container_metrics() -> list[dict[str, Any]]:
             except Exception as exc:
                 log.debug("metrics.container_stat_failed", metadata={"container": c.name, "reason": str(exc)})
                 return None
+            finally:
+                if stats_client is not None:
+                    try:
+                        stats_client.close()
+                    except Exception:
+                        pass
 
         # Process containers in parallel with a timeout per container
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(containers), 8)) as executor:
             future_to_container = {executor.submit(get_container_metrics, c): c for c in containers}
-            for future in concurrent.futures.as_completed(future_to_container, timeout=10):
-                try:
-                    result = future.result(timeout=2)
-                    if result:
-                        results.append(result)
-                except (Exception, concurrent.futures.TimeoutError) as exc:
-                    log.debug("metrics.container_future_failed", metadata={"reason": str(exc)})
+            try:
+                for future in concurrent.futures.as_completed(future_to_container, timeout=15):
+                    try:
+                        result = future.result(timeout=2)
+                        if result:
+                            results.append(result)
+                    except Exception as exc:
+                        log.debug("metrics.container_future_failed", metadata={"reason": str(exc)})
+            except concurrent.futures.TimeoutError as exc:
+                log.warning("metrics.containers_timeout", metadata={"reason": str(exc)})
 
     except Exception as exc:
         log.warning("metrics.containers_failed", metadata={"reason": str(exc)})
