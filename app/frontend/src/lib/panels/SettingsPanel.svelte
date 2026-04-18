@@ -32,17 +32,17 @@
 
   onMount(async () => {
     const a = await getApi();
-    if (!a) return;
+    if (!a) { loaded = true; return; }
     try {
       const [cfg, plat] = await Promise.all([a.GetConfig(), a.GetPlatform()]);
-      baseURL = cfg.base_url ?? 'http://127.0.0.1:9999';
-      apiKey = cfg.api_key ?? '';
-      workspacesRoot = cfg.workspaces_root ?? '';
-      theme = cfg.theme ?? 'dark';
+      baseURL = cfg?.base_url ?? 'http://127.0.0.1:9999';
+      apiKey = cfg?.api_key ?? '';
+      workspacesRoot = cfg?.workspaces_root ?? '';
+      theme = cfg?.theme ?? 'dark';
       platform = plat ?? 'unknown';
       await Promise.all([refreshProfiles(), loadBackups()]);
-    } catch (err) {
-      console.error('Failed to load config:', err);
+    } catch (err: any) {
+      notifications.error(`Failed to load settings: ${err?.message ?? err}`);
     } finally {
       loaded = true;
     }

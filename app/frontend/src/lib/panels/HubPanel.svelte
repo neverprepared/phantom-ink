@@ -95,8 +95,8 @@
       tokens = hubState?.tokens ?? [];
       dockerStats = stats ?? [];
       localProcesses = procs ?? [];
-    } catch (err) {
-      console.error('Dashboard refresh failed:', err);
+    } catch (err: any) {
+      notifications.error(`Dashboard refresh failed: ${err?.message ?? err}`);
     } finally {
       loading = false;
     }

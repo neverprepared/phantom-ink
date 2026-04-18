@@ -25,22 +25,30 @@
   async function selectProfile(name: string | null) {
     let api: any;
     try { api = await import('../../../wailsjs/go/main/App'); } catch { return; }
-    await api.SetActiveProfile(name ?? '');
-    if (name) {
-      const ap = await api.GetActiveProfile();
-      profileState.active = ap?.name ? ap : null;
-    } else {
-      profileState.active = null;
+    try {
+      await api.SetActiveProfile(name ?? '');
+      if (name) {
+        const ap = await api.GetActiveProfile();
+        profileState.active = ap?.name ? ap : null;
+      } else {
+        profileState.active = null;
+      }
+    } catch (err: any) {
+      console.error('Failed to select profile:', err);
     }
   }
 
   async function refreshProfiles() {
     let api: any;
     try { api = await import('../../../wailsjs/go/main/App'); } catch { return; }
-    const scanned = await api.ScanProfiles();
-    profileState.profiles = scanned ?? [];
-    const ap = await api.GetActiveProfile();
-    profileState.active = ap?.name ? ap : null;
+    try {
+      const scanned = await api.ScanProfiles();
+      profileState.profiles = scanned ?? [];
+      const ap = await api.GetActiveProfile();
+      profileState.active = ap?.name ? ap : null;
+    } catch (err: any) {
+      console.error('Failed to refresh profiles:', err);
+    }
   }
 </script>
 

@@ -88,8 +88,8 @@
     if (!a) { loading = false; return; }
     try {
       channels = (await a.ListChannels()) ?? [];
-    } catch (err) {
-      console.error('Failed to fetch channels:', err);
+    } catch (err: any) {
+      notifications.error(`Failed to load channels: ${err?.message ?? err}`);
     } finally {
       loading = false;
     }

@@ -75,11 +75,11 @@
 
   async function refresh() {
     const a = await getApi();
-    if (!a) return;
+    if (!a) { loading = false; return; }
     try {
       allRepos = (await a.ListRepos()) ?? [];
-    } catch (err) {
-      console.error('Failed to fetch repos:', err);
+    } catch (err: any) {
+      notifications.error(`Failed to load repos: ${err?.message ?? err}`);
     } finally {
       loading = false;
     }
