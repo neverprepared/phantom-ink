@@ -14,18 +14,20 @@ import (
 
 // SSEListener connects to /api/events and forwards events via a callback.
 type SSEListener struct {
-	client    *Client
-	onEvent   func(string)
-	cancel    context.CancelFunc
-	mu        sync.Mutex
-	running   bool
+	client     *Client
+	onEvent    func(string)
+	cancel     context.CancelFunc
+	mu         sync.Mutex
+	running    bool
+	httpClient *http.Client // no Timeout: context cancellation handles shutdown
 }
 
 // NewSSEListener creates an SSE listener that calls onEvent for each incoming event.
 func NewSSEListener(client *Client, onEvent func(string)) *SSEListener {
 	return &SSEListener{
-		client:  client,
-		onEvent: onEvent,
+		client:     client,
+		onEvent:    onEvent,
+		httpClient: &http.Client{}, // zero Timeout — relies on request context
 	}
 }
 
@@ -107,7 +109,7 @@ func (s *SSEListener) connect(ctx context.Context) error {
 		req.Header.Set("X-API-Key", s.client.apiKey)
 	}
 
-	resp, err := s.client.httpClient.Do(req)
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
