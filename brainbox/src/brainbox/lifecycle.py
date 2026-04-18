@@ -742,8 +742,14 @@ async def configure(ctx_or_name: SessionContext | str) -> SessionContext:
     # Inject Codex/OpenAI env vars when provider is codex
     elif ctx.llm_provider == "codex":
         api_key = ctx.codex_api_key or settings.codex.api_key
-        resolved["OPENAI_API_KEY"] = api_key
+        if api_key:
+            # Only set if we have a key — otherwise rely on OPENAI_API_KEY
+            # already present in resolved from workspace secrets.
+            resolved["OPENAI_API_KEY"] = api_key
         resolved["CODEX_MODEL"] = ctx.llm_model or settings.codex.model
+
+    # Always expose provider name so ttyd-wrapper.sh can detect which CLI to launch
+    resolved["LLM_PROVIDER"] = ctx.llm_provider
 
     # Phase 1: Enable Claude Code Teams experimental feature
     if ctx.teams_enabled:
