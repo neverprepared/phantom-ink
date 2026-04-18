@@ -1,6 +1,18 @@
 #!/bin/bash
 # Start tmux session with the configured LLM agent
 
+# In hardened mode secrets land in /run/secrets/ rather than ~/.env.
+# Read the vars we need from there if not already in the environment.
+_secret() {
+    local key="$1"
+    if [ -z "${!key}" ] && [ -f "/run/secrets/$key" ]; then
+        export "$key"="$(cat "/run/secrets/$key")"
+    fi
+}
+_secret LLM_PROVIDER
+_secret CODEX_MODEL
+_secret CLAUDE_MODEL
+
 # Attach to existing session, or create new one
 if tmux has-session -t main 2>/dev/null; then
     exec tmux attach -t main
