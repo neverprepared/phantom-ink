@@ -6,7 +6,6 @@ from multiclaude (Dan Lorenc, github.com/dlorenc/multiclaude).
 
 from __future__ import annotations
 
-import time
 import uuid
 from typing import Any, Callable
 
@@ -15,6 +14,7 @@ from .log import get_logger
 from .models import Repository, Task, TaskStatus
 from .policy import evaluate_task_assignment
 from .registry import get_agent, issue_token, revoke_token
+from .utils import now_ms as _now_ms
 
 log = get_logger()
 
@@ -204,10 +204,22 @@ def list_tasks(
     return result
 
 
-async def complete_task(task_id: str, result: Any = None) -> Task:
-    """Mark a task as completed and recycle its container."""
+async def _finalize_task(task: Task, reason: str) -> None:
+    """Recycle the task's container and revoke its token."""
     from . import lifecycle
 
+    if task.session_name:
+        try:
+            await lifecycle.recycle(task.session_name, reason=reason)
+        except Exception as exc:
+            log.warning("router.recycle_failed", metadata={"task_id": task.id, "reason": str(exc)})
+
+    if task.token_id:
+        revoke_token(task.token_id)
+
+
+async def complete_task(task_id: str, result: Any = None) -> Task:
+    """Mark a task as completed and recycle its container."""
     task = _tasks.get(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
@@ -218,16 +230,7 @@ async def complete_task(task_id: str, result: Any = None) -> Task:
     task.result = result
     task.updated_at = _now_ms()
 
-    # Recycle container
-    if task.session_name:
-        try:
-            await lifecycle.recycle(task.session_name, reason="task_completed")
-        except Exception as exc:
-            log.warning("router.recycle_failed", metadata={"task_id": task_id, "reason": str(exc)})
-
-    # Revoke token
-    if task.token_id:
-        revoke_token(task.token_id)
+    await _finalize_task(task, reason="task_completed")
 
     log.info("router.task_completed", metadata={"task_id": task_id})
     _emit("task.completed", task)
@@ -235,8 +238,6 @@ async def complete_task(task_id: str, result: Any = None) -> Task:
 
 
 async def fail_task(task_id: str, error: str | None = None) -> Task:
-    from . import lifecycle
-
     task = _tasks.get(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
@@ -245,14 +246,7 @@ async def fail_task(task_id: str, error: str | None = None) -> Task:
     task.error = error or "Unknown error"
     task.updated_at = _now_ms()
 
-    if task.session_name:
-        try:
-            await lifecycle.recycle(task.session_name, reason="task_failed")
-        except Exception as exc:
-            log.warning("router.recycle_failed", metadata={"task_id": task_id, "reason": str(exc)})
-
-    if task.token_id:
-        revoke_token(task.token_id)
+    await _finalize_task(task, reason="task_failed")
 
     log.info("router.task_failed", metadata={"task_id": task_id, "error": error})
     _emit("task.failed", task)
@@ -260,8 +254,6 @@ async def fail_task(task_id: str, error: str | None = None) -> Task:
 
 
 async def cancel_task(task_id: str) -> Task:
-    from . import lifecycle
-
     task = _tasks.get(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
@@ -271,14 +263,7 @@ async def cancel_task(task_id: str) -> Task:
     task.status = TaskStatus.CANCELLED
     task.updated_at = _now_ms()
 
-    if task.session_name:
-        try:
-            await lifecycle.recycle(task.session_name, reason="task_cancelled")
-        except Exception as exc:
-            log.warning("router.recycle_failed", metadata={"task_id": task_id, "reason": str(exc)})
-
-    if task.token_id:
-        revoke_token(task.token_id)
+    await _finalize_task(task, reason="task_cancelled")
 
     log.info("router.task_cancelled", metadata={"task_id": task_id})
     _emit("task.cancelled", task)
@@ -497,5 +482,3 @@ def restore_state(state: dict | None) -> None:
             _repos[name] = Repository(**data)
 
 
-def _now_ms() -> int:
-    return int(time.time() * 1000)

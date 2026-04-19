@@ -214,6 +214,8 @@ class Settings(BaseSettings):
     container_prefix: str = ""
     user: str = "65534:65534"
     config_dir: Path = Field(default_factory=_default_config_dir)
+    cors_origins: list[str] = Field(default_factory=list)
+    artifact_max_size: int = 100 * 1024 * 1024  # 100MB default
 
     ttl: int = 3600
     health_check_interval: int = 30  # seconds

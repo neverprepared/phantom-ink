@@ -590,7 +590,10 @@ def ingest_to_qdrant(
     file_path: Path,
     file_metadata: Dict,
     collection: str,
-    qdrant_url: str = "http://localhost:6333"
+    qdrant_url: str = "http://localhost:6333",
+    *,
+    client: "QdrantClient | None" = None,
+    embedder: "TextEmbedding | None" = None,
 ) -> int:
     """
     Ingest chunks into Qdrant.
@@ -601,6 +604,8 @@ def ingest_to_qdrant(
         file_metadata: Metadata from extraction
         collection: Qdrant collection name
         qdrant_url: Qdrant server URL
+        client: Optional pre-built QdrantClient (created if not provided)
+        embedder: Optional pre-built TextEmbedding model (created if not provided)
 
     Returns:
         Number of chunks ingested
@@ -608,9 +613,10 @@ def ingest_to_qdrant(
     Raises:
         QdrantConnectionError: If connection to Qdrant fails
     """
-    # Initialize clients with retry
-    client = connect_to_qdrant(qdrant_url)
-    embedder = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
+    if client is None:
+        client = connect_to_qdrant(qdrant_url)
+    if embedder is None:
+        embedder = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
 
     # Vector name used by mcp-server-qdrant
     vector_name = "fast-all-minilm-l6-v2"
@@ -686,7 +692,10 @@ def process_file(
     collection: str,
     chunk_size: int,
     qdrant_url: str,
-    max_file_size: int = MAX_FILE_SIZE
+    max_file_size: int = MAX_FILE_SIZE,
+    *,
+    client: "QdrantClient | None" = None,
+    embedder: "TextEmbedding | None" = None,
 ) -> Dict:
     """Process a single file."""
     print(f"\nProcessing: {path.name}")
@@ -717,7 +726,9 @@ def process_file(
         file_path=path,
         file_metadata=metadata,
         collection=collection,
-        qdrant_url=qdrant_url
+        qdrant_url=qdrant_url,
+        client=client,
+        embedder=embedder,
     )
 
     return {
@@ -798,6 +809,10 @@ def main():
     print(f"Collection: {args.collection}")
     print(f"Chunk size: {args.chunk_size} words")
 
+    # Build shared client and embedding model once for the entire run
+    qdrant_client = connect_to_qdrant(args.qdrant_url)
+    embedder = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
+
     # Process files
     results = []
     for path in files:
@@ -807,7 +822,9 @@ def main():
                 collection=args.collection,
                 chunk_size=args.chunk_size,
                 qdrant_url=args.qdrant_url,
-                max_file_size=max_file_size
+                max_file_size=max_file_size,
+                client=qdrant_client,
+                embedder=embedder,
             )
             results.append(result)
         except QdrantConnectionError as e:

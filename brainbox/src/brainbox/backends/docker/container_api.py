@@ -27,7 +27,6 @@ class QueryRequest(BaseModel):
     prompt: str = Field(..., description="Prompt to send to Claude Code")
     working_dir: str | None = Field(None, description="Working directory")
     timeout: int = Field(300, ge=10, le=3600)
-    fork_session: bool = Field(False, description="Fork a new conversation")
 
 
 class QueryResponse(BaseModel):
@@ -39,7 +38,6 @@ class QueryResponse(BaseModel):
     error: str | None = None
     exit_code: int
     duration_seconds: float
-    files_modified: list[str] = Field(default_factory=list)
 
 
 @app.get("/health")
@@ -132,17 +130,20 @@ async def _build_claude_command(request: QueryRequest, working_dir: str) -> int:
 
 async def _run_and_capture(before_line_count: int, timeout: int) -> str:
     """Poll the tmux pane until output stabilises; return the final pane text."""
+    # Future improvement: use `tmux wait-for` with a named channel to avoid
+    # polling entirely — Claude can signal completion via `tmux wait-for -S`.
     stable_count = 0
     last_line_count = before_line_count
     max_wait = timeout
     waited = 0
-    poll_interval = 1.0
+    poll_interval = 2.5  # Reduced CPU load vs the original 1.0s interval
 
     while waited < max_wait:
         await asyncio.sleep(poll_interval)
         waited += poll_interval
 
-        # Capture current pane content
+        # Capture current pane content — compare only last 50 lines to avoid
+        # full-buffer string comparison on every tick.
         capture_process = await asyncio.create_subprocess_exec(
             "tmux",
             "capture-pane",
@@ -153,14 +154,15 @@ async def _run_and_capture(before_line_count: int, timeout: int) -> str:
             stderr=asyncio.subprocess.PIPE,
         )
         current_output, _ = await capture_process.communicate()
-        current_lines = current_output.decode("utf-8", errors="replace").splitlines()
-        current_line_count = len(current_lines)
+        all_lines = current_output.decode("utf-8", errors="replace").splitlines()
+        current_lines = all_lines[-50:] if len(all_lines) > 50 else all_lines
+        current_line_count = len(all_lines)
 
         # Check if output has stabilized (no new lines for 3 polls)
         # Also check for the prompt character "❯" indicating Claude is ready
         last_line = current_lines[-1] if current_lines else ""
 
-        if current_line_count == last_line_count and "❯" in last_line:
+        if current_line_count == last_line_count and "❯" in last_line:  # noqa: RUF001
             stable_count += 1
             if stable_count >= 3:  # Stable for 3 seconds
                 break
@@ -214,9 +216,6 @@ def _format_query_response(
 
     cleaned_output = "\n".join(response_lines).strip()
 
-    # TODO: Parse git status to detect modified files
-    files_modified = []
-
     return QueryResponse(
         success=True,
         conversation_id=conversation_id,
@@ -224,7 +223,6 @@ def _format_query_response(
         error=None,
         exit_code=0,
         duration_seconds=duration,
-        files_modified=files_modified,
     )
 
 

@@ -16,14 +16,6 @@ from brainbox.langfuse_client import (
 
 
 class TestLangfuseHealthEndpoint:
-    @pytest.fixture()
-    def client(self):
-        from httpx import ASGITransport, AsyncClient
-
-        from brainbox.api import app
-
-        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-
     @pytest.mark.asyncio
     async def test_healthy(self, client, monkeypatch):
         monkeypatch.setattr(settings.langfuse, "mode", "warn")
@@ -53,14 +45,6 @@ class TestLangfuseHealthEndpoint:
 
 
 class TestLangfuseSessionTraces:
-    @pytest.fixture()
-    def client(self):
-        from httpx import ASGITransport, AsyncClient
-
-        from brainbox.api import app
-
-        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-
     @pytest.mark.asyncio
     async def test_returns_traces(self, client, monkeypatch):
         monkeypatch.setattr(settings.langfuse, "mode", "warn")
@@ -109,14 +93,6 @@ class TestLangfuseSessionTraces:
 
 
 class TestLangfuseSessionSummary:
-    @pytest.fixture()
-    def client(self):
-        from httpx import ASGITransport, AsyncClient
-
-        from brainbox.api import app
-
-        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-
     @pytest.mark.asyncio
     async def test_returns_summary(self, client, monkeypatch):
         monkeypatch.setattr(settings.langfuse, "mode", "warn")
@@ -156,14 +132,6 @@ class TestLangfuseSessionSummary:
 
 
 class TestLangfuseTraceDetail:
-    @pytest.fixture()
-    def client(self):
-        from httpx import ASGITransport, AsyncClient
-
-        from brainbox.api import app
-
-        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-
     @pytest.mark.asyncio
     async def test_returns_detail(self, client, monkeypatch):
         monkeypatch.setattr(settings.langfuse, "mode", "warn")
@@ -210,14 +178,6 @@ class TestLangfuseTraceDetail:
 
 
 class TestMetricsTraceCountMerge:
-    @pytest.fixture()
-    def client(self):
-        from httpx import ASGITransport, AsyncClient
-
-        from brainbox.api import app
-
-        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-
     @pytest.mark.asyncio
     async def test_metrics_include_trace_counts(self, client, monkeypatch):
         """When LangFuse is available, metrics include trace_count and error_count."""

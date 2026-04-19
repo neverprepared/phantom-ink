@@ -359,14 +359,6 @@ class TestHealthCheck:
 
 
 class TestArtifactAPI:
-    @pytest.fixture()
-    def client(self):
-        from httpx import ASGITransport, AsyncClient
-
-        from brainbox.api import app
-
-        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-
     @pytest.mark.asyncio
     async def test_upload(self, client, monkeypatch):
         monkeypatch.setattr(settings.artifact, "mode", "warn")
@@ -425,14 +417,6 @@ class TestArtifactAPI:
 
 
 class TestArtifactModes:
-    @pytest.fixture()
-    def client(self):
-        from httpx import ASGITransport, AsyncClient
-
-        from brainbox.api import app
-
-        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-
     @pytest.mark.asyncio
     async def test_off_returns_503(self, client, monkeypatch):
         monkeypatch.setattr(settings.artifact, "mode", "off")

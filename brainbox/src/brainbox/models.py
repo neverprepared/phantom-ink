@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import time
 import uuid
 from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)
+from .utils import now_ms as _now_ms
 
 
 # ---------------------------------------------------------------------------

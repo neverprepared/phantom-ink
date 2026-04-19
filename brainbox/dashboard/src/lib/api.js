@@ -139,18 +139,6 @@ export async function fetchQdrantHealth() {
   return fetchJSON('/api/qdrant/health');
 }
 
-export async function fetchSessionTraces(sessionName, limit = 50) {
-  return fetchJSON(`/api/langfuse/sessions/${encodeURIComponent(sessionName)}/traces?limit=${limit}`, { headers: readHeaders() });
-}
-
-export async function fetchSessionSummary(sessionName) {
-  return fetchJSON(`/api/langfuse/sessions/${encodeURIComponent(sessionName)}/summary`, { headers: readHeaders() });
-}
-
-export async function fetchTraceDetail(traceId) {
-  return fetchJSON(`/api/langfuse/traces/${encodeURIComponent(traceId)}`, { headers: readHeaders() });
-}
-
 // ---------------------------------------------------------------------------
 // Pipelines
 // ---------------------------------------------------------------------------

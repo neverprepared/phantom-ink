@@ -12,12 +12,6 @@ from brainbox.config import settings
 
 
 class TestExecEndpoint:
-    @pytest.fixture()
-    def client(self):
-        from httpx import ASGITransport, AsyncClient
-
-        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-
     @pytest.mark.asyncio
     async def test_success(self, client):
         mock_container = MagicMock()

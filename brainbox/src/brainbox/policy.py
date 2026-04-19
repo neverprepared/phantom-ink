@@ -52,17 +52,3 @@ def evaluate_message(
     return PolicyResult(allowed=True)
 
 
-def evaluate_capability(token: Token | None, required_cap: str) -> PolicyResult:
-    """Check whether a token has a specific capability."""
-    if not token:
-        return PolicyResult(allowed=False, reason="No token provided")
-
-    if not validate_token(token.token_id):
-        return PolicyResult(allowed=False, reason="Token is invalid or expired")
-
-    if required_cap not in token.capabilities:
-        return PolicyResult(
-            allowed=False, reason=f"Token lacks required capability '{required_cap}'"
-        )
-
-    return PolicyResult(allowed=True)

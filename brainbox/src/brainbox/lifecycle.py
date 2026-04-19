@@ -9,17 +9,15 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import stat
 import subprocess
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-import docker
-
 from pathlib import Path
 
 from .config import settings
+from .backends.docker import _docker
 from .backends.docker.cosign import CosignVerificationError, verify_image, verify_image_keyless
 from .backends.docker.hardening import get_hardening_kwargs, get_legacy_kwargs
 from .log import get_logger
@@ -29,22 +27,10 @@ from .models import SessionContext, SessionState, Token
 # Module state
 # ---------------------------------------------------------------------------
 
-_client: docker.DockerClient | None = None
 _sessions: dict[str, SessionContext] = {}
 _executor = ThreadPoolExecutor(max_workers=4)
 
 log = get_logger()
-
-
-def _docker() -> docker.DockerClient:
-    global _client
-    if _client is None:
-        macos_sock = Path.home() / ".docker" / "run" / "docker.sock"
-        if macos_sock.is_socket():
-            _client = docker.DockerClient(base_url=f"unix://{macos_sock}")
-        else:
-            _client = docker.from_env()
-    return _client
 
 
 async def _run(fn: Any, *args: Any, **kwargs: Any) -> Any:
@@ -1223,8 +1209,6 @@ async def run_pipeline(
         and repo.mode in ("clone", "clone-worktree", "ci-ratchet")
         and backend == "docker"
     ):
-        from .backends.docker import _docker
-
         try:
             client = _docker(docker_host)
             container = await _run(client.containers.get, ctx.container_name)
@@ -1356,14 +1340,4 @@ def recover_sessions_from_docker() -> int:
 # Utilities
 # ---------------------------------------------------------------------------
 
-
-def _now_ms() -> int:
-    import time
-
-    return int(time.time() * 1000)
-
-
-def _iso_now() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).isoformat()
+from .utils import now_ms as _now_ms, iso_now as _iso_now

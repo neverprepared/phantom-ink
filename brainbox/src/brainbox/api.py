@@ -28,9 +28,8 @@ from .auth import get_api_key, load_or_create_key, require_api_key
 from .config import settings
 from .rate_limit import limiter, rate_limit_exceeded_handler
 from .hub import init as hub_init, shutdown as hub_shutdown
-from .backends.docker import _calc_cpu, _human_bytes
+from .backends.docker import _calc_cpu, _docker, _human_bytes
 from .lifecycle import (
-    _docker,
     provision,
     configure,
     recycle,
@@ -125,7 +124,6 @@ from .worktrees import (
     get_worktree,
     list_worktrees,
     on_event as worktree_on_event,
-    resolved_local_path,
 )
 from .models import ChannelParticipant
 from .models_api import OllamaChatRequest, OllamaPullRequest, CreatePlaybookRequest, CreateWorktreeRequest
@@ -144,6 +142,13 @@ log = get_logger()
 # ---------------------------------------------------------------------------
 # Audit logging helper
 # ---------------------------------------------------------------------------
+
+
+def validated_session_name(name: str) -> str:
+    try:
+        return validate_session_name(name)
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 def _audit_log(
@@ -372,16 +377,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Brainbox", version="0.2.0", lifespan=lifespan)
 
 # CORS — restrict to localhost by default; override via CL_CORS_ORIGINS
-_cors_origins = (
-    os.environ.get("CL_CORS_ORIGINS", "").split(",")
-    if os.environ.get("CL_CORS_ORIGINS")
-    else [
-        "http://localhost:9999",
-        "http://127.0.0.1:9999",
-        "http://localhost:9998",  # brainbox-ui nginx container
-        "http://localhost:5173",  # Vite dev server
-    ]
-)
+_cors_origins = settings.cors_origins or [
+    "http://localhost:9999",
+    "http://127.0.0.1:9999",
+    "http://localhost:9998",  # brainbox-ui nginx container
+    "http://localhost:5173",  # Vite dev server
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -506,65 +507,6 @@ def _get_sessions_info() -> list[dict[str, Any]]:
     return sessions
 
 
-def _get_sessions_info_legacy() -> list[dict[str, Any]]:
-    """Legacy Docker-only session listing (deprecated)."""
-    sessions = []
-    try:
-        client = _docker()
-        containers = client.containers.list(all=True, filters={"label": "brainbox.managed=true"})
-
-        for c in containers:
-            name = c.name
-            is_running = c.status == "running"
-            port = None
-            volume = "-"
-
-            if is_running:
-                ports = c.attrs.get("NetworkSettings", {}).get("Ports") or {}
-                for bindings in ports.values():
-                    if bindings:
-                        for b in bindings:
-                            hp = b.get("HostPort")
-                            if hp:
-                                port = hp
-                                break
-
-            # Get volume mounts
-            mounts = c.attrs.get("Mounts", [])
-            bind_mounts = [
-                f"{m['Source']}:{m['Destination']}:{'ro' if not m.get('RW', True) else 'rw'}"
-                for m in mounts
-                if m.get("Type") == "bind" and not m["Destination"].endswith("/.claude/projects")
-            ]
-            if bind_mounts:
-                volume = ", ".join(bind_mounts)
-
-            labels = c.labels or {}
-            llm_provider = labels.get("brainbox.llm_provider", "claude")
-            llm_model = labels.get("brainbox.llm_model", "")
-            workspace_profile = labels.get("brainbox.workspace_profile", "")
-
-            sessions.append(
-                {
-                    "backend": "docker",
-                    "name": name,
-                    "session_name": _extract_session_name(name),
-                    "role": _extract_role(c),
-                    "port": port,
-                    "url": f"http://localhost:{port}" if port else None,
-                    "volume": volume,
-                    "active": is_running,
-                    "llm_provider": llm_provider,
-                    "llm_model": llm_model,
-                    "workspace_profile": workspace_profile,
-                }
-            )
-    except Exception as exc:
-        log.warning("docker.list_sessions_failed", metadata={"reason": str(exc)})
-
-    sessions.sort(key=lambda s: (not s["active"], s["name"]))
-    return sessions
-
 
 # ---------------------------------------------------------------------------
 # SSE endpoint
@@ -615,12 +557,8 @@ async def api_list_sessions():
 
 
 @app.get("/api/sessions/{name}")
-async def api_get_session(name: str):
+async def api_get_session(name: str = Depends(validated_session_name)):
     """Get info for a single session by name."""
-    try:
-        validate_session_name(name)
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
     loop = asyncio.get_running_loop()
     sessions = await loop.run_in_executor(None, _get_sessions_info)
     for session in sessions:
@@ -840,7 +778,8 @@ async def api_create_session(
             task_id = task_id_result.id
         elif body.task:
             # Regular session with a task — register in hub so it shows in dashboard
-            from .router import _tasks, _now_ms
+            from .router import _tasks
+            from .utils import now_ms as _now_ms
             from .models import Task as HubTask, TaskStatus
             from .registry import issue_token
             tid = str(uuid.uuid4())
@@ -903,20 +842,18 @@ async def api_create_session(
     except Exception as exc:
         _audit_log(request, "session.create", session_name=body.name, success=False, error=str(exc))
         log.error("session.create.failed", metadata={"error": str(exc)})
-        return {"success": False, "error": str(exc)}
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/api/sessions/{name}/exec")
 @limiter.limit("10/minute")
 async def api_exec_session(
-    request: Request, name: str, body: ExecSessionRequest, _key=Depends(require_api_key)
+    request: Request,
+    body: ExecSessionRequest,
+    name: str = Depends(validated_session_name),
+    _key=Depends(require_api_key),
 ):
     """Execute a command inside a running container."""
-    try:
-        validate_session_name(name)
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
     # Sanitize command input
     if not body.command or not body.command.strip():
         raise HTTPException(status_code=400, detail="Command cannot be empty")
@@ -953,12 +890,12 @@ async def api_exec_session(
 
 @app.post("/api/sessions/{name}/refresh-secrets")
 @limiter.limit("5/minute")
-async def api_refresh_secrets(request: Request, name: str, _key=Depends(require_api_key)):
+async def api_refresh_secrets(
+    request: Request,
+    name: str = Depends(validated_session_name),
+    _key=Depends(require_api_key),
+):
     """Re-resolve and re-inject secrets into a running session."""
-    try:
-        validate_session_name(name)
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
     from .secrets import resolve_secrets
     from .lifecycle import get_session
 
@@ -986,15 +923,11 @@ async def api_refresh_secrets(request: Request, name: str, _key=Depends(require_
 @limiter.limit("5/minute")
 async def api_query_session(
     request: Request,
-    name: str,
     body: QuerySessionRequest,
+    name: str = Depends(validated_session_name),
     _key=Depends(require_api_key),
 ):
     """Send a prompt to Claude Code running in the container via tmux."""
-    try:
-        validate_session_name(name)
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
     return await _query_via_tmux(request, name, body)
 
 
@@ -1225,7 +1158,7 @@ async def _query_via_tmux(request: Request, name: str, body: QuerySessionRequest
     client = _docker()
     try:
         container_name = _find_container_name(client, name)
-    except HTTPException as exc:
+    except HTTPException:
         _audit_log(request, "session.query", session_name=name, success=False, error="not_found")
         raise
 
@@ -1278,7 +1211,6 @@ async def _query_via_tmux(request: Request, name: str, body: QuerySessionRequest
             "error": None,
             "exit_code": 0,
             "duration_seconds": duration,
-            "files_modified": [],  # TODO: Implement git-based detection
         }
 
     except TimeoutError:
@@ -1404,8 +1336,8 @@ def _get_container_metrics() -> list[dict[str, Any]]:
                 if stats_client is not None:
                     try:
                         stats_client.close()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        log.debug("container_metrics.failed", metadata={"reason": str(exc)})
 
         # Process containers in parallel with a timeout per container
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(containers), 8)) as executor:
@@ -1801,7 +1733,7 @@ async def hub_remove_repo(name: str, _key=Depends(require_api_key)):
     if not remove_repo(name):
         raise HTTPException(status_code=404, detail=f"Repository '{name}' not found")
     _broadcast_sse(json.dumps({"action": "repo.delete", "name": name}))
-    return {"deleted": True}
+    return {"success": True}
 
 
 # ---------------------------------------------------------------------------
@@ -2196,10 +2128,10 @@ async def api_artifact_health():
     """Check artifact store connectivity."""
     mode = settings.artifact.mode
     if mode == "off":
-        return {"healthy": False, "mode": "off", "detail": "Artifact store is disabled"}
+        return {"healthy": False, "mode": "off", "url": None, "detail": "Artifact store is disabled"}
     loop = asyncio.get_running_loop()
     healthy = await loop.run_in_executor(None, artifact_health_check)
-    return {"healthy": healthy, "mode": mode}
+    return {"healthy": healthy, "mode": mode, "url": settings.artifact.endpoint, "detail": None}
 
 
 @app.get("/api/artifacts")
@@ -2224,8 +2156,8 @@ async def api_upload_artifact(key: str, request: Request, _key=Depends(require_a
         log.error("artifact.upload.validation_failed", metadata={"key": key, "error": str(val_err)})
         raise HTTPException(status_code=400, detail=str(val_err))
 
-    # Enforce upload size limit (default 50 MB)
-    max_size = int(os.environ.get("CL_ARTIFACT_MAX_SIZE", 50 * 1024 * 1024))
+    # Enforce upload size limit
+    max_size = settings.artifact_max_size
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > max_size:
         raise HTTPException(
@@ -2284,7 +2216,7 @@ async def api_delete_artifact(request: Request, key: str, _key=Depends(require_a
         log.error("artifact.delete.validation_failed", metadata={"key": key, "error": str(val_err)})
         raise HTTPException(status_code=400, detail=str(val_err))
     await _artifact_op(delete_artifact, validated_key)
-    return {"deleted": True, "key": validated_key}
+    return {"success": True, "key": validated_key}
 
 
 # ---------------------------------------------------------------------------
@@ -2317,17 +2249,17 @@ async def api_langfuse_health():
     """Check LangFuse connectivity."""
     mode = settings.langfuse.mode
     if mode == "off":
-        return {"healthy": False, "mode": "off", "detail": "LangFuse integration is disabled"}
+        return {"healthy": False, "mode": "off", "url": None, "detail": "LangFuse integration is disabled"}
     loop = asyncio.get_running_loop()
     healthy = await loop.run_in_executor(None, langfuse_health_check)
-    return {"healthy": healthy, "mode": mode, "url": settings.langfuse.base_url}
+    return {"healthy": healthy, "mode": mode, "url": settings.langfuse.base_url, "detail": None}
 
 
 @app.get("/api/qdrant/health")
 async def api_qdrant_health():
     """Check Qdrant connectivity."""
     if not settings.qdrant.enabled:
-        return {"healthy": False, "url": None, "detail": "Qdrant integration is disabled"}
+        return {"healthy": False, "mode": None, "url": None, "detail": "Qdrant integration is disabled"}
 
     try:
         import httpx
@@ -2335,9 +2267,9 @@ async def api_qdrant_health():
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(f"{settings.qdrant.url}/")
             healthy = response.status_code == 200
-            return {"healthy": healthy, "url": settings.qdrant.url}
+            return {"healthy": healthy, "mode": None, "url": settings.qdrant.url, "detail": None}
     except Exception as e:
-        return {"healthy": False, "url": settings.qdrant.url, "error": str(e)}
+        return {"healthy": False, "mode": None, "url": settings.qdrant.url, "detail": str(e)}
 
 
 @app.get("/api/langfuse/sessions/{session_name}/traces")
@@ -2587,17 +2519,16 @@ async def api_ssh_agent_relay(websocket):
 
 @app.post("/api/sessions/{name}/push-config")
 @limiter.limit("10/minute")
-async def api_push_config(request: Request, name: str, _key=Depends(require_api_key)):
+async def api_push_config(
+    request: Request,
+    name: str = Depends(validated_session_name),
+    _key=Depends(require_api_key),
+):
     """Re-inject translated ~/.claude config bundle into a running container.
 
     Useful when the user updates plugins, skills, or settings mid-session
     without reprovisioning the container.
     """
-    try:
-        validate_session_name(name)
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
     from .bundle import build_config_bundle
     from .backends import create_backend
     from .lifecycle import get_session

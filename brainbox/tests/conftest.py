@@ -21,3 +21,12 @@ def _override_api_key_auth():
         # If brainbox.api can't be imported (e.g., missing optional deps),
         # skip the override — tests that don't import app won't need it
         yield
+
+
+@pytest.fixture()
+def client():
+    """Shared async HTTP client targeting the brainbox FastAPI app."""
+    from httpx import ASGITransport, AsyncClient
+    from brainbox.api import app
+
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")

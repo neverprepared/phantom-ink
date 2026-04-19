@@ -11,13 +11,6 @@ from brainbox.ollama import ChatMessage, ChatResult, ModelInfo, OllamaError
 
 
 class TestOllamaHealthEndpoint:
-    @pytest.fixture()
-    def client(self):
-        from httpx import ASGITransport, AsyncClient
-
-        from brainbox.api import app
-
-        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
     @pytest.mark.asyncio
     async def test_healthy(self, client):
@@ -37,14 +30,6 @@ class TestOllamaHealthEndpoint:
 
 
 class TestOllamaChatEndpoint:
-    @pytest.fixture()
-    def client(self):
-        from httpx import ASGITransport, AsyncClient
-
-        from brainbox.api import app
-
-        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-
     @pytest.mark.asyncio
     async def test_success(self, client):
         result = ChatResult(
@@ -100,14 +85,6 @@ class TestOllamaChatEndpoint:
 
 
 class TestOllamaModelsEndpoint:
-    @pytest.fixture()
-    def client(self):
-        from httpx import ASGITransport, AsyncClient
-
-        from brainbox.api import app
-
-        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-
     @pytest.mark.asyncio
     async def test_success(self, client):
         models = [
@@ -141,14 +118,6 @@ class TestOllamaModelsEndpoint:
 
 
 class TestOllamaPullEndpoint:
-    @pytest.fixture()
-    def client(self):
-        from httpx import ASGITransport, AsyncClient
-
-        from brainbox.api import app
-
-        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-
     @pytest.mark.asyncio
     async def test_success(self, client):
         with patch("brainbox.api.ollama_pull_model", return_value="success"):

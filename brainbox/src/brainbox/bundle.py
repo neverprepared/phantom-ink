@@ -19,6 +19,20 @@ from .log import get_logger
 
 log = get_logger()
 
+_UNSET = object()
+_brew_prefix: object = _UNSET
+
+
+def _get_brew_prefix() -> str | None:
+    global _brew_prefix
+    if _brew_prefix is _UNSET:
+        try:
+            _brew_prefix = subprocess.check_output(["brew", "--prefix"], text=True, timeout=5).strip()
+        except Exception:
+            _brew_prefix = None
+    return _brew_prefix  # type: ignore[return-value]
+
+
 # ~/.claude dirs/files to include in the bundle
 CLAUDE_INCLUDE_DIRS = {"plugins", "hooks", "skills", "agents", "commands"}
 CLAUDE_INCLUDE_FILES = {"CLAUDE.md"}
@@ -58,13 +72,10 @@ def _default_path_map() -> dict[str, str]:
     }
 
     # Detect Homebrew prefix (macOS/Linux)
-    try:
-        brew = subprocess.check_output(["brew", "--prefix"], text=True, timeout=5).strip()
+    brew = _get_brew_prefix()
+    if brew:
         path_map[brew + "/bin/"] = "/home/linuxbrew/.linuxbrew/bin/"
         path_map[brew + "/"] = "/home/linuxbrew/.linuxbrew/"
-    except Exception:
-        # brew not available — skip
-        pass
 
     return path_map
 

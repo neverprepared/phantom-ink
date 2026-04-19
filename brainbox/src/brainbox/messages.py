@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import time
 import uuid
 from collections import deque
 from typing import Any
@@ -12,6 +11,7 @@ from .config import settings
 from .log import get_logger
 from .policy import evaluate_message
 from .registry import list_tokens, validate_token
+from .utils import now_ms as _now_ms
 
 log = get_logger()
 
@@ -170,5 +170,3 @@ def restore_state(state: dict | None) -> None:
     # The log will rebuild naturally as new messages are routed
 
 
-def _now_ms() -> int:
-    return int(time.time() * 1000)

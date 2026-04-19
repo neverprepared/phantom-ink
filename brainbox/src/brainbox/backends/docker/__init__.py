@@ -20,8 +20,9 @@ from docker.errors import NotFound
 from ...log import get_logger
 from ...models import SessionContext, SessionState
 
-# Docker client singleton
+# Docker client singletons
 _client: docker.DockerClient | None = None
+_remote_clients: dict[str, docker.DockerClient] = {}
 _executor = ThreadPoolExecutor(max_workers=4)
 
 log = get_logger()
@@ -42,8 +43,9 @@ def _docker(docker_host: str | None = None) -> docker.DockerClient:
     """Get or create Docker client, optionally targeting a remote host."""
     global _client
     if docker_host:
-        # Remote host: create a fresh client (not cached — could be per-session)
-        return docker.DockerClient(base_url=docker_host)
+        if docker_host not in _remote_clients:
+            _remote_clients[docker_host] = docker.DockerClient(base_url=docker_host)
+        return _remote_clients[docker_host]
     if _client is None:
         macos_sock = Path.home() / ".docker" / "run" / "docker.sock"
         if macos_sock.is_socket():
