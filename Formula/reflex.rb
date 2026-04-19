@@ -7,14 +7,20 @@ class Reflex < Formula
   license "MIT"
 
   def install
+    (share/"reflex").mkpath
+    cp_r "plugins/reflex/.", share/"reflex"
+  end
+
+  def post_install
     target = Pathname.new(Dir.home)/"bin"/"reflex"
-    target.mkpath
-    target.install Dir["plugins/reflex/*"]
+    target.parent.mkpath
+    target.make_symlink share/"reflex" unless target.exist?
   end
 
   def caveats
     <<~EOS
-      Installed to ~/bin/reflex
+      Plugin installed to #{share}/reflex
+      Symlinked to ~/bin/reflex (created on post-install)
 
       To use reflex with Claude Code:
 
@@ -24,8 +30,7 @@ class Reflex < Formula
 
         /plugin marketplace add mindmorass/reflex
 
-      NOTE: Because this formula installs outside the Homebrew prefix,
-      uninstalling via `brew uninstall reflex` will NOT remove the plugin files.
+      NOTE: `brew uninstall reflex` will NOT remove ~/bin/reflex (it's a symlink).
       To fully remove, also run:
 
         rm -rf ~/bin/reflex
@@ -33,6 +38,6 @@ class Reflex < Formula
   end
 
   test do
-    assert_path_exists Pathname.new(Dir.home)/"bin"/"reflex/.claude-plugin/plugin.json"
+    assert_path_exists share/"reflex/.claude-plugin/plugin.json"
   end
 end
