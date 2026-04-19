@@ -234,12 +234,16 @@ class TestInputValidation:
 
     def test_role_validation(self):
         """Roles should be from allowed set."""
+        from brainbox import registry
         from brainbox.validation import validate_role, ValidationError
 
-        # Valid roles
-        assert validate_role("developer") == "developer"
-        assert validate_role("researcher") == "researcher"
-        assert validate_role("performer") == "performer"
+        # Ensure registry is loaded so validate_role can check against it
+        registry.load_agents()
+
+        # Valid roles (current agent set)
+        assert validate_role("assistant") == "assistant"
+        assert validate_role("supervisor") == "supervisor"
+        assert validate_role("worker") == "worker"
 
         # Invalid roles
         with pytest.raises(ValidationError):
