@@ -191,6 +191,7 @@ def list_tasks(
     *,
     status: str | None = None,
     agent_name: str | None = None,
+    limit: int | None = 50,
 ) -> list[Task]:
     result = list(_tasks.values())
     if status:
@@ -198,6 +199,8 @@ def list_tasks(
     if agent_name:
         result = [t for t in result if t.agent_name == agent_name]
     result.sort(key=lambda t: t.created_at, reverse=True)
+    if limit is not None:
+        result = result[:limit]
     return result
 
 

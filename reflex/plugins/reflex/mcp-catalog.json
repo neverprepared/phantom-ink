@@ -200,6 +200,15 @@
           "GOOGLE_OAUTH_CLIENT_SECRET": "${GOOGLE_OAUTH_CLIENT_SECRET}",
           "USER_GOOGLE_EMAIL": "${USER_GOOGLE_EMAIL}"
         }
+      },
+      "container_definition": {
+        "command": "workspace-mcp",
+        "args": ["--tool-tier", "core"],
+        "env": {
+          "GOOGLE_OAUTH_CLIENT_ID": "${GOOGLE_OAUTH_CLIENT_ID}",
+          "GOOGLE_OAUTH_CLIENT_SECRET": "${GOOGLE_OAUTH_CLIENT_SECRET}",
+          "USER_GOOGLE_EMAIL": "${USER_GOOGLE_EMAIL}"
+        }
       }
     },
     "brainbox": {
@@ -218,6 +227,13 @@
         "env": {
           "BRAINBOX_URL": "${BRAINBOX_URL:-http://127.0.0.1:9999}"
         }
+      },
+      "container_definition": {
+        "command": "brainbox-mcp",
+        "args": [],
+        "env": {
+          "BRAINBOX_URL": "${BRAINBOX_URL:-http://host.docker.internal:9999}"
+        }
       }
     },
     "cloudflare-dns": {
@@ -231,22 +247,53 @@
         "env": {
           "CLOUDFLARE_API_TOKEN": "${CLOUDFLARE_API_TOKEN}"
         }
+      },
+      "container_definition": {
+        "command": "mcp-cloudflare",
+        "args": [],
+        "env": {
+          "CLOUDFLARE_API_TOKEN": "${CLOUDFLARE_API_TOKEN}"
+        }
       }
     },
     "uptime-kuma": {
       "description": "Uptime Kuma v2 monitoring — monitors, notifications, tags, status pages, and maintenance",
-      "category": "cloud",
-      "url": "https://github.com/neverprepared/kuma_uptime_mcp",
+      "category": "observability",
+      "url": "https://github.com/neverprepared/mcp-uptime-kuma",
       "requires": ["UPTIME_KUMA_URL", "UPTIME_KUMA_USERNAME", "UPTIME_KUMA_PASSWORD"],
       "definition": {
-        "command": "uvx",
-        "args": ["--from", "git+https://github.com/neverprepared/kuma_uptime_mcp.git", "mcp-uptime-kuma"],
+        "command": "npx",
+        "args": ["-y", "@neverprepared/mcp-uptime-kuma"],
         "env": {
           "UPTIME_KUMA_URL": "${UPTIME_KUMA_URL:-http://localhost:3001}",
           "UPTIME_KUMA_USERNAME": "${UPTIME_KUMA_USERNAME}",
           "UPTIME_KUMA_PASSWORD": "${UPTIME_KUMA_PASSWORD}",
           "UPTIME_KUMA_TOKEN": "${UPTIME_KUMA_TOKEN}",
           "UPTIME_KUMA_MFA_TOKEN": "${UPTIME_KUMA_MFA_TOKEN}"
+        }
+      },
+      "container_definition": {
+        "command": "mcp-uptime-kuma",
+        "args": [],
+        "env": {
+          "UPTIME_KUMA_URL": "${UPTIME_KUMA_URL:-http://localhost:3001}",
+          "UPTIME_KUMA_USERNAME": "${UPTIME_KUMA_USERNAME}",
+          "UPTIME_KUMA_PASSWORD": "${UPTIME_KUMA_PASSWORD}",
+          "UPTIME_KUMA_TOKEN": "${UPTIME_KUMA_TOKEN}",
+          "UPTIME_KUMA_MFA_TOKEN": "${UPTIME_KUMA_MFA_TOKEN}"
+        }
+      }
+    },
+    "new-relic": {
+      "description": "New Relic observability — NerdGraph GraphQL API for metrics, alerts, and entity management",
+      "category": "observability",
+      "url": "https://github.com/neverprepared/mcp-new-relic",
+      "requires": ["NEW_RELIC_API_KEY"],
+      "definition": {
+        "command": "npx",
+        "args": ["-y", "@neverprepared/mcp-new-relic"],
+        "env": {
+          "NEW_RELIC_API_KEY": "${NEW_RELIC_API_KEY}"
         }
       }
     },
@@ -297,6 +344,15 @@
           "CONFLUENCE_EMAIL": "${CONFLUENCE_EMAIL}",
           "CONFLUENCE_API_TOKEN": "${CONFLUENCE_API_TOKEN}"
         }
+      },
+      "container_definition": {
+        "command": "mcp-markdown-to-confluence",
+        "args": [],
+        "env": {
+          "CONFLUENCE_BASE_URL": "${CONFLUENCE_BASE_URL}",
+          "CONFLUENCE_EMAIL": "${CONFLUENCE_EMAIL}",
+          "CONFLUENCE_API_TOKEN": "${CONFLUENCE_API_TOKEN}"
+        }
       }
     },
     "grafana": {
@@ -324,8 +380,8 @@
       "url": "https://github.com/neverprepared/mcp-obsidian-second-brain",
       "requires": ["OBSIDIAN_VAULT_PATH"],
       "definition": {
-        "command": "npx",
-        "args": ["-y", "github:neverprepared/mcp-obsidian-second-brain"],
+        "command": "mcp-obsidian-second-brain",
+        "args": [],
         "env": {
           "OBSIDIAN_VAULT_PATH": "${OBSIDIAN_VAULT_PATH}",
           "LOG_LEVEL": "${LOG_LEVEL:-info}"

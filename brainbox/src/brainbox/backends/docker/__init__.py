@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import os
 import re
 import shlex
 import tarfile
@@ -83,6 +84,29 @@ def _human_bytes(b: int) -> str:
     return f"{b:.1f}TiB"
 
 
+def _build_container_env(ctx: "SessionContext") -> dict[str, str]:
+    """Build the Docker container environment dict.
+
+    Non-sensitive path vars are passed as Docker env vars so every process in
+    the container (Claude, MCP servers, scripts) sees them without needing to
+    source ~/.env or read from /run/secrets/.
+
+    CLAUDE_CONFIG_DIR is intentionally omitted — the container uses its own
+    ~/.claude (populated by inject_claude_config_copy during configure), so
+    Claude's default config path resolution works without any override.
+    """
+    env: dict[str, str] = {"BRAINBOX_ROLE": ctx.role}
+
+    # OBSIDIAN_VAULT_PATH: vault is bind-mounted at the same host path inside
+    # the container, so this value is valid for both sides.
+    if ctx.workspace_home:
+        vault_path = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        if vault_path:
+            env["OBSIDIAN_VAULT_PATH"] = vault_path
+
+    return env
+
+
 class DockerBackend:
     """Docker container backend for brainbox."""
 
@@ -142,9 +166,7 @@ class DockerBackend:
                 "brainbox.llm_model": ctx.llm_model or "",
                 "brainbox.workspace_profile": (ctx.workspace_profile or "").upper(),
             },
-            "environment": {
-                "BRAINBOX_ROLE": ctx.role,
-            },
+            "environment": _build_container_env(ctx),
             "detach": True,
             "volumes": volumes,
         }
@@ -197,6 +219,12 @@ class DockerBackend:
         if container.status != "running":
             await _run(container.start)
 
+        executor = DockerExecExecutor(container)
+
+        # Write workspace settings.local.json — disables host-only plugins,
+        # sets bypass flags. Runs in all modes.
+        await inject_claude_settings(executor, slog=slog)
+
         if ctx.hardened:
             # Write each secret to /run/secrets (Docker-specific, no UTM equivalent)
             for name, value in secrets.items():
@@ -222,10 +250,8 @@ class DockerBackend:
                         metadata={"secret": name, "reason": str(exc)},
                     )
         else:
-            executor = DockerExecExecutor(container)
             await inject_env_file(executor, secrets, ctx.session_name, slog=slog)
             await inject_claude_config(executor, oauth_account, slog=slog)
-            await inject_claude_settings(executor, slog=slog)
 
         # Inject role prompt file for --append-system-prompt-file
         if ctx.role_prompt_file:
@@ -528,6 +554,7 @@ class DockerBackend:
 
     async def fix_git_credential_paths(self, ctx: SessionContext) -> None:
         """Rewrite git credential helper to use container-local brew path."""
+        slog = get_logger(session_name=ctx.session_name, container_name=ctx.container_name)
         client = _docker(ctx.docker_host)
         container = await _run(client.containers.get, ctx.container_name)
         git_cred_fix = textwrap.dedent("""\

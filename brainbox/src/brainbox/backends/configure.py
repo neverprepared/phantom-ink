@@ -11,12 +11,41 @@ import io
 import json
 import shlex
 import tarfile
+from pathlib import Path
 from typing import Any
 
 from ..log import get_logger
 from .executor import GuestExecutor
 
 log = get_logger()
+
+# Container-optimized MCP server commands.
+# These override the host-side commands (npx/uvx/uv run) written into
+# .claude.json with pre-installed container binaries for zero-latency startup.
+# Keys match the mcpServers key names in .claude.json.
+_CONTAINER_MCP_OVERRIDES: dict[str, dict] = {
+    "brainbox": {
+        "command": "brainbox-mcp",
+        "args": [],
+        "env": {"BRAINBOX_URL": "${BRAINBOX_URL:-http://host.docker.internal:9999}"},
+    },
+    "google-workspace": {
+        "command": "workspace-mcp",
+        "args": ["--tool-tier", "core"],
+    },
+    "uptime-kuma": {
+        "command": "mcp-uptime-kuma",
+        "args": [],
+    },
+    "cloudflare-dns": {
+        "command": "mcp-cloudflare",
+        "args": [],
+    },
+    "markdown-to-confluence": {
+        "command": "mcp-markdown-to-confluence",
+        "args": [],
+    },
+}
 
 
 def _extract_from_bundle(bundle_bytes: bytes, arcname: str) -> str | None:
@@ -215,7 +244,14 @@ async def inject_claude_settings(
     *,
     slog: Any | None = None,
 ) -> None:
-    """Set bypassPermissions=true in settings.json.
+    """Write a workspace-level settings.local.json to override profile settings.
+
+    The profile .claude directory is mounted read-only (CLAUDE_CONFIG_DIR), so
+    we cannot write to its settings.json.  Instead we write a project-local
+    settings.local.json in the container workspace that:
+      - enables bypassPermissions / skipDangerousModePermissionPrompt
+      - clears enabledPlugins so host-only LSP plugins (gopls, swift-lsp, …)
+        don't hang at startup inside the Linux container
 
     For Windows: uses PowerShell.
     For Linux/macOS: uses python3.
@@ -241,20 +277,24 @@ async def inject_claude_settings(
                 '$d | ConvertTo-Json -Depth 10 | Set-Content $p"'
             )
         else:
-            # Patch settings.json with all bypass flags (including bypassPermissionsModeAccepted
-            # which Claude Code CLI checks before suppressing the interactive permissions prompt)
-            await executor.exec_shell(
-                f"python3 -c '"
-                "import json, pathlib; "
-                f'p = pathlib.Path("{home}/.claude/settings.json"); '
-                "p.parent.mkdir(parents=True, exist_ok=True); "
-                "d = json.loads(p.read_text()) if p.exists() else {}; "
-                'd["bypassPermissions"] = True; '
-                'd["skipDangerousModePermissionPrompt"] = True; '
-                'd["bypassPermissionsModeAccepted"] = True; '
-                "p.write_text(json.dumps(d, indent=2))"
-                "'"
+            # Write settings.local.json to all common container working directories.
+            # Project-local settings override user settings and don't conflict with
+            # the read-only mounted CLAUDE_CONFIG_DIR.
+            settings_json = (
+                '{"bypassPermissions":true,'
+                '"skipDangerousModePermissionPrompt":true,'
+                '"bypassPermissionsModeAccepted":true,'
+                '"enabledPlugins":{}}'
             )
+            for workspace in [
+                f"{home}/workspace",
+                f"{home}/task-repo",
+                home,
+            ]:
+                await executor.exec_shell(
+                    f"mkdir -p {workspace}/.claude && "
+                    f"echo '{settings_json}' > {workspace}/.claude/settings.local.json"
+                )
         slog.info("configure.claude_settings_applied")
     except Exception as exc:
         slog.warning("configure.claude_settings_failed", metadata={"reason": str(exc)})
@@ -396,6 +436,99 @@ async def inject_config_bundle(
         )
 
 
+async def inject_claude_config_copy(
+    executor: GuestExecutor,
+    claude_config_dir: Path,
+    *,
+    slog: Any | None = None,
+) -> None:
+    """Copy and patch profile .claude config into the container's ~/.claude.
+
+    Reads .claude.json and settings.json from the host's CLAUDE_CONFIG_DIR,
+    applies container-specific patches (MCP binary overrides, plugin stripping,
+    trust for container paths), then streams the result into ~/.claude/ via tar.
+
+    This replaces the read-only bind-mount approach: the container gets a
+    writable, container-appropriate copy of the profile config.
+    """
+    slog = slog or log
+    home = executor.home_dir
+
+    # --- .claude.json ---
+    claude_json_path = claude_config_dir / ".claude.json"
+    try:
+        claude_data: dict = json.loads(claude_json_path.read_text()) if claude_json_path.exists() else {}
+    except Exception:
+        claude_data = {}
+
+    # Onboarding + bypass acceptance
+    claude_data["hasCompletedOnboarding"] = True
+    claude_data["bypassPermissionsModeAccepted"] = True
+
+    # Trust container working directories
+    for path in [f"{home}/workspace", f"{home}/task-repo", home]:
+        claude_data.setdefault("projects", {}).setdefault(path, {}).update(
+            {
+                "hasTrustDialogAccepted": True,
+                "allowedTools": claude_data.get("projects", {}).get(path, {}).get("allowedTools", []),
+                "mcpContextUris": [],
+                "projectOnboardingSeenCount": 0,
+            }
+        )
+
+    # Patch mcpServers with container-optimized commands
+    patched: list[str] = []
+    if "mcpServers" in claude_data:
+        for server_name, override in _CONTAINER_MCP_OVERRIDES.items():
+            if server_name in claude_data["mcpServers"]:
+                server = claude_data["mcpServers"][server_name]
+                server["command"] = override["command"]
+                server["args"] = override["args"]
+                # Merge override env (don't wipe existing env — keep credential refs)
+                if "env" in override:
+                    server.setdefault("env", {}).update(override["env"])
+                patched.append(server_name)
+
+    # --- settings.json ---
+    settings_json_path = claude_config_dir / "settings.json"
+    try:
+        settings_data: dict = json.loads(settings_json_path.read_text()) if settings_json_path.exists() else {}
+    except Exception:
+        settings_data = {}
+
+    # Strip host-only LSP plugins; force bypass flags
+    settings_data["enabledPlugins"] = {}
+    settings_data["bypassPermissions"] = True
+    settings_data["bypassPermissionsModeAccepted"] = True
+
+    # --- stream both files into the container via tar ---
+    claude_json_bytes = json.dumps(claude_data, indent=2).encode()
+    settings_bytes = json.dumps(settings_data, indent=2).encode()
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for arcname, content in [
+            (".claude.json", claude_json_bytes),        # ~/  .claude.json  (mcpServers, projects, etc.)
+            (".claude/settings.json", settings_bytes),  # ~/.claude/settings.json (user prefs)
+        ]:
+            info = tarfile.TarInfo(name=arcname)
+            info.size = len(content)
+            info.mode = 0o600
+            tf.addfile(info, io.BytesIO(content))
+    buf.seek(0)
+
+    await executor.exec_shell(f"mkdir -p {home}/.claude")
+    await executor.write_stdin(f"tar xz -C {home}", buf.read(), timeout=30)
+    await executor.exec_shell(
+        f"chown -R $(whoami):$(id -gn) {home}/.claude 2>/dev/null || true"
+    )
+
+    slog.info(
+        "configure.claude_config_copied",
+        metadata={"patched_servers": patched, "source": str(claude_config_dir)},
+    )
+
+
 async def inject_role_prompt(
     executor: GuestExecutor,
     role: str,
@@ -424,16 +557,20 @@ async def inject_role_prompt(
             f" && chmod 644 {prompt_path}"
         )
 
-        # Configure Claude Code to use the role prompt
-        await executor.exec_shell(
-            f"python3 -c '"
-            "import json, pathlib; "
-            f'p = pathlib.Path("{home}/.claude/settings.json"); '
-            "d = json.loads(p.read_text()) if p.exists() else {}; "
-            f"d['appendSystemPromptFiles'] = ['{prompt_path}']; "
-            "p.write_text(json.dumps(d, indent=2))"
-            "'"
-        )
+        # Configure Claude Code to use the role prompt via workspace settings.local.json.
+        # We write to project-local files (not CLAUDE_CONFIG_DIR/settings.json which may
+        # be read-only when the profile .claude dir is bind-mounted from the host).
+        for workspace in [f"{home}/workspace", f"{home}/task-repo", home]:
+            await executor.exec_shell(
+                f"python3 -c '"
+                "import json, pathlib; "
+                f"p = pathlib.Path(\"{workspace}/.claude/settings.local.json\"); "
+                "d = json.loads(p.read_text()) if p.exists() else {}; "
+                f"d['appendSystemPromptFiles'] = ['{prompt_path}']; "
+                "p.parent.mkdir(parents=True, exist_ok=True); "
+                "p.write_text(json.dumps(d, indent=2))"
+                "'"
+            )
 
         slog.info("configure.role_prompt_injected", metadata={"role": role})
     except Exception as exc:

@@ -532,7 +532,7 @@ def _get_sessions_info_legacy() -> list[dict[str, Any]]:
             # Get volume mounts
             mounts = c.attrs.get("Mounts", [])
             bind_mounts = [
-                f"{m['Source']}:{m['Destination']}"
+                f"{m['Source']}:{m['Destination']}:{'ro' if not m.get('RW', True) else 'rw'}"
                 for m in mounts
                 if m.get("Type") == "bind" and not m["Destination"].endswith("/.claude/projects")
             ]
@@ -1591,8 +1591,8 @@ async def hub_submit_task(body: TaskCreate, _key=Depends(require_api_key)):
 
 
 @app.get("/api/hub/tasks")
-async def hub_list_tasks(status: str | None = None, _key=Depends(require_api_key)):
-    tasks = list_tasks(status=status)
+async def hub_list_tasks(status: str | None = None, limit: int = 50, _key=Depends(require_api_key)):
+    tasks = list_tasks(status=status, limit=limit)
     return [t.model_dump() for t in tasks]
 
 

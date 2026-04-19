@@ -232,15 +232,18 @@ def get_task(task_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def list_tasks(status: str | None = None) -> list[dict[str, Any]]:
+def list_tasks(status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
     """List hub tasks, optionally filtered by status.
 
     Args:
         status: Filter by status (pending, running, completed, failed, cancelled)
+        limit: Max number of tasks to return, most recent first (default 50)
     """
-    path = "/api/hub/tasks"
+    params: list[str] = []
     if status:
-        path += f"?status={status}"
+        params.append(f"status={status}")
+    params.append(f"limit={limit}")
+    path = "/api/hub/tasks?" + "&".join(params)
     return _request("GET", path)
 
 

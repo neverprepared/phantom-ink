@@ -27,12 +27,12 @@
   let expandedMounts = $state<Set<string>>(new Set());
   let metricsTimer: ReturnType<typeof setInterval> | null = null;
 
-  function parseMounts(volume: string): { host: string; container: string }[] {
+  function parseMounts(volume: string): { host: string; container: string; mode: string }[] {
     if (!volume) return [];
     return volume.split(',').map(s => s.trim()).filter(Boolean).map(pair => {
-      const idx = pair.indexOf(':');
-      if (idx === -1) return { host: pair, container: pair };
-      return { host: pair.slice(0, idx), container: pair.slice(idx + 1) };
+      const parts = pair.split(':');
+      if (parts.length === 1) return { host: parts[0], container: parts[0], mode: 'ro' };
+      return { host: parts[0], container: parts[1], mode: parts[2] ?? 'ro' };
     });
   }
 
@@ -594,6 +594,7 @@
                       <span class="mount-host" title={mount.host}>{truncatePath(mount.host)}</span>
                       <span class="mount-arrow">→</span>
                       <span class="mount-container">{mount.container}</span>
+                      <span class="mount-mode" class:mount-mode-ro={mount.mode === 'ro'}>{mount.mode}</span>
                     </div>
                   {/each}
                 </div>
@@ -1206,6 +1207,22 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .mount-mode {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    background: var(--color-bg-tertiary, rgba(255,255,255,0.06));
+    border: 1px solid var(--color-border-primary);
+    border-radius: 3px;
+    padding: 0 4px;
+    flex-shrink: 0;
+  }
+
+  .mount-mode-ro {
+    color: var(--color-warning, #f59e0b);
+    border-color: var(--color-warning, #f59e0b);
   }
 
   .card-actions {

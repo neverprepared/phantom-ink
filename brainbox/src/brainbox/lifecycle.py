@@ -107,7 +107,8 @@ def _parse_env_text(text: str, workspace_home: str) -> dict[str, str]:
         # Strip surrounding quotes
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
             value = value[1:-1]
-        # Expand $WORKSPACE_HOME to actual host path
+        # Expand $WORKSPACE_HOME / ${WORKSPACE_HOME} to actual host path
+        value = value.replace("${WORKSPACE_HOME}", workspace_home)
         value = value.replace("$WORKSPACE_HOME", workspace_home)
         result[name] = value
     return result
@@ -182,8 +183,55 @@ def _compute_mount_context(
         "ws_path": ws_path,
         "env_override": env_override,
         "workspace_home": workspace_home,
+        "workspace_profile": workspace_profile,
         "use_env_vars": use_env,
     }
+
+
+def _generate_container_mcp_json(
+    claude_config_dir: Path,
+    dest_path: Path,
+) -> bool:
+    """Generate a workspace .mcp.json with container-optimised MCP commands.
+
+    Reads mcpServers from the profile's .claude.json, applies container binary
+    overrides (replacing npx/uvx/uv-run commands with pre-installed binaries),
+    and writes the result to *dest_path* so it can be bind-mounted read-only
+    into ~/workspace/.mcp.json inside the container.
+
+    Returns True if the file was written, False if there was nothing to do.
+    """
+    from .backends.configure import _CONTAINER_MCP_OVERRIDES
+
+    claude_json_path = claude_config_dir / ".claude.json"
+    if not claude_json_path.exists():
+        return False
+
+    try:
+        data = json.loads(claude_json_path.read_text())
+    except Exception:
+        return False
+
+    user_servers: dict = data.get("mcpServers", {})
+    if not user_servers:
+        return False
+
+    container_servers: dict = {}
+    for name, server in user_servers.items():
+        override = _CONTAINER_MCP_OVERRIDES.get(name)
+        if override:
+            patched = dict(server)
+            patched["command"] = override["command"]
+            patched["args"] = override["args"]
+            if "env" in override:
+                patched.setdefault("env", {}).update(override["env"])
+            container_servers[name] = patched
+        else:
+            container_servers[name] = server
+
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    dest_path.write_text(json.dumps({"mcpServers": container_servers}, indent=2))
+    return True
 
 
 def _build_volume_map(env_vars: dict) -> dict[str, dict[str, str]]:
@@ -192,6 +240,7 @@ def _build_volume_map(env_vars: dict) -> dict[str, dict[str, str]]:
     ws_path: Path = env_vars["ws_path"]
     env_override: dict[str, str] | None = env_vars["env_override"]
     workspace_home: str | None = env_vars["workspace_home"]
+    workspace_profile: str | None = env_vars.get("workspace_profile")
     use_env_vars: bool = env_vars["use_env_vars"]
 
     p = settings.profile
@@ -305,8 +354,8 @@ def _build_volume_map(env_vars: dict) -> dict[str, dict[str, str]]:
             if host_dir is not None:
                 mounts[str(host_dir)] = {"bind": container_targets[name], "mode": mode}
 
-    # Claude config is delivered via config bundle at provision time (not bind mount)
-    # so we do NOT add a staging mount here.
+    # Note: profile .claude config is NOT bind-mounted. Instead, configure()
+    # copies and patches it into the container's ~/.claude via inject_claude_config_copy.
 
     # Reflex share dir: mount so hooks/skills inside the container can invoke
     # the same reflex runtime that the host uses.
@@ -314,6 +363,24 @@ def _build_volume_map(env_vars: dict) -> dict[str, dict[str, str]]:
         reflex_path = Path(p.reflex_share_path)
         if reflex_path.is_dir():
             mounts[str(reflex_path)] = {"bind": str(reflex_path), "mode": "ro"}
+
+    # Obsidian vault: mount the profile memory vault read-write so the
+    # obsidian-second-brain MCP server can read and write notes from inside
+    # the container using the same OBSIDIAN_VAULT_PATH the host has configured.
+    if p.mount_obsidian_vault:
+        _env = env_override if env_override is not None else os.environ
+        vault_path_str = _env.get("OBSIDIAN_VAULT_PATH")
+        if not vault_path_str and workspace_home:
+            # Derive conventional path: <workspace_home>/obsidian/vaults/<profile>-memory
+            # Prefer the explicitly passed profile name over env lookup (env_override may
+            # not contain WORKSPACE_PROFILE when the profile cache is sparse).
+            profile_name = workspace_profile or _env.get("WORKSPACE_PROFILE", "")
+            if profile_name:
+                vault_path_str = str(ws_path / "obsidian" / "vaults" / f"{profile_name}-memory")
+        if vault_path_str:
+            vault_path = Path(vault_path_str)
+            if vault_path.is_dir():
+                mounts[str(vault_path)] = {"bind": str(vault_path), "mode": "rw"}
 
     # When workspace_home differs from the real home, AWS SSO tokens live in
     # the real $HOME/.aws/sso/cache/ (aws sso login always writes there).
@@ -611,6 +678,7 @@ async def provision(
     container_name = f"{resolved_prefix}{session_name}"
     resolved_ttl = ttl if ttl is not None else settings.ttl
     resolved_workspace_profile = workspace_profile or os.environ.get("WORKSPACE_PROFILE")
+    resolved_workspace_home = workspace_home or os.environ.get("WORKSPACE_HOME")
 
     # Determine image/template based on backend
     if backend == "utm":
@@ -659,7 +727,7 @@ async def provision(
         ollama_host=ollama_host,
         codex_api_key=codex_api_key,
         workspace_profile=resolved_workspace_profile,
-        workspace_home=workspace_home,
+        workspace_home=resolved_workspace_home,
         backend=backend,
         vm_template=vm_template,
         guest_os=guest_os,
@@ -691,6 +759,28 @@ async def provision(
     session_data_dir.mkdir(parents=True, exist_ok=True)
     volumes = {str(session_data_dir): {"bind": "/home/developer/.claude/projects", "mode": "rw"}}
 
+    # Generate container-optimised .mcp.json from the profile's enabled MCP servers
+    # and mount it into ~/workspace so Claude picks it up as the project MCP config.
+    # Also bind-mount the profile's global CLAUDE.md so container Claude gets the
+    # same working-memory protocol and global instructions as the host.
+    if backend == "docker" and resolved_workspace_home:
+        _claude_config_dir = Path(
+            os.environ.get("CLAUDE_CONFIG_DIR", str(Path(resolved_workspace_home) / ".claude"))
+        )
+        _mcp_json_path = session_data_dir / "workspace-mcp.json"
+        if _generate_container_mcp_json(_claude_config_dir, _mcp_json_path):
+            volumes[str(_mcp_json_path)] = {
+                "bind": "/home/developer/workspace/.mcp.json",
+                "mode": "ro",
+            }
+
+        _claude_md = _claude_config_dir / "CLAUDE.md"
+        if _claude_md.is_file():
+            volumes[str(_claude_md)] = {
+                "bind": "/home/developer/.claude/CLAUDE.md",
+                "mode": "ro",
+            }
+
     # User-specified volume mounts
     for vol in ctx.volume_mounts:
         parts = vol.split(":")
@@ -704,7 +794,7 @@ async def provision(
     if backend == "docker":
         profile_mounts = _resolve_profile_mounts(
             workspace_profile=resolved_workspace_profile,
-            workspace_home=workspace_home,
+            workspace_home=resolved_workspace_home,
         )
         volumes.update(profile_mounts)
         # Track which mounts were actually resolved
@@ -1106,17 +1196,12 @@ async def run_pipeline(
         docker_host=docker_host,
     )
 
-    # Inject config bundle (always — both local and remote Docker)
+    # Profile .claude is mounted read-only at provision time (see _build_volume_map).
+    # Config bundle injection is no longer needed — MCP servers, settings, and
+    # plugins are delivered via the bind mount.
     if backend == "docker":
-        from .bundle import build_config_bundle
         from .backends import create_backend
-
-        bundle = build_config_bundle(
-            workspace_home=workspace_home,
-            path_map=settings.path_map or None,
-        )
         docker_backend = create_backend("docker")
-        await docker_backend.inject_config_bundle(ctx, bundle)
 
         # Remote Docker: inject live credential proxies instead of bind mounts
         if not _docker_is_local(docker_host):

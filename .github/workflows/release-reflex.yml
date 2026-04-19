@@ -18,17 +18,75 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#reflex-v}" >> $GITHUB_OUTPUT
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/reflex-v* ]]; then
+            VERSION="${GITHUB_REF_NAME#reflex-v}"
+          else
+            VERSION="dev-${GITHUB_SHA::7}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build zip
         run: |
           cd reflex/plugins
           zip -r "../../reflex-${{ steps.version.outputs.version }}.zip" reflex/
 
+      - name: Install fpm
+        run: |
+          sudo apt-get install -y --no-install-recommends ruby ruby-dev build-essential
+          sudo gem install fpm --no-document
+
+      - name: Assemble package tree
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p pkg-root/opt/reflex/share
+          cp -r reflex/plugins/reflex pkg-root/opt/reflex/share/reflex
+
+          # Ensure all scripts are executable in the package tree
+          find pkg-root/opt/reflex/share/reflex/scripts -name "*.sh" -exec chmod 0755 {} \; 2>/dev/null || true
+          find pkg-root/opt/reflex/share/reflex/scripts -name "*.py" -exec chmod 0755 {} \; 2>/dev/null || true
+
+          # Optional launcher: `reflex` → `claude --plugin-dir /opt/reflex/share/reflex`
+          mkdir -p pkg-root/usr/bin
+          cat > pkg-root/usr/bin/reflex <<'EOF'
+          #!/bin/bash
+          exec claude --plugin-dir /opt/reflex/share/reflex "$@"
+          EOF
+          chmod 0755 pkg-root/usr/bin/reflex
+
+      - name: Build .deb
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          fpm \
+            -s dir \
+            -t deb \
+            -C pkg-root \
+            -n reflex \
+            -v "$VERSION" \
+            --description "Claude Code plugin: skills, agents, slash commands, and workflow orchestration" \
+            --url "https://github.com/neverprepared/phantom-ink" \
+            --license MIT \
+            --architecture all \
+            --deb-no-default-config-files \
+            .
+
       - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/reflex-v')
         uses: softprops/action-gh-release@v2
         with:
-          files: reflex-${{ steps.version.outputs.version }}.zip
+          files: |
+            reflex-${{ steps.version.outputs.version }}.zip
+            *.deb
           tag_name: ${{ github.ref_name }}
           name: reflex v${{ steps.version.outputs.version }}
           generate_release_notes: true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: reflex-packages
+          path: |
+            reflex-*.zip
+            *.deb

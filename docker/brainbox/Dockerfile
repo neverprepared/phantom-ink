@@ -168,13 +168,13 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 RUN bash -c '. "$NVM_DIR/nvm.sh" && npm install -g @openai/codex || true'
 
 # =============================================================================
-# Playwright MCP — browser automation for Claude Code
+# Playwright browsers — pre-download (heavy; separate layer so it caches well)
+# npm install of @playwright/mcp is in the MCP bulk install below
 # =============================================================================
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 USER root
-RUN bash -c '. "$NVM_DIR/nvm.sh" && npm install -g @playwright/mcp' && \
-    mkdir -p /ms-playwright && \
+RUN mkdir -p /ms-playwright && \
     bash -c '. "$NVM_DIR/nvm.sh" && npx --yes playwright install chromium --with-deps' && \
     chmod -R 777 /ms-playwright && \
     rm -rf /var/lib/apt/lists/*
@@ -209,26 +209,49 @@ list(m.embed(['warmup'])); \
 print('fastembed model cached')"
 
 # =============================================================================
-# MCP servers — pre-register binaries so Claude Code finds them
-# Claude config (settings.json, skills, hooks) is NOT baked in;
-# it is delivered at provision time via config bundle from the user's ~/.claude
+# MCP servers — pre-install all packages
+#
+# Servers are enabled/disabled by the per-profile .claude directory mounted
+# at runtime (CLAUDE_CONFIG_DIR). The container pre-installs everything so
+# Claude can start any configured server without a network fetch.
+# No hardcoded "claude mcp add" — configuration lives in the profile.
 # =============================================================================
-RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add playwright -- npx @playwright/mcp --headless --browser chromium --no-sandbox'
-RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add memory -- npx -y @modelcontextprotocol/server-memory'
-RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem /home/developer/workspace'
-RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add github -- npx -y @modelcontextprotocol/server-github'
-RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add brave-search -- npx -y @anthropic-ai/mcp-brave-search'
-RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add qdrant -- uvx --python 3.12 --with fastembed mcp-server-qdrant'
 
-# Brainbox MCP server — copy source and install so the MCP server runs natively.
-# BRAINBOX_URL is set to the Docker host gateway; sessions override via env at provision.
-COPY --chown=developer:developer brainbox/pyproject.toml /home/developer/.brainbox-mcp/pyproject.toml
-COPY --chown=developer:developer brainbox/src /home/developer/.brainbox-mcp/src
-RUN uv pip install --system /home/developer/.brainbox-mcp --no-deps --quiet 2>/dev/null || \
-    pip install /home/developer/.brainbox-mcp --no-deps --quiet 2>/dev/null || true
-RUN bash -c '. "$NVM_DIR/nvm.sh" && claude mcp add brainbox \
-    --env BRAINBOX_URL=http://host.docker.internal:9999 \
-    -- python3 -m brainbox mcp' || true
+# npm-based MCP servers — global install for zero-latency startup
+# Includes: MCP core servers, cloud/infra, collaboration, and all @neverprepared servers
+RUN bash -c '. "$NVM_DIR/nvm.sh" && npm install -g \
+    @playwright/mcp \
+    @modelcontextprotocol/server-memory \
+    @modelcontextprotocol/server-filesystem \
+    @modelcontextprotocol/server-github \
+    chrome-devtools-mcp \
+    mcp-remote \
+    @azure/mcp@2.0.0-beta.10 \
+    @azure-devops/mcp@2.2.2 \
+    mssql-mcp@2.1.1 \
+    @microsoft/devbox-mcp@0.0.3-alpha.4 \
+    kubernetes-mcp-server@0.0.56 \
+    argocd-mcp@0.5.0 \
+    @neverprepared/mcp-markdown-to-confluence \
+    @neverprepared/mcp-obsidian-second-brain \
+    @neverprepared/mcp-cloudflare-dns \
+    @neverprepared/mcp-uptime-kuma \
+    @neverprepared/mcp-new-relic'
+
+# Python MCP servers — uv tool install pre-downloads packages and puts tools on PATH
+RUN uv tool install --python 3.12 --with fastembed 'mcp-server-qdrant==0.8.1' \
+    && uv tool install --python 3.12 'mcp-atlassian==0.13.0' \
+    && uv tool install --python 3.12 'mcp-server-git==2025.12.18' \
+    && uv tool install --python 3.12 markitdown-mcp \
+    && uv tool install --python 3.12 'workspace-mcp==1.7.1' \
+    && uv tool install --python 3.12 \
+        --from 'git+https://github.com/neverprepared/kuma_uptime_mcp.git' \
+        mcp-uptime-kuma
+
+# Brainbox MCP server — minimal package providing the brainbox-mcp binary
+COPY --chown=developer:developer packages/brainbox-mcp /tmp/brainbox-mcp-pkg
+RUN uv tool install --python 3.12 /tmp/brainbox-mcp-pkg \
+    && rm -rf /tmp/brainbox-mcp-pkg
 
 # Skip onboarding and pre-trust common working directories
 RUN bash -c 'if [ -f /home/developer/.claude.json ]; then \
@@ -242,7 +265,8 @@ RUN bash -c 'if [ -f /home/developer/.claude.json ]; then \
 # launched with --plugin-dir /opt/reflex/share/reflex (same convention as
 # the host wrapper: claude --plugin-dir /opt/homebrew/opt/reflex/share/reflex)
 COPY --chown=developer:developer reflex/plugins/reflex /opt/reflex/share/reflex
-RUN find /opt/reflex/share/reflex/scripts -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
+RUN find /opt/reflex/share/reflex/scripts -name "*.sh" -exec chmod 0755 {} \; 2>/dev/null || true \
+    && find /opt/reflex/share/reflex/scripts -name "*.py" -exec chmod 0755 {} \; 2>/dev/null || true
 
 # Shell config + ttyd wrapper
 COPY --chown=developer:developer docker/brainbox/setup/.bashrc /tmp/.bashrc.extra
