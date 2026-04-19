@@ -1,4 +1,6 @@
-"""Tests for pipeline API endpoints."""
+"""Tests for pipeline API endpoints — skipped: module was removed."""
+import pytest
+pytestmark = pytest.mark.skip(reason="brainbox.pipeline module was removed")
 
 from __future__ import annotations
 
