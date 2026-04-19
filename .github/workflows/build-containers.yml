@@ -125,6 +125,29 @@ jobs:
           cache-from: type=gha,scope=brainbox-api
           cache-to: type=gha,scope=brainbox-api,mode=max
 
+  release-brainbox:
+    name: brainbox Homebrew release
+    if: startsWith(github.ref, 'refs/tags/brainbox/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#brainbox/v}" >> $GITHUB_OUTPUT
+
+      - name: Build tarball
+        run: |
+          mkdir -p "brainbox-${{ steps.version.outputs.version }}"
+          echo "brainbox ${{ steps.version.outputs.version }}" > "brainbox-${{ steps.version.outputs.version }}/VERSION"
+          tar czf "brainbox-${{ steps.version.outputs.version }}.tar.gz" "brainbox-${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: brainbox-${{ steps.version.outputs.version }}.tar.gz
+          tag_name: ${{ github.ref_name }}
+          name: brainbox v${{ steps.version.outputs.version }}
+          generate_release_notes: true
+
   build-brainbox-ui:
     name: brainbox-ui
     runs-on: ubuntu-latest
