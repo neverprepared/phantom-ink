@@ -11,15 +11,15 @@ from brainbox.config import Settings
 class TestResolvedImage:
     def test_default_developer(self):
         s = Settings(role="developer")
-        assert s.resolved_image == "ghcr.io/neverprepared/brainbox:latest"
+        assert s.resolved_image == "brainbox"
 
     def test_researcher(self):
         s = Settings(role="researcher")
-        assert s.resolved_image == "ghcr.io/neverprepared/brainbox:latest"
+        assert s.resolved_image == "brainbox"
 
     def test_performer(self):
         s = Settings(role="performer")
-        assert s.resolved_image == "ghcr.io/neverprepared/brainbox:latest"
+        assert s.resolved_image == "brainbox"
 
     def test_explicit_image_overrides_role(self):
         s = Settings(role="developer", image="my-custom-image")
@@ -27,7 +27,7 @@ class TestResolvedImage:
 
     def test_empty_image_falls_back_to_unified(self):
         s = Settings(role="researcher", image="")
-        assert s.resolved_image == "ghcr.io/neverprepared/brainbox:latest"
+        assert s.resolved_image == "brainbox"
 
 
 class TestResolvedPrefix:
@@ -53,9 +53,9 @@ class TestResolvedPrefix:
 
 
 class TestRoleDefault:
-    def test_default_is_developer(self):
+    def test_default_is_assistant(self):
         s = Settings()
-        assert s.role == "developer"
+        assert s.role == "assistant"
 
     def test_env_override(self):
         with patch.dict(os.environ, {"CL_ROLE": "researcher"}):
