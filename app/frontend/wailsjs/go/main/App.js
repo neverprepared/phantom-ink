@@ -22,6 +22,10 @@ export function CompleteChannel(arg1, arg2) {
   return window['go']['main']['App']['CompleteChannel'](arg1, arg2);
 }
 
+export function CreateAgent(arg1) {
+  return window['go']['main']['App']['CreateAgent'](arg1);
+}
+
 export function CreateChannel(arg1) {
   return window['go']['main']['App']['CreateChannel'](arg1);
 }
@@ -44,6 +48,10 @@ export function CreateWorktree(arg1) {
 
 export function CreateWorktreeSession(arg1) {
   return window['go']['main']['App']['CreateWorktreeSession'](arg1);
+}
+
+export function DeleteAgent(arg1) {
+  return window['go']['main']['App']['DeleteAgent'](arg1);
 }
 
 export function DeleteArtifact(arg1) {
@@ -96,6 +104,10 @@ export function FocusTerminalTab(arg1) {
 
 export function GetActiveProfile() {
   return window['go']['main']['App']['GetActiveProfile']();
+}
+
+export function GetAgent(arg1) {
+  return window['go']['main']['App']['GetAgent'](arg1);
 }
 
 export function GetChannel(arg1) {
@@ -168,6 +180,10 @@ export function GetTraceDetail(arg1) {
 
 export function GetWorktree(arg1) {
   return window['go']['main']['App']['GetWorktree'](arg1);
+}
+
+export function LaunchTeam(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['LaunchTeam'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function ListAgents() {
@@ -280,6 +296,10 @@ export function StopSession(arg1) {
 
 export function SubmitTask(arg1) {
   return window['go']['main']['App']['SubmitTask'](arg1);
+}
+
+export function UpdateAgent(arg1, arg2) {
+  return window['go']['main']['App']['UpdateAgent'](arg1, arg2);
 }
 
 export function UpdateRepo(arg1, arg2) {

@@ -48,6 +48,7 @@ class CreateSessionRequest(BaseModel):
     volumes: list[str] | None = None  # New multi-volume support
     llm_provider: str = "claude"
     llm_model: str | None = None
+    llm_effort: str | None = None  # claude only: "low" | "medium" | "high"
     ollama_host: str | None = None
     codex_api_key: str | None = None
     workspace_profile: str | None = None
@@ -76,7 +77,7 @@ class CreateSessionRequest(BaseModel):
     def validate_role_field(cls, v: str | None) -> str:
         """Validate role using existing validation function."""
         if v is None:
-            return "developer"
+            return "assistant"
         try:
             return validate_role(v)
         except ValidationError as e:
@@ -263,3 +264,49 @@ class CreateWorktreeRequest(BaseModel):
 
     repo_name: str = Field(..., min_length=1, description="Repository name (must be registered)")
     branch: str = Field(..., min_length=1, max_length=128, description="Git branch name to create")
+
+
+class CreateAgentRequest(BaseModel):
+    """Request model for POST /api/hub/agents."""
+
+    name: str = Field(..., description="Agent name slug (a-z, 0-9, hyphens)")
+    image: str = Field("brainbox", description="Docker image name")
+    description: str = Field("", description="Human-readable description")
+    category: str = Field("general", description="Agent category (e.g. general, development, orchestration)")
+    spawn_mode: str = Field("container", description="Execution mode: 'container' (full brainbox session) or 'subagent' (spawned by Claude Code/Codex)")
+    capabilities: list[str] = Field(default_factory=list, description="Agent capabilities")
+    hardened: bool = Field(False, description="Enable security hardening")
+    persistent: bool = Field(False, description="Auto-restart on exit")
+    role_prompt_content: str | None = Field(None, description="Markdown role prompt content")
+    claude_model: str | None = Field(None, description="Default Claude model (e.g. claude-opus-4-5)")
+    claude_effort: str | None = Field(None, description="Claude reasoning effort: low | medium | high")
+    codex_model: str | None = Field(None, description="Default Codex model (e.g. codex-mini-latest)")
+    ollama_model: str | None = Field(None, description="Default Ollama model (e.g. qwen3:8b)")
+
+    @field_validator("name")
+    @classmethod
+    def validate_agent_name(cls, v: str) -> str:
+        import re
+        v = v.strip()
+        if not v:
+            raise ValueError("Agent name is required")
+        if not re.match(r"^[a-z0-9][a-z0-9-]*$", v):
+            raise ValueError("Agent name must be lowercase letters, numbers, and hyphens only")
+        return v
+
+
+class UpdateAgentRequest(BaseModel):
+    """Request model for PATCH /api/hub/agents/{name}."""
+
+    image: str | None = None
+    description: str | None = None
+    category: str | None = None
+    spawn_mode: str | None = None
+    capabilities: list[str] | None = None
+    hardened: bool | None = None
+    persistent: bool | None = None
+    role_prompt_content: str | None = None  # empty string = clear prompt
+    claude_model: str | None = None  # empty string = clear
+    claude_effort: str | None = None  # empty string = clear
+    codex_model: str | None = None   # empty string = clear
+    ollama_model: str | None = None  # empty string = clear

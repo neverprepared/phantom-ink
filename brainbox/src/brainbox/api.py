@@ -47,6 +47,7 @@ from .log import get_logger, setup_logging
 from .models import TaskCreate, Token
 from .models_api import (
     CompleteChannelRequest,
+    CreateAgentRequest,
     CreateChannelRequest,
     CreateRepoRequest,
     CreateSessionRequest,
@@ -56,9 +57,18 @@ from .models_api import (
     QuerySessionRequest,
     StartSessionRequest,
     StopSessionRequest,
+    UpdateAgentRequest,
     UpdateRepoRequest,
 )
-from .registry import get_agent, list_agents, list_tokens, validate_token
+from .registry import (
+    create_agent,
+    delete_agent,
+    get_agent,
+    list_agents,
+    list_tokens,
+    update_agent,
+    validate_token,
+)
 from .router import (
     add_repo,
     cancel_task,
@@ -858,6 +868,7 @@ async def api_create_session(
             volume_mounts=body.volumes,
             llm_provider=body.llm_provider,
             llm_model=body.llm_model,
+            llm_effort=body.llm_effort,
             ollama_host=body.ollama_host,
             codex_api_key=body.codex_api_key,
             workspace_profile=body.workspace_profile,
@@ -1493,7 +1504,71 @@ async def hub_get_agent(name: str):
     agent = get_agent(name)
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    from .registry import get_role_prompt
+    data = agent.model_dump()
+    data["role_prompt_content"] = get_role_prompt(name) or ""
+    return data
+
+
+@app.post("/api/hub/agents", status_code=201)
+async def hub_create_agent(body: CreateAgentRequest, _key=Depends(require_api_key)):
+    try:
+        agent = create_agent(
+            name=body.name,
+            image=body.image,
+            description=body.description,
+            capabilities=body.capabilities,
+            hardened=body.hardened,
+            persistent=body.persistent,
+            role_prompt_content=body.role_prompt_content,
+            claude_model=body.claude_model,
+            claude_effort=body.claude_effort,
+            codex_model=body.codex_model,
+            ollama_model=body.ollama_model,
+            category=body.category,
+            spawn_mode=body.spawn_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _broadcast_sse(json.dumps({"action": "agent.created", "name": body.name}))
     return agent.model_dump()
+
+
+@app.patch("/api/hub/agents/{name}")
+async def hub_update_agent(name: str, body: UpdateAgentRequest, _key=Depends(require_api_key)):
+    try:
+        agent = update_agent(
+            name=name,
+            image=body.image,
+            description=body.description,
+            capabilities=body.capabilities,
+            hardened=body.hardened,
+            persistent=body.persistent,
+            role_prompt_content=body.role_prompt_content,
+            claude_model=body.claude_model,
+            claude_effort=body.claude_effort,
+            codex_model=body.codex_model,
+            ollama_model=body.ollama_model,
+            category=body.category,
+            spawn_mode=body.spawn_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _broadcast_sse(json.dumps({"action": "agent.updated", "name": name}))
+    from .registry import get_role_prompt
+    data = agent.model_dump()
+    data["role_prompt_content"] = get_role_prompt(name) or ""
+    return data
+
+
+@app.delete("/api/hub/agents/{name}", status_code=204)
+async def hub_delete_agent(name: str, _key=Depends(require_api_key)):
+    try:
+        delete_agent(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _broadcast_sse(json.dumps({"action": "agent.deleted", "name": name}))
+    return Response(status_code=204)
 
 
 # --- Tasks ---

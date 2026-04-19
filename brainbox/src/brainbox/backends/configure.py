@@ -82,6 +82,10 @@ async def inject_env_file(
                         f"umask 077 && echo {escaped_value} > {token_path}"
                         f" && chmod 400 {token_path}"
                     )
+                    # Also export as BRAINBOX_TOKEN env var so Claude Code can use it directly
+                    await executor.exec_shell(
+                        f"echo {shlex.quote(f'export BRAINBOX_TOKEN={escaped_value}')} >> {env_path}"
+                    )
                 else:
                     await executor.exec_shell(
                         f"echo {shlex.quote(f'export {key}={escaped_value}')} >> {env_path}"

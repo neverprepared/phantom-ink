@@ -50,7 +50,7 @@ When a WebSearch is executed in a containerized Claude Code session:
 ### Environment
 
 - **Host:** macOS Darwin 25.2.0
-- **Container:** Ubuntu 24.04 (brainbox-researcher)
+- **Container:** Ubuntu 24.04 (brainbox)
 - **Python:** 3.12 (via uvx)
 - **Qdrant:** Remote instance at https://qdrant.neverprepared.com:443
 - **Collection:** personal_memories (determined by WORKSPACE_PROFILE)

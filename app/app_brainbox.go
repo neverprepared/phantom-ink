@@ -1,6 +1,10 @@
 package main
 
-import "phantom-ink/brainbox"
+import (
+	"fmt"
+	"phantom-ink/brainbox"
+	"time"
+)
 
 // ---------------------------------------------------------------------------
 // Sessions — pass-through to brainbox client
@@ -46,8 +50,115 @@ func (a *App) CancelTask(taskID string) error {
 	return a.client.CancelTask(taskID)
 }
 
-func (a *App) ListAgents() ([]brainbox.Agent, error) {
+func (a *App) ListAgents() ([]brainbox.AgentDefinition, error) {
 	return a.client.ListAgents()
+}
+
+func (a *App) GetAgent(name string) (brainbox.AgentDefinition, error) {
+	return a.client.GetAgent(name)
+}
+
+func (a *App) CreateAgent(req brainbox.CreateAgentRequest) (brainbox.AgentDefinition, error) {
+	return a.client.CreateAgent(req)
+}
+
+func (a *App) UpdateAgent(name string, req brainbox.UpdateAgentRequest) (brainbox.AgentDefinition, error) {
+	return a.client.UpdateAgent(name, req)
+}
+
+func (a *App) DeleteAgent(name string) error {
+	return a.client.DeleteAgent(name)
+}
+
+// LaunchTeam creates only a supervisor session.  The supervisor's task prompt
+// describes all available agents in the category and how to spawn them on
+// demand via the hub task API — no idle container sessions are pre-launched.
+//
+// Container agents (spawn_mode="container") are launched by the supervisor via
+// POST $BRAINBOX_HUB_URL/api/hub/tasks when it has concrete work for them.
+// Subagents (spawn_mode="subagent") are spawned inline using Claude Code's
+// built-in Task tool.
+func (a *App) LaunchTeam(category string, task string, llmProvider string, llmModel string, workspaceProfile string, workspaceHome string) (brainbox.SessionActionResponse, error) {
+	agents, err := a.client.ListAgents()
+	if err != nil {
+		return brainbox.SessionActionResponse{}, err
+	}
+
+	teamID := fmt.Sprintf("team-%s-%d", category, time.Now().Unix()%100000)
+
+	type agentInfo struct {
+		name        string
+		description string
+		spawnMode   string
+	}
+	var teamAgents []agentInfo
+	for _, ag := range agents {
+		if ag.Category != category || ag.Name == "supervisor" {
+			continue
+		}
+		teamAgents = append(teamAgents, agentInfo{
+			name:        ag.Name,
+			description: ag.Description,
+			spawnMode:   ag.SpawnMode,
+		})
+	}
+
+	supervisorTask := task + "\n\n## Team `" + teamID + "` — available agents\n\n"
+	supervisorTask += "You are the supervisor. Break the goal into concrete subtasks and delegate them. " +
+		"Do not do all the work yourself.\n\n"
+
+	// Container agents section
+	var containerAgents []agentInfo
+	var subAgents []agentInfo
+	for _, ag := range teamAgents {
+		if ag.spawnMode == "subagent" {
+			subAgents = append(subAgents, ag)
+		} else {
+			containerAgents = append(containerAgents, ag)
+		}
+	}
+
+	if len(containerAgents) > 0 {
+		supervisorTask += "### Container agents — spawn via hub task API\n\n"
+		supervisorTask += "Submit a task to a container agent with:\n" +
+			"```\ncurl -s -X POST $BRAINBOX_HUB_URL/api/hub/tasks \\\n" +
+			"  -H 'Content-Type: application/json' \\\n" +
+			"  -H \"Authorization: Bearer $BRAINBOX_TOKEN\" \\\n" +
+			"  -d '{\"agent_name\": \"<name>\", \"description\": \"<task>\"}'\n```\n\n" +
+			"Available agents:\n\n"
+		for _, ag := range containerAgents {
+			supervisorTask += fmt.Sprintf("- **%s**", ag.name)
+			if ag.description != "" {
+				supervisorTask += ": " + ag.description
+			}
+			supervisorTask += "\n"
+		}
+		supervisorTask += "\n"
+	}
+
+	if len(subAgents) > 0 {
+		supervisorTask += "### Subagents — spawn inline with the Task tool\n\n"
+		supervisorTask += "Use Claude Code's built-in Task tool to spawn these agents as sub-tasks:\n\n"
+		for _, ag := range subAgents {
+			supervisorTask += fmt.Sprintf("- **%s**", ag.name)
+			if ag.description != "" {
+				supervisorTask += ": " + ag.description
+			}
+			supervisorTask += "\n"
+		}
+		supervisorTask += "\n"
+	}
+
+	resp, err := a.client.CreateSession(brainbox.CreateSessionRequest{
+		Name:             teamID + "-supervisor",
+		Role:             "supervisor",
+		LLMProvider:      llmProvider,
+		LLMModel:         llmModel,
+		Task:             supervisorTask,
+		WorkspaceProfile: workspaceProfile,
+		WorkspaceHome:    workspaceHome,
+	})
+	return resp, err
 }
 
 func (a *App) GetMessageLog() ([]brainbox.Message, error) {

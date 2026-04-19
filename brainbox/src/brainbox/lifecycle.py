@@ -247,7 +247,21 @@ def _build_volume_map(env_vars: dict) -> dict[str, dict[str, str]]:
             home / ".terraform.d",
             True,
         ),
+        (
+            p.mount_codex,
+            "codex",
+            ["CODEX_HOME"] if use_env_vars else [],
+            ws_path / ".codex",
+            False,
+        ),
     ]
+
+    # Ensure codex dir exists so _resolve_dir can find it — codex won't
+    # create it itself until first run, but Docker requires the source to exist.
+    if p.mount_codex:
+        _env = env_override if env_override is not None else os.environ
+        codex_dir = Path(_env["CODEX_HOME"]) if _env.get("CODEX_HOME") else ws_path / ".codex"
+        codex_dir.mkdir(parents=True, exist_ok=True)
 
     container_targets = {
         "aws": "/home/developer/.aws",
@@ -257,12 +271,13 @@ def _build_volume_map(env_vars: dict) -> dict[str, dict[str, str]]:
         "gitconfig": "/home/developer/.gitconfig",
         "gcloud": "/home/developer/.gcloud",
         "terraform": "/home/developer/.terraform.d",
+        "codex": "/home/developer/.codex",
     }
 
     # Credential mounts default to read-only to prevent containers
     # from modifying host credentials.  Gitconfig stays rw so git can
     # write commit metadata.
-    _RW_MOUNTS = {"gitconfig"}
+    _RW_MOUNTS = {"gitconfig", "codex"}
 
     mounts: dict[str, dict[str, str]] = {}
 
@@ -575,6 +590,7 @@ async def provision(
     token: Token | None = None,
     llm_provider: str = "claude",
     llm_model: str | None = None,
+    llm_effort: str | None = None,
     ollama_host: str | None = None,
     codex_api_key: str | None = None,
     workspace_profile: str | None = None,
@@ -603,7 +619,7 @@ async def provision(
         resolved_port = port or 0  # Will be assigned by backend
     else:
         # Single unified image — role is injected as BRAINBOX_ROLE env var
-        image_or_template = settings.image or "ghcr.io/neverprepared/brainbox:latest"
+        image_or_template = settings.image or "brainbox"
         resolved_port = port or await _run(_find_available_port)
 
     # Resolve role prompt and teams configuration
@@ -614,6 +630,17 @@ async def provision(
     agent_def = get_agent(resolved_role)
     if agent_def and agent_def.role_prompt:
         role_prompt_file = str(settings.agents_dir / agent_def.role_prompt)
+
+    # Apply agent-level model/effort defaults when not explicitly set in request
+    if agent_def and llm_model is None:
+        if llm_provider == "claude" and agent_def.claude_model:
+            llm_model = agent_def.claude_model
+        elif llm_provider == "codex" and agent_def.codex_model:
+            llm_model = agent_def.codex_model
+        elif llm_provider == "ollama" and agent_def.ollama_model:
+            llm_model = agent_def.ollama_model
+    if agent_def and llm_effort is None and llm_provider == "claude" and agent_def.claude_effort:
+        llm_effort = agent_def.claude_effort
 
     ctx = SessionContext(
         session_name=session_name,
@@ -628,6 +655,7 @@ async def provision(
         token=token,
         llm_provider=llm_provider,
         llm_model=llm_model,
+        llm_effort=llm_effort,
         ollama_host=ollama_host,
         codex_api_key=codex_api_key,
         workspace_profile=resolved_workspace_profile,
@@ -732,14 +760,13 @@ async def configure(ctx_or_name: SessionContext | str) -> SessionContext:
 
     resolved = resolve_secrets()
 
-    # Inject Ollama env vars when provider is ollama
+    # Inject provider-specific env vars
     if ctx.llm_provider == "ollama":
         resolved["ANTHROPIC_AUTH_TOKEN"] = "ollama"
         resolved["ANTHROPIC_API_KEY"] = ""
         resolved["ANTHROPIC_BASE_URL"] = ctx.ollama_host or settings.ollama.host
         resolved["CLAUDE_MODEL"] = ctx.llm_model or settings.ollama.model
 
-    # Inject Codex/OpenAI env vars when provider is codex
     elif ctx.llm_provider == "codex":
         api_key = ctx.codex_api_key or settings.codex.api_key
         if api_key:
@@ -748,8 +775,17 @@ async def configure(ctx_or_name: SessionContext | str) -> SessionContext:
             resolved["OPENAI_API_KEY"] = api_key
         resolved["CODEX_MODEL"] = ctx.llm_model or settings.codex.model
 
+    else:
+        # Claude: set model if explicitly requested (agent default or session override)
+        if ctx.llm_model:
+            resolved["CLAUDE_MODEL"] = ctx.llm_model
+
     # Always expose provider name so ttyd-wrapper.sh can detect which CLI to launch
     resolved["LLM_PROVIDER"] = ctx.llm_provider
+
+    # Inject effort for Claude (low | medium | high)
+    if ctx.llm_provider == "claude" and ctx.llm_effort:
+        resolved["CLAUDE_EFFORT"] = ctx.llm_effort
 
     # Phase 1: Enable Claude Code Teams experimental feature
     if ctx.teams_enabled:
@@ -1012,6 +1048,7 @@ async def run_pipeline(
     token: Token | None = None,
     llm_provider: str = "claude",
     llm_model: str | None = None,
+    llm_effort: str | None = None,
     ollama_host: str | None = None,
     codex_api_key: str | None = None,
     workspace_profile: str | None = None,
@@ -1054,6 +1091,7 @@ async def run_pipeline(
         token=token,
         llm_provider=llm_provider,
         llm_model=llm_model,
+        llm_effort=llm_effort,
         ollama_host=ollama_host,
         codex_api_key=codex_api_key,
         workspace_profile=workspace_profile,

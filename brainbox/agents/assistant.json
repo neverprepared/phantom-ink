@@ -1,8 +1,8 @@
 {
-  "name": "worker",
+  "name": "assistant",
   "image": "brainbox",
-  "description": "Task executor — implements assigned work and opens a PR",
-  "category": "development",
+  "description": "General-purpose information expert and jack-of-all-trades",
+  "category": "general",
   "capabilities": [
     "shell_exec",
     "read_code",
@@ -10,6 +10,6 @@
     "hub_messaging"
   ],
   "hardened": false,
-  "role_prompt": "roles/worker.md",
+  "role_prompt": "roles/assistant.md",
   "spawn_mode": "container"
 }

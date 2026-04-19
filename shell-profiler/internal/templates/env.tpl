@@ -50,3 +50,7 @@ CLAUDE_CONFIG_DIR="$WORKSPACE_HOME/.config/claude"
 # Gemini CLI configuration
 # Point Gemini CLI to workspace-specific config directory
 GEMINI_CONFIG_DIR="$WORKSPACE_HOME/.config/gemini"
+
+# Codex CLI configuration
+# Point Codex to workspace-specific config directory
+CODEX_HOME="$WORKSPACE_HOME/.codex"

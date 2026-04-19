@@ -1,9 +1,16 @@
 {
   "name": "supervisor",
-  "image": "brainbox-developer",
+  "image": "brainbox",
   "description": "Orchestrates agents, monitors progress, enforces roadmap",
-  "capabilities": ["shell_exec", "read_code", "write_code", "hub_messaging"],
+  "category": "orchestration",
+  "capabilities": [
+    "shell_exec",
+    "read_code",
+    "write_code",
+    "hub_messaging"
+  ],
   "hardened": false,
   "role_prompt": "roles/supervisor.md",
-  "persistent": true
+  "persistent": true,
+  "spawn_mode": "container"
 }
