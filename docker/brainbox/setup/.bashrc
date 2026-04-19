@@ -23,7 +23,6 @@ claude() {
 # Codex aliases (active when CODEX_MODEL is set — provider is "codex")
 if [ -n "$CODEX_MODEL" ]; then
   alias c='codex'
-  alias cs='codex --dangerously-skip-permissions'
 
   codex() {
     local args=()

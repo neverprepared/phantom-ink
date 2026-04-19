@@ -229,6 +229,10 @@ func (a *App) waitAndReconnect() error {
 	return nil
 }
 
+// ---------------------------------------------------------------------------
+// Platform
+// ---------------------------------------------------------------------------
+
 // GetPlatform returns the OS: "darwin", "windows", or "linux".
 func (a *App) GetPlatform() string {
 	return goruntime.GOOS

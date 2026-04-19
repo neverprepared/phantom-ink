@@ -192,7 +192,7 @@ def validate_port(port: int) -> int:
 
 def validate_role(role: str) -> str:
     """
-    Validate role is one of the allowed values.
+    Validate role against registered agents.
 
     Args:
         role: Role to validate
@@ -201,22 +201,18 @@ def validate_role(role: str) -> str:
         The validated role
 
     Raises:
-        ValidationError: If role is invalid
+        ValidationError: If role is not a known agent name
     """
-    allowed_roles = {
-        "developer",
-        "researcher",
-        "performer",
-        # Roles absorbed from multiclaude (Dan Lorenc)
-        "supervisor",
-        "worker",
-        "merge-queue",
-        "pr-shepherd",
-        "reviewer",
-    }
-    if role not in allowed_roles:
+    # Import here to avoid circular imports at module load time
+    from . import registry  # noqa: PLC0415
+
+    known = {ag.name for ag in registry.list_agents()}
+    if not known:
+        # Registry not yet loaded — fall back to permissive check
+        return role
+    if role not in known:
         raise ValidationError(
-            f"Invalid role '{role}': must be one of {', '.join(sorted(allowed_roles))}"
+            f"Invalid role '{role}': must be one of {', '.join(sorted(known))}"
         )
 
     return role

@@ -40,15 +40,41 @@ func (db *DB) Close() error {
 	return db.conn.Close()
 }
 
-// migrations is an ordered list of schema versions. Each entry's SQL is applied
-// exactly once and the version number is recorded in schema_version. New columns
-// must be added via ALTER TABLE … ADD COLUMN IF NOT EXISTS so that existing
-// databases are upgraded safely without dropping or recreating tables.
-var migrations = []struct {
+// migration describes a single schema version step. Either sql or fn must be
+// set; fn takes precedence when both are set. Use fn for DDL that SQLite's
+// modernc driver does not support (e.g. ALTER TABLE … ADD COLUMN IF NOT EXISTS).
+type migration struct {
 	version int
 	sql     string
-}{
-	{1, `
+	fn      func(conn *sql.DB) error
+}
+
+// addColumnIfMissing adds a column to table only if it does not already exist.
+// modernc.org/sqlite does not support "ALTER TABLE … ADD COLUMN IF NOT EXISTS",
+// so we check PRAGMA table_info instead.
+func addColumnIfMissing(conn *sql.DB, table, column, definition string) error {
+	rows, err := conn.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name string
+		var rest [4]interface{}
+		if err := rows.Scan(&cid, &name, &rest[0], &rest[1], &rest[2], &rest[3]); err != nil {
+			continue
+		}
+		if name == column {
+			return nil // already present
+		}
+	}
+	_, err = conn.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition)
+	return err
+}
+
+var migrations = []migration{
+	{version: 1, sql: `
 		CREATE TABLE IF NOT EXISTS settings (
 			key   TEXT PRIMARY KEY,
 			value TEXT NOT NULL DEFAULT ''
@@ -73,10 +99,11 @@ var migrations = []struct {
 			upstream_url  TEXT NOT NULL DEFAULT ''
 		);
 	`},
-	// v2: workspace_home was added to repos after the initial release.
-	// ALTER TABLE … ADD COLUMN IF NOT EXISTS is a no-op when the column already
-	// exists, so this is safe to run against both old and new databases.
-	{2, `ALTER TABLE repos ADD COLUMN IF NOT EXISTS workspace_home TEXT NOT NULL DEFAULT ''`},
+	// v2: workspace_home added to repos. Uses fn because modernc.org/sqlite
+	// does not support ALTER TABLE … ADD COLUMN IF NOT EXISTS.
+	{version: 2, fn: func(conn *sql.DB) error {
+		return addColumnIfMissing(conn, "repos", "workspace_home", "TEXT NOT NULL DEFAULT ''")
+	}},
 }
 
 func (db *DB) migrate() error {
@@ -98,8 +125,14 @@ func (db *DB) migrate() error {
 		if current >= m.version {
 			continue
 		}
-		if _, err := db.conn.Exec(m.sql); err != nil {
-			return fmt.Errorf("migration v%d: %w", m.version, err)
+		if m.fn != nil {
+			if err := m.fn(db.conn); err != nil {
+				return fmt.Errorf("migration v%d: %w", m.version, err)
+			}
+		} else {
+			if _, err := db.conn.Exec(m.sql); err != nil {
+				return fmt.Errorf("migration v%d: %w", m.version, err)
+			}
 		}
 		if _, err := db.conn.Exec("INSERT INTO schema_version (version) VALUES (?)", m.version); err != nil {
 			return fmt.Errorf("record schema version v%d: %w", m.version, err)

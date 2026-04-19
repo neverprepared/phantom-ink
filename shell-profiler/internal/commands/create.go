@@ -84,6 +84,7 @@ func CreateProfile(profilesDir string, opts CreateOptions) error {
 	dirs := []string{
 		".config/1Password",
 		".config/claude",
+		".codex",
 		".config/gemini",
 		".ssh",
 		".aws",
@@ -463,6 +464,9 @@ func createGitignore(profileDir string) error {
 # Claude Code configuration (may contain API keys and sensitive data)
 .config/claude/
 
+# Codex CLI configuration (may contain API keys and sensitive data)
+.codex/
+
 # Gemini CLI configuration (may contain API keys and sensitive data)
 .config/gemini/
 
@@ -568,6 +572,9 @@ func createREADME(profileDir string, opts CreateOptions) error {
 		"### Claude Code\n" +
 		"- CLAUDE_CONFIG_DIR: Path to profile-specific Claude Code config directory\n" +
 		"- Claude Code will automatically use profile-specific settings\n\n" +
+		"### Codex CLI\n" +
+		"- CODEX_HOME: Path to profile-specific Codex config directory\n" +
+		"- Codex CLI will automatically use profile-specific settings\n\n" +
 		"### Gemini CLI\n" +
 		"- GEMINI_CONFIG_DIR: Path to profile-specific Gemini CLI config directory\n" +
 		"- Gemini CLI will automatically use profile-specific settings\n\n" +
@@ -607,20 +614,24 @@ func createREADME(profileDir string, opts CreateOptions) error {
 		"   - Claude Code will automatically use profile-specific settings\n" +
 		"   - Settings, extensions, and preferences are isolated per profile\n" +
 		"   - Configuration files are stored in .config/claude/\n\n" +
-		"9. Configure Gemini CLI in .config/gemini/:\n" +
+		"9. Configure Codex CLI in .codex/:\n" +
+		"   - Codex CLI will automatically use profile-specific settings\n" +
+		"   - API keys and preferences are isolated per profile\n" +
+		"   - Configuration files are stored in .codex/\n\n" +
+		"10. Configure Gemini CLI in .config/gemini/:\n" +
 		"   - Gemini CLI will automatically use profile-specific settings\n" +
 		"   - API keys and preferences are isolated per profile\n" +
 		"   - Configuration files are stored in .config/gemini/\n\n" +
-		"10. Configure Kubernetes in .kube/:\n" +
+		"11. Configure Kubernetes in .kube/:\n" +
 		"   - Copy or generate kubeconfig to .kube/config\n" +
 		"   - kubectl will automatically use profile-specific kubeconfig\n\n" +
-		"11. XDG-compliant tools (optional):\n" +
+		"12. XDG-compliant tools (optional):\n" +
 		"   - Many tools respect XDG_CONFIG_HOME (neovim, tmux, bat, etc.)\n" +
 		"   - Add configs to .config/<tool>/\n" +
 		"   - Example: .config/nvim/init.vim\n\n" +
-		"12. Add project-specific environment variables to .envrc\n\n" +
-		"13. Create .env for secrets (AWS keys, API tokens, Azure credentials, GCP credentials, Claude API keys, Gemini API keys, etc.)\n\n" +
-		"14. Add custom scripts to bin/ directory\n"
+		"13. Add project-specific environment variables to .envrc\n\n" +
+		"14. Create .env for secrets (AWS keys, API tokens, Azure credentials, GCP credentials, Claude API keys, Codex API keys, Gemini API keys, etc.)\n\n" +
+		"15. Add custom scripts to bin/ directory\n"
 
 	readmePath := filepath.Join(profileDir, "README.md")
 	return os.WriteFile(readmePath, []byte(readmeContent), 0644)
@@ -674,6 +685,9 @@ func createEnvExample(profileDir string) error {
 
 # Claude Code / Anthropic API credentials
 # ANTHROPIC_API_KEY=your-anthropic-api-key
+
+# Codex CLI / OpenAI API credentials
+# OPENAI_API_KEY=your-openai-api-key
 
 # Gemini CLI / Google AI API credentials
 # GEMINI_API_KEY=your-gemini-api-key

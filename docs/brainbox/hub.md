@@ -278,7 +278,7 @@ The role system was absorbed from Dan Lorenc's [multiclaude](https://github.com/
 ```json
 {
   "name": "supervisor",
-  "image": "brainbox-developer",
+  "image": "brainbox",
   "description": "Orchestrates agents, monitors progress, enforces roadmap",
   "capabilities": ["shell_exec", "read_code", "write_code", "hub_messaging"],
   "hardened": false,

@@ -1,4 +1,4 @@
-FROM brainbox-base
+FROM brainbox
 
 # =============================================================================
 # Researcher container — research/fact-checking with read-only HTTP guardrail

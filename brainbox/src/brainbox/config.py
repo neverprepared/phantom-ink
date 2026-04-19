@@ -155,6 +155,7 @@ class ProfileSettings(BaseSettings):
     mount_gcloud: bool = False  # opt-in
     mount_terraform: bool = False  # opt-in
     mount_claude_config: bool = True  # ~/.claude (skills, hooks, MCP config)
+    mount_codex: bool = True  # ~/.codex config directory
     mount_reflex: bool = True  # Reflex share dir (hooks/skills runtime)
     reflex_share_path: str = "/opt/homebrew/opt/reflex/share/reflex"
 
@@ -170,7 +171,7 @@ class CodexSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CODEX_")
 
     api_key: str = ""  # Falls back to OPENAI_API_KEY in env
-    model: str = "codex-mini-latest"
+    model: str = "gpt-5.4"
 
 
 class UTMSettings(BaseSettings):
@@ -208,7 +209,7 @@ class DockerSettings(BaseSettings):
 
 
 class Settings(BaseSettings):
-    role: str = "developer"
+    role: str = "assistant"
     image: str = ""
     container_prefix: str = ""
     user: str = "65534:65534"
@@ -243,7 +244,7 @@ class Settings(BaseSettings):
 
     @property
     def resolved_image(self) -> str:
-        return self.image or "ghcr.io/neverprepared/brainbox:latest"
+        return self.image or "brainbox"
 
     @property
     def resolved_prefix(self) -> str:

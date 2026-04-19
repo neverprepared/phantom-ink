@@ -13,6 +13,8 @@ export function CancelTask(arg1:string):Promise<void>;
 
 export function CompleteChannel(arg1:string,arg2:brainbox.CompleteChannelRequest):Promise<brainbox.Channel>;
 
+export function CreateAgent(arg1:brainbox.CreateAgentRequest):Promise<brainbox.AgentDefinition>;
+
 export function CreateChannel(arg1:brainbox.CreateChannelRequest):Promise<brainbox.Channel>;
 
 export function CreatePlaybook(arg1:brainbox.CreatePlaybookRequest):Promise<brainbox.Playbook>;
@@ -24,6 +26,8 @@ export function CreateSession(arg1:brainbox.CreateSessionRequest):Promise<brainb
 export function CreateWorktree(arg1:brainbox.CreateWorktreeRequest):Promise<brainbox.Worktree>;
 
 export function CreateWorktreeSession(arg1:string):Promise<brainbox.WorktreeSessionResponse>;
+
+export function DeleteAgent(arg1:string):Promise<void>;
 
 export function DeleteArtifact(arg1:string):Promise<void>;
 
@@ -50,6 +54,8 @@ export function FindClaudeProcesses():Promise<Array<main.LocalProcess>>;
 export function FocusTerminalTab(arg1:string):Promise<void>;
 
 export function GetActiveProfile():Promise<main.Profile>;
+
+export function GetAgent(arg1:string):Promise<brainbox.AgentDefinition>;
 
 export function GetChannel(arg1:string):Promise<brainbox.Channel>;
 
@@ -87,7 +93,9 @@ export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;
 
 export function GetWorktree(arg1:string):Promise<brainbox.Worktree>;
 
-export function ListAgents():Promise<Array<brainbox.Agent>>;
+export function LaunchTeam(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<brainbox.SessionActionResponse>;
+
+export function ListAgents():Promise<Array<brainbox.AgentDefinition>>;
 
 export function ListArtifacts(arg1:string):Promise<Array<brainbox.Artifact>>;
 
@@ -142,5 +150,7 @@ export function StopService(arg1:string):Promise<void>;
 export function StopSession(arg1:string):Promise<brainbox.SessionActionResponse>;
 
 export function SubmitTask(arg1:brainbox.SubmitTaskRequest):Promise<brainbox.Task>;
+
+export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promise<brainbox.AgentDefinition>;
 
 export function UpdateRepo(arg1:string,arg2:brainbox.UpdateRepoRequest):Promise<brainbox.Repo>;

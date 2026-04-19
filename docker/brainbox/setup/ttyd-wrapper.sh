@@ -12,6 +12,7 @@ _secret() {
 _secret LLM_PROVIDER
 _secret CODEX_MODEL
 _secret CLAUDE_MODEL
+_secret CLAUDE_EFFORT
 _secret ANTHROPIC_BASE_URL
 
 # Attach to existing session, or create new one
@@ -26,10 +27,11 @@ else
     # Build agent command based on LLM_PROVIDER (defaults to claude)
     case "${LLM_PROVIDER:-claude}" in
         codex)
-            AGENT_CMD="codex --approval-mode full-auto"
-            if [ -n "$CODEX_MODEL" ]; then
-                AGENT_CMD="$AGENT_CMD --model \"$CODEX_MODEL\""
-            fi
+            # --model is injected by the codex() shell wrapper in .bashrc
+            # when CODEX_MODEL is set, so we don't pass it here.
+            # --sandbox off: Docker already provides container isolation;
+            # workspace-write sandbox requires kernel namespaces unavailable in containers.
+            AGENT_CMD="codex --sandbox off --ask-for-approval never"
             ;;
         ollama)
             # CLAUDE_MODEL is set to the ollama model name by lifecycle.py
@@ -42,6 +44,9 @@ else
             AGENT_CMD="claude --plugin-dir /opt/reflex/share/reflex --dangerously-skip-permissions"
             if [ -n "$CLAUDE_MODEL" ]; then
                 AGENT_CMD="$AGENT_CMD --model \"$CLAUDE_MODEL\""
+            fi
+            if [ -n "$CLAUDE_EFFORT" ]; then
+                AGENT_CMD="$AGENT_CMD --effort \"$CLAUDE_EFFORT\""
             fi
             ;;
     esac

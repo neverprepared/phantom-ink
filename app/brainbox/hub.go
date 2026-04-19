@@ -17,14 +17,59 @@ type Task struct {
 	WorkspaceProfile string      `json:"workspace_profile"`
 }
 
-// Agent represents a registered agent definition.
-type Agent struct {
-	Name         string      `json:"name"`
-	Image        string      `json:"image"`
-	Role         string      `json:"role"`
-	Capabilities []string    `json:"capabilities"`
-	Config       interface{} `json:"config"`
+// AgentDefinition represents a registered agent definition.
+type AgentDefinition struct {
+	Name              string   `json:"name"`
+	Image             string   `json:"image"`
+	Description       string   `json:"description"`
+	Category          string   `json:"category"`
+	SpawnMode         string   `json:"spawn_mode"` // "container" | "subagent"
+	Capabilities      []string `json:"capabilities"`
+	Hardened          bool     `json:"hardened"`
+	Persistent        bool     `json:"persistent"`
+	RolePrompt        string   `json:"role_prompt,omitempty"`
+	RolePromptContent string   `json:"role_prompt_content,omitempty"`
+	ClaudeModel       string   `json:"claude_model,omitempty"`
+	ClaudeEffort      string   `json:"claude_effort,omitempty"`
+	CodexModel        string   `json:"codex_model,omitempty"`
+	OllamaModel       string   `json:"ollama_model,omitempty"`
 }
+
+// CreateAgentRequest is the payload for POST /api/hub/agents.
+type CreateAgentRequest struct {
+	Name              string   `json:"name"`
+	Image             string   `json:"image,omitempty"`
+	Description       string   `json:"description,omitempty"`
+	Category          string   `json:"category,omitempty"`
+	SpawnMode         string   `json:"spawn_mode,omitempty"`
+	Capabilities      []string `json:"capabilities,omitempty"`
+	Hardened          bool     `json:"hardened,omitempty"`
+	Persistent        bool     `json:"persistent,omitempty"`
+	RolePromptContent string   `json:"role_prompt_content,omitempty"`
+	ClaudeModel       string   `json:"claude_model,omitempty"`
+	ClaudeEffort      string   `json:"claude_effort,omitempty"`
+	CodexModel        string   `json:"codex_model,omitempty"`
+	OllamaModel       string   `json:"ollama_model,omitempty"`
+}
+
+// UpdateAgentRequest is the payload for PATCH /api/hub/agents/{name}.
+type UpdateAgentRequest struct {
+	Image             *string  `json:"image,omitempty"`
+	Description       *string  `json:"description,omitempty"`
+	Category          *string  `json:"category,omitempty"`
+	SpawnMode         *string  `json:"spawn_mode,omitempty"`
+	Capabilities      []string `json:"capabilities,omitempty"`
+	Hardened          *bool    `json:"hardened,omitempty"`
+	Persistent        *bool    `json:"persistent,omitempty"`
+	RolePromptContent *string  `json:"role_prompt_content,omitempty"`
+	ClaudeModel       *string  `json:"claude_model,omitempty"`
+	ClaudeEffort      *string  `json:"claude_effort,omitempty"`
+	CodexModel        *string  `json:"codex_model,omitempty"`
+	OllamaModel       *string  `json:"ollama_model,omitempty"`
+}
+
+// Agent is kept as an alias for backward compatibility with HubState.
+type Agent = AgentDefinition
 
 // HubState is the full hub state snapshot.
 type HubState struct {
@@ -124,12 +169,47 @@ func (c *Client) CancelTask(taskID string) error {
 }
 
 // ListAgents returns all registered agent definitions.
-func (c *Client) ListAgents() ([]Agent, error) {
-	var agents []Agent
+func (c *Client) ListAgents() ([]AgentDefinition, error) {
+	var agents []AgentDefinition
 	if err := c.get("/api/hub/agents", &agents); err != nil {
 		return nil, err
 	}
 	return agents, nil
+}
+
+// GetAgent returns a single agent definition including its role prompt content.
+func (c *Client) GetAgent(name string) (AgentDefinition, error) {
+	var agent AgentDefinition
+	path := fmt.Sprintf("/api/hub/agents/%s", name)
+	if err := c.get(path, &agent); err != nil {
+		return agent, err
+	}
+	return agent, nil
+}
+
+// CreateAgent creates a new agent definition.
+func (c *Client) CreateAgent(req CreateAgentRequest) (AgentDefinition, error) {
+	var agent AgentDefinition
+	if err := c.post("/api/hub/agents", req, &agent); err != nil {
+		return agent, err
+	}
+	return agent, nil
+}
+
+// UpdateAgent updates an existing agent definition.
+func (c *Client) UpdateAgent(name string, req UpdateAgentRequest) (AgentDefinition, error) {
+	var agent AgentDefinition
+	path := fmt.Sprintf("/api/hub/agents/%s", name)
+	if err := c.patch(path, req, &agent); err != nil {
+		return agent, err
+	}
+	return agent, nil
+}
+
+// DeleteAgent removes a custom agent definition.
+func (c *Client) DeleteAgent(name string) error {
+	path := fmt.Sprintf("/api/hub/agents/%s", name)
+	return c.delete(path, nil)
 }
 
 // GetMessageLog returns the inter-agent message audit log.

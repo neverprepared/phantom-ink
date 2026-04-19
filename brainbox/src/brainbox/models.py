@@ -19,30 +19,22 @@ def _now_ms() -> int:
 # ---------------------------------------------------------------------------
 
 
-class AgentRole(str, Enum):
-    """Agent roles absorbed from multiclaude's agent type system.
-
-    Attribution: Role system originated from Dan Lorenc's multiclaude project
-    (github.com/dlorenc/multiclaude).
-    """
-
-    DEVELOPER = "developer"  # Interactive session (existing default)
-    SUPERVISOR = "supervisor"  # Orchestrates agents, persistent
-    WORKER = "worker"  # Task executor, transient
-    MERGE_QUEUE = "merge-queue"  # PR automation, persistent
-    PR_SHEPHERD = "pr-shepherd"  # Fork PR coordination, persistent
-    REVIEWER = "reviewer"  # Code review, transient
-
-
 class AgentDefinition(BaseModel):
     name: str
     image: str
     description: str = ""
+    category: str = "general"  # e.g. "general", "development", "orchestration"
+    spawn_mode: str = "container"  # "container" | "subagent"
     capabilities: list[str] = Field(default_factory=list)
     hardened: bool = False
     role_prompt: str | None = None  # Path to role prompt markdown (relative to agents dir)
     persistent: bool = False  # Persistent roles auto-restart; transient roles clean up
     repo_url: str | None = None  # GitHub repo URL for repo-specific agents
+    # Per-provider model/effort defaults (override global config when set)
+    claude_model: str | None = None
+    claude_effort: str | None = None  # "low" | "medium" | "high"
+    codex_model: str | None = None
+    ollama_model: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +87,7 @@ class SessionContext(BaseModel):
     env_content: str | None = None  # legacy mode .env body
     llm_provider: str = "claude"  # "claude", "ollama", or "codex"
     llm_model: str | None = None  # e.g. "qwen3-coder"
+    llm_effort: str | None = None  # claude only: "low" | "medium" | "high"
     ollama_host: str | None = None  # per-session override
     codex_api_key: str | None = None  # per-session override
     profile_mounts: set[str] = Field(default_factory=set)  # {"aws", "azure", "kube", "ssh", ...}

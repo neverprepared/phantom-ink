@@ -126,6 +126,149 @@ def list_agents() -> list[AgentDefinition]:
 
 
 # ---------------------------------------------------------------------------
+# Agent CRUD
+# ---------------------------------------------------------------------------
+
+_BUILTIN_AGENTS: frozenset[str] = frozenset({"assistant"})
+
+
+def create_agent(name: str, image: str, description: str, capabilities: list[str],
+                 hardened: bool, persistent: bool, role_prompt_content: str | None,
+                 claude_model: str | None = None, claude_effort: str | None = None,
+                 codex_model: str | None = None, ollama_model: str | None = None,
+                 category: str = "general", spawn_mode: str = "container") -> AgentDefinition:
+    """Create a new agent definition and persist it to disk."""
+    if name in _agents:
+        raise ValueError(f"Agent '{name}' already exists")
+
+    agents_dir = settings.agents_dir
+    agents_dir.mkdir(parents=True, exist_ok=True)
+
+    role_prompt: str | None = None
+    if role_prompt_content:
+        roles_dir = agents_dir / "roles"
+        roles_dir.mkdir(exist_ok=True)
+        prompt_file = roles_dir / f"{name}.md"
+        prompt_file.write_text(role_prompt_content)
+        role_prompt = f"roles/{name}.md"
+        log.info("registry.role_prompt_written", metadata={"agent": name, "path": str(prompt_file)})
+
+    agent = AgentDefinition(
+        name=name,
+        image=image,
+        description=description,
+        category=category,
+        spawn_mode=spawn_mode,
+        capabilities=capabilities,
+        hardened=hardened,
+        persistent=persistent,
+        role_prompt=role_prompt,
+        claude_model=claude_model or None,
+        claude_effort=claude_effort or None,
+        codex_model=codex_model or None,
+        ollama_model=ollama_model or None,
+    )
+
+    json_path = agents_dir / f"{name}.json"
+    json_path.write_text(json.dumps(agent.model_dump(exclude_none=True), indent=2))
+    json_path.chmod(0o644)
+
+    _agents[name] = agent
+    if role_prompt_content:
+        _role_prompts[name] = role_prompt_content
+
+    log.info("registry.agent_created", metadata={"name": name})
+    return agent
+
+
+def update_agent(name: str, image: str | None, description: str | None,
+                 capabilities: list[str] | None, hardened: bool | None,
+                 persistent: bool | None, role_prompt_content: str | None,
+                 claude_model: str | None = None, claude_effort: str | None = None,
+                 codex_model: str | None = None, ollama_model: str | None = None,
+                 category: str | None = None, spawn_mode: str | None = None) -> AgentDefinition:
+    """Update an existing agent definition."""
+    agent = _agents.get(name)
+    if not agent:
+        raise ValueError(f"Agent '{name}' not found")
+
+    agents_dir = settings.agents_dir
+
+    # Patch scalar fields (None = no change, "" = clear for model fields)
+    patch: dict = {}
+    if image is not None:
+        patch["image"] = image
+    if description is not None:
+        patch["description"] = description
+    if category is not None:
+        patch["category"] = category
+    if spawn_mode is not None:
+        patch["spawn_mode"] = spawn_mode
+    if capabilities is not None:
+        patch["capabilities"] = capabilities
+    if hardened is not None:
+        patch["hardened"] = hardened
+    if persistent is not None:
+        patch["persistent"] = persistent
+    # Model/effort fields: None = no change, "" = clear
+    for field, val in [("claude_model", claude_model), ("claude_effort", claude_effort),
+                       ("codex_model", codex_model), ("ollama_model", ollama_model)]:
+        if val is not None:
+            patch[field] = val if val != "" else None
+    updated = agent.model_copy(update=patch)
+
+    # Handle role_prompt_content:
+    #   None      → no change
+    #   ""        → clear prompt
+    #   non-empty → write/overwrite
+    if role_prompt_content is not None:
+        if role_prompt_content == "":
+            # Clear prompt
+            if updated.role_prompt:
+                prompt_path = agents_dir / updated.role_prompt
+                if prompt_path.is_file():
+                    prompt_path.unlink()
+            updated = updated.model_copy(update={"role_prompt": None})
+            _role_prompts.pop(name, None)
+        else:
+            roles_dir = agents_dir / "roles"
+            roles_dir.mkdir(exist_ok=True)
+            prompt_file = roles_dir / f"{name}.md"
+            prompt_file.write_text(role_prompt_content)
+            updated = updated.model_copy(update={"role_prompt": f"roles/{name}.md"})
+            _role_prompts[name] = role_prompt_content
+
+    json_path = agents_dir / f"{name}.json"
+    json_path.write_text(json.dumps(updated.model_dump(exclude_none=True), indent=2))
+
+    _agents[name] = updated
+    log.info("registry.agent_updated", metadata={"name": name})
+    return updated
+
+
+def delete_agent(name: str) -> None:
+    """Delete a custom agent. Built-in agents cannot be deleted."""
+    if name in _BUILTIN_AGENTS:
+        raise ValueError(f"Agent '{name}' is a built-in and cannot be deleted")
+    if name not in _agents:
+        raise ValueError(f"Agent '{name}' not found")
+
+    agents_dir = settings.agents_dir
+
+    json_path = agents_dir / f"{name}.json"
+    if json_path.is_file():
+        json_path.unlink()
+
+    prompt_path = agents_dir / "roles" / f"{name}.md"
+    if prompt_path.is_file():
+        prompt_path.unlink()
+
+    _agents.pop(name, None)
+    _role_prompts.pop(name, None)
+    log.info("registry.agent_deleted", metadata={"name": name})
+
+
+# ---------------------------------------------------------------------------
 # Token issuance
 # ---------------------------------------------------------------------------
 

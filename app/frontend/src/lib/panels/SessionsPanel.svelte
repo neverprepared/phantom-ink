@@ -64,11 +64,43 @@
     }
   });
 
+  // Available agent roles (loaded dynamically)
+  let availableRoles = $state<string[]>(['assistant']);
+
+  async function loadRoles() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const agentDefs = await a.ListAgents();
+      availableRoles = (agentDefs ?? []).map((ag: any) => ag.name);
+    } catch {
+      availableRoles = ['assistant'];
+    }
+  }
+
   // New session form
   let newName = $state('');
-  let newRole = $state('developer');
+  let newRole = $state('assistant');
   let newLLM = $state('claude');
   let newModel = $state('');
+
+  const CODEX_MODELS = [
+    'gpt-5.4',
+    'gpt-5.2-codex',
+    'gpt-5.1-codex-max',
+    'gpt-5.4-mini',
+    'gpt-5.3-codex',
+    'gpt-5.2',
+    'gpt-5.1-codex-mini',
+  ];
+
+  const CLAUDE_MODELS = [
+    'claude-opus-4-6',
+    'claude-sonnet-4-6',
+    'claude-haiku-4-5-20251001',
+  ];
+
+  let ollamaModels = $state<string[]>([]);
   let newBackend = $state('docker');
   let newVMTemplate = $state('');
   let newGuestOS = $state('linux');
@@ -202,9 +234,20 @@
     }
   }
 
+  async function loadOllamaModels() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const models = (await a.ListOllamaModels()) ?? [];
+      ollamaModels = models.map((m: any) => m.name ?? m);
+    } catch {}
+  }
+
   onMount(() => {
     refresh();
     refreshMetrics();
+    loadRoles();
+    loadOllamaModels();
     metricsTimer = setInterval(refreshMetrics, 10_000);
   });
 
@@ -218,6 +261,10 @@
     const raw = ev.raw;
     if (DOCKER_EVENTS.includes(raw) || (ev.data && (ev.data as any).hub)) {
       refresh();
+    }
+    const action = (ev.data as any)?.action ?? '';
+    if (action === 'agent.created' || action === 'agent.updated' || action === 'agent.deleted') {
+      loadRoles();
     }
   });
 
@@ -318,7 +365,9 @@
   $effect(() => {
     if (newLLM !== prevLLM) {
       prevLLM = newLLM;
-      newModel = newLLM === 'codex' ? 'codex-mini-latest' : '';
+      if (newLLM === 'codex') newModel = 'gpt-5.4';
+      else if (newLLM === 'ollama') newModel = ollamaModels[0] ?? '';
+      else newModel = '';
     }
   });
 
@@ -726,12 +775,9 @@
       <div class="field">
         <label for="srole">role</label>
         <select id="srole" bind:value={newRole}>
-          <option value="developer">developer</option>
-          <option value="supervisor">supervisor</option>
-          <option value="worker">worker</option>
-          <option value="merge-queue">merge-queue</option>
-          <option value="pr-shepherd">pr-shepherd</option>
-          <option value="reviewer">reviewer</option>
+          {#each availableRoles as role (role)}
+            <option value={role}>{role}</option>
+          {/each}
         </select>
       </div>
 
@@ -749,14 +795,37 @@
       {#if newLLM === 'ollama'}
         <div class="field">
           <label for="smodel">model</label>
-          <input id="smodel" type="text" bind:value={newModel} placeholder="qwen3-coder" />
+          <select id="smodel" bind:value={newModel}>
+            {#each ollamaModels as m}
+              <option value={m}>{m}</option>
+            {/each}
+            {#if newModel && !ollamaModels.includes(newModel)}
+              <option value={newModel}>{newModel}</option>
+            {/if}
+          </select>
         </div>
       {/if}
 
       {#if newLLM === 'codex'}
         <div class="field">
           <label for="scodexmodel">model</label>
-          <input id="scodexmodel" type="text" bind:value={newModel} placeholder="codex-mini-latest" />
+          <select id="scodexmodel" bind:value={newModel}>
+            {#each CODEX_MODELS as m}
+              <option value={m}>{m}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
+
+      {#if newLLM === 'claude'}
+        <div class="field">
+          <label for="sclaudemodel">model</label>
+          <select id="sclaudemodel" bind:value={newModel}>
+            <option value="">— default —</option>
+            {#each CLAUDE_MODELS as m}
+              <option value={m}>{m}</option>
+            {/each}
+          </select>
         </div>
       {/if}
 

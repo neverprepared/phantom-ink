@@ -28,24 +28,42 @@ export namespace brainbox {
 	        this.workspace_home = source["workspace_home"];
 	    }
 	}
-	export class Agent {
+	export class AgentDefinition {
 	    name: string;
 	    image: string;
-	    role: string;
+	    description: string;
+	    category: string;
+	    spawn_mode: string;
 	    capabilities: string[];
-	    config: any;
+	    hardened: boolean;
+	    persistent: boolean;
+	    role_prompt?: string;
+	    role_prompt_content?: string;
+	    claude_model?: string;
+	    claude_effort?: string;
+	    codex_model?: string;
+	    ollama_model?: string;
 	
 	    static createFrom(source: any = {}) {
-	        return new Agent(source);
+	        return new AgentDefinition(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.image = source["image"];
-	        this.role = source["role"];
+	        this.description = source["description"];
+	        this.category = source["category"];
+	        this.spawn_mode = source["spawn_mode"];
 	        this.capabilities = source["capabilities"];
-	        this.config = source["config"];
+	        this.hardened = source["hardened"];
+	        this.persistent = source["persistent"];
+	        this.role_prompt = source["role_prompt"];
+	        this.role_prompt_content = source["role_prompt_content"];
+	        this.claude_model = source["claude_model"];
+	        this.claude_effort = source["claude_effort"];
+	        this.codex_model = source["codex_model"];
+	        this.ollama_model = source["ollama_model"];
 	    }
 	}
 	export class Artifact {
@@ -209,6 +227,42 @@ export namespace brainbox {
 	        this.uptime = source["uptime"];
 	    }
 	}
+	export class CreateAgentRequest {
+	    name: string;
+	    image?: string;
+	    description?: string;
+	    category?: string;
+	    spawn_mode?: string;
+	    capabilities?: string[];
+	    hardened?: boolean;
+	    persistent?: boolean;
+	    role_prompt_content?: string;
+	    claude_model?: string;
+	    claude_effort?: string;
+	    codex_model?: string;
+	    ollama_model?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CreateAgentRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.image = source["image"];
+	        this.description = source["description"];
+	        this.category = source["category"];
+	        this.spawn_mode = source["spawn_mode"];
+	        this.capabilities = source["capabilities"];
+	        this.hardened = source["hardened"];
+	        this.persistent = source["persistent"];
+	        this.role_prompt_content = source["role_prompt_content"];
+	        this.claude_model = source["claude_model"];
+	        this.claude_effort = source["claude_effort"];
+	        this.codex_model = source["codex_model"];
+	        this.ollama_model = source["ollama_model"];
+	    }
+	}
 	export class CreateChannelRequest {
 	    name: string;
 	    participants: ChannelParticipantRequest[];
@@ -367,11 +421,11 @@ export namespace brainbox {
 	    error: any;
 	    session_name: string;
 	    workspace_profile: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Task(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -388,7 +442,7 @@ export namespace brainbox {
 	    }
 	}
 	export class HubState {
-	    agents: Agent[];
+	    agents: AgentDefinition[];
 	    tasks: Task[];
 	    tokens: any[];
 	    repos: Repo[];
@@ -399,7 +453,7 @@ export namespace brainbox {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.agents = this.convertValues(source["agents"], Agent);
+	        this.agents = this.convertValues(source["agents"], AgentDefinition);
 	        this.tasks = this.convertValues(source["tasks"], Task);
 	        this.tokens = source["tokens"];
 	        this.repos = this.convertValues(source["repos"], Repo);
@@ -690,6 +744,40 @@ export namespace brainbox {
 	        this.spans = source["spans"];
 	        this.metadata = source["metadata"];
 	        this.token_usage = source["token_usage"];
+	    }
+	}
+	export class UpdateAgentRequest {
+	    image?: string;
+	    description?: string;
+	    category?: string;
+	    spawn_mode?: string;
+	    capabilities?: string[];
+	    hardened?: boolean;
+	    persistent?: boolean;
+	    role_prompt_content?: string;
+	    claude_model?: string;
+	    claude_effort?: string;
+	    codex_model?: string;
+	    ollama_model?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateAgentRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.image = source["image"];
+	        this.description = source["description"];
+	        this.category = source["category"];
+	        this.spawn_mode = source["spawn_mode"];
+	        this.capabilities = source["capabilities"];
+	        this.hardened = source["hardened"];
+	        this.persistent = source["persistent"];
+	        this.role_prompt_content = source["role_prompt_content"];
+	        this.claude_model = source["claude_model"];
+	        this.claude_effort = source["claude_effort"];
+	        this.codex_model = source["codex_model"];
+	        this.ollama_model = source["ollama_model"];
 	    }
 	}
 	export class UpdateRepoRequest {
