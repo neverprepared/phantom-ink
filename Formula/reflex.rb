@@ -12,7 +12,7 @@ class Reflex < Formula
   end
 
   def post_install
-    target = Pathname.new(Dir.home)/"bin"/"reflex"
+    target = Pathname.new(Dir.home)/".config"/"phantom-ink"/"reflex"
     target.parent.mkpath
     target.make_symlink share/"reflex" unless target.exist?
   end
@@ -20,20 +20,20 @@ class Reflex < Formula
   def caveats
     <<~EOS
       Plugin installed to #{share}/reflex
-      Symlinked to ~/bin/reflex (created on post-install)
+      Symlinked to ~/.config/phantom-ink/reflex (created on post-install)
 
       To use reflex with Claude Code:
 
-        claude --plugin-dir ~/bin/reflex
+        claude --plugin-dir ~/.config/phantom-ink/reflex
 
       Or install from the plugin marketplace:
 
         /plugin marketplace add mindmorass/reflex
 
-      NOTE: `brew uninstall reflex` will NOT remove ~/bin/reflex (it's a symlink).
+      NOTE: `brew uninstall reflex` will NOT remove ~/.config/phantom-ink/reflex (it's a symlink).
       To fully remove, also run:
 
-        rm -rf ~/bin/reflex
+        rm -rf ~/.config/phantom-ink/reflex
     EOS
   end
 
