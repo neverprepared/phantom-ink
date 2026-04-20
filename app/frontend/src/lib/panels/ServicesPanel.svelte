@@ -22,6 +22,7 @@
   let services = $state<Service[]>([]);
   let loading = $state(true);
   let busyServices = $state<Set<string>>(new Set());
+  let expandedServices = $state<Set<string>>(new Set());
   let editingService = $state<string | null>(null);
   let editURL = $state('');
 
@@ -102,9 +103,17 @@
     return getApi().then(a => a?.SetServiceConfig(s.name, s.enabled, s.local_url, s.remote_url, s.remote));
   }
 
+  function toggleExpanded(name: string) {
+    const next = new Set(expandedServices);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    expandedServices = next;
+  }
+
   async function handleToggle(svc: Service) {
     try {
       await saveSvc(svc, { enabled: !svc.enabled });
+      toggleExpanded(svc.name);
       await refresh();
       notifications.success(`${svc.label} ${!svc.enabled ? 'enabled' : 'disabled'}`);
     } catch (err: any) { notifications.error(`Failed to toggle ${svc.label}: ${err}`); }
@@ -323,101 +332,105 @@
     <div class="service-list">
       {#each services as svc (svc.name)}
         {@const busy = busyServices.has(svc.name)}
+        {@const expanded = expandedServices.has(svc.name)}
         <div class="service-card" class:running={svc.running} class:disabled={!svc.enabled}>
           <div class="card-top">
-            <div class="card-identity">
+            <button class="card-identity" onclick={() => toggleExpanded(svc.name)}>
+              <svg class="expand-chevron" class:expanded xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
               <span class="status-dot" class:running={svc.running}></span>
               <span class="svc-name">{svc.label}</span>
               <span class="svc-status" class:running={svc.running}>
                 {svc.running ? 'running' : 'stopped'}
               </span>
-            </div>
+            </button>
             <label class="toggle-switch" title={svc.enabled ? 'Disable' : 'Enable'}>
               <input type="checkbox" checked={svc.enabled} onchange={() => handleToggle(svc)} />
               <span class="toggle-track"></span>
             </label>
           </div>
 
-          <p class="svc-desc">{svc.description}</p>
+          {#if expanded}
+            <p class="svc-desc">{svc.description}</p>
 
-          {#if !svc.native}
-            <div class="mode-row">
-              <button class="mode-opt" class:active={!svc.remote} onclick={() => svc.remote && handleRemoteToggle(svc)}>local</button>
-              <button class="mode-opt" class:active={svc.remote} onclick={() => !svc.remote && handleRemoteToggle(svc)}>remote</button>
-            </div>
-          {/if}
+            {#if !svc.native}
+              <div class="mode-row">
+                <button class="mode-opt" class:active={!svc.remote} onclick={() => svc.remote && handleRemoteToggle(svc)}>local</button>
+                <button class="mode-opt" class:active={svc.remote} onclick={() => !svc.remote && handleRemoteToggle(svc)}>remote</button>
+              </div>
+            {/if}
 
-          <div class="card-url">
-            <span class="url-mode-label">{svc.remote ? 'remote' : 'local'}</span>
-            {#if editingService === svc.name}
-              <input class="url-input" type="url" bind:value={editURL}
-                onkeydown={(e) => { if (e.key === 'Enter') saveURL(svc); if (e.key === 'Escape') cancelEditURL(); }} />
-              <button class="url-btn save" onclick={() => saveURL(svc)}>save</button>
-              <button class="url-btn" onclick={cancelEditURL}>cancel</button>
-            {:else}
-              {#if svc.url}
-                <button class="url-link" onclick={() => openInBrowser(svc.url)}>{svc.url}</button>
+            <div class="card-url">
+              <span class="url-mode-label">{svc.remote ? 'remote' : 'local'}</span>
+              {#if editingService === svc.name}
+                <input class="url-input" type="url" bind:value={editURL}
+                  onkeydown={(e) => { if (e.key === 'Enter') saveURL(svc); if (e.key === 'Escape') cancelEditURL(); }} />
+                <button class="url-btn save" onclick={() => saveURL(svc)}>save</button>
+                <button class="url-btn" onclick={cancelEditURL}>cancel</button>
               {:else}
-                <span class="url-empty">not set</span>
+                {#if svc.url}
+                  <button class="url-link" onclick={() => openInBrowser(svc.url)}>{svc.url}</button>
+                {:else}
+                  <span class="url-empty">not set</span>
+                {/if}
+                <button class="url-btn" onclick={() => startEditURL(svc)}>edit</button>
               {/if}
-              <button class="url-btn" onclick={() => startEditURL(svc)}>edit</button>
-            {/if}
-          </div>
+            </div>
 
-          <div class="card-actions">
-            {#if svc.native || svc.remote}
-              <!-- Status shown in card header — no actions needed -->
-            {:else if busy}
-              <span class="busy-indicator">
-                <svg class="spinner" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                working...
-              </span>
-            {:else if svc.running}
-              <button class="btn-primary btn-sm" onclick={() => handleRestart(svc.name)}>restart</button>
-              <button class="btn-danger btn-sm" onclick={() => handleStop(svc.name)}>stop</button>
-            {:else}
-              <button class="btn-success btn-sm" onclick={() => handleStart(svc.name)}>start</button>
-            {/if}
-          </div>
-
-          <!-- Ollama models inline (inside the ollama service card) -->
-          {#if svc.name === 'ollama' && svc.enabled}
-            <div class="ollama-section">
-              <div class="ollama-header">
-                <span class="ollama-title">models</span>
-                <button class="btn-refresh" onclick={refreshOllamaModels} title="Refresh models" aria-label="Refresh Ollama models">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
-                </button>
-              </div>
-              <div class="ollama-pull-row">
-                <input class="ollama-pull-input" type="text" placeholder="model name (e.g. llama3.2)"
-                  bind:value={ollamaPullName}
-                  onkeydown={(e) => { if (e.key === 'Enter') handleOllamaPull(); }}
-                  disabled={ollamaPulling} />
-                <button class="btn-primary btn-sm" onclick={handleOllamaPull} disabled={ollamaPulling || !ollamaPullName.trim()}>
-                  {ollamaPulling ? 'pulling...' : 'pull'}
-                </button>
-              </div>
-              {#if ollamaLoading}
-                <p class="hint">loading models...</p>
-              {:else if ollamaModels.length === 0}
-                <p class="hint">no models — use pull to download one</p>
+            <div class="card-actions">
+              {#if svc.native || svc.remote}
+                <!-- Status shown in card header — no actions needed -->
+              {:else if busy}
+                <span class="busy-indicator">
+                  <svg class="spinner" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                  working...
+                </span>
+              {:else if svc.running}
+                <button class="btn-primary btn-sm" onclick={() => handleRestart(svc.name)}>restart</button>
+                <button class="btn-danger btn-sm" onclick={() => handleStop(svc.name)}>stop</button>
               {:else}
-                <div class="ollama-model-list">
-                  {#each ollamaModels as model (model.name)}
-                    {@const deleting = ollamaDeleting.has(model.name)}
-                    <div class="ollama-model-row">
-                      <span class="ollama-model-name">{model.name}</span>
-                      <span class="ollama-model-size">{formatBytes(model.size)}</span>
-                      <button class="btn-danger btn-sm btn-xs" onclick={() => handleOllamaDelete(model.name)}
-                        disabled={deleting} title="Delete model" aria-label="Delete {model.name}">
-                        {deleting ? '...' : 'delete'}
-                      </button>
-                    </div>
-                  {/each}
+                <button class="btn-success btn-sm" onclick={() => handleStart(svc.name)}>start</button>
+              {/if}
+            </div>
+
+            <!-- Ollama models inline (inside the ollama service card) -->
+            {#if svc.name === 'ollama' && svc.enabled}
+              <div class="ollama-section">
+                <div class="ollama-header">
+                  <span class="ollama-title">models</span>
+                  <button class="btn-refresh" onclick={refreshOllamaModels} title="Refresh models" aria-label="Refresh Ollama models">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+                  </button>
                 </div>
-              {/if}
-            </div>
+                <div class="ollama-pull-row">
+                  <input class="ollama-pull-input" type="text" placeholder="model name (e.g. llama3.2)"
+                    bind:value={ollamaPullName}
+                    onkeydown={(e) => { if (e.key === 'Enter') handleOllamaPull(); }}
+                    disabled={ollamaPulling} />
+                  <button class="btn-primary btn-sm" onclick={handleOllamaPull} disabled={ollamaPulling || !ollamaPullName.trim()}>
+                    {ollamaPulling ? 'pulling...' : 'pull'}
+                  </button>
+                </div>
+                {#if ollamaLoading}
+                  <p class="hint">loading models...</p>
+                {:else if ollamaModels.length === 0}
+                  <p class="hint">no models — use pull to download one</p>
+                {:else}
+                  <div class="ollama-model-list">
+                    {#each ollamaModels as model (model.name)}
+                      {@const deleting = ollamaDeleting.has(model.name)}
+                      <div class="ollama-model-row">
+                        <span class="ollama-model-name">{model.name}</span>
+                        <span class="ollama-model-size">{formatBytes(model.size)}</span>
+                        <button class="btn-danger btn-sm btn-xs" onclick={() => handleOllamaDelete(model.name)}
+                          disabled={deleting} title="Delete model" aria-label="Delete {model.name}">
+                          {deleting ? '...' : 'delete'}
+                        </button>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
           {/if}
         </div>
       {/each}
@@ -450,7 +463,16 @@
     margin-bottom: 6px;
   }
 
-  .card-identity { display: flex; align-items: center; gap: 8px; }
+  .card-identity {
+    display: flex; align-items: center; gap: 8px;
+    background: none; border: none; padding: 0; cursor: pointer;
+    color: inherit; font-family: inherit; text-align: left;
+  }
+
+  .expand-chevron {
+    color: var(--color-text-tertiary); transition: transform 0.15s; flex-shrink: 0;
+  }
+  .expand-chevron.expanded { transform: rotate(90deg); }
 
   .status-dot {
     width: 8px; height: 8px; border-radius: 50%;
