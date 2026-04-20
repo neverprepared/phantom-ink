@@ -10,11 +10,14 @@
   import EmptyState from './EmptyState.svelte';
 
   let sessions = $state([]);
+  let loading = $state(true);
   let showNewModal = $state(false);
   let infoSession = $state(null);
   let eventSource = null;
   let expandedSessions = $state(new Set());
   let activeProfile = $state(null);
+  let userSelectedProfile = $state(false);
+  let refreshAbort = null;
 
   const DOCKER_EVENTS = ['create', 'start', 'stop', 'die', 'destroy'];
   const TIPS = [
@@ -25,11 +28,16 @@
   const tip = TIPS[Math.floor(Math.random() * TIPS.length)];
 
   async function refresh() {
+    if (refreshAbort) refreshAbort.abort();
+    refreshAbort = new AbortController();
     try {
-      sessions = await fetchSessions();
+      sessions = await fetchSessions(refreshAbort.signal);
     } catch (err) {
-      // Only show error on explicit user actions, not on background SSE refreshes
-      console.error('Failed to fetch sessions:', err);
+      if (err.name !== 'AbortError') {
+        console.error('Failed to fetch sessions:', err);
+      }
+    } finally {
+      loading = false;
     }
   }
 
@@ -63,17 +71,23 @@
 
   onDestroy(() => {
     if (eventSource) eventSource.close();
+    if (refreshAbort) refreshAbort.abort();
   });
 
   // Group sessions by profile
   let profiles = $derived([...new Set(sessions.map(s => s.workspace_profile || '').filter(p => p))].sort());
 
-  // Set active profile to first available if not set or if current profile has no sessions
+  // Set active profile to first available only if user hasn't made a selection yet
   $effect(() => {
-    if (profiles.length > 0 && (!activeProfile || !profiles.includes(activeProfile))) {
+    if (profiles.length > 0 && !userSelectedProfile && (!activeProfile || !profiles.includes(activeProfile))) {
       activeProfile = profiles[0];
     }
   });
+
+  function selectProfile(p) {
+    activeProfile = p;
+    userSelectedProfile = true;
+  }
 
   // Filter sessions by active profile
   let filteredSessions = $derived(
@@ -97,16 +111,24 @@
   <button class="new-btn" onclick={() => showNewModal = true} aria-label="Create new session">+ new session</button>
 </header>
 
-{#if sessions.length === 0}
+{#if loading}
+  <div class="loading-state">Loading sessions…</div>
+{:else if sessions.length === 0}
   <EmptyState {tip} />
 {:else}
   {#if profiles.length > 0}
     <div class="profile-tabs">
+      <button
+        class="profile-tab"
+        class:active={activeProfile === null}
+        onclick={() => selectProfile(null)}
+        aria-label="Show all sessions"
+      >ALL</button>
       {#each profiles as profile}
         <button
           class="profile-tab"
           class:active={activeProfile === profile}
-          onclick={() => activeProfile = profile}
+          onclick={() => selectProfile(profile)}
           aria-label={`Switch to ${profile.toUpperCase()} profile`}
         >
           {profile.toUpperCase()}
@@ -144,7 +166,7 @@
 
 {#if showNewModal}
   <NewSessionModal
-    existingNames={sessions.map(s => s.session_name || s.name)}
+    existingNames={sessions.map(s => s.name)}
     onClose={() => showNewModal = false}
     onCreate={handleSessionUpdate}
   />
@@ -162,6 +184,12 @@
 </footer>
 
 <style>
+  .loading-state {
+    color: var(--color-text-secondary);
+    font-size: 14px;
+    padding: 24px 0;
+  }
+
   header {
     display: flex;
     justify-content: space-between;

@@ -1,4 +1,5 @@
 <script>
+  import { onDestroy } from 'svelte';
   import { stopSession, deleteSession, startSession } from './api.js';
   import { notifications } from './notifications.svelte.js';
   import Badge from './Badge.svelte';
@@ -63,6 +64,8 @@
     }
   }
 
+  onDestroy(() => clearTimeout(confirmTimeout));
+
   let displayName = $derived(session.session_name || session.name);
   let displayRole = $derived(session.role || 'developer');
   let displayUrl = $derived(session.url ? session.url.replace('http://', '') : '');
@@ -90,13 +93,11 @@
 >
   <div class="card-header">
     <span class="status-dot" class:active={session.active} aria-label={session.active ? 'Active' : 'Inactive'}></span>
-    <a
-      href={'#'}
+    <button
       class="session-name"
-      onclick={(e) => { e.preventDefault(); onInfo(session.name); }}
-      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onInfo(session.name); } }}
+      onclick={() => onInfo(session.name)}
       aria-label={`View details for ${displayName}`}
-    >{displayName}</a>
+    >{displayName}</button>
     <Badge type="backend" variant={backend} text={isUTM ? 'macOS VM' : 'Container'} />
     <Badge type="role" variant={displayRole} text={displayRole} />
     <Badge type="provider" variant={llmVisibility} text={llmVisibility} />
@@ -184,6 +185,11 @@
     text-decoration: none;
     font-weight: 500;
     font-size: 15px;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-family: inherit;
   }
   .session-name:hover { color: var(--color-accent); }
 

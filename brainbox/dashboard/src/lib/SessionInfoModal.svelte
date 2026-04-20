@@ -27,10 +27,14 @@
   });
 
 
-  function copyCmd() {
-    navigator.clipboard.writeText(execCmd);
-    copied = true;
-    setTimeout(() => copied = false, 1500);
+  async function copyCmd() {
+    try {
+      await navigator.clipboard.writeText(execCmd);
+      copied = true;
+      setTimeout(() => copied = false, 1500);
+    } catch {
+      // clipboard access denied — do not flip copied
+    }
   }
 </script>
 

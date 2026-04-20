@@ -7,6 +7,7 @@
 
   let sessions = $state([]);
   let loading = $state(true);
+  let error = $state(null);
   let eventSource = null;
   let abortController = null;
 
@@ -22,10 +23,11 @@
 
     try {
       sessions = await fetchSessions(abortController.signal);
+      error = null;
     } catch (err) {
-      // Ignore AbortError - it's expected when cancelling requests
       if (err.name !== 'AbortError') {
         console.error('Failed to fetch sessions:', err);
+        error = err.message;
       }
     } finally {
       loading = false;
@@ -65,6 +67,10 @@
   <h1><span class="accent">dashboard</span></h1>
 </header>
 
+{#if error}
+  <div class="error-bar">{error}</div>
+{/if}
+
 {#if loading}
   <div class="loading">Loading sessions…</div>
 {:else}
@@ -86,6 +92,15 @@
     color: var(--color-text-secondary);
     font-size: 14px;
     padding: 24px 0;
+  }
+  .error-bar {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    color: #fca5a5;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    margin-bottom: 16px;
   }
 
   header {

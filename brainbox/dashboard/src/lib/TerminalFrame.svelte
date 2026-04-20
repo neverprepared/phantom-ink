@@ -1,5 +1,6 @@
 <script>
   import { stopSession } from './api.js';
+  import { notifications } from './notifications.svelte.js';
 
   let { session, onUpdate } = $props();
 
@@ -11,11 +12,16 @@
     confirmStop = false;
   }
 
-  function handleStop(e) {
+  async function handleStop(e) {
     e.preventDefault();
     if (confirmStop) {
       resetConfirm();
-      stopSession(session.name).then(onUpdate);
+      try {
+        await stopSession(session.name);
+        onUpdate();
+      } catch (err) {
+        notifications.error(`Failed to stop session: ${err.message}`);
+      }
       return;
     }
     confirmStop = true;
@@ -37,19 +43,16 @@
   <div class="frame-bar">
     <span>{displayName}</span>
     <div class="frame-actions">
-      <a
-        href={'#'}
-        class="frame-stop"
+      <button
+        class="frame-stop frame-action-btn"
         onclick={handleStop}
-        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleStop(e); } }}
         aria-label={confirmStop ? `Confirm stop ${displayName}` : `Stop ${displayName}`}
-      >{confirmStop ? 'stop?' : 'stop'}</a>
-      <a
-        href={'#'}
+      >{confirmStop ? 'stop?' : 'stop'}</button>
+      <button
+        class="frame-action-btn"
         onclick={refreshFrame}
-        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); refreshFrame(e); } }}
         aria-label={`Refresh ${displayName}`}
-      >refresh</a>
+      >refresh</button>
       <a
         href={session.url}
         target="_blank"
@@ -82,12 +85,19 @@
     display: flex;
     gap: 12px;
   }
-  .frame-bar a {
+  .frame-bar a, .frame-action-btn {
     color: #f59e0b;
     text-decoration: none;
     font-size: 12px;
   }
-  .frame-bar a:hover { text-decoration: underline; }
+  .frame-action-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    padding: 0;
+  }
+  .frame-bar a:hover, .frame-action-btn:hover { text-decoration: underline; }
   iframe {
     width: 100%;
     height: 450px;

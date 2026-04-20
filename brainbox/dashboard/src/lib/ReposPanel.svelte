@@ -31,6 +31,10 @@
   }
 
   async function handleAdd() {
+    if (!newUrl.startsWith('https://github.com/')) {
+      error = 'URL must start with https://github.com/';
+      return;
+    }
     adding = true;
     try {
       await addRepo({
@@ -157,7 +161,7 @@
         <div class="repo-card">
           <div class="repo-header">
             <h3>{repo.name}</h3>
-            <button class="btn-delete" onclick={() => handleDelete(repo.name)} title="Remove">x</button>
+            <button class="btn-delete" onclick={() => handleDelete(repo.name)} title="Remove" aria-label={`Remove repository ${repo.name}`}>x</button>
           </div>
           <div class="repo-url">{repo.url}</div>
           <div class="repo-branch">branch: {repo.target_branch}</div>
@@ -167,6 +171,8 @@
               class="agent-toggle"
               class:active={repo.merge_queue_enabled}
               onclick={() => handleToggle(repo, 'merge_queue_enabled')}
+              aria-label={`${repo.merge_queue_enabled ? 'Disable' : 'Enable'} merge-queue for ${repo.name}`}
+              aria-pressed={repo.merge_queue_enabled}
             >
               <Badge variant={repo.merge_queue_enabled ? 'success' : 'muted'}>merge-queue</Badge>
             </button>
@@ -174,6 +180,8 @@
               class="agent-toggle"
               class:active={repo.pr_shepherd_enabled}
               onclick={() => handleToggle(repo, 'pr_shepherd_enabled')}
+              aria-label={`${repo.pr_shepherd_enabled ? 'Disable' : 'Enable'} pr-shepherd for ${repo.name}`}
+              aria-pressed={repo.pr_shepherd_enabled}
             >
               <Badge variant={repo.pr_shepherd_enabled ? 'success' : 'muted'}>pr-shepherd</Badge>
             </button>

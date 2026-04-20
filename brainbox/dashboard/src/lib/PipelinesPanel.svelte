@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { fetchPipelineDefinitions, fetchPipelineRuns, fetchPipelineRun, cancelPipelineRun, connectSSE } from './api.js';
+  import { notifications } from './notifications.svelte.js';
 
   let definitions = $state([]);
   let runs = $state([]);
@@ -41,6 +42,7 @@
       await refresh();
     } catch (err) {
       console.error('Failed to cancel run:', err);
+      notifications.error(`Failed to cancel run: ${err.message}`);
     }
   }
 
