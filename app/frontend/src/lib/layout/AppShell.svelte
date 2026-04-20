@@ -15,6 +15,7 @@
   import PlaybooksPanel from '../panels/PlaybooksPanel.svelte';
   import JobsPanel from '../panels/JobsPanel.svelte';
   import EventFeedPanel from '../panels/EventFeedPanel.svelte';
+  import ProfilesPanel from '../panels/ProfilesPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
 </script>
 
@@ -43,6 +44,8 @@
         <PlaybooksPanel />
       {:else if currentPanel.value === 'events'}
         <EventFeedPanel />
+      {:else if currentPanel.value === 'profiles'}
+        <ProfilesPanel />
       {:else if currentPanel.value === 'settings'}
         <SettingsPanel />
       {/if}

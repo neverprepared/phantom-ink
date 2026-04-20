@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // ContainerStat represents live resource usage for a Docker container.
@@ -214,6 +215,68 @@ func (a *App) GetDiskBreakdown() DiskBreakdown {
 		TotalLabel: humanBytes(total),
 		Categories: cats,
 	}
+}
+
+// ProfileDiskUsage represents disk usage for a single profile.
+type ProfileDiskUsage struct {
+	Name  string `json:"name"`
+	Bytes int64  `json:"bytes"`
+	Label string `json:"label"`
+}
+
+// DiskOverview is the full-disk pie chart data.
+type DiskOverview struct {
+	TotalDisk  int64              `json:"total_disk"`  // full disk capacity
+	TotalLabel string             `json:"total_label"`
+	UsedDisk   int64              `json:"used_disk"`
+	UsedLabel  string             `json:"used_label"`
+	Profiles   []ProfileDiskUsage `json:"profiles"`
+	OSBytes    int64              `json:"os_bytes"` // everything not accounted for by profiles
+	OSLabel    string             `json:"os_label"`
+}
+
+// GetDiskOverview returns total disk size and per-profile usage for pie chart.
+func (a *App) GetDiskOverview() DiskOverview {
+	overview := DiskOverview{}
+
+	// Total disk capacity + used
+	home, _ := os.UserHomeDir()
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(home, &stat); err == nil {
+		overview.TotalDisk = int64(stat.Blocks) * int64(stat.Bsize)
+		overview.TotalLabel = humanBytes(overview.TotalDisk)
+		free := int64(stat.Bavail) * int64(stat.Bsize)
+		overview.UsedDisk = overview.TotalDisk - free
+		overview.UsedLabel = humanBytes(overview.UsedDisk)
+	}
+
+	// Per-profile disk usage
+	profiles, err := a.ScanProfiles()
+	if err != nil {
+		profiles = nil
+	}
+	var profileTotal int64
+	for _, p := range profiles {
+		if p.WorkspaceHome == "" {
+			continue
+		}
+		bytes := dirSize(p.WorkspaceHome)
+		overview.Profiles = append(overview.Profiles, ProfileDiskUsage{
+			Name:  p.Name,
+			Bytes: bytes,
+			Label: humanBytes(bytes),
+		})
+		profileTotal += bytes
+	}
+
+	// OS = used - profiles
+	overview.OSBytes = overview.UsedDisk - profileTotal
+	if overview.OSBytes < 0 {
+		overview.OSBytes = 0
+	}
+	overview.OSLabel = humanBytes(overview.OSBytes)
+
+	return overview
 }
 
 // SystemInfo holds system-level CPU and memory totals.
