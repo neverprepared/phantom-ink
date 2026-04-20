@@ -173,7 +173,7 @@
         <div class="stat-body">
           <span class="stat-label">Tasks</span>
           <span class="stat-value">{runningTasks.length}<span class="stat-sub"> / {filteredTasks.length}</span></span>
-          <span class="stat-detail">{runningTasks.length} running, {agents.length} agents</span>
+          <span class="stat-detail">{runningTasks.length} running</span>
         </div>
       </div>
 
@@ -301,25 +301,6 @@
       {/if}
     </div>
 
-    <!-- Agents -->
-    <div class="section">
-      <h2>agents</h2>
-      {#if agents.length === 0}
-        <EmptyState title="No agents registered" />
-      {:else}
-        <div class="agent-grid">
-          {#each agents as agent (agent.name)}
-            <div class="agent-card">
-              <span class="agent-name">{agent.name}</span>
-              <Badge text={agent.role ?? 'unknown'} variant={agent.role} />
-              {#if agent.persistent}
-                <span class="agent-tag">persistent</span>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </div>
   {/if}
 </div>
 
@@ -599,31 +580,6 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 10px;
-  }
-
-  .agent-card {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    background: var(--color-bg-card);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-lg);
-    padding: 14px;
-    box-shadow: var(--shadow-card);
-  }
-
-  .agent-name {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--color-text-primary);
-  }
-
-  .agent-tag {
-    font-size: 9px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--color-text-tertiary);
   }
 
 </style>
