@@ -196,8 +196,11 @@ async def _run_task(pb: Playbook, task: PlaybookTask) -> None:
         async with httpx.AsyncClient(base_url=base_url, timeout=600) as client:
             headers = {"X-API-Key": api_key}
 
-            # Create fresh worker session
-            resp = await client.post("/api/create", json={"name": session_name}, headers=headers)
+            # Create fresh worker session with the playbook's profile context
+            create_body: dict = {"name": session_name}
+            if pb.workspace_profile and pb.workspace_profile != "global":
+                create_body["workspace_profile"] = pb.workspace_profile
+            resp = await client.post("/api/create", json=create_body, headers=headers)
             resp.raise_for_status()
 
             try:
