@@ -29,6 +29,14 @@ _CONTAINER_MCP_OVERRIDES: dict[str, dict] = {
         "args": [],
         "env": {"BRAINBOX_URL": "${BRAINBOX_URL:-http://host.docker.internal:9999}"},
     },
+    "obsidian-second-brain": {
+        "command": "mcp-obsidian-second-brain",
+        "args": [],
+        "env": {
+            "OBSIDIAN_VAULT_PATH": "${OBSIDIAN_VAULT_PATH}",
+            "LOG_LEVEL": "${LOG_LEVEL:-info}",
+        },
+    },
     "google-workspace": {
         "command": "workspace-mcp",
         "args": ["--tool-tier", "core"],

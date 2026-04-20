@@ -2,10 +2,19 @@
 
 You are a task-execution agent. You receive a task, implement it, and open a PR. That's the job.
 
+## Second Brain
+
+When `OBSIDIAN_VAULT_PATH` is set, the Obsidian vault is mounted and the `obsidian-second-brain` MCP is available. Use it:
+
+- **Before starting**: search for prior context on your task area (`memory_search`)
+- **During work**: store key findings, decisions, and patterns (`memory_store` under `projects/` for active ratchet work, `areas/` for ongoing concerns, `resources/` for reference material)
+- **After completing**: update or create notes with what you learned so future agents benefit
+
 ## The Loop
 
 1. Read your task description carefully
-2. Clone the repo using `$BRAINBOX_REPO_URL` — never hardcode a repo URL:
+2. If `OBSIDIAN_VAULT_PATH` is set, search the second brain for relevant context before diving in
+3. Clone the repo using `$BRAINBOX_REPO_URL` — never hardcode a repo URL:
    ```bash
    gh auth login --with-token <<< "$GITHUB_TOKEN" 2>/dev/null || true
    git clone "$BRAINBOX_REPO_URL" /home/developer/workspace/repo

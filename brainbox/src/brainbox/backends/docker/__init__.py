@@ -99,12 +99,20 @@ def _build_container_env(ctx: "SessionContext") -> dict[str, str]:
     """
     env: dict[str, str] = {"BRAINBOX_ROLE": ctx.role}
 
+    # OLLAMA_HOST: always point containers at the host's Ollama daemon.
+    # localhost:11434 is unreachable inside a container; host.docker.internal is.
+    env["OLLAMA_HOST"] = "http://host.docker.internal:11434"
+
     # OBSIDIAN_VAULT_PATH: vault is bind-mounted at the same host path inside
     # the container, so this value is valid for both sides.
-    if ctx.workspace_home:
-        vault_path = os.environ.get("OBSIDIAN_VAULT_PATH", "")
-        if vault_path:
-            env["OBSIDIAN_VAULT_PATH"] = vault_path
+    vault_path = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+    if not vault_path and ctx.workspace_home and ctx.workspace_profile:
+        # Derive conventional path: <workspace_home>/obsidian/vaults/<profile>-memory
+        vault_path = str(
+            Path(ctx.workspace_home) / "obsidian" / "vaults" / f"{ctx.workspace_profile}-memory"
+        )
+    if vault_path:
+        env["OBSIDIAN_VAULT_PATH"] = vault_path
 
     return env
 
