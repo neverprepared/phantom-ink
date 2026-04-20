@@ -30,3 +30,6 @@ dist/
 # Environment / secrets
 .env.secrets
 .env.local
+
+# Worker task output (ratchet review/fix artifacts)
+tasks/
