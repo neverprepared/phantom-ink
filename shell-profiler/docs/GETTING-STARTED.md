@@ -336,11 +336,25 @@ shell-profiler list
 # List with details
 shell-profiler list --verbose
 
+# Select a profile (interactive menu or by name)
+shell-profiler select
+shell-profiler select <name>
+
 # Show current profile info
 shell-profiler info
 
 # Show direnv status
 shell-profiler status
+
+# Manage dotfiles in a profile
+shell-profiler dotfiles list [name]
+shell-profiler dotfiles edit [name]
+
+# Sync a profile with a remote git repository
+shell-profiler sync init <name> [--remote <url>]
+shell-profiler sync pull <name>
+shell-profiler sync push <name>
+shell-profiler sync status
 
 # Delete a profile
 shell-profiler delete <name>

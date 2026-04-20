@@ -1,7 +1,7 @@
 # Workspace Profile Switcher
 
-[![CI](https://github.com/neverprepared/ink-bunny/actions/workflows/ci.yml/badge.svg)](https://github.com/neverprepared/ink-bunny/actions/workflows/ci.yml)
-[![Release](https://github.com/neverprepared/ink-bunny/actions/workflows/release.yml/badge.svg)](https://github.com/neverprepared/ink-bunny/actions/workflows/release.yml)
+[![CI](https://github.com/neverprepared/phantom-ink/actions/workflows/ci.yml/badge.svg)](https://github.com/neverprepared/phantom-ink/actions/workflows/ci.yml)
+[![Release](https://github.com/neverprepared/phantom-ink/actions/workflows/release.yml/badge.svg)](https://github.com/neverprepared/phantom-ink/actions/workflows/release.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/neverprepared/shell-profile-manager)](https://goreportcard.com/report/github.com/neverprepared/shell-profile-manager)
 
 A terminal shell switcher using direnv to manage workspace-specific environment variables and tool configurations.
@@ -11,20 +11,23 @@ A terminal shell switcher using direnv to manage workspace-specific environment 
 ### Homebrew (macOS/Linux)
 
 ```bash
-brew install neverprepared/ink-bunny/shell-profiler
+brew tap neverprepared/phantom-ink
+brew install neverprepared/phantom-ink/shell-profiler
 ```
 
 ### From Source
 
 ```bash
-git clone https://github.com/neverprepared/ink-bunny.git
-cd ink-bunny/shell-profiler
+git clone https://github.com/neverprepared/phantom-ink.git
+cd phantom-ink/shell-profiler
 make build
 ```
 
+> **Requires Go 1.25 or later.** Install from https://go.dev/dl/
+
 ### From Releases
 
-Download a pre-built binary from the [releases page](https://github.com/neverprepared/ink-bunny/releases) for your platform.
+Download a pre-built binary from the [releases page](https://github.com/neverprepared/phantom-ink/releases) for your platform.
 
 ## Overview
 
@@ -267,6 +270,73 @@ shell-profiler create client-acme
 shell-profiler create client-globex
 shell-profiler create client-initech
 ```
+
+### Selecting a Profile Interactively
+
+Use `select` (alias: `use`) to pick a profile from a menu and get activation instructions:
+
+```bash
+# Interactive selection menu
+shell-profiler select
+
+# Select a specific profile
+shell-profiler select my-project
+
+# Select and auto-allow direnv
+shell-profiler select my-project --allow-direnv
+```
+
+The command shows the profile path and prints `cd` instructions. The profile activates when you navigate into its directory.
+
+### Syncing Profiles with Git
+
+Use `sync` to back up and restore profiles via a remote git repository:
+
+```bash
+# Initialize git in a profile
+shell-profiler sync init my-project
+
+# Initialize with a remote
+shell-profiler sync init my-project --remote https://github.com/user/my-project-profile.git
+
+# Set or update the remote URL
+shell-profiler sync remote my-project https://github.com/user/my-project-profile.git
+
+# Pull latest changes from remote
+shell-profiler sync pull my-project
+
+# Push local changes to remote (auto-commits uncommitted files)
+shell-profiler sync push my-project
+
+# Pull then push in one step
+shell-profiler sync sync my-project
+
+# Check git status across all profiles
+shell-profiler sync status
+shell-profiler sync status my-project
+```
+
+> **Note:** Secrets stored in `.env` are gitignored by default. Only configuration files (`.gitconfig`, `.envrc`, etc.) are pushed.
+
+### Managing Dotfiles
+
+Use `dotfiles` (alias: `dotfiles ls`, `dotfiles edit`) to inspect and edit dotfiles within a profile:
+
+```bash
+# List dotfiles in a profile (interactive selection if name omitted)
+shell-profiler dotfiles list
+shell-profiler dotfiles list my-project
+
+# Edit a dotfile (interactive profile and file selection if omitted)
+shell-profiler dotfiles edit
+shell-profiler dotfiles edit my-project
+shell-profiler dotfiles edit my-project .gitconfig
+
+# Use a specific editor
+shell-profiler dotfiles edit my-project .envrc --editor code
+```
+
+Tracked dotfiles include: `.envrc`, `.gitconfig`, `.gitignore`, `.ssh/config`, `.aws/config`, `.kube/config`, `.terraformrc`, and more. Any hidden file in the profile root is also shown.
 
 ## Advanced Configuration
 
