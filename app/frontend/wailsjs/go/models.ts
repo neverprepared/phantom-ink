@@ -861,6 +861,24 @@ export namespace main {
 	        this.theme = source["theme"];
 	    }
 	}
+	export class ContainerDiskStat {
+	    name: string;
+	    writable_size: string;
+	    writable_size_bytes: number;
+	    virtual_size: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ContainerDiskStat(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.writable_size = source["writable_size"];
+	        this.writable_size_bytes = source["writable_size_bytes"];
+	        this.virtual_size = source["virtual_size"];
+	    }
+	}
 	export class ContainerStat {
 	    name: string;
 	    id: string;

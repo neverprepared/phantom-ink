@@ -63,6 +63,8 @@ export function GetChannelMessages(arg1:string,arg2:string):Promise<Array<brainb
 
 export function GetConfig():Promise<main.Config>;
 
+export function GetContainerDiskUsage():Promise<Array<main.ContainerDiskStat>>;
+
 export function GetContainerMetrics():Promise<Array<brainbox.ContainerMetrics>>;
 
 export function GetDockerStats():Promise<Array<main.ContainerStat>>;

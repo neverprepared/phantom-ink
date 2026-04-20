@@ -3,7 +3,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { brainboxEvents } from '../events.svelte';
   import { notifications } from '../notifications.svelte';
-  import { combinedHistory as combinedHistoryStore, localHistory as localHistoryStore } from '../metricsHistory.svelte';
+  import { combinedHistory as combinedHistoryStore, localHistory as localHistoryStore, diskHistory as diskHistoryStore } from '../metricsHistory.svelte';
   import { profileState, featureFlags } from '../stores.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Badge from '../components/Badge.svelte';
@@ -186,12 +186,22 @@
 
     // Metrics fetch — must not be blocked by local process scan
     try {
-      const [sh, hist] = await Promise.all([
+      const [sh, hist, diskStats] = await Promise.all([
         a.GetSessionsMetricsHistory(),
         a.GetMetricsHistory(),
+        a.GetContainerDiskUsage().catch(() => []),
       ]);
       sessionHistory = sh ?? {};
       history = hist ?? [];
+
+      // Per-container disk history
+      const diskNow = Date.now();
+      const diskKeys = new Set<string>();
+      for (const d of (diskStats ?? [])) {
+        diskKeys.add(d.name);
+        diskHistoryStore.update(d.name, { ts: diskNow, bytes: d.writable_size_bytes ?? 0 });
+      }
+      diskHistoryStore.pruneKeys(diskKeys);
     } catch { /* non-critical */ }
 
     // Local process history + combined aggregate — isolated so failures don't affect metrics
@@ -548,10 +558,13 @@
           {#if active}
             {@const sname = session.session_name ?? session.name}
             {@const hist = sessionHistory[sname] ?? []}
+            {@const diskHist = diskHistoryStore.value[session.name] ?? []}
             {@const memData = hist.map((s: any) => ({ ts: s.ts, value: s.mem_usage / 1024 / 1024 }))}
             {@const cpuData = hist.map((s: any) => ({ ts: s.ts, value: s.cpu_percent }))}
+            {@const diskData = diskHist.map((s: any) => ({ ts: s.ts / 1000, value: s.bytes / 1024 / 1024 }))}
             {@const latestMem = hist.length ? (() => { const v = hist[hist.length-1].mem_usage; return v < 1024*1024 ? `${(v/1024).toFixed(0)} KB` : `${(v/1024/1024).toFixed(1)} MB`; })() : '–'}
             {@const latestCPU = hist.length ? `${hist[hist.length-1].cpu_percent.toFixed(1)}%` : '–'}
+            {@const latestDisk = diskHist.length ? (() => { const v = diskHist[diskHist.length-1].bytes; return v < 1024*1024 ? `${(v/1024).toFixed(0)} KB` : `${(v/1024/1024).toFixed(1)} MB`; })() : (diskUsageMap[session.name] || '–')}
             {#if hist.length >= 2}
               <div class="card-charts">
                 <div class="card-chart">
@@ -568,7 +581,6 @@
                     width={80}
                     height={20}
                     compact={true}
-                    strokeWidth={0.75}
                   />
                 </div>
                 <div class="card-chart">
@@ -585,9 +597,26 @@
                     width={80}
                     height={20}
                     compact={true}
-                    strokeWidth={0.75}
                   />
                 </div>
+                {#if diskHist.length >= 2}
+                  <div class="card-chart">
+                    <div class="card-chart-label">
+                      <span>disk</span>
+                      <span class="card-chart-current">{latestDisk}</span>
+                    </div>
+                    <MetricsChart
+                      data={diskData}
+                      label="{sname}-disk"
+                      current={latestDisk}
+                      color="var(--color-accent)"
+                      formatY={(v) => `${v.toFixed(0)}MB`}
+                      width={80}
+                      height={20}
+                      compact={true}
+                    />
+                  </div>
+                {/if}
               </div>
             {/if}
           {/if}
@@ -682,7 +711,6 @@
                     width={80}
                     height={20}
                     compact={true}
-                    strokeWidth={0.75}
                   />
                 </div>
                 <div class="card-chart">
@@ -699,7 +727,6 @@
                     width={80}
                     height={20}
                     compact={true}
-                    strokeWidth={0.75}
                   />
                 </div>
               </div>
