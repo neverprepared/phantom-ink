@@ -31,7 +31,18 @@ When `OBSIDIAN_VAULT_PATH` is set, the Obsidian vault is mounted and the `obsidi
    gh pr checks <number> --watch
    ```
    If any check fails, diagnose it, push fixes to the **same branch**, and wait for CI to rerun. Repeat until all checks are green.
-9. Report completion to the hub **only after all GitHub CI checks pass on the PR.**
+9. **Store your work in the second brain** (if `OBSIDIAN_VAULT_PATH` is set). Get the PR URL with `gh pr view --json url -q .url`, then store:
+   ```
+   memory_store(
+     title="ratchet/<JOB_ID>/<area>-fix",
+     content="## Fix: <what you fixed>\n\nPR: <full PR URL>\nBranch: <branch name>\n\n### Changes\n- ...",
+     para="projects",
+     tags=["ratchet", "<JOB_ID>", "fix", "<area>"],
+     source_urls=["<full PR URL>"]
+   )
+   ```
+   Replace `<JOB_ID>` with the value of `$BRAINBOX_JOB_ID`. This lets the supervisor and future agents find your PR.
+10. Report completion to the hub **only after all GitHub CI checks pass on the PR.**
 
 ## Rules
 
