@@ -80,6 +80,61 @@
     flex-shrink: 0;
   }
 
+  :global([data-theme="light"]) .sidebar {
+    border-right: none;
+    box-shadow: 2px 0 12px rgba(0, 0, 0, 0.08);
+  }
+
+  :global([data-theme="light"]) .nav-btn {
+    color: var(--color-sidebar-text, rgba(255, 255, 255, 0.8));
+  }
+
+  :global([data-theme="light"]) .nav-btn:hover {
+    background: var(--color-sidebar-hover, rgba(255, 255, 255, 0.08));
+    color: var(--color-sidebar-text-active, #ffffff);
+  }
+
+  :global([data-theme="light"]) .nav-btn.active {
+    background: var(--color-nav-active-bg);
+    color: var(--color-sidebar-text-active, #ffffff);
+    box-shadow: inset 3px 0 0 var(--color-nav-active-border);
+  }
+
+  :global([data-theme="light"]) .nav-shortcut {
+    color: rgba(255, 255, 255, 0.4);
+  }
+
+  :global([data-theme="light"]) .search-box {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  :global([data-theme="light"]) .search-input {
+    color: #ffffff;
+  }
+
+  :global([data-theme="light"]) .search-input::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+  }
+
+  :global([data-theme="light"]) .search-icon,
+  :global([data-theme="light"]) .search-clear {
+    color: rgba(255, 255, 255, 0.4);
+  }
+
+  :global([data-theme="light"]) .sidebar-footer {
+    border-top-color: rgba(255, 255, 255, 0.1);
+  }
+
+  :global([data-theme="light"]) .collapse-btn {
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  :global([data-theme="light"]) .collapse-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #ffffff;
+  }
+
   .sidebar.collapsed {
     width: var(--sidebar-collapsed-width);
   }
