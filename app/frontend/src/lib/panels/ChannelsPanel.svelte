@@ -107,7 +107,7 @@
         lastMessageId = newMsgs[newMsgs.length - 1].id;
       }
     } catch (err) {
-      console.error('Failed to fetch messages:', err);
+      notifications.error('Failed to fetch messages: ' + err.message);
     } finally {
       messagesLoading = false;
     }
@@ -126,7 +126,7 @@
         lastMessageId = messages[messages.length - 1].id;
       }
     } catch (err) {
-      console.error('Failed to load messages:', err);
+      notifications.error('Failed to load messages: ' + err.message);
     }
   }
 

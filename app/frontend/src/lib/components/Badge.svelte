@@ -22,19 +22,19 @@
   /* Status variants */
   .badge.running, .badge.active {
     background: rgba(16, 185, 129, 0.15);
-    color: #6ee7b7;
+    color: var(--color-status-success-text);
     border-color: rgba(16, 185, 129, 0.3);
   }
 
   .badge.stopped, .badge.failed, .badge.cancelled {
     background: rgba(239, 68, 68, 0.1);
-    color: #fca5a5;
+    color: var(--color-status-error-text);
     border-color: rgba(239, 68, 68, 0.2);
   }
 
   .badge.pending {
     background: rgba(245, 158, 11, 0.1);
-    color: #fcd34d;
+    color: var(--color-status-warning-text);
     border-color: rgba(245, 158, 11, 0.2);
   }
 

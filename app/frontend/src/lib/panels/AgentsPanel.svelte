@@ -832,13 +832,13 @@
   }
 
   .badge-blue {
-    background: rgba(59, 130, 246, 0.15);
-    color: #60a5fa;
+    background: var(--color-role-blue-bg);
+    color: var(--color-role-blue-text);
   }
 
   .badge-orange {
-    background: rgba(234, 88, 12, 0.15);
-    color: #fb923c;
+    background: var(--color-role-orange-bg);
+    color: var(--color-role-orange-text);
   }
 
   .badge-gray {
@@ -847,8 +847,8 @@
   }
 
   .badge-purple {
-    background: rgba(139, 92, 246, 0.15);
-    color: #a78bfa;
+    background: var(--color-role-purple-bg);
+    color: var(--color-role-purple-text);
   }
 
   .btn-primary {
