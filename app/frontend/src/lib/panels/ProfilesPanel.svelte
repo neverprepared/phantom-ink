@@ -262,13 +262,6 @@
               {#if profileDiskMap.has(p.name)}
                 <span class="disk-badge">{profileDiskMap.get(p.name)}</span>
               {/if}
-              {#if p.secrets_mode === '1password'}
-                <span class="secrets-badge op">1Password</span>
-              {:else if p.secrets_mode === 'plaintext'}
-                <span class="secrets-badge plain">plaintext</span>
-              {:else}
-                <span class="secrets-badge none">no secrets</span>
-              {/if}
               {#if p.has_backup}
                 <span class="secrets-badge plain">backup</span>
               {/if}
@@ -445,7 +438,7 @@
   .btn-small:hover { background: rgba(16, 185, 129, 0.2); border-color: var(--color-success); }
 
   /* Profile list */
-  .profile-list { display: flex; flex-direction: column; gap: 2px; max-width: 560px; }
+  .profile-list { display: flex; flex-direction: column; gap: 2px; }
   .empty { font-size: 12px; color: var(--color-text-tertiary); padding: 12px 0; }
 
   .profile-item {
@@ -486,9 +479,7 @@
   }
 
   .secrets-badge { font-size: 10px; padding: 1px 6px; border-radius: var(--radius-sm); }
-  .secrets-badge.op { background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); color: var(--color-info); }
   .secrets-badge.plain { background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--color-accent); }
-  .secrets-badge.none { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: var(--color-error); }
 
   .profile-row { display: flex; align-items: center; gap: 4px; }
   .profile-row .profile-item { flex: 1; }
