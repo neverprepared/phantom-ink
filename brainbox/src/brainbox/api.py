@@ -2092,10 +2092,15 @@ async def hub_delete_playbook(playbook_id: str, _key=Depends(require_api_key)):
         raise HTTPException(status_code=404, detail=str(exc))
 
 
+class RunPlaybookRequest(BaseModel):
+    workspace_profile: str | None = None
+
+
 @app.post("/api/hub/playbooks/{playbook_id}/run")
-async def hub_run_playbook(playbook_id: str, _key=Depends(require_api_key)):
+async def hub_run_playbook(playbook_id: str, body: RunPlaybookRequest | None = None, _key=Depends(require_api_key)):
     try:
-        pb = await run_playbook(playbook_id)
+        profile = body.workspace_profile if body else None
+        pb = await run_playbook(playbook_id, workspace_profile=profile)
         return pb.model_dump()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

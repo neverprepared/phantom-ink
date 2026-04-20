@@ -71,10 +71,20 @@ func (c *Client) DeletePlaybook(id string) error {
 	return c.delete(fmt.Sprintf("/api/hub/playbooks/%s", id), nil)
 }
 
+// RunPlaybookRequest is the optional body for POST /api/hub/playbooks/{id}/run.
+type RunPlaybookRequest struct {
+	WorkspaceProfile string `json:"workspace_profile,omitempty"`
+}
+
 // RunPlaybook starts sequential execution of a playbook.
-func (c *Client) RunPlaybook(id string) (Playbook, error) {
+// workspaceProfile overrides the playbook's saved profile for this run.
+func (c *Client) RunPlaybook(id string, workspaceProfile string) (Playbook, error) {
 	var pb Playbook
-	if err := c.post(fmt.Sprintf("/api/hub/playbooks/%s/run", id), nil, &pb); err != nil {
+	var body interface{}
+	if workspaceProfile != "" {
+		body = RunPlaybookRequest{WorkspaceProfile: workspaceProfile}
+	}
+	if err := c.post(fmt.Sprintf("/api/hub/playbooks/%s/run", id), body, &pb); err != nil {
 		return pb, err
 	}
 	return pb, nil

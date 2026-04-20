@@ -38,6 +38,10 @@
   let expandedTasks = $state<Set<string>>(new Set());
   let confirmingDelete = $state(false);
 
+  // Profile picker for run
+  let showProfilePicker = $state(false);
+  let profiles = $derived(profileState.profiles);
+
   // Create modal
   let showCreateModal = $state(false);
   let newName = $state('');
@@ -125,11 +129,23 @@
     }
   }
 
-  async function runPlaybook() {
+  function handleRunClick() {
     if (!selected) return;
+    // If the playbook is global and no profile filter is active, prompt the user to pick one
+    const needsPicker = selected.workspace_profile === 'global' && !activeProfileName;
+    if (needsPicker && profiles.length > 0) {
+      showProfilePicker = true;
+    } else {
+      runWithProfile(activeProfileName || '');
+    }
+  }
+
+  async function runWithProfile(profile: string) {
+    if (!selected) return;
+    showProfilePicker = false;
     try {
       const api = await getApi();
-      selected = await api.RunPlaybook(selected.id);
+      selected = await api.RunPlaybook(selected.id, profile);
       const idx = playbooks.findIndex(p => p.id === selected!.id);
       if (idx >= 0) playbooks[idx] = selected;
     } catch (e: any) {
@@ -298,7 +314,7 @@
         {:else}
           <button
             class="btn btn-run"
-            onclick={runPlaybook}
+            onclick={handleRunClick}
           >
             {selected.status === 'idle' ? 'Run' : 'Run Again'}
           </button>
@@ -358,6 +374,26 @@
         >
           {isCreating ? 'Creating…' : 'Create'}
         </button>
+      </div>
+    </div>
+  </Modal>
+{/if}
+
+{#if showProfilePicker}
+  <Modal onClose={() => (showProfilePicker = false)}>
+    <div class="profile-picker-modal">
+      <h3>Select a profile</h3>
+      <p class="picker-hint">This global playbook needs a profile context for credentials and vault access.</p>
+      <div class="picker-list">
+        {#each profiles as p (p.name)}
+          <button class="picker-item" onclick={() => runWithProfile(p.name)}>
+            <span class="picker-name">{p.name}</span>
+            <span class="picker-path">{p.workspace_home}</span>
+          </button>
+        {/each}
+      </div>
+      <div class="picker-actions">
+        <button class="btn" onclick={() => (showProfilePicker = false)}>Cancel</button>
       </div>
     </div>
   </Modal>
@@ -701,4 +737,17 @@
     background: rgba(245, 158, 11, 0.1);
   }
   .scope-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  /* Profile picker modal */
+  .profile-picker-modal h3 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .picker-hint { font-size: 12px; color: var(--color-text-tertiary); margin-bottom: 14px; }
+  .picker-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px; }
+  .picker-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 14px; background: transparent; border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md); text-align: left; transition: all 0.15s; width: 100%;
+  }
+  .picker-item:hover { background: var(--color-surface-hover); border-color: var(--color-accent); }
+  .picker-name { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
+  .picker-path { font-size: 11px; color: var(--color-text-tertiary); font-family: var(--font-mono); }
+  .picker-actions { display: flex; justify-content: flex-end; }
 </style>

@@ -108,13 +108,20 @@ def delete_playbook(playbook_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def run_playbook(playbook_id: str) -> Playbook:
-    """Start sequential execution; returns immediately. Runs in background."""
+async def run_playbook(playbook_id: str, *, workspace_profile: str | None = None) -> Playbook:
+    """Start sequential execution; returns immediately. Runs in background.
+
+    *workspace_profile* overrides the playbook's saved profile for this run.
+    Used when a global playbook needs a specific profile context at runtime.
+    """
     pb = _playbooks.get(playbook_id)
     if not pb:
         raise ValueError(f"Playbook '{playbook_id}' not found")
     if pb.status == "running":
         raise ValueError(f"Playbook '{playbook_id}' is already running")
+
+    # Apply runtime profile override (doesn't change the saved playbook)
+    run_profile = workspace_profile or pb.workspace_profile
 
     # Reset task statuses for a fresh run
     for task in pb.tasks:
@@ -125,7 +132,7 @@ async def run_playbook(playbook_id: str) -> Playbook:
         task.started_at = None
         task.finished_at = None
 
-    task = asyncio.create_task(_execute(playbook_id))
+    task = asyncio.create_task(_execute(playbook_id, run_profile=run_profile))
     _run_tasks[playbook_id] = task
     return pb
 
@@ -141,19 +148,19 @@ def cancel_playbook(playbook_id: str) -> None:
         log.info("playbook.cancelled", metadata={"id": playbook_id})
 
 
-async def _execute(playbook_id: str) -> None:
+async def _execute(playbook_id: str, *, run_profile: str = "global") -> None:
     from .models import _now_ms
     pb = _playbooks[playbook_id]
     pb.status = "running"
     pb.started_at = _now_ms()
     _emit("playbook.started", pb)
-    log.info("playbook.started", metadata={"id": playbook_id, "tasks": len(pb.tasks)})
+    log.info("playbook.started", metadata={"id": playbook_id, "tasks": len(pb.tasks), "profile": run_profile})
 
     try:
         for task in pb.tasks:
             if pb.status == "cancelled":
                 break
-            await _run_task(pb, task)
+            await _run_task(pb, task, run_profile=run_profile)
             if task.status == "failed":
                 pb.status = "failed"
                 pb.finished_at = _now_ms()
@@ -180,7 +187,7 @@ async def _execute(playbook_id: str) -> None:
         _run_tasks.pop(playbook_id, None)
 
 
-async def _run_task(pb: Playbook, task: PlaybookTask) -> None:
+async def _run_task(pb: Playbook, task: PlaybookTask, *, run_profile: str = "global") -> None:
     from .models import _now_ms
     session_name = f"pb-{pb.id[:6]}-t{task.index}"
     task.status = "running"
@@ -196,10 +203,10 @@ async def _run_task(pb: Playbook, task: PlaybookTask) -> None:
         async with httpx.AsyncClient(base_url=base_url, timeout=600) as client:
             headers = {"X-API-Key": api_key}
 
-            # Create fresh worker session with the playbook's profile context
+            # Create fresh worker session with the runtime profile context
             create_body: dict = {"name": session_name}
-            if pb.workspace_profile and pb.workspace_profile != "global":
-                create_body["workspace_profile"] = pb.workspace_profile
+            if run_profile and run_profile != "global":
+                create_body["workspace_profile"] = run_profile
             resp = await client.post("/api/create", json=create_body, headers=headers)
             resp.raise_for_status()
 

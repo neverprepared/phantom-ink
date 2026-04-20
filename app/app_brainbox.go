@@ -285,8 +285,9 @@ func (a *App) DeletePlaybook(id string) error {
 }
 
 // RunPlaybook starts sequential execution of a playbook.
-func (a *App) RunPlaybook(id string) (brainbox.Playbook, error) {
-	return a.client.RunPlaybook(id)
+// workspaceProfile overrides the playbook's saved profile for this run.
+func (a *App) RunPlaybook(id string, workspaceProfile string) (brainbox.Playbook, error) {
+	return a.client.RunPlaybook(id, workspaceProfile)
 }
 
 // CancelPlaybook cancels a running playbook.
