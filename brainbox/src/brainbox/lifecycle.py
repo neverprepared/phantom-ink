@@ -342,6 +342,37 @@ def _build_volume_map(env_vars: dict) -> dict[str, dict[str, str]]:
             if host_dir is not None:
                 mounts[str(host_dir)] = {"bind": container_targets[name], "mode": mode}
 
+    # GPG agent socket forwarding: mount the pubring (key IDs) and the agent
+    # extra socket so containers can sign commits via the host's gpg-agent.
+    if p.mount_gpg:
+        import subprocess
+
+        gnupg_dir = Path.home() / ".gnupg"
+        if gnupg_dir.is_dir():
+            # Mount pubring + trustdb read-only so gpg knows the key IDs
+            for f in ("pubring.kbx", "trustdb.gpg"):
+                fpath = gnupg_dir / f
+                if fpath.is_file():
+                    mounts[str(fpath)] = {
+                        "bind": f"/home/developer/.gnupg/{f}",
+                        "mode": "ro",
+                    }
+
+            # Mount the agent extra socket (designed for forwarding)
+            try:
+                extra_sock = subprocess.check_output(
+                    ["gpgconf", "--list-dirs", "agent-extra-socket"],
+                    text=True,
+                ).strip()
+            except Exception:
+                extra_sock = str(gnupg_dir / "S.gpg-agent.extra")
+
+            if Path(extra_sock).exists():
+                mounts[extra_sock] = {
+                    "bind": "/home/developer/.gnupg/S.gpg-agent",
+                    "mode": "rw",
+                }
+
     # Note: profile .claude config is NOT bind-mounted. Instead, configure()
     # copies and patches it into the container's ~/.claude via inject_claude_config_copy.
 
@@ -797,6 +828,7 @@ async def provision(
             "/home/developer/.azure": "azure",
             "/home/developer/.kube": "kube",
             "/home/developer/.ssh": "ssh",
+            "/home/developer/.gnupg/S.gpg-agent": "gpg",
             "/home/developer/.gitconfig": "gitconfig",
             "/home/developer/.gcloud": "gcloud",
             "/home/developer/.terraform.d": "terraform",

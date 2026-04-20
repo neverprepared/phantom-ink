@@ -151,6 +151,7 @@ class ProfileSettings(BaseSettings):
     mount_azure: bool = True
     mount_kube: bool = True
     mount_ssh: bool = True  # .ssh directory
+    mount_gpg: bool = True  # .gnupg directory + agent socket forwarding for commit signing
     mount_gitconfig: bool = True  # .gitconfig file
     mount_gcloud: bool = False  # opt-in
     mount_terraform: bool = False  # opt-in

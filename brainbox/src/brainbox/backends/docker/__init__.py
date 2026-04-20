@@ -568,10 +568,20 @@ class DockerBackend:
             if [ -x "$BREW_GH" ]; then
                 sed -i "s|!/opt/homebrew/bin/gh|!$BREW_GH|g" /home/developer/.gitconfig.local 2>/dev/null
             fi
-            # GPG signing keys are in the macOS keychain — not available in containers.
-            # Disable signing so commits work; identity is still verified by the gh token.
-            git config --file /home/developer/.gitconfig.local commit.gpgsign false
-            git config --file /home/developer/.gitconfig.local tag.gpgsign false
+            # GPG signing: if the host gpg-agent socket is forwarded, enable signing.
+            # Otherwise disable it (no keychain access in Linux containers).
+            if [ -S /home/developer/.gnupg/S.gpg-agent ]; then
+                # Socket forwarded — enable signing, point gpg at the forwarded agent
+                mkdir -p /home/developer/.gnupg
+                chmod 700 /home/developer/.gnupg
+                echo "no-autostart" > /home/developer/.gnupg/gpg.conf
+                printf "%%Assuan%%\\nsocket=/home/developer/.gnupg/S.gpg-agent\\n" > /home/developer/.gnupg/gpg-agent.conf 2>/dev/null || true
+                echo 'export GPG_AGENT_INFO=/home/developer/.gnupg/S.gpg-agent' >> /home/developer/.env
+            else
+                # No socket — disable signing
+                git config --file /home/developer/.gitconfig.local commit.gpgsign false
+                git config --file /home/developer/.gitconfig.local tag.gpgsign false
+            fi
             echo 'export GIT_CONFIG_GLOBAL=/home/developer/.gitconfig.local' >> /home/developer/.env
             export GIT_CONFIG_GLOBAL=/home/developer/.gitconfig.local
         """)
