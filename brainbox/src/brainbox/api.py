@@ -374,7 +374,9 @@ async def lifespan(app: FastAPI):
     await hub_shutdown()
 
 
-app = FastAPI(title="Brainbox", version="0.2.0", lifespan=lifespan)
+_API_VERSION = "0.10.2"
+
+app = FastAPI(title="Brainbox", version=_API_VERSION, lifespan=lifespan)
 
 # CORS — restrict to localhost by default; override via CL_CORS_ORIGINS
 _cors_origins = settings.cors_origins or [
@@ -516,6 +518,7 @@ def _get_sessions_info() -> list[dict[str, Any]]:
 @app.get("/api/events")
 async def sse_events(
     session: str | None = Query(None, description="Filter events by session name"),
+    _key: str = Depends(require_api_key),
 ):
     queue: asyncio.Queue = asyncio.Queue(maxsize=50)
     _sse_queues.add(queue)
@@ -1164,7 +1167,7 @@ async def _query_via_tmux(request: Request, name: str, body: QuerySessionRequest
 
     # Verify container exists and is running
     try:
-        container = _tmux_verify_container(client, container_name)
+        _tmux_verify_container(client, container_name)
     except HTTPException as exc:
         if exc.status_code == 404:
             _audit_log(
@@ -1404,7 +1407,7 @@ async def _metrics_sample_loop() -> None:
                     "cpu_percent": m.get("cpu_percent", 0),
                 })
         except Exception:
-            pass
+            log.warning("metrics.sample_failed", exc_info=True)
 
 
 @app.get("/api/metrics/history")
@@ -2188,7 +2191,7 @@ async def api_upload_artifact(key: str, request: Request, _key=Depends(require_a
 
 @app.get("/api/artifacts/{key:path}")
 @limiter.limit("30/minute")
-async def api_download_artifact(request: Request, key: str):
+async def api_download_artifact(request: Request, key: str, _key=Depends(require_api_key)):
     """Download an artifact by key."""
     # Validate artifact key to prevent path traversal
     try:
@@ -2570,7 +2573,7 @@ async def api_push_config(
 async def api_info():
     """Return API version and basic status. Used as a lightweight health check."""
     return {
-        "version": "0.10.2",
+        "version": _API_VERSION,
         "status": "ok",
     }
 

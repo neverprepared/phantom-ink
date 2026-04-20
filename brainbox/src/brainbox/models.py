@@ -79,7 +79,7 @@ class SessionContext(BaseModel):
     ttl: int  # seconds
     hardened: bool = True
     volume_mounts: list[str] = Field(default_factory=list)
-    secrets: dict[str, str] = Field(default_factory=dict)
+    secrets: dict[str, str] = Field(default_factory=dict, exclude=True)
     health_failures: int = 0
     token: Token | None = None
     env_content: str | None = None  # legacy mode .env body
@@ -237,7 +237,7 @@ class MessagesState(BaseModel):
 
 
 class HubState(BaseModel):
-    flushed_at: int  # epoch ms
+    flushed_at: int = Field(default_factory=lambda: int(_now_ms()))
     registry: RegistryState = Field(default_factory=RegistryState)
     router: RouterState = Field(default_factory=RouterState)
     messages: MessagesState = Field(default_factory=MessagesState)

@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import subprocess
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -29,6 +30,7 @@ from .models import SessionContext, SessionState, Token
 
 _sessions: dict[str, SessionContext] = {}
 _executor = ThreadPoolExecutor(max_workers=4)
+_port_lock = threading.Lock()
 
 log = get_logger()
 
@@ -511,23 +513,24 @@ def _resolve_oauth_account() -> dict[str, str] | None:
 def _find_available_port(start: int = 7681) -> int:
     """Scan running containers to find a free host port."""
     client = _docker()
-    try:
-        containers = client.containers.list()
-        used: set[int] = set()
-        for c in containers:
-            ports = c.attrs.get("NetworkSettings", {}).get("Ports") or {}
-            for bindings in ports.values():
-                if bindings:
-                    for b in bindings:
-                        if b.get("HostPort"):
-                            used.add(int(b["HostPort"]))
-        port = start
-        while port in used:
-            port += 1
-        return port
-    except Exception as exc:
-        log.warning("lifecycle.port_scan_failed", metadata={"reason": str(exc)})
-        return start
+    with _port_lock:
+        try:
+            containers = client.containers.list()
+            used: set[int] = set()
+            for c in containers:
+                ports = c.attrs.get("NetworkSettings", {}).get("Ports") or {}
+                for bindings in ports.values():
+                    if bindings:
+                        for b in bindings:
+                            if b.get("HostPort"):
+                                used.add(int(b["HostPort"]))
+            port = start
+            while port in used:
+                port += 1
+            return port
+        except Exception as exc:
+            log.warning("lifecycle.port_scan_failed", metadata={"reason": str(exc)})
+            return start
 
 
 # ---------------------------------------------------------------------------
@@ -1055,7 +1058,7 @@ async def _inject_repo_clone(container: Any, repo: Any) -> None:
     # Ensure parent directory exists
     await _run(
         container.exec_run,
-        ["sh", "-c", f"mkdir -p {parent_dir}"],
+        ["mkdir", "-p", parent_dir],
         user="developer",
     )
 

@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from .config import settings
 from .log import get_logger
-from .models import Repository, Task, TaskStatus
+from .models import Repository, SessionState, Task, TaskStatus
 from .policy import evaluate_task_assignment
 from .registry import get_agent, issue_token, revoke_token
 from .utils import now_ms as _now_ms
@@ -246,6 +246,8 @@ async def fail_task(task_id: str, error: str | None = None) -> Task:
     task = _tasks.get(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
+    if task.status not in (TaskStatus.RUNNING, TaskStatus.PENDING):
+        raise ValueError(f"Cannot fail task in status {task.status}")
 
     task.status = TaskStatus.FAILED
     task.error = error or "Unknown error"
@@ -307,8 +309,6 @@ async def check_running_tasks() -> None:
             else:
                 await fail_task(task.id, "Container no longer exists")
             continue
-
-        from .models import SessionState
 
         if session.state == SessionState.RECYCLED:
             await fail_task(task.id, "Container was recycled externally")
@@ -476,6 +476,8 @@ def get_state() -> dict:
 def restore_state(state: dict | None) -> None:
     if not state:
         return
+    _tasks.clear()
+    _repos.clear()
     # Restore tasks
     if "tasks" in state:
         for tid, data in state["tasks"]:
