@@ -81,13 +81,32 @@
   );
 
   // --- Log line parsing ---
-  function logLevel(line: string): 'error' | 'warn' | 'info' | 'debug' | 'other' {
+  type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'other';
+  type LogFilter = 'all' | LogLevel;
+  let activeLogFilter = $state<LogFilter>('all');
+
+  function logLevel(line: string): LogLevel {
     if (line.includes('"level":"error"') || line.includes(' ERROR ')) return 'error';
     if (line.includes('"level":"warning"') || line.includes(' WARNING ') || line.includes(' WARN ')) return 'warn';
     if (line.includes('"level":"info"') || line.includes(' INFO ')) return 'info';
     if (line.includes('"level":"debug"') || line.includes(' DEBUG ')) return 'debug';
     return 'other';
   }
+
+  let filteredLogLines = $derived(
+    activeLogFilter === 'all'
+      ? logLines
+      : logLines.filter(line => logLevel(line) === activeLogFilter)
+  );
+
+  // Counts per level for badge display
+  let logCounts = $derived.by(() => {
+    const counts = { error: 0, warn: 0, info: 0, debug: 0, other: 0 };
+    for (const line of logLines) {
+      counts[logLevel(line)]++;
+    }
+    return counts;
+  });
 </script>
 
 <div class="panel">
@@ -108,6 +127,23 @@
 
   {#if activeTab === 'logs'}
     <div class="logs-toolbar">
+      <div class="log-filters">
+        <button class="log-filter-btn" class:active={activeLogFilter === 'all'} onclick={() => activeLogFilter = 'all'}>
+          all <span class="log-filter-count">{logLines.length}</span>
+        </button>
+        <button class="log-filter-btn error" class:active={activeLogFilter === 'error'} onclick={() => activeLogFilter = 'error'}>
+          error {#if logCounts.error > 0}<span class="log-filter-count">{logCounts.error}</span>{/if}
+        </button>
+        <button class="log-filter-btn warn" class:active={activeLogFilter === 'warn'} onclick={() => activeLogFilter = 'warn'}>
+          warn {#if logCounts.warn > 0}<span class="log-filter-count">{logCounts.warn}</span>{/if}
+        </button>
+        <button class="log-filter-btn info" class:active={activeLogFilter === 'info'} onclick={() => activeLogFilter = 'info'}>
+          info {#if logCounts.info > 0}<span class="log-filter-count">{logCounts.info}</span>{/if}
+        </button>
+        <button class="log-filter-btn debug" class:active={activeLogFilter === 'debug'} onclick={() => activeLogFilter = 'debug'}>
+          debug {#if logCounts.debug > 0}<span class="log-filter-count">{logCounts.debug}</span>{/if}
+        </button>
+      </div>
       <select class="log-count-select" bind:value={logCount} onchange={refreshLogs}>
         <option value={100}>last 100</option>
         <option value={200}>last 200</option>
@@ -120,11 +156,11 @@
     </div>
     {#if loadingLogs}
       <div class="empty">loading logs...</div>
-    {:else if logLines.length === 0}
-      <div class="empty">no log entries found</div>
+    {:else if filteredLogLines.length === 0}
+      <div class="empty">{logLines.length === 0 ? 'no log entries found' : 'no entries match the current filter'}</div>
     {:else}
       <div class="log-feed">
-        {#each logLines as line, i (i)}
+        {#each filteredLogLines as line, i (i)}
           {@const level = logLevel(line)}
           <div class="log-line {level}">{line}</div>
         {/each}
@@ -217,7 +253,45 @@
     gap: 8px;
     margin-bottom: 10px;
     flex-shrink: 0;
+    flex-wrap: wrap;
   }
+
+  .log-filters {
+    display: flex;
+    gap: 4px;
+    flex: 1;
+  }
+
+  .log-filter-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border-secondary);
+    background: transparent;
+    color: var(--color-text-tertiary);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .log-filter-btn:hover { background: var(--color-surface-hover); color: var(--color-text-secondary); }
+  .log-filter-btn.active { background: var(--color-surface-active); color: var(--color-text-primary); border-color: var(--color-text-tertiary); }
+  .log-filter-btn.error.active { border-color: var(--color-error); color: var(--color-error); background: rgba(239, 68, 68, 0.1); }
+  .log-filter-btn.warn.active { border-color: var(--color-warning); color: var(--color-warning); background: rgba(234, 179, 8, 0.1); }
+  .log-filter-btn.info.active { border-color: var(--color-info); color: var(--color-info); background: rgba(14, 165, 233, 0.1); }
+  .log-filter-btn.debug.active { border-color: var(--color-text-tertiary); color: var(--color-text-tertiary); background: var(--color-surface-subtle); }
+
+  .log-filter-count {
+    font-size: 9px;
+    background: var(--color-surface-active);
+    padding: 0 4px;
+    border-radius: 9999px;
+    min-width: 14px;
+    text-align: center;
+  }
+  .log-filter-btn.active .log-filter-count { background: rgba(255, 255, 255, 0.15); }
 
   .log-count-select {
     font-size: 12px;
