@@ -7,6 +7,24 @@ description: Azure operations not covered by the Microsoft MCP — PIM role acti
 
 > CLI patterns for Azure operations that the Microsoft MCP server doesn't expose.
 
+## Relationship to the Azure MCP Server
+
+The **Azure MCP server** (if enabled via `/reflex:mcp enable azure`) handles:
+- Resource CRUD (VMs, storage, networking, databases)
+- Resource group management
+- Deployments and ARM/Bicep templates
+- Key Vault secrets and certificates
+- App Service / Container Apps management
+
+**This skill covers what the MCP does NOT**:
+- PIM role activation (Graph API, not ARM)
+- Support tickets (`az support` extension)
+- Resource locks
+- Cost/billing queries
+- Policy compliance checks
+
+**Rule of thumb**: If it's a resource management operation, try the Azure MCP first. If it's IAM/governance/billing/support, use this skill's patterns.
+
 ## When to Use
 
 - Activating Privileged Identity Management (PIM) eligible roles
