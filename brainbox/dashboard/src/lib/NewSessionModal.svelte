@@ -79,7 +79,7 @@
 
 <Modal {onClose}>
   {#snippet children()}
-    <div bind:this={modalElement}>
+    <form bind:this={modalElement} onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
       <h2 id="modal-title">new session</h2>
       <p class="modal-subtitle">each session runs in its own isolated container</p>
 
@@ -185,12 +185,12 @@
     </div>
 
       <div class="modal-actions">
-        <button class="modal-cancel" onclick={onClose} disabled={isCreating}>cancel</button>
-        <button class="modal-submit" onclick={handleSubmit} disabled={isCreating}>
+        <button class="modal-cancel" type="button" onclick={onClose} disabled={isCreating}>cancel</button>
+        <button class="modal-submit" type="submit" disabled={isCreating}>
           {isCreating ? 'creating...' : 'create'}
         </button>
       </div>
-    </div>
+    </form>
   {/snippet}
 </Modal>
 

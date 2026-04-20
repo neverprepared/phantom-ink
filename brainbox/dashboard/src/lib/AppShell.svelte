@@ -21,6 +21,8 @@
       <PipelinesPanel />
     {:else if currentPanel.value === 'observability'}
       <ObservabilityPanel />
+    {:else}
+      <div class="panel-error">Unknown panel. <button onclick={() => currentPanel.value = 'containers'}>Go home</button></div>
     {/if}
   </main>
 </div>

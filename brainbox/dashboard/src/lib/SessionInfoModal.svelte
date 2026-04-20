@@ -28,7 +28,9 @@
 
 
   function copyCmd() {
-    navigator.clipboard.writeText(execCmd);
+    navigator.clipboard.writeText(execCmd).catch(() => {
+      // fallback: select the text for manual copy
+    });
     copied = true;
     setTimeout(() => copied = false, 1500);
   }

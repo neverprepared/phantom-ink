@@ -8,6 +8,8 @@
   let error = $state(null);
   let showAddForm = $state(false);
   let eventSource = null;
+  let confirmDeleteName = $state(null);
+  let confirmDeleteTimeout = null;
 
   // Add form state
   let newUrl = $state('');
@@ -30,7 +32,13 @@
     }
   }
 
+  function resetConfirmDelete() {
+    if (confirmDeleteTimeout) clearTimeout(confirmDeleteTimeout);
+    confirmDeleteName = null;
+  }
+
   async function handleAdd() {
+    error = null;
     adding = true;
     try {
       await addRepo({
@@ -59,6 +67,7 @@
   }
 
   async function handleToggle(repo, field) {
+    error = null;
     try {
       await updateRepo(repo.name, { [field]: !repo[field] });
       await refresh();
@@ -68,7 +77,14 @@
   }
 
   async function handleDelete(name) {
-    if (!confirm(`Remove repository "${name}"?`)) return;
+    error = null;
+    if (confirmDeleteName !== name) {
+      resetConfirmDelete();
+      confirmDeleteName = name;
+      confirmDeleteTimeout = setTimeout(resetConfirmDelete, 3000);
+      return;
+    }
+    resetConfirmDelete();
     try {
       await deleteRepo(name);
       await refresh();
@@ -89,6 +105,7 @@
 
   onDestroy(() => {
     if (eventSource) eventSource.close();
+    if (confirmDeleteTimeout) clearTimeout(confirmDeleteTimeout);
   });
 </script>
 
@@ -157,7 +174,9 @@
         <div class="repo-card">
           <div class="repo-header">
             <h3>{repo.name}</h3>
-            <button class="btn-delete" onclick={() => handleDelete(repo.name)} title="Remove">x</button>
+            <button class="btn-delete" onclick={() => handleDelete(repo.name)} title="Remove">
+              {confirmDeleteName === repo.name ? 'remove?' : 'x'}
+            </button>
           </div>
           <div class="repo-url">{repo.url}</div>
           <div class="repo-branch">branch: {repo.target_branch}</div>
@@ -168,17 +187,17 @@
               class:active={repo.merge_queue_enabled}
               onclick={() => handleToggle(repo, 'merge_queue_enabled')}
             >
-              <Badge variant={repo.merge_queue_enabled ? 'success' : 'muted'}>merge-queue</Badge>
+              <Badge text="merge-queue" variant={repo.merge_queue_enabled ? 'success' : 'muted'} />
             </button>
             <button
               class="agent-toggle"
               class:active={repo.pr_shepherd_enabled}
               onclick={() => handleToggle(repo, 'pr_shepherd_enabled')}
             >
-              <Badge variant={repo.pr_shepherd_enabled ? 'success' : 'muted'}>pr-shepherd</Badge>
+              <Badge text="pr-shepherd" variant={repo.pr_shepherd_enabled ? 'success' : 'muted'} />
             </button>
             {#if repo.is_fork}
-              <Badge variant="info">fork</Badge>
+              <Badge text="fork" variant="info" />
             {/if}
           </div>
 

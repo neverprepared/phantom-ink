@@ -69,4 +69,18 @@
     background: rgba(139, 92, 246, 0.15);
     color: #8b5cf6;
   }
+
+  /* Generic semantic variants (used without a type) */
+  .badge[data-variant="success"] {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+  }
+  .badge[data-variant="muted"] {
+    background: rgba(100, 116, 139, 0.15);
+    color: #64748b;
+  }
+  .badge[data-variant="info"] {
+    background: rgba(14, 165, 233, 0.15);
+    color: #0ea5e9;
+  }
 </style>

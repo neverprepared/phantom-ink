@@ -1,4 +1,5 @@
 <script>
+  import { onDestroy } from 'svelte';
   import { stopSession, deleteSession, startSession } from './api.js';
   import { notifications } from './notifications.svelte.js';
   import Badge from './Badge.svelte';
@@ -62,6 +63,8 @@
       isStarting = false;
     }
   }
+
+  onDestroy(() => { if (confirmTimeout) clearTimeout(confirmTimeout); });
 
   let displayName = $derived(session.session_name || session.name);
   let displayRole = $derived(session.role || 'developer');

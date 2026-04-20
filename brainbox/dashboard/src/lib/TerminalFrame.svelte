@@ -1,5 +1,7 @@
 <script>
+  import { onDestroy } from 'svelte';
   import { stopSession } from './api.js';
+  import { notifications } from './notifications.svelte.js';
 
   let { session, onUpdate } = $props();
 
@@ -15,12 +17,16 @@
     e.preventDefault();
     if (confirmStop) {
       resetConfirm();
-      stopSession(session.name).then(onUpdate);
+      stopSession(session.name)
+        .then(onUpdate)
+        .catch(err => notifications.error(`Failed to stop session: ${err.message}`));
       return;
     }
     confirmStop = true;
     confirmTimeout = setTimeout(resetConfirm, 3000);
   }
+
+  onDestroy(() => { if (confirmTimeout) clearTimeout(confirmTimeout); });
 
   let iframeSrc = $derived(session.url);
   let refreshKey = $state(0);

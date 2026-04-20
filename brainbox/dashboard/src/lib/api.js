@@ -61,7 +61,7 @@ async function fetchJSON(url, options = {}) {
 }
 
 export async function fetchSessions(signal = null) {
-  return fetchJSON('/api/sessions', signal ? { signal } : {});
+  return fetchJSON('/api/sessions', { headers: readHeaders(), ...(signal ? { signal } : {}) });
 }
 
 export async function stopSession(name) {
@@ -97,7 +97,7 @@ export async function createSession({ name, role, volume, llm_provider, llm_mode
 }
 
 export async function fetchContainerMetrics(signal = null) {
-  return fetchJSON('/api/metrics/containers', signal ? { signal } : {});
+  return fetchJSON('/api/metrics/containers', { headers: readHeaders(), ...(signal ? { signal } : {}) });
 }
 
 export async function fetchHubState() {
