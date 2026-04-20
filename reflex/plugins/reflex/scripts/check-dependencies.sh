@@ -88,7 +88,7 @@ fi
 # Plugin Version Check (marketplace users)
 # =============================================================================
 # Compare installed version against latest on GitHub to notify users of updates.
-INSTALLED_VERSION=$(jq -r '.version // empty' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json" 2>/dev/null || true)
+INSTALLED_VERSION=$(jq -r '.version // empty' "${CLAUDE_PLUGIN_ROOT:?Error: CLAUDE_PLUGIN_ROOT is not set}/.claude-plugin/plugin.json" 2>/dev/null || true)
 VERSION_CACHE="${CLAUDE_DIR}/reflex/.version-checked"
 LATEST_VERSION=""
 # Only hit GitHub when the cache is missing or older than 24 hours (1440 minutes)
@@ -129,7 +129,7 @@ fi
 # =============================================================================
 # MCP Server Status
 # =============================================================================
-MCP_CATALOG="${CLAUDE_PLUGIN_ROOT}/mcp-catalog.json"
+MCP_CATALOG="${CLAUDE_PLUGIN_ROOT:?Error: CLAUDE_PLUGIN_ROOT is not set}/mcp-catalog.json"
 MCP_JSON="${WORKSPACE_HOME:-$HOME}/.mcp.json"
 
 MCP_STATUS=""

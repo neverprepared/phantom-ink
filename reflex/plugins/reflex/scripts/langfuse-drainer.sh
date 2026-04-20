@@ -25,9 +25,12 @@ while true; do
         PROC_FILE="${QUEUE_FILE}.processing"
         mv "$QUEUE_FILE" "$PROC_FILE"
         # shellcheck disable=SC2086
-        uvx --quiet $PYTHON_FLAG --with "langfuse>=3,<4" python \
-            "$SCRIPT_DIR/langfuse-trace.py" --batch "$PROC_FILE" || \
+        if uvx --quiet $PYTHON_FLAG --with "langfuse>=3,<4" python \
+            "$SCRIPT_DIR/langfuse-trace.py" --batch "$PROC_FILE"; then
+            rm -f "$PROC_FILE"
+        else
             echo "langfuse-drainer: batch processing failed for $PROC_FILE" >&2
-        rm -f "$PROC_FILE"
+            mv "$PROC_FILE" "${PROC_FILE}.failed" 2>/dev/null || true
+        fi
     fi
 done

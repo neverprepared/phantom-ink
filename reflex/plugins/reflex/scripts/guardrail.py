@@ -71,7 +71,7 @@ DEFAULT_PATTERNS: List[Dict] = [
         "name": "rm_root",
         "severity": "critical",
         "category": "file_deletion",
-        "pattern": r"rm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\s+)*(/|/\*|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/opt|/proc|/root|/sbin|/srv|/sys|/tmp|/usr|/var)(\s|$|/\*)",
+        "pattern": r"rm\s+(-[a-zA-Z]*[rf][a-zA-Z]*[ \t]*)*(/|/\*|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/opt|/proc|/root|/sbin|/srv|/sys|/tmp|/usr|/var)(\s|$|/\*)",
         "description": "Recursive deletion of root or system directories",
         "tool": "Bash",
         "field": "command"
@@ -312,12 +312,30 @@ DEFAULT_PATTERNS: List[Dict] = [
         "field": "file_path"
     },
     {
+        "name": "edit_system_config",
+        "severity": "medium",
+        "category": "system_modification",
+        "pattern": r"^(/etc/|/usr/local/etc/|/opt/homebrew/etc/)",
+        "description": "Editing system configuration directories",
+        "tool": "Edit",
+        "field": "file_path"
+    },
+    {
         "name": "write_ssh_config",
         "severity": "medium",
         "category": "system_modification",
         "pattern": r"\.ssh/(config|authorized_keys|known_hosts)",
         "description": "Writing to SSH configuration files",
         "tool": "Write",
+        "field": "file_path"
+    },
+    {
+        "name": "edit_ssh_config",
+        "severity": "medium",
+        "category": "system_modification",
+        "pattern": r"\.ssh/(config|authorized_keys|known_hosts)",
+        "description": "Editing SSH configuration files",
+        "tool": "Edit",
         "field": "file_path"
     },
     {
@@ -496,12 +514,6 @@ def extract_field(tool_name: str, tool_input: Dict, field: str) -> Optional[str]
     elif field == "tool_name":
         # For MCP tools, match against the tool name itself
         return tool_name
-    elif field == "issue_key":
-        # For Jira tools, extract the issue key
-        return tool_input.get("issue_key", "")
-    elif field == "page_id":
-        # For Confluence tools, extract the page id
-        return tool_input.get("page_id", "")
     return None
 
 

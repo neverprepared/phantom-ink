@@ -72,7 +72,7 @@ def debug_log(msg: str) -> None:
 
 def send_trace(tool_data: dict) -> None:
     """Send tool call trace to LangFuse using SDK v3 API."""
-    host = os.environ.get("LANGFUSE_BASE_URL", "http://localhost:3000")
+    host = os.environ.get("LANGFUSE_BASE_URL") or "http://localhost:3000"
     public_key = os.environ.get("LANGFUSE_PUBLIC_KEY")
     secret_key = os.environ.get("LANGFUSE_SECRET_KEY")
 
@@ -105,20 +105,22 @@ def send_trace(tool_data: dict) -> None:
 
         # Use hook-stamped time as the span timestamp so queue delay doesn't skew traces.
         # _queued_at is set by langfuse-hook.sh immediately after the tool completes.
+        # queued_at reflects when the hook fired (immediately after tool completion).
+        # Real span duration tracking would require capturing tool start time in the hook.
         queued_at_raw = tool_data.get("_queued_at")
         if queued_at_raw:
             try:
-                end_time = datetime.fromisoformat(queued_at_raw.replace("Z", "+00:00"))
+                queued_at = datetime.fromisoformat(queued_at_raw.replace("Z", "+00:00"))
             except ValueError:
-                end_time = datetime.now(timezone.utc)
+                queued_at = datetime.now(timezone.utc)
         else:
-            end_time = datetime.now(timezone.utc)
+            queued_at = datetime.now(timezone.utc)
 
         with propagate_attributes(session_id=session_id, user_id=user_id):
             with langfuse.start_as_current_observation(
                 as_type="span",
                 name=f"tool:{parsed['tool_name']}",
-                start_time=end_time,
+                start_time=queued_at,
                 input=parsed["tool_input"],
                 metadata={
                     "source": "claude-code",
@@ -129,7 +131,7 @@ def send_trace(tool_data: dict) -> None:
                 },
             ) as span:
                 # Update with output and explicit end time
-                span.update(output=parsed["tool_response"], end_time=end_time)
+                span.update(output=parsed["tool_response"], end_time=queued_at)
 
                 # Add error level if there was an error
                 if parsed["error"]:
