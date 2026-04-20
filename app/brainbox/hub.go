@@ -15,6 +15,7 @@ type Task struct {
 	Error            interface{} `json:"error"`
 	SessionName      string      `json:"session_name"`
 	WorkspaceProfile string      `json:"workspace_profile"`
+	JobID            string      `json:"job_id"`
 }
 
 // AgentDefinition represents a registered agent definition.

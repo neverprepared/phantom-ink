@@ -13,6 +13,7 @@
   import ObservabilityPanel from '../panels/ObservabilityPanel.svelte';
   import ChannelsPanel from '../panels/ChannelsPanel.svelte';
   import PlaybooksPanel from '../panels/PlaybooksPanel.svelte';
+  import JobsPanel from '../panels/JobsPanel.svelte';
   import EventFeedPanel from '../panels/EventFeedPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
 </script>
@@ -28,6 +29,8 @@
         <AgentsPanel />
       {:else if currentPanel.value === 'dashboard'}
         <HubPanel />
+      {:else if currentPanel.value === 'jobs'}
+        <JobsPanel />
       {:else if currentPanel.value === 'repos'}
         <ReposPanel />
       {:else if currentPanel.value === 'integrations'}
