@@ -10,7 +10,6 @@
   import HubPanel from '../panels/HubPanel.svelte';
   import ReposPanel from '../panels/ReposPanel.svelte';
   import ServicesPanel from '../panels/ServicesPanel.svelte';
-  import ObservabilityPanel from '../panels/ObservabilityPanel.svelte';
   import ChannelsPanel from '../panels/ChannelsPanel.svelte';
   import PlaybooksPanel from '../panels/PlaybooksPanel.svelte';
   import EventFeedPanel from '../panels/EventFeedPanel.svelte';
@@ -33,8 +32,6 @@
         <ReposPanel />
       {:else if currentPanel.value === 'integrations'}
         <ServicesPanel />
-      {:else if currentPanel.value === 'observability'}
-        <ObservabilityPanel />
       {:else if currentPanel.value === 'channels'}
         <ChannelsPanel />
       {:else if currentPanel.value === 'playbooks'}
