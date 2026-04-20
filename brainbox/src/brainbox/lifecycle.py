@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from .backends.docker import _docker
+from .backends.docker import _docker, _client  # noqa: F401 — re-exported for test monkeypatching
 from .backends.docker.cosign import CosignVerificationError, verify_image, verify_image_keyless
 from .backends.docker.hardening import get_hardening_kwargs, get_legacy_kwargs
 from .config import settings
@@ -483,13 +483,13 @@ def _resolve_profile_env(
         stripped = raw_line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        assignment = stripped
-        if assignment.startswith("export "):
-            assignment = assignment[7:]
-        var_name = assignment.split("=", 1)[0].strip()
+        bare = stripped
+        if bare.startswith("export "):
+            bare = bare[7:]
+        var_name = bare.split("=", 1)[0].strip()
         if var_name in _HOST_ONLY_VARS:
             continue
-        lines.append(assignment)
+        lines.append(bare)
 
     return "\n".join(lines)
 

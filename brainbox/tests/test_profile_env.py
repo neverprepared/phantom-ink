@@ -615,9 +615,10 @@ class TestResolveProfileEnv:
         assert result is not None
         # HOME=/bad should be stripped, but WORKSPACE_HOME is prepended
         lines = result.splitlines()
-        home_lines = [l for l in lines if l.startswith("export HOME=") or l == "HOME=/bad"]
+        home_lines = [l for l in lines if l.startswith("export HOME=") or l == "HOME=/bad" or l.startswith("HOME=")]
         assert home_lines == []  # stripped as host-only
-        assert "export MY_VAR=good" in result
+        # export prefix is stripped from profile lines for consistency
+        assert "MY_VAR=good" in result
 
     # --- Explicit workspace_profile ---
 

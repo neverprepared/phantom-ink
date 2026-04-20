@@ -2232,7 +2232,7 @@ async def api_delete_artifact(request: Request, key: str, _key=Depends(require_a
         log.error("artifact.delete.validation_failed", metadata={"key": key, "error": str(val_err)})
         raise HTTPException(status_code=400, detail=str(val_err))
     await _artifact_op(delete_artifact, validated_key)
-    return {"success": True, "key": validated_key}
+    return {"deleted": True, "key": validated_key}
 
 
 # ---------------------------------------------------------------------------
