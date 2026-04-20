@@ -221,31 +221,52 @@
     color: #ffffff;
   }
 
-  /* Paper theme — flat, thin borders, left-border active indicator */
+  /* Paper theme — white sidebar, thin borders, left-accent active */
   :global([data-theme="paper"]) .sidebar {
-    border-right: 1px solid #dddddd;
+    background: #ffffff;
+    border-right: 1px solid #ddd;
     box-shadow: none;
   }
 
   :global([data-theme="paper"]) .nav-btn {
-    color: var(--color-sidebar-text, #9a9a9a);
+    color: #9a9a9a;
     border-radius: 0;
+    padding: 12px 15px;
+    font-size: 14px;
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
   }
 
   :global([data-theme="paper"]) .nav-btn:hover {
-    background: var(--color-sidebar-hover, rgba(0, 0, 0, 0.02));
-    color: var(--color-text-primary);
+    background: #f6f6f6;
+    color: #333333;
   }
 
   :global([data-theme="paper"]) .nav-btn.active {
     background: transparent;
-    color: var(--color-sidebar-text-active, #333333);
-    box-shadow: inset 3px 0 0 var(--color-nav-active-border);
+    color: #333333;
+    box-shadow: inset 4px 0 0 #f5593d;
     border-radius: 0;
+    font-weight: 500;
+  }
+
+  :global([data-theme="paper"]) .nav-label {
+    font-size: 12px;
+  }
+
+  :global([data-theme="paper"]) .nav-shortcut {
+    display: none;
+  }
+
+  :global([data-theme="paper"]) .search-box {
+    background: #f6f6f6;
+    border-color: #ddd;
+    border-radius: 4px;
   }
 
   :global([data-theme="paper"]) .sidebar-footer {
-    border-top-color: #dddddd;
+    border-top: 1px solid #ddd;
   }
 
   .sidebar.collapsed {
