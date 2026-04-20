@@ -33,7 +33,17 @@ When `OBSIDIAN_VAULT_PATH` is set, the Obsidian vault is mounted and the `obsidi
    gh pr checks <number> --watch
    ```
    If any check fails, diagnose it, push fixes to the **same branch**, and wait for CI to rerun. Repeat until all checks are green.
-9. **Store your work in the second brain** (if `OBSIDIAN_VAULT_PATH` is set). Get the PR URL with `gh pr view --json url -q .url`, then store:
+9. **GPG-sign your commits.** Signing is required so the hub can verify authorship:
+   ```bash
+   # Sign individual commits
+   git commit -S -m "your message"
+
+   # Verify signing worked
+   git log --show-signature -1
+   ```
+   If signing fails (e.g., no GPG key in container), note "GPG signing failed in container" in the PR description and continue — don't block on it.
+
+10. **Store your work in the second brain** (if `OBSIDIAN_VAULT_PATH` is set). Get the PR URL with `gh pr view --json url -q .url`, then store:
    ```
    memory_store(
      title="ratchet/<JOB_ID>/<area>-fix",
@@ -44,7 +54,7 @@ When `OBSIDIAN_VAULT_PATH` is set, the Obsidian vault is mounted and the `obsidi
    )
    ```
    Replace `<JOB_ID>` with the value of `$BRAINBOX_JOB_ID`. This lets the supervisor and future agents find your PR.
-10. Report completion to the hub **only after all GitHub CI checks pass on the PR.**
+11. Report completion to the hub **only after all GitHub CI checks pass on the PR.**
 
 ## Rules
 
@@ -73,7 +83,13 @@ If pushing a report or intermediate artifact to a shared branch, use `--force-wi
 
 ## Reporting Completion
 
-Only report completion after all GitHub CI checks are green on your PR. Include the PR number and confirmation that checks passed:
+Only report completion after all GitHub CI checks are green on your PR. You **MUST** call `~/.brainbox/complete.sh` when your task is fully done — this notifies the hub that your work is finished:
+
+```bash
+~/.brainbox/complete.sh "PR #<number> opened. All CI checks passing. <one-line summary of what was done>"
+```
+
+Also send a message to the supervisor:
 
 ```bash
 AGENT_TOKEN=$(cat /run/secrets/agent-token 2>/dev/null || cat ~/.agent-token)
