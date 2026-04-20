@@ -523,12 +523,8 @@ Commands:
             --no-interactive        Disable interactive mode
         Note: Interactive selection by default if name is omitted
 
-    restore <name> [options]    Restore a profile from backup
-        Options:
-            --force                 Skip confirmation prompt
-            --dry-run              Preview restore without restoring
-            --file <file>           Restore only a specific file
-            --backup-date <date>    Restore from specific dated backup
+    restore <name>              ⚠️  NOT YET IMPLEMENTED — coming soon
+                                Running this command returns an error.
 
     info                        Show information about the current profile
     status                      Show direnv status
@@ -576,11 +572,6 @@ Examples:
 
     # Delete a profile
     shell-profiler delete old-project
-
-    # Restore from backup (will list available backups)
-    shell-profiler restore my-project
-    shell-profiler restore my-project --backup-date 2024-11-29_14-30-45
-    shell-profiler restore my-project --file .envrc
 
     # Show current shell-profiler info
     shell-profiler info
