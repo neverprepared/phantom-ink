@@ -56,8 +56,8 @@
     const lastEvent = brainboxEvents.last;
     if (!lastEvent) return;
     try {
-      const parsed = typeof lastEvent === 'string' ? JSON.parse(lastEvent) : lastEvent;
-      const action = parsed?.action ?? parsed?.event;
+      const evData = lastEvent.data as any;
+      const action = evData?.action ?? evData?.event ?? '';
       if (
         action === 'playbook.created' ||
         action === 'playbook.deleted' ||
@@ -68,7 +68,7 @@
       ) {
         loadPlaybooks();
       } else if (action === 'playbook.task_started' || action === 'playbook.task_done') {
-        const pid = parsed?.data?.playbook_id;
+        const pid = evData?.data?.playbook_id;
         if (pid && selected?.id === pid) {
           refreshSelected();
         }
