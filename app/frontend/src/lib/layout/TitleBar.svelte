@@ -126,7 +126,7 @@
     display: flex;
     align-items: center;
     gap: 2px;
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--color-surface-subtle);
     border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-lg);
     padding: 2px;
@@ -158,7 +158,7 @@
   }
 
   .tab.active {
-    background: rgba(245, 158, 11, 0.12);
+    background: var(--color-accent-soft);
     color: var(--color-accent);
     font-weight: 600;
   }
@@ -184,7 +184,7 @@
   }
   .tab-refresh:hover {
     color: var(--color-text-secondary);
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--color-surface-hover);
   }
 
   .titlebar-right {
@@ -214,7 +214,7 @@
 
   .conn-status.connected .conn-dot {
     background: var(--color-success);
-    box-shadow: 0 0 4px rgba(16, 185, 129, 0.4);
+    box-shadow: var(--shadow-status-active);
   }
 
   .conn-status.connected {
@@ -225,7 +225,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--color-surface-hover);
     border: 1px solid var(--color-border-secondary);
     border-radius: var(--radius-md);
     color: var(--color-text-tertiary);

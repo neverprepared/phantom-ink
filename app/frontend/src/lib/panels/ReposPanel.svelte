@@ -92,7 +92,7 @@
       const result = await a.ListWorktrees(repoName);
       worktrees = { ...worktrees, [repoName]: result ?? [] };
     } catch (err) {
-      console.error('Failed to fetch worktrees:', err);
+      notifications.error('Failed to fetch worktrees: ' + err.message);
     }
   }
 

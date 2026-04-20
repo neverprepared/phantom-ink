@@ -6,6 +6,7 @@
   import HubActivity from './HubActivity.svelte';
 
   let sessions = $state([]);
+  let loading = $state(true);
   let eventSource = null;
   let abortController = null;
 
@@ -26,6 +27,8 @@
       if (err.name !== 'AbortError') {
         console.error('Failed to fetch sessions:', err);
       }
+    } finally {
+      loading = false;
     }
   }
 
@@ -62,6 +65,9 @@
   <h1><span class="accent">dashboard</span></h1>
 </header>
 
+{#if loading}
+  <div class="loading">Loading sessions…</div>
+{:else}
 <StatsGrid
   total={sessions.length}
   active={activeSessions.length}
@@ -73,8 +79,15 @@
   <MetricsTable />
   <HubActivity />
 </div>
+{/if}
 
 <style>
+  .loading {
+    color: var(--color-text-secondary);
+    font-size: 14px;
+    padding: 24px 0;
+  }
+
   header {
     display: flex;
     justify-content: space-between;

@@ -35,7 +35,7 @@
   .backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: var(--color-overlay);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -52,7 +52,7 @@
     max-width: 480px;
     max-height: 80vh;
     overflow-y: auto;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+    box-shadow: var(--shadow-modal);
     animation: appear 0.15s ease;
   }
 
