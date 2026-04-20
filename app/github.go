@@ -221,8 +221,12 @@ func (a *App) GetRepoActivity(repoURL string) ([]RepoEvent, error) {
 		if err := json.Unmarshal([]byte(line), &e); err != nil {
 			continue
 		}
+		firstCommitMsg := ""
+		if len(e.Payload.Commits) > 0 {
+			firstCommitMsg = e.Payload.Commits[0].Message
+		}
 		summary := summarizeEvent(e.Type, e.Payload.Action, e.Payload.Ref,
-			e.Payload.Commits, e.Payload.PullRequest.Title, e.Payload.Issue.Title)
+			firstCommitMsg, e.Payload.PullRequest.Title, e.Payload.Issue.Title)
 		events = append(events, RepoEvent{
 			Type:      e.Type,
 			Actor:     e.Actor,
@@ -233,12 +237,12 @@ func (a *App) GetRepoActivity(repoURL string) ([]RepoEvent, error) {
 	return events, nil
 }
 
-func summarizeEvent(typ, action, ref string, commits []struct{ Message string }, prTitle, issueTitle string) string {
+func summarizeEvent(typ, action, ref, firstCommitMsg, prTitle, issueTitle string) string {
 	switch typ {
 	case "PushEvent":
 		branch := strings.TrimPrefix(ref, "refs/heads/")
-		if len(commits) > 0 {
-			msg := strings.SplitN(commits[0].Message, "\n", 2)[0]
+		if firstCommitMsg != "" {
+			msg := strings.SplitN(firstCommitMsg, "\n", 2)[0]
 			return "Pushed to " + branch + ": " + msg
 		}
 		return "Pushed to " + branch
