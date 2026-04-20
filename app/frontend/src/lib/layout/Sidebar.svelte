@@ -165,6 +165,89 @@
     border-top-color: rgba(0, 0, 0, 0.04);
   }
 
+  /* Vision theme — deep space with blue glow */
+  :global([data-theme="vision"]) .sidebar {
+    border-right: none;
+    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.4);
+  }
+
+  :global([data-theme="vision"]) .nav-btn {
+    color: var(--color-sidebar-text, rgba(255, 255, 255, 0.6));
+  }
+
+  :global([data-theme="vision"]) .nav-btn:hover {
+    background: var(--color-sidebar-hover, rgba(255, 255, 255, 0.06));
+    color: var(--color-sidebar-text-active, #ffffff);
+  }
+
+  :global([data-theme="vision"]) .nav-btn.active {
+    background: var(--color-nav-active-bg);
+    color: #ffffff;
+    box-shadow: inset 3px 0 0 var(--color-nav-active-border), 0 0 12px rgba(0, 117, 255, 0.2);
+  }
+
+  :global([data-theme="vision"]) .nav-shortcut {
+    color: rgba(255, 255, 255, 0.3);
+  }
+
+  :global([data-theme="vision"]) .search-box {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  :global([data-theme="vision"]) .search-input {
+    color: #ffffff;
+  }
+
+  :global([data-theme="vision"]) .search-input::placeholder {
+    color: rgba(255, 255, 255, 0.3);
+  }
+
+  :global([data-theme="vision"]) .search-icon,
+  :global([data-theme="vision"]) .search-clear {
+    color: rgba(255, 255, 255, 0.3);
+  }
+
+  :global([data-theme="vision"]) .sidebar-footer {
+    border-top-color: rgba(255, 255, 255, 0.06);
+  }
+
+  :global([data-theme="vision"]) .collapse-btn {
+    color: rgba(255, 255, 255, 0.4);
+  }
+
+  :global([data-theme="vision"]) .collapse-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #ffffff;
+  }
+
+  /* Paper theme — flat, thin borders, left-border active indicator */
+  :global([data-theme="paper"]) .sidebar {
+    border-right: 1px solid #dddddd;
+    box-shadow: none;
+  }
+
+  :global([data-theme="paper"]) .nav-btn {
+    color: var(--color-sidebar-text, #9a9a9a);
+    border-radius: 0;
+  }
+
+  :global([data-theme="paper"]) .nav-btn:hover {
+    background: var(--color-sidebar-hover, rgba(0, 0, 0, 0.02));
+    color: var(--color-text-primary);
+  }
+
+  :global([data-theme="paper"]) .nav-btn.active {
+    background: transparent;
+    color: var(--color-sidebar-text-active, #333333);
+    box-shadow: inset 3px 0 0 var(--color-nav-active-border);
+    border-radius: 0;
+  }
+
+  :global([data-theme="paper"]) .sidebar-footer {
+    border-top-color: #dddddd;
+  }
+
   .sidebar.collapsed {
     width: var(--sidebar-collapsed-width);
   }

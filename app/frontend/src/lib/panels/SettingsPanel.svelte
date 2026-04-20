@@ -107,6 +107,14 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c-1.2 0-2.4.6-3 1.7A3.6 3.6 0 0 0 4.6 9c-1 .6-1.7 1.8-1.5 3.2.1 1.4 1.1 2.5 2.3 2.9l.3.1h12.5c1.5-.2 2.7-1.5 2.8-3 0-1.3-.7-2.5-1.8-3.1A4 4 0 0 0 15 4.7 3.7 3.7 0 0 0 12 3z"/></svg>
             muse
           </button>
+          <button class="theme-opt" class:active={theme === 'vision'} onclick={() => setTheme('vision')}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            vision
+          </button>
+          <button class="theme-opt" class:active={theme === 'paper'} onclick={() => setTheme('paper')}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            paper
+          </button>
           <button class="theme-opt" class:active={theme === 'auto'} onclick={() => setTheme('auto')}>
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14z" fill="currentColor" opacity="0.3"/></svg>
             auto

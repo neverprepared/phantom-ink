@@ -230,6 +230,134 @@
 }
 
 /* ==========================================================================
+   Vision theme — inspired by Vision UI Dashboard React
+   Deep space dark with glass morphism, neon blue/purple accents, gradient cards
+   ========================================================================== */
+
+[data-theme="vision"] {
+  /* Backgrounds — deep navy/space */
+  --color-bg-primary: #0f1535;
+  --color-bg-secondary: #1a1f4e;
+  --color-bg-tertiary: #1a2038;
+  --color-bg-card: linear-gradient(127deg, rgba(24, 29, 60, 0.9) 0%, rgba(17, 20, 45, 0.7) 100%);
+  --color-bg-sidebar: linear-gradient(180deg, #1a1f4e 0%, #0f1535 100%);
+
+  /* Borders — glassy, semi-transparent */
+  --color-border-primary: rgba(255, 255, 255, 0.08);
+  --color-border-secondary: rgba(255, 255, 255, 0.12);
+
+  /* Text — cool white/gray */
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #a0aec0;
+  --color-text-tertiary: #718096;
+  --color-text-muted: #4a5568;
+
+  /* Accent — electric cyan-blue gradient feel */
+  --color-accent: #0075ff;
+  --color-accent-soft: rgba(0, 117, 255, 0.15);
+  --color-focus: #0075ff;
+
+  /* Status — vivid neon */
+  --color-success: #01b574;
+  --color-error: #e31a1a;
+  --color-warning: #ffb547;
+  --color-info: #0075ff;
+
+  /* Sidebar */
+  --color-sidebar-text: rgba(255, 255, 255, 0.6);
+  --color-sidebar-text-active: #ffffff;
+  --color-sidebar-hover: rgba(255, 255, 255, 0.06);
+
+  /* Surface states — glass effect */
+  --color-surface-subtle: rgba(255, 255, 255, 0.02);
+  --color-surface-hover: rgba(255, 255, 255, 0.05);
+  --color-surface-active: rgba(255, 255, 255, 0.08);
+  --color-overlay: rgba(0, 0, 0, 0.7);
+  --color-nav-active-bg: rgba(0, 117, 255, 0.15);
+  --color-nav-active-border: #0075ff;
+  --color-dot-offline: #4a5568;
+
+  /* Shadows — deep, colored glow */
+  --shadow-card: 0 4px 24px 0 rgba(0, 0, 0, 0.4);
+  --shadow-card-hover: 0 8px 32px 0 rgba(0, 117, 255, 0.15), 0 4px 16px rgba(0, 0, 0, 0.3);
+  --shadow-modal: 0 24px 48px -12px rgba(0, 0, 0, 0.5);
+  --shadow-button: 0 4px 12px rgba(0, 117, 255, 0.2);
+  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-status-active: 0 0 8px rgba(1, 181, 116, 0.5);
+
+  /* Radius — generous, modern */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+}
+
+/* ==========================================================================
+   Paper theme — inspired by Paper Dashboard (BS3)
+   Light gray sidebar, thin line borders, flat/minimal, muted pastels
+   ========================================================================== */
+
+[data-theme="paper"] {
+  /* Backgrounds — warm off-white */
+  --color-bg-primary: #f4f3ef;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #eeeee9;
+  --color-bg-card: #ffffff;
+  --color-bg-sidebar: #f4f3ef;
+
+  /* Borders — thin, visible lines (paper style) */
+  --color-border-primary: #dddddd;
+  --color-border-secondary: #e3e3e3;
+
+  /* Text — dark gray, readable */
+  --color-text-primary: #333333;
+  --color-text-secondary: #666666;
+  --color-text-tertiary: #9a9a9a;
+  --color-text-muted: #cccccc;
+
+  /* Accent — paper dashboard teal-blue */
+  --color-accent: #51cbce;
+  --color-accent-soft: rgba(81, 203, 206, 0.1);
+  --color-focus: #51cbce;
+
+  /* Status — paper dashboard muted pastels */
+  --color-success: #6bd098;
+  --color-error: #f17e5d;
+  --color-warning: #fcc468;
+  --color-info: #51bcda;
+
+  /* Sidebar — light with thin left border active */
+  --color-sidebar-text: #9a9a9a;
+  --color-sidebar-text-active: #333333;
+  --color-sidebar-hover: rgba(0, 0, 0, 0.02);
+
+  /* Surface states */
+  --color-surface-subtle: rgba(0, 0, 0, 0.01);
+  --color-surface-hover: rgba(0, 0, 0, 0.02);
+  --color-surface-active: rgba(0, 0, 0, 0.04);
+  --color-overlay: rgba(0, 0, 0, 0.3);
+  --color-nav-active-bg: transparent;
+  --color-nav-active-border: #51cbce;
+  --color-dot-offline: #cccccc;
+
+  /* Shadows — minimal, almost flat */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 4px rgba(0, 0, 0, 0.02);
+  --shadow-card-hover: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-modal: 0 8px 24px -4px rgba(0, 0, 0, 0.1);
+  --shadow-button: none;
+  --shadow-inset: none;
+
+  /* Radius — tight, understated */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+
+  /* Typography — Helvetica-style */
+  --font-ui: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+/* ==========================================================================
    Platform overrides
    ========================================================================== */
 
