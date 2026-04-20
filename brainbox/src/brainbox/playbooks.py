@@ -302,24 +302,27 @@ def load_builtins() -> int:
     """Load built-in playbook templates from brainbox/playbooks/*.md.
 
     Called once at API startup. Returns the number of playbooks loaded.
-    Skips files whose name (slug) is already loaded (idempotent).
+    Skips files whose display name already exists (idempotent across restarts).
+    Also marks any restored-from-state playbooks with matching names as builtins
+    so they cannot be deleted.
     """
     pb_dir = _builtin_dir()
     if not pb_dir.is_dir():
         return 0
 
     loaded = 0
-    existing_names = {pb.name for pb in _playbooks.values()}
+    existing_names = {pb.name: pb.id for pb in _playbooks.values()}
 
     for md_file in sorted(pb_dir.glob("*.md")):
-        name = md_file.stem  # e.g. "self-improvement"
-        if name in existing_names:
-            continue
         try:
             markdown = md_file.read_text()
-            # Extract title from first heading, fall back to filename
             title_match = re.match(r"^#\s+(.+)$", markdown, re.MULTILINE)
-            display_name = title_match.group(1).strip() if title_match else name.replace("-", " ").title()
+            display_name = title_match.group(1).strip() if title_match else md_file.stem.replace("-", " ").title()
+
+            if display_name in existing_names:
+                # Already exists (restored from state) — mark it as builtin
+                _builtin_ids.add(existing_names[display_name])
+                continue
 
             pb = Playbook(
                 name=display_name,
@@ -329,7 +332,7 @@ def load_builtins() -> int:
             )
             _playbooks[pb.id] = pb
             _builtin_ids.add(pb.id)
-            existing_names.add(display_name)
+            existing_names[display_name] = pb.id
             loaded += 1
             log.info(
                 "playbook.builtin_loaded",
