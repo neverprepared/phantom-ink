@@ -9,19 +9,20 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 import subprocess
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
-from pathlib import Path
-
-from .config import settings
 from .backends.docker import _docker
 from .backends.docker.cosign import CosignVerificationError, verify_image, verify_image_keyless
 from .backends.docker.hardening import get_hardening_kwargs, get_legacy_kwargs
+from .config import settings
 from .log import get_logger
 from .models import SessionContext, SessionState, Token
+from .utils import now_ms as _now_ms, iso_now as _iso_now
 
 # ---------------------------------------------------------------------------
 # Module state
@@ -29,6 +30,7 @@ from .models import SessionContext, SessionState, Token
 
 _sessions: dict[str, SessionContext] = {}
 _executor = ThreadPoolExecutor(max_workers=4)
+_port_lock: asyncio.Lock | None = None
 
 log = get_logger()
 
@@ -487,7 +489,7 @@ def _resolve_profile_env(
         var_name = assignment.split("=", 1)[0].strip()
         if var_name in _HOST_ONLY_VARS:
             continue
-        lines.append(stripped)
+        lines.append(assignment)
 
     return "\n".join(lines)
 
@@ -675,7 +677,11 @@ async def provision(
     else:
         # Single unified image — role is injected as BRAINBOX_ROLE env var
         image_or_template = settings.image or "brainbox"
-        resolved_port = port or await _run(_find_available_port)
+        global _port_lock
+        if _port_lock is None:
+            _port_lock = asyncio.Lock()
+        async with _port_lock:
+            resolved_port = port or await _run(_find_available_port)
 
     # Resolve role prompt and teams configuration
     from .registry import get_agent
@@ -908,7 +914,7 @@ async def configure(ctx_or_name: SessionContext | str) -> SessionContext:
 
     ctx.secrets.update(resolved)
     if not ctx.hardened:
-        ctx.env_content = "\n".join(f"export {k}={v}" for k, v in resolved.items())
+        ctx.env_content = "\n".join(f"export {k}={shlex.quote(v)}" for k, v in resolved.items())
 
     # Agent token — store only the UUID so `Authorization: Bearer <content>` works
     if ctx.token:
@@ -1009,7 +1015,7 @@ async def recycle(ctx_or_name: SessionContext | str, reason: str = "manual") -> 
 
     # Clean up host worktree if one was created for this session
     if ctx.worktree_path:
-        _remove_host_worktree(ctx.worktree_path)
+        await _remove_host_worktree(ctx.worktree_path)
 
     return ctx
 
@@ -1019,29 +1025,33 @@ async def recycle(ctx_or_name: SessionContext | str, reason: str = "manual") -> 
 # ---------------------------------------------------------------------------
 
 
-def _create_host_worktree(repo_path: str, branch: str) -> str:
+async def _create_host_worktree(repo_path: str, branch: str) -> str:
     """Create a git worktree on the host and return its path."""
     wt_id = uuid.uuid4().hex[:8]
     wt_path = f"/tmp/brainbox-wt-{wt_id}"
-    subprocess.run(
-        ["git", "-C", repo_path, "worktree", "add", "-B", branch, wt_path],
-        check=True,
-        capture_output=True,
-        text=True,
+    proc = await asyncio.create_subprocess_exec(
+        "git", "-C", repo_path, "worktree", "add", "-B", branch, wt_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, "git worktree add", stderr=stderr)
     log.info("worktree.created", metadata={"path": wt_path, "branch": branch})
     return wt_path
 
 
-def _remove_host_worktree(wt_path: str) -> None:
+async def _remove_host_worktree(wt_path: str) -> None:
     """Remove a host git worktree, ignoring errors."""
     try:
-        subprocess.run(
-            ["git", "worktree", "remove", "--force", wt_path],
-            check=True,
-            capture_output=True,
-            text=True,
+        proc = await asyncio.create_subprocess_exec(
+            "git", "worktree", "remove", "--force", wt_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
+        await proc.communicate()
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, "git worktree remove")
         log.info("worktree.removed", metadata={"path": wt_path})
     except Exception as exc:
         log.warning("worktree.remove_failed", metadata={"path": wt_path, "error": str(exc)})
@@ -1072,10 +1082,10 @@ async def _inject_repo_clone(container: Any, repo: Any) -> None:
             host_path = clone_url[len("https://") :]
             clone_cmd = (
                 ". /home/developer/.env 2>/dev/null || true"
-                f" && git clone https://x-access-token:${{GH_TOKEN}}@{host_path} {clone_dest}"
+                f" && git clone https://x-access-token:${{GH_TOKEN}}@{shlex.quote(host_path)} {shlex.quote(clone_dest)}"
             )
         else:
-            clone_cmd = f"git clone {clone_url} {clone_dest}"
+            clone_cmd = f"git clone {clone_url} {shlex.quote(clone_dest)}"
 
         result = await _run(
             container.exec_run,
@@ -1165,7 +1175,7 @@ async def run_pipeline(
     # Pre-provision: worktree-mount creates a host worktree and mounts it
     worktree_path: str | None = None
     if repo is not None and repo.mode == "worktree-mount":
-        worktree_path = _create_host_worktree(repo.url, repo.branch)
+        worktree_path = await _create_host_worktree(repo.url, repo.branch)
         volume_mounts = list(volume_mounts or [])
         volume_mounts.append(f"{worktree_path}:{repo.container_path}:rw")
 
@@ -1283,10 +1293,9 @@ def recover_sessions_from_docker() -> int:
     Returns the number of sessions recovered.
     """
     try:
-        import docker as _docker_sdk
         from .models import SessionContext, SessionState
 
-        client = _docker_sdk.from_env()
+        client = _docker()
         containers = client.containers.list(
             filters={"label": "brainbox.managed=true", "status": "running"}
         )
@@ -1349,8 +1358,3 @@ def recover_sessions_from_docker() -> int:
     return recovered
 
 
-# ---------------------------------------------------------------------------
-# Utilities
-# ---------------------------------------------------------------------------
-
-from .utils import now_ms as _now_ms, iso_now as _iso_now

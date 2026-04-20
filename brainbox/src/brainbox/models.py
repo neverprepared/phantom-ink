@@ -21,7 +21,7 @@ class AgentDefinition(BaseModel):
     image: str
     description: str = ""
     category: str = "general"  # e.g. "general", "development", "orchestration"
-    spawn_mode: str = "container"  # "container" | "subagent"
+    spawn_mode: Literal["container", "subagent"] = "container"
     capabilities: list[str] = Field(default_factory=list)
     hardened: bool = False
     role_prompt: str | None = None  # Path to role prompt markdown (relative to agents dir)
@@ -29,7 +29,7 @@ class AgentDefinition(BaseModel):
     repo_url: str | None = None  # GitHub repo URL for repo-specific agents
     # Per-provider model/effort defaults (override global config when set)
     claude_model: str | None = None
-    claude_effort: str | None = None  # "low" | "medium" | "high"
+    claude_effort: Literal["low", "medium", "high"] | None = None
     codex_model: str | None = None
     ollama_model: str | None = None
 
@@ -83,7 +83,7 @@ class SessionContext(BaseModel):
     health_failures: int = 0
     token: Token | None = None
     env_content: str | None = None  # legacy mode .env body
-    llm_provider: str = "claude"  # "claude", "ollama", or "codex"
+    llm_provider: Literal["claude", "ollama", "codex"] = "claude"
     llm_model: str | None = None  # e.g. "qwen3-coder"
     llm_effort: str | None = None  # claude only: "low" | "medium" | "high"
     ollama_host: str | None = None  # per-session override
@@ -92,7 +92,7 @@ class SessionContext(BaseModel):
     workspace_profile: str | None = None  # Caller's profile name
     workspace_home: str | None = None  # Caller's workspace home path
     # Backend-specific fields
-    backend: str = "docker"  # "docker" or "utm"
+    backend: Literal["docker", "utm"] = "docker"
     docker_host: str | None = None  # Docker daemon host (None = local socket)
     ports: dict[str, int] | None = None  # Additional port mappings (container_port: host_port)
     ssh_port: int | None = None  # UTM only: SSH port for VM access (deprecated - use vm_ip)
@@ -101,7 +101,7 @@ class SessionContext(BaseModel):
     vm_path: str | None = None  # UTM only: Full path to .utm package
     vm_ip: str | None = None  # UTM only: VM's IP address (bridged networking)
     mac_address: str | None = None  # UTM only: VM's MAC address for IP discovery
-    guest_os: str = "linux"  # UTM only: guest OS type — "linux", "macos", or "windows"
+    guest_os: Literal["linux", "macos", "windows"] = "linux"  # UTM only
     worktree_path: str | None = (
         None  # Host worktree path created for this session (worktree-mount mode)
     )
@@ -229,6 +229,7 @@ class RegistryState(BaseModel):
 
 class RouterState(BaseModel):
     tasks: list[tuple[str, dict[str, Any]]] = Field(default_factory=list)
+    repos: list[tuple[str, dict[str, Any]]] = Field(default_factory=list)
 
 
 class MessagesState(BaseModel):

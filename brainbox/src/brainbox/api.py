@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections as _collections
 import json
 import os
 import secrets
@@ -212,10 +213,6 @@ def _broadcast_to_channel(channel_id: str, data: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Task tracking for async execution
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
 # Docker events watcher
 # ---------------------------------------------------------------------------
 
@@ -237,7 +234,10 @@ async def _watch_docker_events() -> None:
             for event in client.events(filters={"label": "brainbox.managed=true"}, decode=True):
                 action = event.get("Action", "")
                 if action in ("create", "start", "stop", "die", "destroy"):
-                    loop.call_soon_threadsafe(_broadcast_sse, action)
+                    loop.call_soon_threadsafe(
+                        _broadcast_sse,
+                        json.dumps({"action": action, "source": "docker"}),
+                    )
             return True
         except Exception as e:
             log.warning(
@@ -370,6 +370,10 @@ async def lifespan(app: FastAPI):
         _docker_events_task.cancel()
     if _metrics_sample_task:
         _metrics_sample_task.cancel()
+    await asyncio.gather(
+        *[t for t in (_docker_events_task, _metrics_sample_task) if t],
+        return_exceptions=True,
+    )
 
     await hub_shutdown()
 
@@ -386,7 +390,7 @@ _cors_origins = settings.cors_origins or [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "DELETE", "PATCH"],
     allow_headers=["Authorization", "Content-Type", "X-Request-Id", "X-API-Key"],
 )
 
@@ -1015,6 +1019,7 @@ async def _tmux_send_and_wait(
     prompt: str,
     timeout: float,
     working_dir: str | None = None,
+    docker_host: str | None = None,
 ) -> str:
     """Send a prompt to the container's tmux session and wait for completion.
 
@@ -1023,7 +1028,7 @@ async def _tmux_send_and_wait(
     *timeout* seconds.
     """
     loop = asyncio.get_running_loop()
-    container = _docker().containers.get(container_name)
+    container = _docker(docker_host).containers.get(container_name)
 
     # Clear any existing input
     await loop.run_in_executor(
@@ -1153,9 +1158,13 @@ def _tmux_parse_output(raw_output: str, start_marker: str, end_marker: str) -> s
 
 async def _query_via_tmux(request: Request, name: str, body: QuerySessionRequest):
     """Query container via tmux (legacy fallback)."""
+    from .lifecycle import get_session
+
     start_time = time.time()
 
-    client = _docker()
+    ctx = get_session(name)
+    session_docker_host = ctx.docker_host if ctx else None
+    client = _docker(session_docker_host)
     try:
         container_name = _find_container_name(client, name)
     except HTTPException:
@@ -1193,6 +1202,7 @@ async def _query_via_tmux(request: Request, name: str, body: QuerySessionRequest
             body.prompt,
             body.timeout,
             working_dir=body.working_dir,
+            docker_host=session_docker_host,
         )
 
         # Calculate duration
@@ -1370,8 +1380,6 @@ async def api_container_metrics():
 # ---------------------------------------------------------------------------
 # Metrics history — in-memory ring buffer
 # ---------------------------------------------------------------------------
-
-import collections as _collections
 
 _metrics_history: _collections.deque[dict[str, Any]] = _collections.deque(maxlen=360)
 _session_metrics_history: dict[str, _collections.deque[dict[str, Any]]] = {}
@@ -1789,13 +1797,20 @@ async def hub_create_channel(body: CreateChannelRequest, request: Request, _key=
             container_name = _find_container_name(client, p.session_name)
             container = client.containers.get(container_name)
             loop = asyncio.get_running_loop()
-            # Write CHANNEL.md into container
-            escaped = bootstrap.replace("'", "'\\''")
+            # Write CHANNEL.md into container using binary copy (no shell, no injection risk)
+            import io
+            import tarfile
+
+            content_bytes = bootstrap.encode("utf-8")
+            tarstream = io.BytesIO()
+            with tarfile.open(fileobj=tarstream, mode="w") as tar:
+                info = tarfile.TarInfo(name="CHANNEL.md")
+                info.size = len(content_bytes)
+                tar.addfile(info, io.BytesIO(content_bytes))
+            tarstream.seek(0)
             await loop.run_in_executor(
                 None,
-                lambda c=container, b=escaped: c.exec_run(
-                    ["sh", "-c", f"printf '%s' '{b}' > /home/developer/CHANNEL.md"]
-                ),
+                lambda c=container, ts=tarstream: c.put_archive("/home/developer", ts),
             )
             # Send bootstrap prompt to Claude via tmux so the agent starts participating
             tmux_prompt = (

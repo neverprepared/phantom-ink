@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from .config import settings
 from .log import get_logger
-from .models import Repository, Task, TaskStatus
+from .models import Repository, SessionState, Task, TaskStatus
 from .policy import evaluate_task_assignment
 from .registry import get_agent, issue_token, revoke_token
 from .utils import now_ms as _now_ms
@@ -200,7 +200,11 @@ def list_tasks(
 ) -> list[Task]:
     result = list(_tasks.values())
     if status:
-        result = [t for t in result if t.status == status]
+        try:
+            status_enum = TaskStatus(status)
+        except ValueError:
+            raise ValueError(f"Invalid status '{status}'")
+        result = [t for t in result if t.status == status_enum]
     if agent_name:
         result = [t for t in result if t.agent_name == agent_name]
     result.sort(key=lambda t: t.created_at, reverse=True)
@@ -246,6 +250,10 @@ async def fail_task(task_id: str, error: str | None = None) -> Task:
     task = _tasks.get(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
+    if task.status not in (TaskStatus.RUNNING, TaskStatus.PENDING):
+        raise ValueError(
+            f"Task '{task_id}' cannot be failed from status '{task.status}'"
+        )
 
     task.status = TaskStatus.FAILED
     task.error = error or "Unknown error"
@@ -308,8 +316,6 @@ async def check_running_tasks() -> None:
                 await fail_task(task.id, "Container no longer exists")
             continue
 
-        from .models import SessionState
-
         if session.state == SessionState.RECYCLED:
             await fail_task(task.id, "Container was recycled externally")
 
@@ -324,17 +330,26 @@ async def _restart_persistent_task(task: Task) -> None:
 
     # Reuse session name for continuity
     ttl = settings.hub.persistent_token_ttl
+    old_token_id = task.token_id
     token = issue_token(task.agent_name, task.id, ttl=ttl)
     task.token_id = token.token_id
     task.updated_at = _now_ms()
 
-    await lifecycle.run_pipeline(
-        session_name=task.session_name,
-        role=task.agent_name,
-        hardened=agent_def.hardened,
-        token=token,
-        repo_url=task.repo_url,
-    )
+    try:
+        await lifecycle.run_pipeline(
+            session_name=task.session_name,
+            role=task.agent_name,
+            hardened=agent_def.hardened,
+            token=token,
+            repo_url=task.repo_url,
+        )
+    except Exception:
+        revoke_token(token.token_id)
+        task.token_id = old_token_id
+        raise
+
+    if old_token_id:
+        revoke_token(old_token_id)
 
     log.info(
         "router.persistent_agent_restarted",
