@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -112,6 +114,106 @@ func (a *App) GetContainerDiskUsage() ([]ContainerDiskStat, error) {
 		})
 	}
 	return stats, nil
+}
+
+// DiskCategory represents disk usage for one category.
+type DiskCategory struct {
+	Name  string `json:"name"`
+	Bytes int64  `json:"bytes"`
+	Label string `json:"label"` // human-readable e.g. "1.2 GB"
+}
+
+// DiskBreakdown is the full disk usage summary.
+type DiskBreakdown struct {
+	Total      int64          `json:"total_bytes"`
+	TotalLabel string         `json:"total_label"`
+	Categories []DiskCategory `json:"categories"`
+}
+
+func humanBytes(b int64) string {
+	switch {
+	case b >= 1_000_000_000_000:
+		return fmt.Sprintf("%.1f TB", float64(b)/1_000_000_000_000)
+	case b >= 1_000_000_000:
+		return fmt.Sprintf("%.1f GB", float64(b)/1_000_000_000)
+	case b >= 1_000_000:
+		return fmt.Sprintf("%.1f MB", float64(b)/1_000_000)
+	case b >= 1_000:
+		return fmt.Sprintf("%.1f KB", float64(b)/1_000)
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
+}
+
+// dirSize returns total size of all files under a directory.
+func dirSize(path string) int64 {
+	var total int64
+	filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		total += info.Size()
+		return nil
+	})
+	return total
+}
+
+// GetDiskBreakdown returns disk usage grouped by category:
+// containers (writable layers), images, sessions data, workspace config.
+func (a *App) GetDiskBreakdown() DiskBreakdown {
+	var cats []DiskCategory
+
+	// 1. Container writable layers
+	var containerTotal int64
+	if disks, err := a.GetContainerDiskUsage(); err == nil {
+		for _, d := range disks {
+			containerTotal += d.WritableSizeBytes
+		}
+	}
+	cats = append(cats, DiskCategory{Name: "containers", Bytes: containerTotal, Label: humanBytes(containerTotal)})
+
+	// 2. Docker images — parse `docker system df --format`
+	var imageBytes int64
+	if out, err := exec.Command("docker", "system", "df", "--format", "{{.Type}}\t{{.Size}}").Output(); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			parts := strings.SplitN(line, "\t", 2)
+			if len(parts) == 2 && parts[0] == "Images" {
+				imageBytes = parseDockerSize(strings.TrimSpace(parts[1]))
+			}
+		}
+	}
+	cats = append(cats, DiskCategory{Name: "images", Bytes: imageBytes, Label: humanBytes(imageBytes)})
+
+	// 3. Sessions data — brainbox sessions directory
+	var sessionsBytes int64
+	home, _ := os.UserHomeDir()
+	configHome := os.Getenv("XDG_CONFIG_HOME")
+	if configHome == "" {
+		configHome = filepath.Join(home, ".config")
+	}
+	sessionsDir := filepath.Join(configHome, "phantom-ink", "brainbox", "sessions")
+	sessionsBytes = dirSize(sessionsDir)
+	cats = append(cats, DiskCategory{Name: "sessions", Bytes: sessionsBytes, Label: humanBytes(sessionsBytes)})
+
+	// 4. Workspace config — .claude directory
+	var configBytes int64
+	claudeDir := os.Getenv("CLAUDE_CONFIG_DIR")
+	if claudeDir == "" {
+		claudeDir = filepath.Join(home, ".claude")
+	}
+	configBytes = dirSize(claudeDir)
+	cats = append(cats, DiskCategory{Name: "config", Bytes: configBytes, Label: humanBytes(configBytes)})
+
+	var total int64
+	for _, c := range cats {
+		total += c.Bytes
+	}
+
+	return DiskBreakdown{
+		Total:      total,
+		TotalLabel: humanBytes(total),
+		Categories: cats,
+	}
 }
 
 // SystemInfo holds system-level CPU and memory totals.

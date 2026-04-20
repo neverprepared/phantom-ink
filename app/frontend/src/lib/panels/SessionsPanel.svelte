@@ -17,6 +17,7 @@
   let agents = $state<any[]>([]);
   let localProcesses = $state<any[]>([]);
   let diskUsageMap = $state<Record<string, string>>({}); // container name → writable size
+  let diskBreakdown = $state<any | null>(null);
   let sessionHistory = $state<Record<string, any[]>>({});
   let history = $state<any[]>([]);
   let aggregateHoverIdx = $state<number | null>(null);
@@ -147,16 +148,18 @@
     const a = await getApi();
     if (!a) { loading = false; return; }
     try {
-      const [sess, hubState, procs, diskStats] = await Promise.all([
+      const [sess, hubState, procs, diskStats, diskBk] = await Promise.all([
         a.GetSessions(),
         a.GetHubState(),
         a.FindClaudeProcesses(),
         a.GetContainerDiskUsage().catch(() => []),
+        a.GetDiskBreakdown().catch(() => null),
       ]);
       allSessions = sess ?? [];
       tasks = hubState?.tasks ?? [];
       agents = hubState?.agents ?? [];
       localProcesses = procs ?? [];
+      diskBreakdown = diskBk;
       const dm: Record<string, string> = {};
       for (const d of (diskStats ?? [])) {
         dm[d.name] = d.writable_size;
@@ -487,6 +490,37 @@
         onHover={(idx) => aggregateHoverIdx = idx}
         onHoverEnd={() => aggregateHoverIdx = null}
       />
+    </div>
+  {/if}
+
+  {#if diskBreakdown}
+    <div class="disk-breakdown">
+      <div class="disk-total">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
+        <span class="disk-total-label">{diskBreakdown.total_label}</span>
+        <span class="disk-total-sub">total disk</span>
+      </div>
+      <div class="disk-bar">
+        {#each diskBreakdown.categories as cat (cat.name)}
+          {@const pct = diskBreakdown.total_bytes > 0 ? (cat.bytes / diskBreakdown.total_bytes) * 100 : 0}
+          {#if pct > 0}
+            <div
+              class="disk-segment disk-{cat.name}"
+              style="width: {Math.max(pct, 2)}%"
+              title="{cat.name}: {cat.label}"
+            ></div>
+          {/if}
+        {/each}
+      </div>
+      <div class="disk-legend">
+        {#each diskBreakdown.categories as cat (cat.name)}
+          <span class="disk-legend-item">
+            <span class="disk-dot disk-{cat.name}"></span>
+            <span class="disk-cat-name">{cat.name}</span>
+            <span class="disk-cat-size">{cat.label}</span>
+          </span>
+        {/each}
+      </div>
     </div>
   {/if}
 
@@ -1665,4 +1699,80 @@
     font-size: 13px;
     background: #000;
   }
+  /* Disk breakdown */
+  .disk-breakdown {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 20px;
+    padding: 10px 14px;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-lg);
+  }
+
+  .disk-total {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    color: var(--color-text-tertiary);
+  }
+
+  .disk-total-label {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--color-text-primary);
+    font-family: var(--font-mono);
+  }
+
+  .disk-total-sub {
+    font-size: 11px;
+    color: var(--color-text-tertiary);
+  }
+
+  .disk-bar {
+    flex: 1;
+    display: flex;
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: var(--color-bg-tertiary, rgba(255,255,255,0.06));
+    gap: 1px;
+  }
+
+  .disk-segment { min-width: 3px; border-radius: 2px; }
+  .disk-segment.disk-containers { background: var(--color-info); }
+  .disk-segment.disk-images { background: var(--color-accent); }
+  .disk-segment.disk-sessions { background: var(--color-success); }
+  .disk-segment.disk-config { background: #d8b4fe; }
+
+  .disk-legend {
+    display: flex;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .disk-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--color-text-tertiary);
+  }
+
+  .disk-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .disk-dot.disk-containers { background: var(--color-info); }
+  .disk-dot.disk-images { background: var(--color-accent); }
+  .disk-dot.disk-sessions { background: var(--color-success); }
+  .disk-dot.disk-config { background: #d8b4fe; }
+
+  .disk-cat-name { font-weight: 500; }
+  .disk-cat-size { font-family: var(--font-mono); font-size: 10px; }
 </style>
