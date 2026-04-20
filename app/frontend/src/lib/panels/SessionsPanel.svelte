@@ -581,6 +581,7 @@
                     width={80}
                     height={20}
                     compact={true}
+                    strokeWidth={0.5}
                   />
                 </div>
                 <div class="card-chart">
@@ -597,6 +598,7 @@
                     width={80}
                     height={20}
                     compact={true}
+                    strokeWidth={0.5}
                   />
                 </div>
                 {#if diskHist.length >= 2}
@@ -614,6 +616,7 @@
                       width={80}
                       height={20}
                       compact={true}
+                      strokeWidth={0.5}
                     />
                   </div>
                 {/if}
@@ -711,6 +714,7 @@
                     width={80}
                     height={20}
                     compact={true}
+                    strokeWidth={0.5}
                   />
                 </div>
                 <div class="card-chart">
@@ -727,6 +731,7 @@
                     width={80}
                     height={20}
                     compact={true}
+                    strokeWidth={0.5}
                   />
                 </div>
               </div>
