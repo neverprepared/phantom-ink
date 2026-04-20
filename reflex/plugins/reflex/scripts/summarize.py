@@ -358,6 +358,7 @@ class OpenAIProvider:
         try:
             resp = self.client.chat.completions.create(
                 model=self.model,
+                max_tokens=4096,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},

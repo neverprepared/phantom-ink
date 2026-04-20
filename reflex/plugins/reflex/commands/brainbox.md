@@ -716,7 +716,7 @@ API_KEY=$(curl -sf "${URL}/api/auth/key" --max-time 3 2>/dev/null | jq -r '.key 
 RESULT=$(curl -sf -X POST "${URL}/api/delete" \
   -H 'Content-Type: application/json' \
   -H "X-API-Key: ${API_KEY}" \
-  -d "{\"name\": \"${NAME}\"}" --max-time 60 2>&1)
+  -d "$(jq -n --arg name "$NAME" '{name: $name}')" --max-time 60 2>&1)
 
 echo "$RESULT"
 ```

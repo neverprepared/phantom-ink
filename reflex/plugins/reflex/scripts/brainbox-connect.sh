@@ -64,7 +64,7 @@ health_check() {
 if health_check; then
   mkdir -p "$CONFIG_DIR"
   echo "$URL" > "$URL_FILE"
-  echo "{\"url\": \"${URL}\", \"status\": \"connected\"}"
+  jq -n --arg url "$URL" --arg status "connected" '{url: $url, status: $status}'
   exit 0
 fi
 
@@ -102,7 +102,7 @@ while [ "$_i" -lt 20 ]; do
   _i=$((_i + 1))
   if health_check; then
     echo "$URL" > "$URL_FILE"
-    echo "{\"url\": \"${URL}\", \"status\": \"started\", \"pid\": ${API_PID}}"
+    jq -n --arg url "$URL" --arg status "started" --argjson pid "$API_PID" '{url: $url, status: $status, pid: $pid}'
     exit 0
   fi
   sleep 0.5

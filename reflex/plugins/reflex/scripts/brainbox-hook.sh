@@ -6,8 +6,8 @@
 
 set -euo pipefail
 
-# Read SessionStart input from stdin
-read -r INPUT 2>/dev/null || INPUT="{}"
+# Consume stdin to avoid blocking the hook runner
+cat > /dev/null
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONNECT_SCRIPT="${SCRIPT_DIR}/brainbox-connect.sh"

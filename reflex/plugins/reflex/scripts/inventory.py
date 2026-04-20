@@ -28,6 +28,7 @@ import argparse
 import fnmatch
 import json
 import os
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -619,7 +620,7 @@ def explore_resource(conn: sqlite3.Connection, resource: dict, max_depth: int, c
         )
 
         try:
-            out = _run(cmd.split())
+            out = _run(shlex.split(cmd))
             if not out.strip():
                 continue
             data = json.loads(out)
