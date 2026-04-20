@@ -563,12 +563,16 @@ class DockerBackend:
         container = await _run(client.containers.get, ctx.container_name)
         git_cred_fix = textwrap.dedent("""\
             BREW_GH="$(brew --prefix 2>/dev/null)/bin/gh"
+            cp /home/developer/.gitconfig /home/developer/.gitconfig.local 2>/dev/null || true
             if [ -x "$BREW_GH" ]; then
-                cp /home/developer/.gitconfig /home/developer/.gitconfig.local 2>/dev/null || true
                 sed -i "s|!/opt/homebrew/bin/gh|!$BREW_GH|g" /home/developer/.gitconfig.local 2>/dev/null
-                echo 'export GIT_CONFIG_GLOBAL=/home/developer/.gitconfig.local' >> /home/developer/.env
-                export GIT_CONFIG_GLOBAL=/home/developer/.gitconfig.local
             fi
+            # GPG signing keys are in the macOS keychain — not available in containers.
+            # Disable signing so commits work; identity is still verified by the gh token.
+            git config --file /home/developer/.gitconfig.local commit.gpgsign false
+            git config --file /home/developer/.gitconfig.local tag.gpgsign false
+            echo 'export GIT_CONFIG_GLOBAL=/home/developer/.gitconfig.local' >> /home/developer/.env
+            export GIT_CONFIG_GLOBAL=/home/developer/.gitconfig.local
         """)
         try:
             await _run(
