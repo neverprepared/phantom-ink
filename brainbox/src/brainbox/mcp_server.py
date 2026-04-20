@@ -31,17 +31,20 @@ def _api_key() -> str:
     key = os.environ.get("CL_API_KEY", "")
     if key:
         return key
-    # Try common key file locations (XDG, WORKSPACE_HOME, home)
-    for candidate in [
+    # Try common key file locations: new canonical path then legacy fallback.
+    # New path: {base}/phantom-ink/brainbox/.api-key
+    # Legacy path: {base}/developer/.api-key  (pre-rename; kept for compat)
+    for base in [
         os.environ.get("XDG_CONFIG_HOME", ""),
         os.path.join(os.environ.get("WORKSPACE_HOME", ""), ".config"),
         os.path.join(str(Path.home()), ".config"),
     ]:
-        if not candidate:
+        if not base:
             continue
-        key_file = Path(candidate) / "developer" / ".api-key"
-        if key_file.exists():
-            return key_file.read_text().strip()
+        for subdir in ("phantom-ink/brainbox", "developer"):
+            key_file = Path(base) / subdir / ".api-key"
+            if key_file.exists():
+                return key_file.read_text().strip()
     # Fall back to loopback endpoint (works regardless of which profile started brainbox)
     try:
         req = urllib.request.Request(f"{_api_url()}/api/auth/key")
@@ -117,20 +120,38 @@ def create_session(
     role: str = "developer",
     docker_host: str | None = None,
 ) -> dict[str, Any]:
-    """Create and start a new container session.
+    """Create and start a new container session running Claude Code.
 
-    Available roles: developer (default interactive), supervisor (orchestrates agents),
-    worker (executes tasks, creates PRs), merge-queue (auto-merges when CI passes),
-    pr-shepherd (coordinates fork PRs), reviewer (reviews PRs).
+    Provisions a Docker container for the specified role, injects credentials
+    and workspace configuration, then starts and monitors the session.
+
+    Available roles:
+      developer   — interactive Claude Code session (default)
+      supervisor  — orchestrates the overall workflow, spawns worker tasks
+      worker      — executes a specific task and opens a PR (transient)
+      reviewer    — reviews an open PR and posts comments (transient)
+      merge-queue — watches PRs and merges when CI passes (persistent)
+      pr-shepherd — coordinates PRs for fork repos (persistent)
 
     Persistent roles (supervisor, merge-queue, pr-shepherd) auto-restart on failure.
-    Transient roles (worker, reviewer) clean up their containers on completion.
+    Transient roles (worker, reviewer) remove their containers on completion.
+
+    Returns a dict with:
+      success (bool): Whether provisioning succeeded.
+      backend (str): Always "docker" for this tool.
+      url (str): Web terminal URL, e.g. "http://localhost:7681".
 
     Args:
-        name: Session name (container will be named developer-{name})
-        volume: Optional host:container volume mount (e.g. /path/to/code:/workspace)
-        role: Agent role — controls the system prompt injected into the container
-        docker_host: Docker daemon URL (e.g. tcp://remote:2376). None = local socket.
+        name: Session name; container will be named ``{role}-{name}``
+              (e.g. ``developer-default``). Defaults to ``"default"``.
+        volume: Optional host-to-container volume mount in Docker format:
+                ``/host/path:/container/path`` or
+                ``/host/path:/container/path:ro``.
+                Use this to expose a local repo or workspace to the container.
+        role: Agent role — controls the system prompt injected into the
+              container. See role list above.
+        docker_host: Docker daemon URL (e.g. ``tcp://remote:2376``).
+                     ``None`` uses the local socket.
     """
     body: dict[str, Any] = {"name": name, "role": role}
     if volume:
@@ -185,7 +206,23 @@ def push_config(name: str) -> dict[str, Any]:
 
 @mcp.tool()
 def get_metrics() -> list[dict[str, Any]]:
-    """Get per-container CPU %, memory usage, and uptime for all running sessions."""
+    """Get resource metrics for all running brainbox-managed container sessions.
+
+    Each element describes one container and includes:
+      name (str): Full container name (e.g. "worker-my-task").
+      session_name (str): Session name with role prefix stripped.
+      role (str): Agent role (e.g. "developer", "worker").
+      llm_provider (str): LLM backend the session was started with.
+      workspace_profile (str): Active workspace profile, or empty string.
+      cpu_percent (float): CPU usage as a percentage of one core.
+      mem_usage (int): Memory used by the container in bytes.
+      mem_usage_human (str): Human-readable memory usage (e.g. "1.2 GB").
+      mem_limit (int): Container memory limit in bytes.
+      mem_limit_human (str): Human-readable memory limit.
+      uptime_seconds (int): Seconds since the container was started.
+      trace_count (int): LangFuse traces recorded for this session (cached 60 s).
+      error_count (int): Error-level LangFuse traces for this session.
+    """
     return _request("GET", "/api/metrics/containers")
 
 
@@ -310,7 +347,17 @@ def cancel_task(task_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 def get_langfuse_health() -> dict[str, Any]:
-    """Check LangFuse observability service health and connectivity."""
+    """Check LangFuse observability service health and connectivity.
+
+    Pings the LangFuse ``/api/public/health`` endpoint using the configured
+    base URL and credentials (``LANGFUSE_BASE_URL``, ``LANGFUSE_PUBLIC_KEY``,
+    ``LANGFUSE_SECRET_KEY``).
+
+    Returns a dict with:
+      healthy (bool): True if LangFuse responded with HTTP 200.
+      url (str): The LangFuse base URL that was probed.
+      error (str, optional): Error message if the probe failed.
+    """
     return _request("GET", "/api/langfuse/health")
 
 
@@ -422,31 +469,83 @@ def delete_artifact(key: str) -> dict[str, Any]:
 
 @mcp.tool()
 def get_langfuse_session_traces(session_name: str, limit: int = 50) -> list[dict[str, Any]]:
-    """List LangFuse traces for a container session.
+    """List LangFuse traces recorded for a container session.
+
+    Queries LangFuse for all traces whose ``sessionId`` matches the brainbox
+    session name.  Traces represent individual Claude Code invocations or
+    tool-use sequences.
+
+    Each element in the returned list includes:
+      id (str): LangFuse trace ID.
+      name (str): Trace name (typically the Claude Code command).
+      session_id (str): LangFuse session ID (matches session_name).
+      timestamp (str): ISO 8601 creation timestamp.
+      status (str): "ok" or "error" (derived from the trace level field).
+      input (str): Truncated trace input (prompt text).
+      output (str): Truncated trace output (assistant response).
 
     Args:
-        session_name: Session name (e.g. test-1)
-        limit: Maximum number of traces to return (default: 50)
+        session_name: Brainbox session name (e.g. "test-1"). Used as the
+                      LangFuse sessionId filter.
+        limit: Maximum number of traces to return, most recent first
+               (default: 50).
     """
     return _request("GET", f"/api/langfuse/sessions/{session_name}/traces?limit={limit}")
 
 
 @mcp.tool()
 def get_langfuse_session_summary(session_name: str) -> dict[str, Any]:
-    """Get trace count, error count, and tool breakdown for a session.
+    """Get aggregated observability statistics for a session from LangFuse.
+
+    Batch-fetches all observations for the session and computes counts in a
+    single API round-trip.  Use this for a quick health snapshot before
+    drilling into individual traces with get_langfuse_session_traces.
+
+    Returns a dict with:
+      session_id (str): The session name used as the LangFuse session ID.
+      total_traces (int): Total number of traces recorded for this session.
+      total_observations (int): Total number of observations (spans, generations,
+          events) across all traces.
+      error_count (int): Number of observations at ERROR level.
+      tool_counts (dict[str, int]): Map of tool/observation name → call count,
+          showing which Claude tools were used most.
 
     Args:
-        session_name: Session name (e.g. test-1)
+        session_name: Brainbox session name (e.g. "test-1").
     """
     return _request("GET", f"/api/langfuse/sessions/{session_name}/summary")
 
 
 @mcp.tool()
 def get_langfuse_trace_detail(trace_id: str) -> dict[str, Any]:
-    """Get full detail for a single LangFuse trace including observations.
+    """Get full detail for a single LangFuse trace, including all observations.
+
+    Fetches the trace record and all its child observations (spans, generations,
+    events) in two API calls, then returns them together.  Use this to inspect
+    what Claude did inside a specific invocation — which tools it called, in
+    what order, and whether any errored.
+
+    Returns a dict with:
+      trace (dict): The trace record:
+        id (str): LangFuse trace ID.
+        name (str): Trace name.
+        session_id (str): LangFuse session ID.
+        timestamp (str): ISO 8601 creation timestamp.
+        status (str): "ok" or "error".
+        input (str): Truncated prompt input.
+        output (str): Truncated assistant output.
+      observations (list[dict]): Child observations, each with:
+        id (str): Observation ID.
+        trace_id (str): Parent trace ID.
+        name (str): Tool or span name.
+        type (str): "SPAN", "GENERATION", or "EVENT".
+        start_time (str): ISO 8601 start timestamp.
+        end_time (str): ISO 8601 end timestamp (empty if still running).
+        status (str): "ok" or "error".
+        level (str): Severity — "DEFAULT", "DEBUG", "WARNING", or "ERROR".
 
     Args:
-        trace_id: LangFuse trace ID
+        trace_id: LangFuse trace ID, as returned by get_langfuse_session_traces.
     """
     return _request("GET", f"/api/langfuse/traces/{trace_id}")
 
@@ -689,8 +788,18 @@ def channel_complete(channel_id: str, by: str, reason: str | None = None) -> dic
 def list_playbooks(workspace_profile: str = "global") -> list[dict[str, Any]]:
     """List playbooks, optionally filtered by workspace profile.
 
+    Workspace profiles are named credential+environment bundles managed via the
+    Profiles panel in the brainbox desktop app.  Each profile maps to a
+    workspace directory and injects its own ``.env`` file, AWS/GCP/Azure
+    credentials, kubeconfig, and SSH keys into container sessions.  Playbooks
+    can be scoped to a specific profile so that the correct credentials are
+    used when the steps execute.  Pass ``"global"`` to list playbooks that
+    apply to all profiles.
+
     Args:
-        workspace_profile: Filter by profile name, or 'global' for all-profile playbooks
+        workspace_profile: Profile name to filter by (e.g. ``"work"``), or
+                           ``"global"`` to list cross-profile playbooks
+                           (default: ``"global"``).
     """
     path = "/api/hub/playbooks"
     if workspace_profile:
@@ -712,13 +821,23 @@ def get_playbook(playbook_id: str) -> dict[str, Any]:
 def create_playbook(name: str, markdown: str, workspace_profile: str = "global") -> dict[str, Any]:
     """Create a new playbook from a markdown checklist.
 
-    Each `- [ ] task description` line becomes a sequential step dispatched
-    to a fresh ephemeral worker session.
+    Each ``- [ ] task description`` line in the markdown becomes a sequential
+    step dispatched to a fresh ephemeral worker session when the playbook is
+    run.  Steps execute one at a time in order; each runs in its own isolated
+    container with the specified workspace profile's credentials.
+
+    Workspace profiles are named credential+environment bundles.  Specifying a
+    profile here ensures every worker step launched by this playbook has the
+    correct ``.env``, cloud credentials, and kubeconfig injected.  Use
+    ``"global"`` for playbooks that do not require profile-specific credentials.
 
     Args:
-        name: Display name for the playbook
-        markdown: Markdown content with `- [ ]` checklist items as steps
-        workspace_profile: Profile scope, or 'global' for all profiles
+        name: Display name for the playbook.
+        markdown: Markdown content containing ``- [ ]`` checklist items.
+                  Non-checklist lines are stored but ignored during execution.
+        workspace_profile: Profile scope for worker sessions spawned by this
+                           playbook (e.g. ``"work"``), or ``"global"`` for
+                           all-profile playbooks (default: ``"global"``).
     """
     return _request("POST", "/api/hub/playbooks", {
         "name": name,
