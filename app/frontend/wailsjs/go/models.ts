@@ -421,6 +421,7 @@ export namespace brainbox {
 	    error: any;
 	    session_name: string;
 	    workspace_profile: string;
+	    job_id: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Task(source);
@@ -439,6 +440,7 @@ export namespace brainbox {
 	        this.error = source["error"];
 	        this.session_name = source["session_name"];
 	        this.workspace_profile = source["workspace_profile"];
+	        this.job_id = source["job_id"];
 	    }
 	}
 	export class HubState {
@@ -841,6 +843,58 @@ export namespace brainbox {
 
 export namespace main {
 	
+	export class CIRun {
+	    name: string;
+	    status: string;
+	    conclusion: string;
+	    url: string;
+	    created_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CIRun(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.status = source["status"];
+	        this.conclusion = source["conclusion"];
+	        this.url = source["url"];
+	        this.created_at = source["created_at"];
+	    }
+	}
+	export class CIStatus {
+	    branch: string;
+	    runs: CIRun[];
+	
+	    static createFrom(source: any = {}) {
+	        return new CIStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.branch = source["branch"];
+	        this.runs = this.convertValues(source["runs"], CIRun);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class Config {
 	    base_url: string;
 	    api_key: string;
@@ -866,11 +920,11 @@ export namespace main {
 	    writable_size: string;
 	    writable_size_bytes: number;
 	    virtual_size: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ContainerDiskStat(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -905,6 +959,117 @@ export namespace main {
 	        this.pids = source["pids"];
 	    }
 	}
+	export class DiskCategory {
+	    name: string;
+	    bytes: number;
+	    label: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiskCategory(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.bytes = source["bytes"];
+	        this.label = source["label"];
+	    }
+	}
+	export class DiskBreakdown {
+	    total_bytes: number;
+	    total_label: string;
+	    categories: DiskCategory[];
+	
+	    static createFrom(source: any = {}) {
+	        return new DiskBreakdown(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.total_bytes = source["total_bytes"];
+	        this.total_label = source["total_label"];
+	        this.categories = this.convertValues(source["categories"], DiskCategory);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class ProfileDiskUsage {
+	    name: string;
+	    bytes: number;
+	    label: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProfileDiskUsage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.bytes = source["bytes"];
+	        this.label = source["label"];
+	    }
+	}
+	export class DiskOverview {
+	    total_disk: number;
+	    total_label: string;
+	    used_disk: number;
+	    used_label: string;
+	    profiles: ProfileDiskUsage[];
+	    os_bytes: number;
+	    os_label: string;
+	    scanned_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiskOverview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.total_disk = source["total_disk"];
+	        this.total_label = source["total_label"];
+	        this.used_disk = source["used_disk"];
+	        this.used_label = source["used_label"];
+	        this.profiles = this.convertValues(source["profiles"], ProfileDiskUsage);
+	        this.os_bytes = source["os_bytes"];
+	        this.os_label = source["os_label"];
+	        this.scanned_at = source["scanned_at"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class LocalProcess {
 	    pid: string;
 	    tty: string;
@@ -929,6 +1094,18 @@ export namespace main {
 	        this.mem_mb = source["mem_mb"];
 	        this.workspace_profile = source["workspace_profile"];
 	        this.workspace_home = source["workspace_home"];
+	    }
+	}
+	export class LogEntry {
+	    line: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LogEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.line = source["line"];
 	    }
 	}
 	export class PreflightCheck {
@@ -969,6 +1146,71 @@ export namespace main {
 	        this.secrets_mode = source["secrets_mode"];
 	        this.secrets_path = source["secrets_path"];
 	        this.has_backup = source["has_backup"];
+	    }
+	}
+	
+	export class RepoBranch {
+	    name: string;
+	    protected: boolean;
+	    has_pr: boolean;
+	    pr_number: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RepoBranch(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.protected = source["protected"];
+	        this.has_pr = source["has_pr"];
+	        this.pr_number = source["pr_number"];
+	    }
+	}
+	export class RepoEvent {
+	    type: string;
+	    actor: string;
+	    created_at: string;
+	    summary: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RepoEvent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.actor = source["actor"];
+	        this.created_at = source["created_at"];
+	        this.summary = source["summary"];
+	    }
+	}
+	export class RepoPR {
+	    number: number;
+	    title: string;
+	    branch: string;
+	    author: string;
+	    url: string;
+	    is_draft: boolean;
+	    created_at: string;
+	    ci_status: string;
+	    labels: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new RepoPR(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.number = source["number"];
+	        this.title = source["title"];
+	        this.branch = source["branch"];
+	        this.author = source["author"];
+	        this.url = source["url"];
+	        this.is_draft = source["is_draft"];
+	        this.created_at = source["created_at"];
+	        this.ci_status = source["ci_status"];
+	        this.labels = source["labels"];
 	    }
 	}
 	export class SecretKeyStatus {

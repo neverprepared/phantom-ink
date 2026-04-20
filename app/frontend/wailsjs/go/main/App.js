@@ -102,6 +102,10 @@ export function FocusTerminalTab(arg1) {
   return window['go']['main']['App']['FocusTerminalTab'](arg1);
 }
 
+export function GetAPILogs(arg1) {
+  return window['go']['main']['App']['GetAPILogs'](arg1);
+}
+
 export function GetActiveProfile() {
   return window['go']['main']['App']['GetActiveProfile']();
 }
@@ -128,6 +132,14 @@ export function GetContainerDiskUsage() {
 
 export function GetContainerMetrics() {
   return window['go']['main']['App']['GetContainerMetrics']();
+}
+
+export function GetDiskBreakdown() {
+  return window['go']['main']['App']['GetDiskBreakdown']();
+}
+
+export function GetDiskOverview() {
+  return window['go']['main']['App']['GetDiskOverview']();
 }
 
 export function GetDockerStats() {
@@ -160,6 +172,22 @@ export function GetPlaybook(arg1) {
 
 export function GetProfileSecrets(arg1) {
   return window['go']['main']['App']['GetProfileSecrets'](arg1);
+}
+
+export function GetRepoActivity(arg1) {
+  return window['go']['main']['App']['GetRepoActivity'](arg1);
+}
+
+export function GetRepoBranches(arg1) {
+  return window['go']['main']['App']['GetRepoBranches'](arg1);
+}
+
+export function GetRepoCIStatus(arg1, arg2) {
+  return window['go']['main']['App']['GetRepoCIStatus'](arg1, arg2);
+}
+
+export function GetRepoPRs(arg1) {
+  return window['go']['main']['App']['GetRepoPRs'](arg1);
 }
 
 export function GetSessionTraces(arg1, arg2) {
@@ -260,6 +288,10 @@ export function RunPlaybook(arg1) {
 
 export function RunPreflightChecks() {
   return window['go']['main']['App']['RunPreflightChecks']();
+}
+
+export function ScanDiskUsage() {
+  return window['go']['main']['App']['ScanDiskUsage']();
 }
 
 export function ScanProfiles() {

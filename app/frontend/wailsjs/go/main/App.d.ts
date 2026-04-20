@@ -53,6 +53,8 @@ export function FindClaudeProcesses():Promise<Array<main.LocalProcess>>;
 
 export function FocusTerminalTab(arg1:string):Promise<void>;
 
+export function GetAPILogs(arg1:number):Promise<Array<main.LogEntry>>;
+
 export function GetActiveProfile():Promise<main.Profile>;
 
 export function GetAgent(arg1:string):Promise<brainbox.AgentDefinition>;
@@ -66,6 +68,10 @@ export function GetConfig():Promise<main.Config>;
 export function GetContainerDiskUsage():Promise<Array<main.ContainerDiskStat>>;
 
 export function GetContainerMetrics():Promise<Array<brainbox.ContainerMetrics>>;
+
+export function GetDiskBreakdown():Promise<main.DiskBreakdown>;
+
+export function GetDiskOverview():Promise<main.DiskOverview>;
 
 export function GetDockerStats():Promise<Array<main.ContainerStat>>;
 
@@ -82,6 +88,14 @@ export function GetPlatform():Promise<string>;
 export function GetPlaybook(arg1:string):Promise<brainbox.Playbook>;
 
 export function GetProfileSecrets(arg1:string):Promise<Array<main.SecretKeyStatus>>;
+
+export function GetRepoActivity(arg1:string):Promise<Array<main.RepoEvent>>;
+
+export function GetRepoBranches(arg1:string):Promise<Array<main.RepoBranch>>;
+
+export function GetRepoCIStatus(arg1:string,arg2:string):Promise<main.CIStatus>;
+
+export function GetRepoPRs(arg1:string):Promise<Array<main.RepoPR>>;
 
 export function GetSessionTraces(arg1:string,arg2:number):Promise<Array<brainbox.Trace>>;
 
@@ -132,6 +146,8 @@ export function RestoreProfile(arg1:string):Promise<void>;
 export function RunPlaybook(arg1:string):Promise<brainbox.Playbook>;
 
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
+
+export function ScanDiskUsage():Promise<main.DiskOverview>;
 
 export function ScanProfiles():Promise<Array<main.Profile>>;
 
