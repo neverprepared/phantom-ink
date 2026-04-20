@@ -44,7 +44,7 @@ fi
 # Export credentials for the drainer process to inherit
 export LANGFUSE_PUBLIC_KEY
 export LANGFUSE_SECRET_KEY
-export LANGFUSE_BASE_URL="${LANGFUSE_BASE_URL:-}"
+[[ -n "${LANGFUSE_BASE_URL:-}" ]] && export LANGFUSE_BASE_URL
 export LANGFUSE_USER_ID="${WORKSPACE_PROFILE:-$HOME}"
 export CLAUDE_CONFIG_DIR="$CLAUDE_DIR"
 

@@ -22,15 +22,16 @@ RESULT=$("$CONNECT_SCRIPT" 2>/dev/null) || {
 }
 
 STATUS=$(echo "$RESULT" | jq -r '.status // empty' 2>/dev/null || true)
+CONTEXT=""
 
 case "$STATUS" in
   connected)
-    URL=$(echo "$RESULT" | jq -r '.url' 2>/dev/null)
-    CONTEXT="Brainbox: connected at ${URL}"
+    URL=$(echo "$RESULT" | jq -r '.url // empty' 2>/dev/null)
+    [[ -n "$URL" ]] && CONTEXT="Brainbox: connected at ${URL}"
     ;;
   started)
-    URL=$(echo "$RESULT" | jq -r '.url' 2>/dev/null)
-    CONTEXT="Brainbox: auto-started at ${URL}"
+    URL=$(echo "$RESULT" | jq -r '.url // empty' 2>/dev/null)
+    [[ -n "$URL" ]] && CONTEXT="Brainbox: auto-started at ${URL}"
     ;;
   *)
     # Unavailable — stay silent
@@ -38,7 +39,8 @@ case "$STATUS" in
     ;;
 esac
 
-# Output hook context
+# Output hook context (only if we have something to report)
+[[ -z "$CONTEXT" ]] && exit 0
 printf '%s' "$CONTEXT" | jq -Rs '{
   hookSpecificOutput: {
     hookEventName: "SessionStart",

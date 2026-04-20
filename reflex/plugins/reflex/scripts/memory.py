@@ -107,12 +107,18 @@ CREATE TABLE IF NOT EXISTS documents (
 """
 
 
+_db_initialized = False
+
+
 def connect() -> sqlite3.Connection:
+    global _db_initialized
     path = db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA)
+    if not _db_initialized:
+        conn.executescript(SCHEMA)
+        _db_initialized = True
     return conn
 
 
@@ -236,8 +242,8 @@ def cmd_ingest(args):
         )
         conn.commit()
         conn.close()
-    except Exception:
-        pass  # never block the hook
+    except Exception as e:
+        sys.stderr.write(f"memory-hook: error: {e}\n")  # never block the hook
 
 
 def cmd_recent(args):

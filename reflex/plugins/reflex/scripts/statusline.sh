@@ -108,15 +108,36 @@ baseline=20000
 bar_width=10
 
 if [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
-    context_length=$(jq -s '
-        map(select(.message.usage and .isSidechain != true and .isApiErrorMessage != true)) |
-        last |
-        if . then
-            (.message.usage.input_tokens // 0) +
-            (.message.usage.cache_read_input_tokens // 0) +
-            (.message.usage.cache_creation_input_tokens // 0)
-        else 0 end
-    ' < "$transcript_path")
+    jq_result=$(jq -rs '{
+        context_length: (
+            map(select(.message.usage and .isSidechain != true and .isApiErrorMessage != true)) |
+            last |
+            if . then
+                (.message.usage.input_tokens // 0) +
+                (.message.usage.cache_read_input_tokens // 0) +
+                (.message.usage.cache_creation_input_tokens // 0)
+            else 0 end
+        ),
+        last_user_msg: (
+            def is_unhelpful:
+                startswith("[Request interrupted") or
+                startswith("[Request cancelled") or
+                . == "";
+            [.[] | select(.type == "user") |
+             select(.message.content | type == "string" or
+                    (type == "array" and any(.[]; .type == "text")))] |
+            reverse |
+            map(.message.content |
+                if type == "string" then .
+                else [.[] | select(.type == "text") | .text] | join(" ") end |
+                gsub("\n"; " ") | gsub("  +"; " ")) |
+            map(select(is_unhelpful | not)) |
+            first // ""
+        )
+    }' < "$transcript_path" 2>/dev/null)
+
+    context_length=$(echo "$jq_result" | jq -r '.context_length')
+    last_user_msg=$(echo "$jq_result" | jq -r '.last_user_msg')
 
     if [[ "$context_length" -gt 0 ]]; then
         pct=$((context_length * 100 / max_context))
@@ -128,6 +149,7 @@ if [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
 else
     pct=$((baseline * 100 / max_context))
     pct_prefix="~"
+    last_user_msg=""
 fi
 
 [[ $pct -gt 100 ]] && pct=100
@@ -185,33 +207,14 @@ output+=" ${ctx}${C_RESET}"
 printf '%b\n' "$output"
 
 # Show last user message on second line
-if [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
+if [[ -n "$last_user_msg" ]]; then
     plain_output="${model} | 📁${dir}"
     [[ -n "$branch" ]] && plain_output+=" | 🔀${branch} ${git_status_indicators}"
     plain_output+=" | xxxxxxxxxx ${pct}% of ${max_k}k tokens"
     max_len=${#plain_output}
-    last_user_msg=$(jq -rs '
-        def is_unhelpful:
-            startswith("[Request interrupted") or
-            startswith("[Request cancelled") or
-            . == "";
-        [.[] | select(.type == "user") |
-         select(.message.content | type == "string" or
-                (type == "array" and any(.[]; .type == "text")))] |
-        reverse |
-        map(.message.content |
-            if type == "string" then .
-            else [.[] | select(.type == "text") | .text] | join(" ") end |
-            gsub("\n"; " ") | gsub("  +"; " ")) |
-        map(select(is_unhelpful | not)) |
-        first // ""
-    ' < "$transcript_path" 2>/dev/null)
-
-    if [[ -n "$last_user_msg" ]]; then
-        if [[ ${#last_user_msg} -gt $max_len ]]; then
-            echo "💬 ${last_user_msg:0:$((max_len - 3))}..."
-        else
-            echo "💬 ${last_user_msg}"
-        fi
+    if [[ ${#last_user_msg} -gt $max_len ]]; then
+        echo "💬 ${last_user_msg:0:$((max_len - 3))}..."
+    else
+        echo "💬 ${last_user_msg}"
     fi
 fi

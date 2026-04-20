@@ -13,8 +13,9 @@ if [ ! -f "$NOTIFY_ENABLED" ] && [ ! -f "$SPEAK_ENABLED" ]; then
     exit 0
 fi
 
-# Extract tool name directly from stdin — no need to buffer the full payload
-TOOL_NAME=$(jq -r '.tool_name // empty' 2>/dev/null || echo "")
+# Buffer stdin so it can be used multiple times if needed
+HOOK_DATA=$(cat)
+TOOL_NAME=$(echo "$HOOK_DATA" | jq -r '.tool_name // empty' 2>/dev/null || echo "")
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 

@@ -19,7 +19,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|Write|mcp__.*__jira_delete_issue|mcp__.*__jira_remove_issue_link|mcp__.*__confluence_delete_page",
+        "matcher": "Bash|Write|Edit|mcp__.*__jira_delete_issue|mcp__.*__jira_remove_issue_link|mcp__.*__confluence_delete_page",
         "hooks": [
           {
             "type": "command",
