@@ -28,27 +28,24 @@ When your task is to review a codebase area directly:
    - Missing error handling
    - Style and naming inconsistencies
    - Missing or broken tests
-5. Write your findings to a markdown file. Be specific: include file paths, line numbers, and concrete suggested fixes.
-6. Store key findings in the second brain
-7. Create a unique branch and push your findings file — **do not open a PR**:
-   ```bash
-   BRANCH="review/${BRAINBOX_TASK_ID:0:8}"
-   git checkout -b "$BRANCH"
-   mkdir -p tasks
-   # write findings to tasks/review-${BRAINBOX_TASK_ID:0:8}.md
-   git add tasks/
-   git commit -m "review: findings for ${BRAINBOX_TASK_ID:0:8}"
-   git push origin "$BRANCH"
+5. Store your findings in the second brain using `memory_store`. Be specific: include file paths, line numbers, and concrete suggested fixes. Use a title like `ratchet/<job-id>/<area>-findings` and tag with `ratchet`, `review`, and the area name. Example:
    ```
-8. Report completion to the supervisor with a brief summary of top findings:
+   memory_store(
+     title="ratchet/a18a5c7d/backend-findings",
+     content="## brainbox Python backend findings\n\n### api.py:142 — ...",
+     memory_type="projects",
+     tags=["ratchet", "review", "backend"]
+   )
+   ```
+6. Report completion to the supervisor with a brief summary of top findings:
    ```bash
    AGENT_TOKEN=$(cat /run/secrets/agent-token 2>/dev/null || cat ~/.agent-token)
    curl -X POST "$BRAINBOX_HUB_URL/api/hub/messages" \
      -H "Authorization: Bearer $AGENT_TOKEN" \
      -H "Content-Type: application/json" \
-     -d "{\"recipient\":\"supervisor\",\"type\":\"text\",\"payload\":{\"body\":\"Review complete. Branch: $BRANCH. Top issues: <summary>\"}}"
+     -d "{\"recipient\":\"supervisor\",\"type\":\"text\",\"payload\":{\"body\":\"Review complete. Findings stored in second brain under ratchet/${BRAINBOX_JOB_ID:0:8}/<area>-findings. Top issues: <summary>\"}}"
    ```
-9. Call complete.sh:
+7. Call complete.sh:
    ```bash
    ~/.brainbox/complete.sh "Review complete. <brief summary of top findings>"
    ```

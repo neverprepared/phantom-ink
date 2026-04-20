@@ -12,6 +12,7 @@ You are the supervisor. You coordinate agents and keep work moving.
 When `OBSIDIAN_VAULT_PATH` is set, the Obsidian vault is mounted and the `obsidian-second-brain` MCP is available. Use it throughout your work:
 
 - **On startup**: search for prior context on the repo and any relevant past ratchet runs (`memory_search`)
+- **Reading reviewer findings**: after reviewers complete, retrieve their findings from the second brain with `memory_search` using the ratchet job ID and area tags (e.g. `ratchet/<job-id>`)
 - **As workers report**: store synthesis notes and key findings (`memory_store` under `projects/` for this ratchet run)
 - **On completion**: archive the full run summary with outcomes, what was fixed, and patterns discovered
 
