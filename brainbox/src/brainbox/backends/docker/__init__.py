@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import os
 import re
 import shlex
-import tarfile
 import textwrap
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -28,15 +26,7 @@ _executor = ThreadPoolExecutor(max_workers=4)
 log = get_logger()
 
 
-def _extract_from_bundle(bundle_bytes: bytes, arcname: str) -> str | None:
-    """Extract a single text file from a tar.gz bundle by archive name."""
-    try:
-        with tarfile.open(fileobj=io.BytesIO(bundle_bytes), mode="r:gz") as tf:
-            member = tf.getmember(arcname)
-            f = tf.extractfile(member)
-            return f.read().decode("utf-8") if f else None
-    except (KeyError, tarfile.TarError, OSError):
-        return None
+from ..utils import _extract_from_bundle
 
 
 def _docker(docker_host: str | None = None) -> docker.DockerClient:
@@ -322,7 +312,6 @@ class DockerBackend:
                     )
 
                 # Brief pause to let tmux session establish before ttyd attaches
-                import asyncio
                 await asyncio.sleep(1)
 
             # Start ttyd — attaches to existing tmux session (task) or starts new one (interactive)
@@ -349,12 +338,13 @@ class DockerBackend:
 
     async def stop(self, ctx: SessionContext) -> SessionContext:
         """Stop Docker container."""
+        slog = get_logger(session_name=ctx.session_name, container_name=ctx.container_name)
         client = _docker(ctx.docker_host)
         try:
             container = await _run(client.containers.get, ctx.container_name)
             await _run(container.stop, timeout=5)
-        except Exception:
-            pass
+        except Exception as exc:
+            slog.warning("container.stop_failed", metadata={"reason": str(exc)})
         return ctx
 
     async def remove(self, ctx: SessionContext) -> SessionContext:
@@ -366,8 +356,8 @@ class DockerBackend:
             container = await _run(client.containers.get, ctx.container_name)
             await _run(container.remove)
             slog.info("container.removed")
-        except Exception:
-            pass
+        except Exception as exc:
+            slog.warning("container.remove_failed", metadata={"reason": str(exc)})
 
         return ctx
 
@@ -483,13 +473,16 @@ class DockerBackend:
                 user_mcps = json.loads(settings_json).get("mcpServers", {})
                 if user_mcps:
                     mcp_json = json.dumps(user_mcps)
+                    home_dir = executor.home_dir
+                    p_j = json.dumps(f"{home_dir}/.claude.json").replace('"', '\\"')
+                    ws_j = json.dumps(f"{home_dir}/workspace").replace('"', '\\"')
                     await executor.exec_shell(
                         f'echo {shlex.quote(mcp_json)} | python3 -c "'
                         "import json, pathlib, sys; "
-                        "p = pathlib.Path('/home/developer/.claude.json'); "
+                        f"p = pathlib.Path({p_j}); "
                         "d = json.loads(p.read_text()) if p.exists() else {}; "
                         "u = json.load(sys.stdin); "
-                        "ws = '/home/developer/workspace'; "
+                        f"ws = {ws_j}; "
                         "d.setdefault('projects', {}).setdefault(ws, {}).setdefault('mcpServers', {}).update(u); "
                         "p.write_text(json.dumps(d, indent=2))"
                         '"'
