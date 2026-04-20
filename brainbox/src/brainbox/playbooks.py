@@ -207,6 +207,10 @@ async def _run_task(pb: Playbook, task: PlaybookTask, *, run_profile: str = "glo
             create_body: dict = {"name": session_name}
             if run_profile and run_profile != "global":
                 create_body["workspace_profile"] = run_profile
+                # Resolve workspace_home from profile name so mounts are correct
+                workspace_home = _resolve_workspace_home(run_profile)
+                if workspace_home:
+                    create_body["workspace_home"] = workspace_home
             resp = await client.post("/api/create", json=create_body, headers=headers)
             resp.raise_for_status()
 
@@ -296,6 +300,33 @@ def _load_api_key() -> str:
         return settings.api_key_file.read_text().strip()
     except FileNotFoundError:
         return ""
+
+
+def _resolve_workspace_home(profile_name: str) -> str | None:
+    """Look up a profile's workspace_home from the volatile cache or profiles dir.
+
+    Shell-profiler writes a cache at $TMPDIR/sp-profiles/{name}/.env with
+    WORKSPACE_HOME=... on every `cd`. We read that, or fall back to the
+    conventional profiles directory layout.
+    """
+    import os
+    import tempfile
+
+    # Try volatile cache first (written by shell-profiler on cd)
+    cache_env = Path(tempfile.gettempdir()) / "sp-profiles" / profile_name / ".env"
+    if cache_env.is_file():
+        for line in cache_env.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("WORKSPACE_HOME="):
+                return line.split("=", 1)[1].strip().strip("'\"")
+
+    # Fall back to profiles directory convention: ~/workspaces/profiles/<name>
+    home = os.environ.get("HOME", str(Path.home()))
+    candidate = Path(home) / "workspaces" / "profiles" / profile_name
+    if candidate.is_dir():
+        return str(candidate)
+
+    return None
 
 
 # ---------------------------------------------------------------------------
