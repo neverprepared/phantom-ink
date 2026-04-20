@@ -247,6 +247,8 @@ async def query(request: QueryRequest) -> QueryResponse:
         before_line_count = await _build_claude_command(request, working_dir)
         output = await _run_and_capture(before_line_count, request.timeout)
         return _format_query_response(output, request.prompt, conversation_id, start_time)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query execution failed: {e}")
 

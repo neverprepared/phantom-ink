@@ -99,6 +99,7 @@ from .langfuse_client import (
     list_traces as langfuse_list_traces,
 )
 from .messages import get_message_log, get_messages, route as route_message
+from .utils import _now_ms
 from .channels import (
     complete_channel,
     create_channel,
@@ -477,7 +478,13 @@ def _extract_role(container: Any) -> str:
 
 
 def _get_sessions_info() -> list[dict[str, Any]]:
-    """Get session info from all backends (Docker + UTM)."""
+    """Get session info from all backends (Docker + UTM).
+
+    NOTE: unlike _get_sessions_info_legacy, backend-provided dicts may omit
+    volume, active, llm_model, llm_provider, and workspace_profile fields.
+    Callers that depend on those fields should use _get_sessions_info_legacy
+    (Docker-only) until backends are updated to return a uniform shape.
+    """
     from .backends import create_backend
 
     sessions = []
@@ -681,7 +688,7 @@ async def api_stop_session(
                 success=False,
                 error=str(fallback_exc),
             )
-            log.exception("session.stop_failed.unexpected")
+            log.exception("session.stop_failed.unexpected", metadata={"error": str(fallback_exc)})
             raise HTTPException(status_code=500, detail=f"Failed to stop session: {fallback_exc}")
 
 
@@ -743,7 +750,7 @@ async def api_delete_session(
                 success=False,
                 error=str(fallback_exc),
             )
-            log.exception("session.delete_failed.unexpected")
+            log.exception("session.delete_failed.unexpected", metadata={"error": str(fallback_exc)})
             raise HTTPException(status_code=500, detail=f"Failed to delete session: {fallback_exc}")
 
 
@@ -817,7 +824,7 @@ async def api_start_session(
                 success=False,
                 error=str(fallback_exc),
             )
-            log.exception("session.start_failed.unexpected")
+            log.exception("session.start_failed.unexpected", metadata={"error": str(fallback_exc)})
             raise HTTPException(status_code=500, detail=f"Failed to start session: {fallback_exc}")
 
 
@@ -840,7 +847,7 @@ async def api_create_session(
             task_id = task_id_result.id
         elif body.task:
             # Regular session with a task — register in hub so it shows in dashboard
-            from .router import _tasks, _now_ms
+            from .router import _tasks
             from .models import Task as HubTask, TaskStatus
             from .registry import issue_token
             tid = str(uuid.uuid4())
@@ -848,6 +855,8 @@ async def api_create_session(
             token = issue_token(role, tid, ttl=settings.hub.token_ttl)
             hub_token = token
             task_id = tid
+            # NOTE: workspace_profile and workspace_home are not set here;
+            # repo_url is None because this path is for non-repo sessions.
             _tasks[tid] = HubTask(
                 id=tid,
                 description=body.task,
@@ -886,24 +895,27 @@ async def api_create_session(
         _audit_log(request, "session.create", session_name=body.name, success=True)
         _broadcast_sse(json.dumps({"action": "session.create", "session": body.name, "profile": body.workspace_profile or ""}))
 
-        # Response format depends on backend
+        # Response is always the same shape regardless of backend
         if ctx.backend == "utm":
             return {
                 "success": True,
                 "backend": "utm",
-                "ssh_port": ctx.ssh_port,
                 "url": None,
+                "ssh_port": ctx.ssh_port,
             }
         else:
             return {
                 "success": True,
                 "backend": "docker",
                 "url": f"http://localhost:{ctx.port}",
+                "ssh_port": None,
             }
+    except HTTPException:
+        raise
     except Exception as exc:
         _audit_log(request, "session.create", session_name=body.name, success=False, error=str(exc))
-        log.error("session.create.failed", metadata={"error": str(exc)})
-        return {"success": False, "error": str(exc)}
+        log.error("session.create_failed", metadata={"error": str(exc)})
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/api/sessions/{name}/exec")
@@ -1278,7 +1290,7 @@ async def _query_via_tmux(request: Request, name: str, body: QuerySessionRequest
             "error": None,
             "exit_code": 0,
             "duration_seconds": duration,
-            "files_modified": [],  # TODO: Implement git-based detection
+            "files_modified": [],  # not yet implemented — always returns empty list
         }
 
     except TimeoutError:
@@ -1453,7 +1465,7 @@ async def _metrics_sample_loop() -> None:
         await asyncio.sleep(10)
         try:
             container_metrics = await loop.run_in_executor(None, _get_container_metrics)
-            ts = time.time()
+            ts = _now_ms()
             _metrics_history.append({
                 "ts": ts,
                 "agent_count": len(container_metrics),
@@ -1471,8 +1483,8 @@ async def _metrics_sample_loop() -> None:
                     "mem_usage": m.get("mem_usage", 0),
                     "cpu_percent": m.get("cpu_percent", 0),
                 })
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("metrics.sample_failed", metadata={"error": str(exc)})
 
 
 @app.get("/api/metrics/history")
@@ -1625,7 +1637,7 @@ def _require_token_or_api_key(request: Request) -> Token:
     # Fall back to API key — create a synthetic hub token
     api_key = request.headers.get("x-api-key", "")
     if api_key and secrets.compare_digest(api_key, get_api_key()):
-        now = int(time.time() * 1000)
+        now = _now_ms()
         return Token(
             token_id="api-key-fallback",
             agent_name="hub",
@@ -1653,8 +1665,8 @@ async def hub_route_message(request: Request, token: Token = Depends(_require_to
                     return {"delivered": True, "message_id": "api-key-completion", "task_id": task_id}
                 except Exception as exc:
                     log.warning("hub.task_completion_error", metadata={"task_id": task_id, "reason": str(exc)})
-            return {"delivered": True, "message_id": "api-key-no-task-id"}
-        return {"delivered": True, "message_id": "api-key-passthrough"}
+            return {"delivered": True, "message_id": "api-key-no-task-id", "task_id": None}
+        return {"delivered": True, "message_id": "api-key-passthrough", "task_id": None}
 
     try:
         result = route_message(

@@ -380,7 +380,7 @@ class TestProvisionCosignIntegration:
 
         from brainbox.lifecycle import provision
 
-        with pytest.raises(FileNotFoundError, match="cosign.pub"):
+        with pytest.raises(ValueError, match="cosign.pub"):
             await provision(session_name="test-enforce-nofile")
 
     @pytest.mark.asyncio

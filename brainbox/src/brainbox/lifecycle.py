@@ -24,6 +24,7 @@ from .backends.docker.cosign import CosignVerificationError, verify_image, verif
 from .backends.docker.hardening import get_hardening_kwargs, get_legacy_kwargs
 from .log import get_logger
 from .models import SessionContext, SessionState, Token
+from .utils import _now_ms
 
 # ---------------------------------------------------------------------------
 # Module state
@@ -528,7 +529,7 @@ async def _verify_cosign(image: Any, image_name: str, slog: Any) -> None:
     if not use_keyless and use_key:
         if not os.path.isfile(key_path):
             if mode == "enforce":
-                raise FileNotFoundError(f"Cosign public key not found: {key_path}")
+                raise ValueError(f"Cosign public key not found: {key_path}")
             slog.warning(
                 "container.cosign_skipped",
                 metadata={"reason": f"key file not found: {key_path}"},
@@ -1163,9 +1164,9 @@ async def run_pipeline(
                 "merge-queue",
                 repo_url=repo.url,
             )
-            log.info("ci_ratchet.merge_queue_started", metadata={"repo": repo.url})
+            log.info("ci.ratchet.merge_queue_started", metadata={"repo": repo.url})
         except Exception as exc:
-            log.warning("ci_ratchet.merge_queue_failed", metadata={"error": str(exc)})
+            log.warning("ci.ratchet.merge_queue_failed", metadata={"error": str(exc)})
 
     await monitor(ctx)
     return ctx
@@ -1272,10 +1273,7 @@ def recover_sessions_from_docker() -> int:
 # ---------------------------------------------------------------------------
 
 
-def _now_ms() -> int:
-    import time
-
-    return int(time.time() * 1000)
+# _now_ms imported from .utils
 
 
 def _iso_now() -> str:

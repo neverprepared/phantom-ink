@@ -15,6 +15,7 @@ from .log import get_logger
 from .models import Repository, Task, TaskStatus
 from .policy import evaluate_task_assignment
 from .registry import get_agent, issue_token, revoke_token
+from .utils import _now_ms
 
 log = get_logger()
 
@@ -71,6 +72,8 @@ async def submit_task(
 
     task_id = str(uuid.uuid4())
     now = _now_ms()
+    # NOTE: workspace_home is not set here; it is resolved later from repo defaults.
+    # workspace_profile may be None when not passed by the caller.
     task = Task(
         id=task_id,
         description=description,
@@ -164,6 +167,8 @@ def register_ci_ratchet_task(
     task_id = str(uuid.uuid4())
     now = _now_ms()
     token = issue_token("worker", task_id, ttl=settings.hub.token_ttl)
+    # NOTE: workspace_profile and workspace_home are not set for ci-ratchet tasks;
+    # they are sourced from the repo config at launch time.
     task = Task(
         id=task_id,
         description=description,
@@ -494,5 +499,4 @@ def restore_state(state: dict | None) -> None:
             _repos[name] = Repository(**data)
 
 
-def _now_ms() -> int:
-    return int(time.time() * 1000)
+# _now_ms imported from .utils
