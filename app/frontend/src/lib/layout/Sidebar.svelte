@@ -1,16 +1,42 @@
 <script lang="ts">
   import { panels } from '../panels';
   import { currentPanel, sidebarCollapsed } from '../stores.svelte';
+
+  let search = $state('');
+
+  let filteredPanels = $derived(
+    search.trim()
+      ? panels.filter(p => p.label.toLowerCase().includes(search.trim().toLowerCase()))
+      : panels
+  );
 </script>
 
 <nav class="sidebar" class:collapsed={sidebarCollapsed.value}>
+  {#if !sidebarCollapsed.value}
+    <div class="search-box">
+      <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input
+        type="text"
+        class="search-input"
+        placeholder="filter…"
+        bind:value={search}
+        aria-label="Filter panels"
+      />
+      {#if search}
+        <button class="search-clear" onclick={() => search = ''} aria-label="Clear filter">
+          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      {/if}
+    </div>
+  {/if}
+
   <ul class="nav-items">
-    {#each panels as panel (panel.id)}
+    {#each filteredPanels as panel (panel.id)}
       <li>
         <button
           class="nav-btn"
           class:active={currentPanel.value === panel.id}
-          onclick={() => currentPanel.value = panel.id}
+          onclick={() => { currentPanel.value = panel.id; search = ''; }}
           title={sidebarCollapsed.value ? `${panel.label} ${panel.shortcut ?? ''}` : panel.label}
           aria-label={panel.label}
           aria-current={currentPanel.value === panel.id ? 'page' : undefined}
@@ -57,6 +83,51 @@
   .sidebar.collapsed {
     width: var(--sidebar-collapsed-width);
   }
+
+  /* Search */
+  .search-box {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 8px 8px 0;
+    padding: 5px 8px;
+    background: var(--color-bg-tertiary, rgba(255,255,255,0.04));
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md);
+  }
+
+  .search-icon {
+    color: var(--color-text-tertiary);
+    flex-shrink: 0;
+  }
+
+  .search-input {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--color-text-primary);
+    font-size: 12px;
+    font-family: inherit;
+    padding: 0;
+    min-width: 0;
+  }
+
+  .search-input::placeholder {
+    color: var(--color-text-tertiary);
+  }
+
+  .search-clear {
+    background: none;
+    border: none;
+    color: var(--color-text-tertiary);
+    padding: 2px;
+    display: flex;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+  .search-clear:hover { color: var(--color-text-secondary); }
 
   .nav-items {
     list-style: none;
