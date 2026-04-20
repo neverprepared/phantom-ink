@@ -655,6 +655,7 @@ async def provision(
     repo_url: str | None = None,
     task_description: str | None = None,
     task_id: str | None = None,
+    job_id: str | None = None,
     docker_host: str | None = None,
 ) -> SessionContext:
     from .backends import create_backend
@@ -723,6 +724,7 @@ async def provision(
         repo_url=repo_url,
         task_description=task_description,
         task_id=task_id,
+        job_id=job_id,
         docker_host=docker_host,
     )
 
@@ -867,8 +869,17 @@ async def configure(ctx_or_name: SessionContext | str) -> SessionContext:
     if ctx.teams_enabled:
         resolved["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"] = "1"
 
-    # Inject hub URL for agent communication
-    resolved["BRAINBOX_HUB_URL"] = f"http://host.docker.internal:{settings.api_port}"
+    # Inject hub URL for agent communication (shell scripts use BRAINBOX_HUB_URL;
+    # the brainbox MCP server uses BRAINBOX_URL — keep both in sync)
+    _hub_url = f"http://host.docker.internal:{settings.api_port}"
+    resolved["BRAINBOX_HUB_URL"] = _hub_url
+    resolved["BRAINBOX_URL"] = _hub_url
+
+    # Inject task/job IDs so workers can build unique branch names and identify themselves
+    if ctx.task_id:
+        resolved["BRAINBOX_TASK_ID"] = ctx.task_id
+    if ctx.job_id:
+        resolved["BRAINBOX_JOB_ID"] = ctx.job_id
 
     # Inject repo URL if associated
     if ctx.repo_url:
@@ -1136,6 +1147,7 @@ async def run_pipeline(
     repo_url: str | None = None,
     task_description: str | None = None,
     task_id: str | None = None,
+    job_id: str | None = None,
     docker_host: str | None = None,
     repo: Any = None,  # RepoConfig | None — avoid circular import
 ) -> SessionContext:
@@ -1179,6 +1191,7 @@ async def run_pipeline(
         repo_url=repo_url,
         task_description=task_description,
         task_id=task_id,
+        job_id=job_id,
         docker_host=docker_host,
     )
 

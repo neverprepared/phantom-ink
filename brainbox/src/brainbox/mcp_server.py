@@ -191,7 +191,10 @@ def get_metrics() -> list[dict[str, Any]]:
 
 @mcp.tool()
 def submit_task(
-    description: str, agent_name: str = "worker", repo_url: str | None = None
+    description: str,
+    agent_name: str = "worker",
+    repo_url: str | None = None,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     """Submit a task to the hub — spawns an isolated container running the specified agent.
 
@@ -211,6 +214,8 @@ def submit_task(
         description: Task description / instructions for the agent
         agent_name: Agent role to run (default: worker)
         repo_url: Optional GitHub repo URL to associate the task with
+        job_id: Parent supervisor task ID — links this worker to a job for tracking.
+                Supervisors should pass their own task ID here when spawning workers.
     """
     body: dict[str, Any] = {
         "description": description,
@@ -218,6 +223,8 @@ def submit_task(
     }
     if repo_url:
         body["repo_url"] = repo_url
+    if job_id:
+        body["job_id"] = job_id
     return _request("POST", "/api/hub/tasks", body)
 
 

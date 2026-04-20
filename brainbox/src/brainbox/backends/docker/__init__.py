@@ -167,6 +167,8 @@ class DockerBackend:
                 "brainbox.llm_provider": ctx.llm_provider,
                 "brainbox.llm_model": ctx.llm_model or "",
                 "brainbox.workspace_profile": (ctx.workspace_profile or "").upper(),
+                "brainbox.task_id": ctx.task_id or "",
+                "brainbox.job_id": ctx.job_id or ctx.task_id or "",
             },
             "environment": _build_container_env(ctx),
             "detach": True,

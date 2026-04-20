@@ -1512,9 +1512,10 @@ async def hub_submit_task(body: TaskCreate, _key=Depends(require_api_key)):
         task = await submit_task(
             body.description,
             body.agent_name,
-            repo_url=getattr(body, "repo_url", None),
-            workspace_profile=getattr(body, "workspace_profile", None),
-            workspace_home=getattr(body, "workspace_home", None),
+            repo_url=body.repo_url,
+            workspace_profile=body.workspace_profile,
+            workspace_home=body.workspace_home,
+            job_id=body.job_id,
         )
         _broadcast_sse(json.dumps({"action": "task.submit", "agent": body.agent_name, "repo": body.repo_url or ""}))
         return task.model_dump()

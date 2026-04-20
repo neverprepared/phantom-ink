@@ -52,6 +52,7 @@ async def submit_task(
     repo_url: str | None = None,
     workspace_profile: str | None = None,
     workspace_home: str | None = None,
+    job_id: str | None = None,
 ) -> Task:
     """Create and launch a task for the given agent.
 
@@ -71,6 +72,8 @@ async def submit_task(
 
     task_id = str(uuid.uuid4())
     now = _now_ms()
+    # Supervisors own their job; workers inherit the supervisor's task_id as job_id
+    resolved_job_id = job_id or task_id
     task = Task(
         id=task_id,
         description=description,
@@ -80,6 +83,7 @@ async def submit_task(
         updated_at=now,
         repo_url=repo_url,
         workspace_profile=workspace_profile,
+        job_id=resolved_job_id,
     )
 
     # Policy check
@@ -118,6 +122,7 @@ async def submit_task(
             repo_url=repo_url,
             task_description=description,
             task_id=task_id,
+            job_id=resolved_job_id,
             workspace_home=repo_workspace_home,
             workspace_profile=repo_workspace_profile,
         )

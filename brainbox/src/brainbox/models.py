@@ -73,6 +73,7 @@ class SessionContext(BaseModel):
     repo_url: str | None = None  # Associated repository URL
     task_description: str | None = None  # Task description for hub-spawned workers
     task_id: str | None = None  # Hub task ID for completion callbacks
+    job_id: str | None = None  # Root supervisor task ID (own task_id if this is the root)
     state: SessionState = SessionState.PROVISIONING
     created_at: int  # epoch ms
     ttl: int  # seconds
@@ -125,6 +126,7 @@ class TaskCreate(BaseModel):
     repo_url: str | None = None
     workspace_profile: str | None = None
     workspace_home: str | None = None
+    job_id: str | None = None  # Parent supervisor task ID; None means this task IS the job root
 
 
 class Task(BaseModel):
@@ -140,6 +142,7 @@ class Task(BaseModel):
     error: str | None = None
     repo_url: str | None = None  # Associated repository
     workspace_profile: str | None = None  # Profile that submitted this task
+    job_id: str | None = None  # Parent supervisor task ID (own id if this is the root)
 
 
 # ---------------------------------------------------------------------------
