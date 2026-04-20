@@ -1,6 +1,6 @@
 # Docker
 
-This directory contains Docker images and Compose configurations for the ink-bunny platform.
+This directory contains Docker images and Compose configurations for the phantom-ink platform.
 
 ## Available Services
 

@@ -1,6 +1,6 @@
-# Svelte 5 Dashboard
+# Wails Desktop Dashboard
 
-The brainbox dashboard is a Svelte 5 SPA (Single Page Application) using runes-based reactive state. It provides real-time monitoring and control of sessions across panels: **Containers**, **Dashboard** (with Repos panel), and **Observability**.
+The brainbox dashboard is a Wails desktop application embedding a Svelte 5 frontend with runes-based reactive state. It is packaged as a native desktop app (not a browser SPA) using the Wails framework — Go backend bundled with the Svelte UI. It provides real-time monitoring and control of sessions across panels: **Containers**, **Dashboard** (with Repos panel), and **Observability**.
 
 **Key characteristics:**
 - Hash-based routing (`#containers`, `#dashboard`, `#observability`)
@@ -68,7 +68,7 @@ sequenceDiagram
     participant API as /api/*
     participant SSE as /api/events
 
-    Browser->>App: Load SPA
+    Browser->>App: Launch Wails app
     App->>App: Read hash → currentPanel
     App->>App: Read localStorage → sidebarCollapsed
     App->>Panel: Mount active panel

@@ -129,15 +129,15 @@ This is different from PHASE_1's policy engine (which governs agent-to-agent com
 
 **PHASE_1 specifies**: No concept of MCP servers or external tool integrations.
 
-**Reflex provides**: 11+ pre-configured MCP servers with installation, credential management, and lifecycle control.
+**Reflex provides**: 25 pre-configured MCP servers with installation, credential management, and lifecycle control.
 
 | Component | File | Purpose |
 |---|---|---|
-| Server catalog | `plugins/reflex/mcp-catalog.json` | Definitions for 11+ MCP servers |
+| Server catalog | `plugins/reflex/mcp-catalog.json` | Definitions for 25 MCP servers |
 | Management command | `plugins/reflex/commands/mcp.md` | `/reflex:mcp` — list, install, uninstall, enable, disable |
 | Init command | `plugins/reflex/commands/init.md` | `/reflex:init` — credential setup for 7 services |
 | Update command | `plugins/reflex/commands/update-mcp.md` | `/reflex:update-mcp` — check and apply package updates |
 
-Pre-configured servers: Qdrant, Atlassian (Jira/Confluence), Git, GitHub, Playwright, Microsoft Docs, Azure, Azure DevOps, DevBox, SQL Server, MarkItDown.
+Pre-configured servers: Qdrant, Atlassian (Jira/Confluence), Git, GitHub, Playwright, Microsoft Docs, Azure, Azure DevOps, Azure AI Foundry, az-pim, ArgoCD, DevBox, SQL Server, MarkItDown, Kubernetes, Spacelift, Google Workspace, Brainbox, Cloudflare DNS, Uptime Kuma, New Relic, macOS Ecosystem, Markdown-to-Confluence, Grafana, Obsidian Second Brain.
 
 MCP servers extend Claude's capabilities with authenticated access to external systems — a form of tool integration that PHASE_1's architecture doesn't address. This gives Reflex agents access to issue trackers, documentation, databases, and cloud platforms without custom integration code.

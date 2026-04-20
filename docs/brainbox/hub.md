@@ -262,16 +262,21 @@ flowchart LR
 
 Agents are defined as JSON files in the `agents/` directory adjacent to the brainbox package. Role prompts (markdown) live in `agents/roles/`.
 
-The role system was absorbed from Dan Lorenc's [multiclaude](https://github.com/dlorenc/multiclaude) project. Six roles are defined:
+The role system was absorbed from Dan Lorenc's [multiclaude](https://github.com/dlorenc/multiclaude) project and extended with language-specialist roles. Eleven roles are defined:
 
 | Role | Persistent | Description |
 |------|-----------|-------------|
-| `developer` | No | Interactive session (default) |
-| `supervisor` | Yes | Orchestrates agents, monitors progress |
-| `worker` | No | Task executor, creates PRs |
-| `merge-queue` | Yes | PR automation |
-| `pr-shepherd` | Yes | Fork PR coordination |
-| `reviewer` | No | Code review |
+| `assistant` | No | General-purpose information expert and jack-of-all-trades |
+| `bash` | No | Shell scripting expert — POSIX-compatible scripts, shellcheck, shfmt, bats |
+| `golang` | No | Go development expert — idiomatic Go, modules, goroutines, table-driven tests |
+| `java` | No | Java development expert — modern Java idioms, Maven/Gradle, JUnit 5 |
+| `linter` | No | Static analysis, formatting, and security scanning across any stack |
+| `python` | No | Python development expert — type-annotated code, pytest, ruff |
+| `qa` | No | Quality assurance — writes tests, hunts edge cases, verifies behaviour |
+| `reviewer` | No | Reviews PRs, posts comments, flags blocking issues |
+| `supervisor` | Yes | Orchestrates agents, monitors progress, enforces roadmap |
+| `typescript` | No | TypeScript/Node.js expert — strict typing, modern JS ecosystem |
+| `worker` | No | Task executor — implements assigned work and opens a PR |
 
 ### Agent definition schema
 
@@ -333,7 +338,7 @@ All models are Pydantic `BaseModel` subclasses in `models.py`.
 
 | Model | Key Fields | Usage |
 |-------|-----------|-------|
-| `AgentRole` | enum: developer, supervisor, worker, merge-queue, pr-shepherd, reviewer | Role classification |
+| `AgentRole` | enum: assistant, bash, golang, java, linter, python, qa, reviewer, supervisor, typescript, worker | Role classification |
 | `AgentDefinition` | name, image, description, capabilities[], hardened, role_prompt, persistent, repo_url | Loaded from `agents/*.json` |
 | `Token` | token_id, agent_name, task_id, capabilities[], issued, expiry | Issued per task |
 | `Task` | id, description, agent_name, status, token_id, session_name, result, error, repo_url | Router state |

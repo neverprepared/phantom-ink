@@ -154,12 +154,14 @@ LangFuse mode (`CL_LANGFUSE__MODE`): `off` (disabled, 503), `warn` (soft fail), 
 | `GET` | `/api/metrics/containers` | Per-container CPU %, memory, uptime, trace/error counts |
 | `GET` | `/api/events` | SSE stream (Docker + hub events) |
 
-### Dashboard (SPA)
+### Dashboard (Wails desktop app)
+
+The dashboard is served as a Wails desktop application. The FastAPI backend also serves the built frontend assets so the UI is accessible via browser during development.
 
 | Path | Description |
 |------|-------------|
-| `/assets/*` | Static JS/CSS from built dashboard |
-| `/*` | SPA fallback → `index.html` |
+| `/assets/*` | Static JS/CSS from built Svelte frontend |
+| `/*` | Fallback → `index.html` (dev/browser access) |
 
 ## Rate Limits
 
