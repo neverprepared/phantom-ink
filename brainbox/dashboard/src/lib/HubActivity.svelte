@@ -3,12 +3,16 @@
   import { fetchHubState, connectSSE } from './api.js';
 
   let hubState = $state(null);
+  let error = $state(null);
   let eventSource = null;
 
   async function refresh() {
     try {
       hubState = await fetchHubState();
-    } catch { /* noop */ }
+      error = null;
+    } catch {
+      error = 'Failed to load hub state';
+    }
   }
 
   onMount(() => {
@@ -43,6 +47,10 @@
 
 <div class="hub-section">
   <h3>Hub Activity</h3>
+
+  {#if error}
+    <div class="hub-error">{error}</div>
+  {/if}
 
   <div class="hub-stats">
     <div class="hub-stat">
@@ -159,5 +167,14 @@
     border-radius: 50%;
     background: #10b981;
     display: inline-block;
+  }
+  .hub-error {
+    font-size: 12px;
+    color: #fca5a5;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    padding: 6px 10px;
+    border-radius: 4px;
+    margin-bottom: 12px;
   }
 </style>

@@ -1,4 +1,5 @@
 /** Reactive stores for panel routing and sidebar state. */
+import { panels } from './panels.js';
 
 // ---------------------------------------------------------------------------
 // Sidebar collapsed state (localStorage-persisted)
@@ -30,10 +31,11 @@ export const sidebarCollapsed = {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_PANEL = 'containers';
+const VALID_PANELS = new Set(panels.map(p => p.id));
 
 function panelFromHash() {
   const h = location.hash.replace('#', '');
-  return h || DEFAULT_PANEL;
+  return VALID_PANELS.has(h) ? h : DEFAULT_PANEL;
 }
 
 let _panel = $state(panelFromHash());

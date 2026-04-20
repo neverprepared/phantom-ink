@@ -21,6 +21,8 @@
       <PipelinesPanel />
     {:else if currentPanel.value === 'observability'}
       <ObservabilityPanel />
+    {:else}
+      <ContainersPanel />
     {/if}
   </main>
 </div>

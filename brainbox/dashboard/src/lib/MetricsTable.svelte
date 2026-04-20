@@ -4,6 +4,7 @@
   import Badge from './Badge.svelte';
 
   let metrics = $state([]);
+  let loading = $state(true);
   let sseConn = null;
   let abortController = null;
 
@@ -30,10 +31,11 @@
     try {
       metrics = await fetchContainerMetrics(abortController.signal);
     } catch (err) {
-      // Ignore AbortError - it's expected when cancelling requests
       if (err.name !== 'AbortError') {
         console.error('Failed to fetch container metrics:', err);
       }
+    } finally {
+      loading = false;
     }
   }
 
@@ -50,7 +52,9 @@
 
 <div class="metrics-section">
   <h3>Container Metrics</h3>
-  {#if metrics.length === 0}
+  {#if loading}
+    <p class="empty"><span class="spinner"></span> Loading…</p>
+  {:else if metrics.length === 0}
     <p class="empty">No running containers</p>
   {:else}
     <table class="metrics-table">
@@ -74,7 +78,7 @@
             <td class="role-cell"><Badge type="role" variant={m.role || 'developer'} text={m.role || 'developer'} /></td>
             <td class="profile-cell">{#if m.workspace_profile}<Badge type="profile" variant="workspace" text={m.workspace_profile.toUpperCase()} />{:else}<span class="empty-cell">—</span>{/if}</td>
             <td class="llm-cell"><Badge type="provider" variant={m.llm_provider === 'ollama' ? 'private' : 'public'} text={m.llm_provider === 'ollama' ? 'private' : 'public'} /></td>
-            <td class="num">{m.cpu_percent.toFixed(1)}%</td>
+            <td class="num">{(m.cpu_percent ?? 0).toFixed(1)}%</td>
             <td class="num">{m.mem_usage_human} / {m.mem_limit_human}</td>
             <td class="num">{formatUptime(m.uptime_seconds)}</td>
             <td class="num">{m.trace_count ?? 0}</td>
@@ -137,4 +141,16 @@
   .profile-cell { padding: 10px var(--spacing-md); }
   .empty-cell { color: #374151; }
   .error-count { color: var(--color-error); font-weight: 600; }
+  .spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(148, 163, 184, 0.2);
+    border-top-color: #94a3b8;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>

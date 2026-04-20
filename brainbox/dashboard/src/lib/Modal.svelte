@@ -1,8 +1,21 @@
 <script>
   let { onClose, children } = $props();
 
+  let modalEl = $state(null);
+
   function handleKeydown(e) {
-    if (e.key === 'Escape') onClose();
+    if (e.key === 'Escape') { onClose(); return; }
+    if (e.key === 'Tab' && modalEl) {
+      const focusable = [...modalEl.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(el => !el.disabled);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey) {
+        if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+      } else {
+        if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    }
   }
 
   function handleOverlayClick(e) {
@@ -15,7 +28,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="modal-overlay" onclick={handleOverlayClick}>
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" bind:this={modalEl}>
     {@render children()}
   </div>
 </div>
