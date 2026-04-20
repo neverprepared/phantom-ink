@@ -28,6 +28,7 @@
       workspacesRoot = cfg?.workspaces_root ?? '';
       theme = cfg?.theme ?? 'dark';
       platform = plat ?? 'unknown';
+      applyTheme(theme);
     } catch (err: any) {
       notifications.error(`Failed to load settings: ${err?.message ?? err}`);
     } finally {
@@ -35,18 +36,35 @@
     }
   });
 
-  async function toggleTheme() {
-    const newTheme = theme === 'dark' ? 'light' : 'dark';
+  function resolveAutoTheme(): 'dark' | 'light' {
+    const hour = new Date().getHours();
+    return (hour >= 7 && hour < 19) ? 'light' : 'dark';
+  }
+
+  function applyTheme(t: string) {
+    document.documentElement.dataset.theme = t === 'auto' ? resolveAutoTheme() : t;
+  }
+
+  async function setTheme(newTheme: string) {
     const a = await getApi();
     if (!a) return;
     try {
       await a.SetTheme(newTheme);
       theme = newTheme;
-      document.documentElement.dataset.theme = newTheme;
+      applyTheme(newTheme);
     } catch (err: any) {
       notifications.error(`Failed to set theme: ${err}`);
     }
   }
+
+  // Auto theme: re-evaluate every minute
+  onMount(() => {
+    if (theme === 'auto') applyTheme('auto');
+    const interval = setInterval(() => {
+      if (theme === 'auto') applyTheme('auto');
+    }, 60_000);
+    return () => clearInterval(interval);
+  });
 
   async function handleSave() {
     saving = true;
@@ -78,15 +96,22 @@
       <div class="section">
         <h2>appearance</h2>
         <div class="theme-toggle">
-          <button class="theme-opt" class:active={theme === 'dark'} onclick={() => { if (theme !== 'dark') toggleTheme(); }}>
+          <button class="theme-opt" class:active={theme === 'dark'} onclick={() => setTheme('dark')}>
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
             dark
           </button>
-          <button class="theme-opt" class:active={theme === 'light'} onclick={() => { if (theme !== 'light') toggleTheme(); }}>
+          <button class="theme-opt" class:active={theme === 'light'} onclick={() => setTheme('light')}>
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
             light
           </button>
+          <button class="theme-opt" class:active={theme === 'auto'} onclick={() => setTheme('auto')}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14z" fill="currentColor" opacity="0.3"/></svg>
+            auto
+          </button>
         </div>
+        {#if theme === 'auto'}
+          <p class="hint">light 7am–7pm, dark 7pm–7am</p>
+        {/if}
       </div>
 
       <!-- Brainbox Connection -->
