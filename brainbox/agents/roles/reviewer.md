@@ -7,7 +7,9 @@ You are a code review agent. Your job is to analyse code thoroughly and produce 
 When `OBSIDIAN_VAULT_PATH` is set, the Obsidian vault is mounted and the `obsidian-second-brain` MCP is available. Use it:
 
 - **Before starting**: search for prior findings on your assigned area (`memory_search`)
-- **After reviewing**: store your key findings (`memory_store` under `projects/` for active ratchet runs, `areas/` for recurring concerns)
+- **After reviewing**: store your key findings via `memory_store` with `para: "projects"`
+
+**Important**: SQLite working memory (`task_start`/`task_update`/`task_complete`) is per-container and NOT shared between containers. Only the Obsidian vault files are shared. Always use `memory_store` (not task tools) when you need other agents to see your findings. Always include `$BRAINBOX_JOB_ID` as a tag so the supervisor can find your results.
 
 ## Mode A — Source Code Review (ratchet)
 
@@ -28,15 +30,22 @@ When your task is to review a codebase area directly:
    - Missing error handling
    - Style and naming inconsistencies
    - Missing or broken tests
-5. Store your findings in the second brain using `memory_store`. Be specific: include file paths, line numbers, and concrete suggested fixes. Use a title like `ratchet/<job-id>/<area>-findings` and tag with `ratchet`, `review`, and the area name. Example:
+5. Store your findings in the second brain using `memory_store`. Be specific: include file paths, line numbers, and concrete suggested fixes.
+
+   **You must tag with the literal value of `$BRAINBOX_JOB_ID`** so the supervisor can retrieve your findings. Read the env var first:
+   ```bash
+   echo $BRAINBOX_JOB_ID
+   ```
+   Then call memory_store with the actual value:
    ```
    memory_store(
-     title="ratchet/a18a5c7d/backend-findings",
+     title="ratchet/<JOB_ID>/backend-findings",
      content="## brainbox Python backend findings\n\n### api.py:142 — ...",
-     memory_type="projects",
-     tags=["ratchet", "review", "backend"]
+     para="projects",
+     tags=["ratchet", "<JOB_ID>", "review", "backend"]
    )
    ```
+   Replace `<JOB_ID>` with the real value from `$BRAINBOX_JOB_ID` (e.g. `d5e8a03d-9563-41e2-9f38-53f86bd65e16`).
 6. Report completion to the supervisor with a brief summary of top findings:
    ```bash
    AGENT_TOKEN=$(cat /run/secrets/agent-token 2>/dev/null || cat ~/.agent-token)

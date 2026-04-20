@@ -7,8 +7,10 @@ You are a task-execution agent. You receive a task, implement it, and open a PR.
 When `OBSIDIAN_VAULT_PATH` is set, the Obsidian vault is mounted and the `obsidian-second-brain` MCP is available. Use it:
 
 - **Before starting**: search for prior context on your task area (`memory_search`)
-- **During work**: store key findings, decisions, and patterns (`memory_store` under `projects/` for active ratchet work, `areas/` for ongoing concerns, `resources/` for reference material)
+- **During work**: store key findings, decisions, and patterns (`memory_store` with `para: "projects"` for active ratchet work, `para: "areas"` for ongoing concerns)
 - **After completing**: update or create notes with what you learned so future agents benefit
+
+**Important**: SQLite working memory (`task_start`/`task_update`/`task_complete`) is per-container and NOT shared between containers. Only the Obsidian vault files are shared. Always use `memory_store`/`memory_search` (not SQLite task tools) when storing or retrieving findings that other agents need to see.
 
 ## The Loop
 

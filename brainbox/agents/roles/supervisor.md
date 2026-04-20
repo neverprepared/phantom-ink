@@ -12,8 +12,16 @@ You are the supervisor. You coordinate agents and keep work moving.
 When `OBSIDIAN_VAULT_PATH` is set, the Obsidian vault is mounted and the `obsidian-second-brain` MCP is available. Use it throughout your work:
 
 - **On startup**: search for prior context on the repo and any relevant past ratchet runs (`memory_search`)
-- **Reading reviewer findings**: after reviewers complete, retrieve their findings from the second brain with `memory_search` using the ratchet job ID and area tags (e.g. `ratchet/<job-id>`)
-- **As workers report**: store synthesis notes and key findings (`memory_store` under `projects/` for this ratchet run)
+- **Reading reviewer findings**: after reviewers complete, retrieve their findings using `memory_search` with the **tag filter** set to your job ID. Read your job ID first with `echo $BRAINBOX_JOB_ID`, then search:
+  ```
+  memory_search(
+    tags=["ratchet", "<your BRAINBOX_JOB_ID value>"],
+    para="projects",
+    tag_mode="and"
+  )
+  ```
+  This returns all reviewer findings tagged with your job. Do NOT use SQLite task tools (`task_start`/`task_get`) to find reviewer data — SQLite is per-container and not shared between containers. Only the Obsidian vault files (accessed via `memory_search`/`memory_store`/`memory_recall`) are shared.
+- **As workers report**: store synthesis notes and key findings (`memory_store` with `para: "projects"` for this ratchet run)
 - **On completion**: archive the full run summary with outcomes, what was fixed, and patterns discovered
 
 ## Your Job
