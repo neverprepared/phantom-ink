@@ -458,6 +458,37 @@
     </div>
   {/if}
 
+  {#if diskBreakdown}
+    <div class="disk-breakdown">
+      <div class="disk-total">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
+        <span class="disk-total-label">{diskBreakdown.total_label}</span>
+        <span class="disk-total-sub">total disk</span>
+      </div>
+      <div class="disk-bar">
+        {#each diskBreakdown.categories as cat (cat.name)}
+          {@const pct = diskBreakdown.total_bytes > 0 ? (cat.bytes / diskBreakdown.total_bytes) * 100 : 0}
+          {#if pct > 0}
+            <div
+              class="disk-segment disk-{cat.name}"
+              style="width: {Math.max(pct, 2)}%"
+              title="{cat.name}: {cat.label}"
+            ></div>
+          {/if}
+        {/each}
+      </div>
+      <div class="disk-legend">
+        {#each diskBreakdown.categories as cat (cat.name)}
+          <span class="disk-legend-item">
+            <span class="disk-dot disk-{cat.name}"></span>
+            <span class="disk-cat-name">{cat.name}</span>
+            <span class="disk-cat-size">{cat.label}</span>
+          </span>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   {#if combinedHistoryStore.value.length >= 2}
     <div class="charts-row">
       <MetricsChart
@@ -490,37 +521,6 @@
         onHover={(idx) => aggregateHoverIdx = idx}
         onHoverEnd={() => aggregateHoverIdx = null}
       />
-    </div>
-  {/if}
-
-  {#if diskBreakdown}
-    <div class="disk-breakdown">
-      <div class="disk-total">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
-        <span class="disk-total-label">{diskBreakdown.total_label}</span>
-        <span class="disk-total-sub">total disk</span>
-      </div>
-      <div class="disk-bar">
-        {#each diskBreakdown.categories as cat (cat.name)}
-          {@const pct = diskBreakdown.total_bytes > 0 ? (cat.bytes / diskBreakdown.total_bytes) * 100 : 0}
-          {#if pct > 0}
-            <div
-              class="disk-segment disk-{cat.name}"
-              style="width: {Math.max(pct, 2)}%"
-              title="{cat.name}: {cat.label}"
-            ></div>
-          {/if}
-        {/each}
-      </div>
-      <div class="disk-legend">
-        {#each diskBreakdown.categories as cat (cat.name)}
-          <span class="disk-legend-item">
-            <span class="disk-dot disk-{cat.name}"></span>
-            <span class="disk-cat-name">{cat.name}</span>
-            <span class="disk-cat-size">{cat.label}</span>
-          </span>
-        {/each}
-      </div>
     </div>
   {/if}
 
