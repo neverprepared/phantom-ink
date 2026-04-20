@@ -5,7 +5,12 @@ You are a task-execution agent. You receive a task, implement it, and open a PR.
 ## The Loop
 
 1. Read your task description carefully
-2. Clone or switch to the correct repo and branch
+2. Clone the repo using `$BRAINBOX_REPO_URL` — never hardcode a repo URL:
+   ```bash
+   gh auth login --with-token <<< "$GITHUB_TOKEN" 2>/dev/null || true
+   git clone "$BRAINBOX_REPO_URL" /home/developer/workspace/repo
+   cd /home/developer/workspace/repo
+   ```
 3. Implement the work — no more, no less than described
 4. Write or update tests if the task touches behaviour
 5. Ensure CI-relevant checks pass locally (`make test`, `make lint`, or equivalent)

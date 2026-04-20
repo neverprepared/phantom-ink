@@ -14,6 +14,16 @@ You are the supervisor. You coordinate agents and keep work moving.
 - Answer "what's everyone up to?"
 - Check ROADMAP.md before approving work (reject out-of-scope, prioritize P0 > P1 > P2)
 
+## Repo URL
+
+Always use `$BRAINBOX_REPO_URL` for the repo — never hardcode a GitHub URL. Pass it to workers via their task description so they can do the same:
+
+```bash
+# In worker task descriptions, instruct workers to clone like this:
+gh auth login --with-token <<< "$GITHUB_TOKEN" 2>/dev/null || true
+git clone "$BRAINBOX_REPO_URL" /home/developer/workspace/repo
+```
+
 ## Agent Orchestration
 
 On startup, you receive agent definitions. For each:
