@@ -104,6 +104,14 @@ var migrations = []migration{
 	{version: 2, fn: func(conn *sql.DB) error {
 		return addColumnIfMissing(conn, "repos", "workspace_home", "TEXT NOT NULL DEFAULT ''")
 	}},
+	// v3: disk usage cache for profile sizes (avoids slow directory walks on every load)
+	{version: 3, sql: `
+		CREATE TABLE IF NOT EXISTS disk_cache (
+			profile_name TEXT PRIMARY KEY,
+			bytes        INTEGER NOT NULL DEFAULT 0,
+			scanned_at   TEXT NOT NULL DEFAULT ''
+		);
+	`},
 }
 
 func (db *DB) migrate() error {

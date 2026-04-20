@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // ContainerStat represents live resource usage for a Docker container.
@@ -233,13 +234,13 @@ type DiskOverview struct {
 	Profiles   []ProfileDiskUsage `json:"profiles"`
 	OSBytes    int64              `json:"os_bytes"` // everything not accounted for by profiles
 	OSLabel    string             `json:"os_label"`
+	ScannedAt  string             `json:"scanned_at"` // ISO 8601 timestamp of last scan, empty if no cache
 }
 
-// GetDiskOverview returns total disk size and per-profile usage for pie chart.
-func (a *App) GetDiskOverview() DiskOverview {
+// diskOverviewFromCache builds a DiskOverview using cached profile sizes.
+func (a *App) diskOverviewFromCache() DiskOverview {
 	overview := DiskOverview{}
 
-	// Total disk capacity + used
 	home, _ := os.UserHomeDir()
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(home, &stat); err == nil {
@@ -250,33 +251,91 @@ func (a *App) GetDiskOverview() DiskOverview {
 		overview.UsedLabel = humanBytes(overview.UsedDisk)
 	}
 
-	// Per-profile disk usage
-	profiles, err := a.ScanProfiles()
-	if err != nil {
-		profiles = nil
-	}
+	// Read cached profile sizes
 	var profileTotal int64
-	for _, p := range profiles {
-		if p.WorkspaceHome == "" {
-			continue
+	var latestScan string
+	if a.db != nil {
+		rows, err := a.db.conn.Query("SELECT profile_name, bytes, scanned_at FROM disk_cache ORDER BY profile_name")
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var name string
+				var bytes int64
+				var scannedAt string
+				if err := rows.Scan(&name, &bytes, &scannedAt); err == nil {
+					overview.Profiles = append(overview.Profiles, ProfileDiskUsage{
+						Name: name, Bytes: bytes, Label: humanBytes(bytes),
+					})
+					profileTotal += bytes
+					if scannedAt > latestScan {
+						latestScan = scannedAt
+					}
+				}
+			}
 		}
-		bytes := dirSize(p.WorkspaceHome)
-		overview.Profiles = append(overview.Profiles, ProfileDiskUsage{
-			Name:  p.Name,
-			Bytes: bytes,
-			Label: humanBytes(bytes),
-		})
-		profileTotal += bytes
 	}
 
-	// OS = used - profiles
+	overview.ScannedAt = latestScan
 	overview.OSBytes = overview.UsedDisk - profileTotal
 	if overview.OSBytes < 0 {
 		overview.OSBytes = 0
 	}
 	overview.OSLabel = humanBytes(overview.OSBytes)
-
 	return overview
+}
+
+// GetDiskOverview returns cached disk overview (instant). Call ScanDiskUsage to refresh.
+func (a *App) GetDiskOverview() DiskOverview {
+	return a.diskOverviewFromCache()
+}
+
+// ScanDiskUsage walks each profile's workspace_home, updates the cache,
+// and returns the fresh DiskOverview. This is slow — call only on user request.
+func (a *App) ScanDiskUsage() DiskOverview {
+	profiles, err := a.ScanProfiles()
+	if err != nil {
+		profiles = nil
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	for _, p := range profiles {
+		if p.WorkspaceHome == "" {
+			continue
+		}
+		bytes := dirSize(p.WorkspaceHome)
+		if a.db != nil {
+			a.db.conn.Exec(
+				"INSERT INTO disk_cache (profile_name, bytes, scanned_at) VALUES (?, ?, ?) "+
+					"ON CONFLICT(profile_name) DO UPDATE SET bytes=excluded.bytes, scanned_at=excluded.scanned_at",
+				p.Name, bytes, now,
+			)
+		}
+	}
+
+	// Clean up profiles that no longer exist
+	if a.db != nil {
+		profileNames := make(map[string]bool)
+		for _, p := range profiles {
+			profileNames[p.Name] = true
+		}
+		rows, err := a.db.conn.Query("SELECT profile_name FROM disk_cache")
+		if err == nil {
+			defer rows.Close()
+			var toDelete []string
+			for rows.Next() {
+				var name string
+				if rows.Scan(&name) == nil && !profileNames[name] {
+					toDelete = append(toDelete, name)
+				}
+			}
+			for _, name := range toDelete {
+				a.db.conn.Exec("DELETE FROM disk_cache WHERE profile_name = ?", name)
+			}
+		}
+	}
+
+	return a.diskOverviewFromCache()
 }
 
 // SystemInfo holds system-level CPU and memory totals.

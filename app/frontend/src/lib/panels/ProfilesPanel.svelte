@@ -10,6 +10,7 @@
   let scanning = $state(false);
   let diskOverview = $state<any | null>(null);
   let loadingDisk = $state(true);
+  let scanningDisk = $state(false);
 
   // Create profile
   let showCreateProfile = $state(false);
@@ -48,6 +49,33 @@
       diskOverview = await a.GetDiskOverview();
     } catch { diskOverview = null; }
     finally { loadingDisk = false; }
+  }
+
+  async function scanDisk() {
+    scanningDisk = true;
+    const a = await getApi();
+    if (!a) { scanningDisk = false; return; }
+    try {
+      diskOverview = await a.ScanDiskUsage();
+      notifications.success('Disk scan complete');
+    } catch (err: any) {
+      notifications.error(`Disk scan failed: ${err?.message ?? err}`);
+    } finally {
+      scanningDisk = false;
+    }
+  }
+
+  function formatScanTime(iso: string): string {
+    if (!iso) return 'never';
+    const d = new Date(iso);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
   }
 
   async function selectProfile(name: string) {
@@ -171,9 +199,11 @@
   </header>
 
   <!-- Disk overview pie chart -->
-  {#if diskOverview && pieSlices.length > 0}
+  {#if diskOverview}
     <div class="disk-overview">
-      <PieChart slices={pieSlices} size={160} />
+      {#if pieSlices.length > 0}
+        <PieChart slices={pieSlices} size={160} />
+      {/if}
       <div class="disk-info">
         <div class="disk-total-row">
           <span class="disk-used">{diskOverview.used_label}</span>
@@ -189,6 +219,19 @@
               <span class="legend-val">{s.label}</span>
             </span>
           {/each}
+        </div>
+        <div class="disk-scan-row">
+          <button class="btn-scan" onclick={scanDisk} disabled={scanningDisk}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class:spinning={scanningDisk} aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+            {scanningDisk ? 'scanning...' : 'scan disk'}
+          </button>
+          <span class="scan-time">
+            {#if diskOverview.scanned_at}
+              scanned {formatScanTime(diskOverview.scanned_at)}
+            {:else}
+              not yet scanned
+            {/if}
+          </span>
         </div>
       </div>
     </div>
@@ -351,6 +394,34 @@
 
   .legend-name { font-weight: 500; color: var(--color-text-secondary); }
   .legend-val { font-family: var(--font-mono); font-size: 11px; }
+
+  .disk-scan-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+  }
+
+  .btn-scan {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-md);
+    color: var(--color-text-tertiary);
+    font-size: 11px;
+    padding: 4px 10px;
+    transition: all 0.15s;
+  }
+  .btn-scan:hover:not(:disabled) { background: rgba(255, 255, 255, 0.1); color: var(--color-text-secondary); }
+  .btn-scan:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .scan-time {
+    font-size: 11px;
+    color: var(--color-text-tertiary);
+    font-style: italic;
+  }
 
   /* Create profile */
   .create-profile {
