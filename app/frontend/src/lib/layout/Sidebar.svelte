@@ -212,6 +212,8 @@
     white-space: nowrap;
     transition: all 0.15s;
     min-width: 0;
+    text-align: left;
+    justify-content: flex-start;
   }
 
   .nav-btn:hover {
