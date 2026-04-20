@@ -168,6 +168,68 @@
 }
 
 /* ==========================================================================
+   Muse theme — inspired by Muse Vue Ant Design Dashboard
+   White sidebar, coral accent, airy spacing, soft rounded cards
+   ========================================================================== */
+
+[data-theme="muse"] {
+  /* Backgrounds — pure white and warm grays */
+  --color-bg-primary: #f8f9fa;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #f0f2f5;
+  --color-bg-card: #ffffff;
+  --color-bg-sidebar: #ffffff;
+
+  /* Borders — barely visible, let shadows do the work */
+  --color-border-primary: rgba(0, 0, 0, 0.04);
+  --color-border-secondary: rgba(0, 0, 0, 0.06);
+
+  /* Text — warm dark grays */
+  --color-text-primary: #141414;
+  --color-text-secondary: #595959;
+  --color-text-tertiary: #8c8c8c;
+  --color-text-muted: #bfbfbf;
+
+  /* Accent — coral orange (Muse primary) */
+  --color-accent: #ff6b6b;
+  --color-accent-soft: rgba(255, 107, 107, 0.08);
+  --color-focus: #1890ff;
+
+  /* Status — Ant Design palette */
+  --color-success: #52c41a;
+  --color-error: #ff4d4f;
+  --color-warning: #faad14;
+  --color-info: #1890ff;
+
+  /* Sidebar — light with colored active state */
+  --color-sidebar-text: #8c8c8c;
+  --color-sidebar-text-active: #141414;
+  --color-sidebar-hover: rgba(0, 0, 0, 0.03);
+
+  /* Surface states */
+  --color-surface-subtle: rgba(0, 0, 0, 0.01);
+  --color-surface-hover: rgba(0, 0, 0, 0.025);
+  --color-surface-active: rgba(0, 0, 0, 0.05);
+  --color-overlay: rgba(0, 0, 0, 0.3);
+  --color-nav-active-bg: rgba(255, 107, 107, 0.08);
+  --color-nav-active-border: #ff6b6b;
+  --color-dot-offline: #d9d9d9;
+
+  /* Shadows — very soft, almost flat */
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.02);
+  --shadow-card-hover: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --shadow-modal: 0 12px 32px -4px rgba(0, 0, 0, 0.12);
+  --shadow-button: 0 2px 4px rgba(0, 0, 0, 0.04);
+  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.03);
+
+  /* Radius — generous, pill-like */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.5rem;
+}
+
+/* ==========================================================================
    Platform overrides
    ========================================================================== */
 

@@ -135,6 +135,36 @@
     color: #ffffff;
   }
 
+  /* Muse theme — white sidebar with colored active state */
+  :global([data-theme="muse"]) .sidebar {
+    border-right: 1px solid rgba(0, 0, 0, 0.04);
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.03);
+  }
+
+  :global([data-theme="muse"]) .nav-btn {
+    color: var(--color-sidebar-text, #8c8c8c);
+    border-radius: 0.75rem;
+  }
+
+  :global([data-theme="muse"]) .nav-btn:hover {
+    background: var(--color-sidebar-hover, rgba(0, 0, 0, 0.03));
+    color: var(--color-text-primary);
+  }
+
+  :global([data-theme="muse"]) .nav-btn.active {
+    background: var(--color-nav-active-bg);
+    color: var(--color-accent);
+    box-shadow: none;
+  }
+
+  :global([data-theme="muse"]) .nav-shortcut {
+    color: var(--color-text-muted);
+  }
+
+  :global([data-theme="muse"]) .sidebar-footer {
+    border-top-color: rgba(0, 0, 0, 0.04);
+  }
+
   .sidebar.collapsed {
     width: var(--sidebar-collapsed-width);
   }
