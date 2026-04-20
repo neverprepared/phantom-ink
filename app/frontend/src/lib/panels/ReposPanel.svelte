@@ -7,6 +7,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import Modal from '../components/Modal.svelte';
   import ProfilePicker from '../components/ProfilePicker.svelte';
+  import Badge from '../components/Badge.svelte';
 
   interface Worktree {
     id: string;
@@ -14,12 +15,13 @@
     branch: string;
     worktree_path: string;
     session_name?: string;
-    status: string; // "ready", "in_use", "error"
+    status: string;
     created_at: number;
     error?: string;
   }
 
   let allRepos = $state<any[]>([]);
+  let hubTasks = $state<any[]>([]);
   let loading = $state(true);
   let showAddModal = $state(false);
   let repoURL = $state('');
@@ -30,45 +32,49 @@
   let isAdding = $state(false);
 
   // Worktree state
-  let worktrees = $state<Record<string, Worktree[]>>({});       // repo_name -> worktrees
-  let expandedRepos = $state<Set<string>>(new Set());
-  let newBranch = $state<Record<string, string>>({});            // repo_name -> branch input
+  let worktrees = $state<Record<string, Worktree[]>>({});
+  let newBranch = $state<Record<string, string>>({});
   let creatingWorktree = $state<Record<string, boolean>>({});
-  let launchingSession = $state<Record<string, boolean>>({});    // worktree_id -> loading
-  let confirmDeleteWt = $state<string | null>(null);             // worktree id
+  let launchingSession = $state<Record<string, boolean>>({});
+  let confirmDeleteWt = $state<string | null>(null);
+
+  // Expanded sections per repo: repoName → Set<'prs' | 'workers' | 'worktrees'>
+  let expandedSections = $state<Record<string, Set<string>>>({});
+
+  // Toggle in-flight state
+  let togglingMQ = $state<Record<string, boolean>>({});
+  let togglingPS = $state<Record<string, boolean>>({});
 
   let activeProfile = $derived(profileState.active);
   let profiles = $derived(profileState.profiles);
 
   let filteredRepos = $derived.by(() => {
     if (!activeProfile) return allRepos;
-    return allRepos.filter(r => {
-      const rp = (r.workspace_profile ?? '').toLowerCase();
-      return rp === activeProfile.name.toLowerCase();
+    return allRepos.filter(r =>
+      (r.workspace_profile ?? '').toLowerCase() === activeProfile.name.toLowerCase()
+    );
+  });
+
+  function tasksForRepo(repoUrl: string): any[] {
+    return hubTasks.filter(t => {
+      const turl = typeof t.repo_url === 'string' ? t.repo_url : '';
+      return turl === repoUrl && (t.status === 'running' || t.status === 'pending');
     });
-  });
+  }
 
-  let groupedRepos = $derived.by(() => {
-    const groups: Record<string, any[]> = {};
-    for (const r of filteredRepos) {
-      const key = r.workspace_profile || 'unassigned';
-      (groups[key] ??= []).push(r);
-    }
-    return groups;
-  });
-
-  // SSE: reload worktrees on relevant events
   $effect(() => {
     const lastEvent = brainboxEvents.last;
     if (!lastEvent) return;
     try {
       const parsed = typeof lastEvent === 'string' ? JSON.parse(lastEvent) : lastEvent;
-      const action = parsed?.action;
-      if (action === 'worktree.created' || action === 'worktree.deleted' || action === 'worktree.updated') {
-        const repoName = parsed?.data?.repo_name;
-        if (repoName && expandedRepos.has(repoName)) {
-          loadWorktrees(repoName);
-        }
+      const action = parsed?.action ?? parsed?.raw ?? '';
+      if (
+        action.startsWith('worktree.') ||
+        action.startsWith('task.') ||
+        action.startsWith('repo.') ||
+        action === 'hub'
+      ) {
+        refresh();
       }
     } catch {}
   });
@@ -77,7 +83,12 @@
     const a = await getApi();
     if (!a) { loading = false; return; }
     try {
-      allRepos = (await a.ListRepos()) ?? [];
+      const [repos, hs] = await Promise.all([
+        a.ListRepos(),
+        a.GetHubState(),
+      ]);
+      allRepos = repos ?? [];
+      hubTasks = hs?.tasks ?? [];
     } catch (err: any) {
       notifications.error(`Failed to load repos: ${err?.message ?? err}`);
     } finally {
@@ -91,46 +102,51 @@
     try {
       const result = await a.ListWorktrees(repoName);
       worktrees = { ...worktrees, [repoName]: result ?? [] };
-    } catch (err) {
-      notifications.error('Failed to fetch worktrees: ' + err.message);
+    } catch (err: any) {
+      notifications.error('Failed to fetch worktrees: ' + (err?.message ?? err));
     }
   }
 
-  function toggleExpand(repoName: string) {
-    const next = new Set(expandedRepos);
-    if (next.has(repoName)) {
-      next.delete(repoName);
+  function isSectionExpanded(rname: string, section: string): boolean {
+    return expandedSections[rname]?.has(section) ?? false;
+  }
+
+  function toggleSection(rname: string, section: string) {
+    const current = expandedSections[rname] ?? new Set<string>();
+    const next = new Set(current);
+    if (next.has(section)) {
+      next.delete(section);
     } else {
-      next.add(repoName);
-      loadWorktrees(repoName);
+      next.add(section);
+      if (section === 'worktrees') loadWorktrees(rname);
     }
-    expandedRepos = next;
+    expandedSections = { ...expandedSections, [rname]: next };
   }
 
-  async function createWorktree(repoName: string) {
-    const branch = (newBranch[repoName] ?? '').trim();
+  async function createWorktree(rname: string) {
+    const branch = (newBranch[rname] ?? '').trim();
     if (!branch) return;
-    creatingWorktree = { ...creatingWorktree, [repoName]: true };
+    creatingWorktree = { ...creatingWorktree, [rname]: true };
     const a = await getApi();
-    if (!a) { creatingWorktree = { ...creatingWorktree, [repoName]: false }; return; }
+    if (!a) { creatingWorktree = { ...creatingWorktree, [rname]: false }; return; }
     try {
-      await a.CreateWorktree({ repo_name: repoName, branch });
-      newBranch = { ...newBranch, [repoName]: '' };
-      await loadWorktrees(repoName);
+      await a.CreateWorktree({ repo_name: rname, branch });
+      newBranch = { ...newBranch, [rname]: '' };
+      await loadWorktrees(rname);
     } catch (err: any) {
       notifications.error(`Failed to create worktree: ${err?.message ?? err}`);
     } finally {
-      creatingWorktree = { ...creatingWorktree, [repoName]: false };
+      creatingWorktree = { ...creatingWorktree, [rname]: false };
     }
   }
 
-  async function deleteWorktree(id: string, repoName: string) {
+  async function deleteWorktree(id: string, rname: string) {
     confirmDeleteWt = null;
     const a = await getApi();
     if (!a) return;
     try {
       await a.DeleteWorktree(id);
-      await loadWorktrees(repoName);
+      await loadWorktrees(rname);
     } catch (err: any) {
       notifications.error(`Failed to delete worktree: ${err?.message ?? err}`);
     }
@@ -148,6 +164,36 @@
       notifications.error(`Failed to launch session: ${err?.message ?? err}`);
     } finally {
       launchingSession = { ...launchingSession, [wt.id]: false };
+    }
+  }
+
+  async function toggleMergeQueue(repo: any) {
+    togglingMQ = { ...togglingMQ, [repo.name]: true };
+    const a = await getApi();
+    if (!a) { togglingMQ = { ...togglingMQ, [repo.name]: false }; return; }
+    try {
+      const val = !repo.merge_queue_enabled;
+      await a.UpdateRepo(repo.name, { merge_queue: val });
+      await refresh();
+    } catch (err: any) {
+      notifications.error(`Failed to update merge queue: ${err?.message ?? err}`);
+    } finally {
+      togglingMQ = { ...togglingMQ, [repo.name]: false };
+    }
+  }
+
+  async function togglePRShepherd(repo: any) {
+    togglingPS = { ...togglingPS, [repo.name]: true };
+    const a = await getApi();
+    if (!a) { togglingPS = { ...togglingPS, [repo.name]: false }; return; }
+    try {
+      const val = !repo.pr_shepherd_enabled;
+      await a.UpdateRepo(repo.name, { pr_shepherd: val });
+      await refresh();
+    } catch (err: any) {
+      notifications.error(`Failed to update PR shepherd: ${err?.message ?? err}`);
+    } finally {
+      togglingPS = { ...togglingPS, [repo.name]: false };
     }
   }
 
@@ -201,12 +247,30 @@
     if (status === 'error') return 'wt-error';
     return 'wt-ready';
   }
+
+  function shortId(id: string): string {
+    return id ? id.substring(0, 8) : '—';
+  }
+
+  function extractOwnerRepo(url: string): string {
+    try {
+      const u = new URL(url);
+      return u.pathname.replace(/^\//, '').replace(/\.git$/, '');
+    } catch {
+      return url;
+    }
+  }
 </script>
 
 <div class="panel" aria-busy={loading}>
   <header>
     <h1><span class="accent">repos</span></h1>
-    <button class="new-btn" onclick={openAddModal}>+ add repo</button>
+    <div class="header-actions">
+      <button class="refresh-btn" onclick={refresh} title="Refresh" aria-label="Refresh">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+      </button>
+      <button class="new-btn" onclick={openAddModal}>+ add repo</button>
+    </div>
   </header>
 
   {#if loading}
@@ -214,94 +278,215 @@
   {:else if filteredRepos.length === 0}
     <EmptyState title="No repos tracked" message="Add a GitHub repo to enable multi-agent automation." />
   {:else}
-    {#each Object.entries(groupedRepos) as [profileName, repos] (profileName)}
-      <div class="group-header">
-        <span class="group-label">{profileName}</span>
-        <span class="group-count">{repos.length}</span>
-      </div>
-      <div class="list">
-        {#each repos as repo (repo.name)}
-          {@const mq = repo.merge_queue_enabled}
-          {@const ps = repo.pr_shepherd_enabled}
-          {@const expanded = expandedRepos.has(repo.name)}
-          {@const repoWorktrees = worktrees[repo.name] ?? []}
-          <div class="row" class:expanded>
-            <div class="row-main">
-              <div class="row-title">
-                <button class="expand-btn" onclick={() => toggleExpand(repo.name)} title={expanded ? 'Collapse' : 'Expand worktrees'}>
-                  {expanded ? '▼' : '▶'}
-                </button>
-                <button class="repo-name" onclick={() => openInBrowser(repo.url)}>{repo.name}</button>
-                {#if !activeProfile}
-                  <span class="scope-badge">{repo.workspace_profile}</span>
-                {/if}
-              </div>
-              <div class="row-meta">
-                {#if mq}<span class="badge mq">merge-queue</span>{/if}
-                {#if ps}<span class="badge ps">pr-shepherd</span>{/if}
-                <span class="meta-url">{repo.url}</span>
-              </div>
-            </div>
+    <div class="cards">
+      {#each filteredRepos as repo (repo.name)}
+        {@const workers = tasksForRepo(repo.url)}
+        {@const workerCount = workers.length}
+        {@const repoWorktrees = worktrees[repo.name] ?? []}
+        {@const prExpanded = isSectionExpanded(repo.name, 'prs')}
+        {@const workersExpanded = isSectionExpanded(repo.name, 'workers')}
+        {@const worktreesExpanded = isSectionExpanded(repo.name, 'worktrees')}
+
+        <div class="repo-card">
+          <!-- Card header -->
+          <div class="card-header">
+            <span class="status-dot" class:active={workerCount > 0}></span>
+            <button class="repo-name-btn" onclick={() => openInBrowser(repo.url)}>
+              {repo.name}
+              <svg class="ext-icon" xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            </button>
+            {#if repo.is_fork}
+              <span class="tag fork-tag">fork</span>
+            {/if}
+            {#if !activeProfile && repo.workspace_profile}
+              <span class="tag profile-tag">{repo.workspace_profile}</span>
+            {/if}
+            <div class="header-spacer"></div>
+            {#if workerCount > 0}
+              <span class="worker-badge">
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                {workerCount} worker{workerCount !== 1 ? 's' : ''}
+              </span>
+            {/if}
             <button class="btn-remove" onclick={() => handleDelete(repo.name)}>remove</button>
           </div>
 
-          {#if expanded}
-            <div class="worktrees-section">
-              <!-- New worktree input -->
-              <div class="wt-new-row">
-                <input
-                  class="wt-branch-input"
-                  type="text"
-                  placeholder="branch name (e.g. feature/my-task)"
-                  bind:value={newBranch[repo.name]}
-                  onkeydown={(e) => e.key === 'Enter' && createWorktree(repo.name)}
-                />
-                <button
-                  class="btn-wt-add"
-                  onclick={() => createWorktree(repo.name)}
-                  disabled={creatingWorktree[repo.name] || !(newBranch[repo.name] ?? '').trim()}
-                >
-                  {creatingWorktree[repo.name] ? '…' : '+ worktree'}
-                </button>
-              </div>
+          <!-- Repo meta -->
+          <div class="card-meta">
+            <span class="meta-item">
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+              {repo.target_branch || 'main'}
+            </span>
+            {#if repo.is_fork && repo.upstream_url}
+              <span class="meta-item meta-upstream">↑ {extractOwnerRepo(repo.upstream_url)}</span>
+            {/if}
+            <span class="meta-url">{repo.url}</span>
+          </div>
 
-              {#if repoWorktrees.length === 0}
-                <div class="wt-empty">No worktrees — create one above</div>
-              {:else}
-                {#each repoWorktrees as wt (wt.id)}
-                  <div class="wt-row">
-                    <span class="wt-dot {wtStatusClass(wt.status)}"></span>
-                    <span class="wt-branch">{wt.branch}</span>
-                    <span class="wt-status-label {wtStatusClass(wt.status)}">{wt.status}</span>
-                    {#if wt.session_name}
-                      <span class="wt-session">{wt.session_name}</span>
-                    {/if}
-                    <div class="wt-actions">
-                      {#if confirmDeleteWt === wt.id}
-                        <span class="wt-confirm-label">delete?</span>
-                        <button class="btn-wt-confirm-yes" onclick={() => deleteWorktree(wt.id, repo.name)}>yes</button>
-                        <button class="btn-wt-cancel" onclick={() => (confirmDeleteWt = null)}>no</button>
-                      {:else}
-                        {#if wt.status !== 'in_use'}
-                          <button
-                            class="btn-wt-launch"
-                            onclick={() => launchSession(wt)}
-                            disabled={launchingSession[wt.id]}
-                          >
-                            {launchingSession[wt.id] ? '…' : 'Launch'}
-                          </button>
-                        {/if}
-                        <button class="btn-wt-delete" onclick={() => (confirmDeleteWt = wt.id)}>✕</button>
-                      {/if}
-                    </div>
+          <!-- Toggle switches: merge-queue, pr-shepherd -->
+          <div class="toggle-row">
+            <button
+              class="toggle-switch"
+              class:on={repo.merge_queue_enabled}
+              class:off={!repo.merge_queue_enabled}
+              disabled={togglingMQ[repo.name]}
+              onclick={() => toggleMergeQueue(repo)}
+              title="Toggle merge-queue agent"
+            >
+              <span class="switch-track">
+                <span class="switch-knob"></span>
+              </span>
+              <span class="switch-label">merge-queue</span>
+            </button>
+
+            <button
+              class="toggle-switch"
+              class:on={repo.pr_shepherd_enabled}
+              class:off={!repo.pr_shepherd_enabled}
+              disabled={togglingPS[repo.name]}
+              onclick={() => togglePRShepherd(repo)}
+              title="Toggle PR shepherd agent"
+            >
+              <span class="switch-track">
+                <span class="switch-knob"></span>
+              </span>
+              <span class="switch-label">pr-shepherd</span>
+            </button>
+          </div>
+
+          <!-- Collapsible sections -->
+          <div class="sections">
+
+            <!-- Open PRs -->
+            <div class="section">
+              <button
+                class="section-toggle"
+                class:expanded={prExpanded}
+                onclick={() => toggleSection(repo.name, 'prs')}
+              >
+                <svg class="chevron" xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
+                open prs
+              </button>
+              {#if prExpanded}
+                <div class="section-body">
+                  <!-- TODO: implement GetRepoPRs(url) in Go backend, then fetch here -->
+                  <div class="placeholder-row">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    PR data not yet available — add <code>GetRepoPRs(url)</code> to the Go backend
                   </div>
-                {/each}
+                </div>
               {/if}
             </div>
-          {/if}
-        {/each}
-      </div>
-    {/each}
+
+            <!-- Active Workers -->
+            <div class="section">
+              <button
+                class="section-toggle"
+                class:expanded={workersExpanded}
+                onclick={() => toggleSection(repo.name, 'workers')}
+              >
+                <svg class="chevron" xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                active workers
+                {#if workerCount > 0}
+                  <span class="section-count">{workerCount}</span>
+                {/if}
+              </button>
+              {#if workersExpanded}
+                <div class="section-body">
+                  {#if workers.length === 0}
+                    <div class="empty-section">No active workers</div>
+                  {:else}
+                    {#each workers as task (task.id)}
+                      <div class="worker-row">
+                        <span class="worker-id">{shortId(task.id)}</span>
+                        <span class="worker-agent">{task.agent_name || '—'}</span>
+                        <Badge text={task.status} variant={task.status} />
+                        {#if task.session_name}
+                          <span class="worker-session">{task.session_name}</span>
+                        {/if}
+                      </div>
+                    {/each}
+                  {/if}
+                </div>
+              {/if}
+            </div>
+
+            <!-- Worktrees / Branch Overview -->
+            <div class="section">
+              <button
+                class="section-toggle"
+                class:expanded={worktreesExpanded}
+                onclick={() => toggleSection(repo.name, 'worktrees')}
+              >
+                <svg class="chevron" xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+                worktrees
+                {#if repoWorktrees.length > 0}
+                  <span class="section-count">{repoWorktrees.length}</span>
+                {/if}
+              </button>
+              {#if worktreesExpanded}
+                <div class="section-body">
+                  <!-- New worktree input -->
+                  <div class="wt-new-row">
+                    <input
+                      class="wt-branch-input"
+                      type="text"
+                      placeholder="branch name (e.g. feature/my-task)"
+                      bind:value={newBranch[repo.name]}
+                      onkeydown={(e) => e.key === 'Enter' && createWorktree(repo.name)}
+                    />
+                    <button
+                      class="btn-wt-add"
+                      onclick={() => createWorktree(repo.name)}
+                      disabled={creatingWorktree[repo.name] || !(newBranch[repo.name] ?? '').trim()}
+                    >
+                      {creatingWorktree[repo.name] ? '…' : '+ worktree'}
+                    </button>
+                  </div>
+
+                  {#if repoWorktrees.length === 0}
+                    <div class="empty-section">No worktrees — create one above</div>
+                  {:else}
+                    {#each repoWorktrees as wt (wt.id)}
+                      <div class="wt-row">
+                        <span class="wt-dot {wtStatusClass(wt.status)}"></span>
+                        <span class="wt-branch">{wt.branch}</span>
+                        <span class="wt-status-label {wtStatusClass(wt.status)}">{wt.status}</span>
+                        {#if wt.session_name}
+                          <span class="wt-session">{wt.session_name}</span>
+                        {/if}
+                        <div class="wt-actions">
+                          {#if confirmDeleteWt === wt.id}
+                            <span class="wt-confirm-label">delete?</span>
+                            <button class="btn-wt-confirm-yes" onclick={() => deleteWorktree(wt.id, repo.name)}>yes</button>
+                            <button class="btn-wt-cancel" onclick={() => (confirmDeleteWt = null)}>no</button>
+                          {:else}
+                            {#if wt.status !== 'in_use'}
+                              <button
+                                class="btn-wt-launch"
+                                onclick={() => launchSession(wt)}
+                                disabled={launchingSession[wt.id]}
+                              >
+                                {launchingSession[wt.id] ? '…' : 'launch'}
+                              </button>
+                            {/if}
+                            <button class="btn-wt-delete" onclick={() => (confirmDeleteWt = wt.id)}>✕</button>
+                          {/if}
+                        </div>
+                      </div>
+                    {/each}
+                  {/if}
+                </div>
+              {/if}
+            </div>
+
+          </div><!-- /sections -->
+        </div><!-- /repo-card -->
+      {/each}
+    </div>
   {/if}
 </div>
 
@@ -332,7 +517,6 @@
         </label>
       </div>
 
-      <!-- Profile picker -->
       <ProfilePicker bind:selected={selectedProfile} />
 
       <div class="modal-actions">
@@ -347,9 +531,18 @@
 
 <style>
   .panel { padding: var(--panel-padding); }
-  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+
   h1 { font-size: 22px; font-weight: 600; }
   .accent { color: var(--color-accent); }
+
+  .header-actions { display: flex; gap: 8px; align-items: center; }
 
   .new-btn {
     background: rgba(59, 130, 246, 0.1);
@@ -363,124 +556,113 @@
   }
   .new-btn:hover { background: rgba(59, 130, 246, 0.2); }
 
+  .refresh-btn {
+    background: none;
+    border: 1px solid var(--color-border-secondary);
+    color: var(--color-text-tertiary);
+    padding: 6px;
+    border-radius: var(--radius-md);
+    display: flex;
+    transition: all 0.15s;
+  }
+  .refresh-btn:hover { color: var(--color-text-primary); border-color: var(--color-text-tertiary); }
+
   .loading { color: var(--color-text-tertiary); font-size: 13px; padding: 24px 0; }
 
-  /* Group headers */
-  .group-header {
+  /* Cards grid */
+  .cards {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 16px;
-    margin-bottom: 8px;
-    padding-bottom: 6px;
-    border-bottom: 1px solid var(--color-border-primary);
-  }
-  .group-header:first-of-type { margin-top: 0; }
-
-  .group-label {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--color-text-tertiary);
-  }
-
-  .group-count {
-    font-size: 10px;
-    background: var(--color-bg-tertiary);
-    color: var(--color-text-tertiary);
-    padding: 1px 6px;
-    border-radius: 9999px;
-  }
-
-  .list { display: flex; flex-direction: column; gap: 0; margin-bottom: 16px; }
-
-  .row {
-    display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 12px;
+  }
+
+  .repo-card {
     background: var(--color-bg-secondary);
     border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-lg);
-    padding: 12px 14px;
-    margin-bottom: 4px;
-  }
-  .row.expanded {
-    border-bottom-left-radius: 0;
-    border-bottom-right-radius: 0;
-    border-bottom-color: transparent;
-    margin-bottom: 0;
+    border-left: 3px solid var(--color-border-primary);
+    border-radius: var(--radius-xl);
+    padding: 14px 18px;
+    transition: border-left-color 0.2s;
   }
 
-  .row-main { flex: 1; min-width: 0; }
+  .repo-card:has(.status-dot.active) {
+    border-left-color: var(--color-success);
+  }
 
-  .row-title {
+  /* Card header */
+  .card-header {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
   }
 
-  .expand-btn {
-    background: none;
-    border: none;
-    padding: 0 2px;
-    font-size: 10px;
-    color: var(--color-text-tertiary);
-    cursor: pointer;
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--color-text-muted);
     flex-shrink: 0;
-    line-height: 1;
   }
-  .expand-btn:hover { color: var(--color-text-primary); }
+  .status-dot.active {
+    background: var(--color-success);
+    box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
+  }
 
-  .repo-name {
-    font-size: 14px;
-    font-weight: 500;
+  .repo-name-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 15px;
+    font-weight: 600;
     color: var(--color-text-primary);
     background: none;
     border: none;
     padding: 0;
     text-align: left;
+    transition: color 0.15s;
   }
-  .repo-name:hover { color: var(--color-accent); }
+  .repo-name-btn:hover { color: var(--color-accent); }
 
-  .scope-badge {
+  .ext-icon { opacity: 0.4; flex-shrink: 0; }
+  .repo-name-btn:hover .ext-icon { opacity: 0.8; }
+
+  .header-spacer { flex: 1; }
+
+  .tag {
     font-size: 9px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     padding: 1px 6px;
     border-radius: 9999px;
-    background: rgba(245, 158, 11, 0.1);
-    color: var(--color-accent);
-    border: 1px solid rgba(245, 158, 11, 0.2);
+    flex-shrink: 0;
   }
 
-  .row-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-
-  .badge {
-    font-size: 10px;
-    padding: 2px 6px;
-    border-radius: 9999px;
-    font-weight: 500;
-  }
-  .badge.mq {
-    background: rgba(16, 185, 129, 0.1);
-    color: #6ee7b7;
-    border: 1px solid rgba(16, 185, 129, 0.2);
-  }
-  .badge.ps {
+  .fork-tag {
     background: rgba(168, 85, 247, 0.1);
     color: #d8b4fe;
     border: 1px solid rgba(168, 85, 247, 0.2);
   }
 
-  .meta-url {
+  .profile-tag {
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--color-accent);
+    border: 1px solid rgba(245, 158, 11, 0.2);
+  }
+
+  .worker-badge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     font-size: 11px;
-    color: var(--color-text-tertiary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font-weight: 500;
+    color: var(--color-success);
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    border-radius: 9999px;
+    padding: 2px 8px;
+    flex-shrink: 0;
   }
 
   .btn-remove {
@@ -495,21 +677,218 @@
   }
   .btn-remove:hover { background: rgba(239, 68, 68, 0.15); }
 
-  /* Worktrees section */
-  .worktrees-section {
-    background: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border-primary);
-    border-top: none;
-    border-bottom-left-radius: var(--radius-lg);
-    border-bottom-right-radius: var(--radius-lg);
-    padding: 10px 14px 12px;
-    margin-bottom: 4px;
+  /* Card meta */
+  .card-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
   }
 
+  .meta-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--color-text-tertiary);
+    font-family: var(--font-mono, monospace);
+  }
+
+  .meta-upstream {
+    color: var(--color-text-tertiary);
+    font-size: 11px;
+  }
+
+  .meta-url {
+    font-size: 11px;
+    color: var(--color-text-tertiary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Toggle switches */
+  .toggle-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+
+  .toggle-switch {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    background: none;
+    border: none;
+    padding: 3px 0;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .toggle-switch:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .switch-track {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    width: 28px;
+    height: 16px;
+    border-radius: 8px;
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-secondary);
+    transition: background 0.2s, border-color 0.2s;
+    flex-shrink: 0;
+  }
+
+  .toggle-switch.on .switch-track {
+    background: rgba(16, 185, 129, 0.25);
+    border-color: rgba(16, 185, 129, 0.5);
+  }
+
+  .switch-knob {
+    position: absolute;
+    left: 2px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--color-text-tertiary);
+    transition: transform 0.2s, background 0.2s;
+  }
+
+  .toggle-switch.on .switch-knob {
+    transform: translateX(12px);
+    background: var(--color-success);
+  }
+
+  .switch-label {
+    font-size: 12px;
+    color: var(--color-text-tertiary);
+    transition: color 0.15s;
+  }
+  .toggle-switch.on .switch-label { color: var(--color-text-secondary); }
+
+  /* Collapsible sections */
+  .sections {
+    border-top: 1px solid var(--color-border-primary);
+    margin-top: 2px;
+  }
+
+  .section {
+    border-bottom: 1px solid var(--color-border-primary);
+  }
+  .section:last-child { border-bottom: none; }
+
+  .section-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 8px 0;
+    font-size: 12px;
+    color: var(--color-text-tertiary);
+    text-align: left;
+    cursor: pointer;
+    transition: color 0.15s;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: normal;
+  }
+  .section-toggle:hover { color: var(--color-text-secondary); }
+
+  .chevron {
+    transition: transform 0.15s;
+    flex-shrink: 0;
+    color: var(--color-text-tertiary);
+  }
+  .section-toggle.expanded .chevron { transform: rotate(90deg); }
+
+  .section-count {
+    font-size: 10px;
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-tertiary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: 9999px;
+    padding: 0 5px;
+    line-height: 1.5;
+    margin-left: 2px;
+  }
+
+  .section-body {
+    padding: 4px 0 10px 18px;
+  }
+
+  /* Placeholder */
+  .placeholder-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--color-text-tertiary);
+    font-style: italic;
+    padding: 2px 0;
+  }
+  .placeholder-row code {
+    font-family: var(--font-mono, monospace);
+    font-style: normal;
+    font-size: 10px;
+    background: var(--color-bg-tertiary);
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+
+  /* Empty section */
+  .empty-section {
+    font-size: 12px;
+    color: var(--color-text-tertiary);
+    padding: 2px 0;
+  }
+
+  /* Workers */
+  .worker-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 0;
+    border-top: 1px solid var(--color-border-primary);
+    font-size: 12px;
+  }
+  .worker-row:first-child { border-top: none; }
+
+  .worker-id {
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+    color: var(--color-text-tertiary);
+    flex-shrink: 0;
+  }
+
+  .worker-agent {
+    font-size: 12px;
+    color: var(--color-text-primary);
+    font-weight: 500;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .worker-session {
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    font-family: var(--font-mono, monospace);
+    flex-shrink: 0;
+  }
+
+  /* Worktrees */
   .wt-new-row {
     display: flex;
     gap: 8px;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
   }
 
   .wt-branch-input {
@@ -532,15 +911,10 @@
     font-size: 12px;
     white-space: nowrap;
     flex-shrink: 0;
+    transition: all 0.15s;
   }
   .btn-wt-add:hover:not(:disabled) { background: rgba(59, 130, 246, 0.15); }
   .btn-wt-add:disabled { opacity: 0.4; cursor: not-allowed; }
-
-  .wt-empty {
-    font-size: 12px;
-    color: var(--color-text-tertiary);
-    padding: 4px 0;
-  }
 
   .wt-row {
     display: flex;
@@ -601,6 +975,7 @@
     background: rgba(59, 130, 246, 0.08);
     color: var(--color-info);
     font-size: 11px;
+    transition: all 0.15s;
   }
   .btn-wt-launch:hover:not(:disabled) { background: rgba(59, 130, 246, 0.15); }
   .btn-wt-launch:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -613,6 +988,7 @@
     padding: 2px 4px;
     cursor: pointer;
     border-radius: 3px;
+    transition: all 0.15s;
   }
   .btn-wt-delete:hover { color: #f87171; background: rgba(239, 68, 68, 0.1); }
 
@@ -629,6 +1005,7 @@
     background: rgba(239, 68, 68, 0.1);
     color: #f87171;
     cursor: pointer;
+    transition: all 0.15s;
   }
 
   .btn-wt-cancel {
@@ -639,18 +1016,13 @@
     background: none;
     color: var(--color-text-tertiary);
     cursor: pointer;
+    transition: all 0.15s;
   }
 
   /* Modal */
   h2 { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
   .modal-sub { font-size: 12px; color: var(--color-text-muted); margin-bottom: 20px; }
   .field { margin-bottom: 14px; }
-
-  .hint {
-    font-size: 11px;
-    color: var(--color-text-tertiary);
-    margin-top: 4px;
-  }
 
   .checkboxes { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
   .checkbox {
@@ -677,7 +1049,9 @@
     padding: 7px 14px;
     border-radius: var(--radius-md);
     font-size: 13px;
+    transition: all 0.15s;
   }
+  .btn-cancel:hover { background: rgba(255,255,255,0.05); }
 
   .btn-submit {
     background: rgba(59, 130, 246, 0.1);
@@ -689,5 +1063,6 @@
     font-weight: 500;
     transition: all 0.15s;
   }
-  .btn-submit:hover { background: rgba(59, 130, 246, 0.2); }
+  .btn-submit:hover:not(:disabled) { background: rgba(59, 130, 246, 0.2); }
+  .btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
