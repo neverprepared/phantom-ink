@@ -70,9 +70,12 @@ class DockerExecExecutor:
         return "linux"
 
     async def exec_shell(self, command: str, *, timeout: int = 30) -> tuple[int, str]:
-        result = await self._run(
-            self._container.exec_run,
-            ["sh", "-c", command],
+        result = await asyncio.wait_for(
+            self._run(
+                self._container.exec_run,
+                ["sh", "-c", command],
+            ),
+            timeout=timeout,
         )
         exit_code = result.exit_code if hasattr(result, "exit_code") else 0
         output = (
@@ -99,11 +102,12 @@ class DockerExecExecutor:
     async def write_stdin(
         self, command: str, stdin_data: bytes, *, timeout: int = 30
     ) -> tuple[int, str]:
-        # Docker exec doesn't natively support stdin piping via the SDK in the
-        # same way — use echo | sh -c workaround for small payloads, or fall
-        # back to exec_shell with escaped content.
-        escaped = shlex.quote(stdin_data.decode("utf-8", errors="replace"))
-        return await self.exec_shell(f"printf '%s' {escaped} | {command}", timeout=timeout)
+        import base64
+        b64 = base64.b64encode(stdin_data).decode("ascii")
+        return await self.exec_shell(
+            f"printf '%s' {shlex.quote(b64)} | base64 -d | {command}",
+            timeout=timeout,
+        )
 
 
 class SSHExecutor:

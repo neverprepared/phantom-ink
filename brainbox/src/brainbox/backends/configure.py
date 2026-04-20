@@ -16,6 +16,7 @@ from typing import Any
 
 from ..log import get_logger
 from .executor import GuestExecutor
+from .utils import _extract_from_bundle
 
 log = get_logger()
 
@@ -56,15 +57,20 @@ _CONTAINER_MCP_OVERRIDES: dict[str, dict] = {
 }
 
 
-def _extract_from_bundle(bundle_bytes: bytes, arcname: str) -> str | None:
-    """Extract a single text file from a tar.gz bundle by archive name."""
-    try:
-        with tarfile.open(fileobj=io.BytesIO(bundle_bytes), mode="r:gz") as tf:
-            member = tf.getmember(arcname)
-            f = tf.extractfile(member)
-            return f.read().decode("utf-8") if f else None
-    except (KeyError, tarfile.TarError, OSError):
-        return None
+def _escape_powershell_value(value: str) -> str:
+    """Escape a string for use in a PowerShell single-quoted string context.
+
+    Escapes backtick, dollar, braces (for double-quoted outer shell safety),
+    and single quote (the only escape needed in PS single-quoted strings).
+    """
+    return (
+        value
+        .replace("`", "``")
+        .replace("$", "`$")
+        .replace("{", "`{")
+        .replace("}", "`}")
+        .replace("'", "''")
+    )
 
 
 async def inject_env_file(
@@ -90,7 +96,7 @@ async def inject_env_file(
                 "powershell -Command \"Set-Content -Path $env:USERPROFILE\\.env -Value '' -Force\""
             )
             for key, value in secrets.items():
-                escaped_value = value.replace("'", "''")
+                escaped_value = _escape_powershell_value(value)
                 if key == "agent-token":
                     await executor.exec_shell(
                         f'powershell -Command "Set-Content -Path $env:USERPROFILE\\.agent-token'
@@ -208,10 +214,11 @@ async def inject_claude_config(
                 "bypassPermissionsModeAccepted": True,
             }
             patch_json = json.dumps(claude_json_patch)
+            p_j = json.dumps(f"{home}/.claude.json").replace('"', '\\"')
             await executor.exec_shell(
                 f'echo {shlex.quote(patch_json)} | python3 -c "'
                 "import json, pathlib, sys; "
-                f"p = pathlib.Path('{home}/.claude.json'); "
+                f"p = pathlib.Path({p_j}); "
                 "d = json.loads(p.read_text()) if p.exists() else {}; "
                 "d.update(json.load(sys.stdin)); "
                 "p.write_text(json.dumps(d, indent=2))"
@@ -233,10 +240,11 @@ async def inject_claude_config(
 
     try:
         patch_json = json.dumps(claude_json_patch)
+        p_j = json.dumps(f"{home}/.claude.json").replace('"', '\\"')
         await executor.exec_shell(
             f'echo {shlex.quote(patch_json)} | python3 -c "'
             "import json, pathlib, sys; "
-            f"p = pathlib.Path('{home}/.claude.json'); "
+            f"p = pathlib.Path({p_j}); "
             "d = json.loads(p.read_text()) if p.exists() else {}; "
             "d.update(json.load(sys.stdin)); "
             "p.write_text(json.dumps(d, indent=2))"
@@ -305,7 +313,7 @@ async def inject_claude_settings(
             ]:
                 await executor.exec_shell(
                     f"mkdir -p {workspace}/.claude && "
-                    f"echo '{settings_json}' > {workspace}/.claude/settings.local.json"
+                    f"echo {shlex.quote(settings_json)} > {workspace}/.claude/settings.local.json"
                 )
         slog.info("configure.claude_settings_applied")
     except Exception as exc:
@@ -365,7 +373,7 @@ async def inject_profile_env_docker(
         # The caller must handle root access; we just write the files.
         escaped = shlex.quote(profile_env)
         await executor.exec_shell(
-            f"mkdir -p /run/profile && chmod 777 /run/profile"
+            f"mkdir -p /run/profile && chmod 750 /run/profile"
             f" && echo {escaped} > /run/profile/.env"
             f" && chmod 644 /run/profile/.env"
         )
@@ -424,13 +432,15 @@ async def inject_config_bundle(
             user_mcps = json.loads(settings_json).get("mcpServers", {})
             if user_mcps:
                 mcp_json = json.dumps(user_mcps)
+                p_j = json.dumps(f"{home}/.claude.json").replace('"', '\\"')
+                ws_j = json.dumps(f"{home}/workspace").replace('"', '\\"')
                 await executor.exec_shell(
                     f'echo {shlex.quote(mcp_json)} | python3 -c "'
                     "import json, pathlib, sys; "
-                    f"p = pathlib.Path('{home}/.claude.json'); "
+                    f"p = pathlib.Path({p_j}); "
                     "d = json.loads(p.read_text()) if p.exists() else {}; "
                     "u = json.load(sys.stdin); "
-                    f"ws = '{home}/workspace'; "
+                    f"ws = {ws_j}; "
                     "d.setdefault('projects', {}).setdefault(ws, {}).setdefault('mcpServers', {}).update(u); "
                     "p.write_text(json.dumps(d, indent=2))"
                     '"',
@@ -479,10 +489,11 @@ async def inject_claude_config_copy(
 
     # Trust container working directories
     for path in [f"{home}/workspace", f"{home}/task-repo", home]:
-        claude_data.setdefault("projects", {}).setdefault(path, {}).update(
+        existing = claude_data.setdefault("projects", {}).setdefault(path, {})
+        existing.update(
             {
                 "hasTrustDialogAccepted": True,
-                "allowedTools": claude_data.get("projects", {}).get(path, {}).get("allowedTools", []),
+                "allowedTools": existing.get("allowedTools", []),
                 "mcpContextUris": [],
                 "projectOnboardingSeenCount": 0,
             }
@@ -572,16 +583,18 @@ async def inject_role_prompt(
         # Configure Claude Code to use the role prompt via workspace settings.local.json.
         # We write to project-local files (not CLAUDE_CONFIG_DIR/settings.json which may
         # be read-only when the profile .claude dir is bind-mounted from the host).
+        py_code = (
+            "import json,os,pathlib; "
+            'p = pathlib.Path(os.environ["BRAINBOX_WS"]) / ".claude/settings.local.json"; '
+            "d = json.loads(p.read_text()) if p.exists() else {}; "
+            'd["appendSystemPromptFiles"] = [os.environ["BRAINBOX_PP"]]; '
+            "p.parent.mkdir(parents=True, exist_ok=True); "
+            "p.write_text(json.dumps(d, indent=2))"
+        )
         for workspace in [f"{home}/workspace", f"{home}/task-repo", home]:
             await executor.exec_shell(
-                f"python3 -c '"
-                "import json, pathlib; "
-                f"p = pathlib.Path(\"{workspace}/.claude/settings.local.json\"); "
-                "d = json.loads(p.read_text()) if p.exists() else {}; "
-                f"d['appendSystemPromptFiles'] = ['{prompt_path}']; "
-                "p.parent.mkdir(parents=True, exist_ok=True); "
-                "p.write_text(json.dumps(d, indent=2))"
-                "'"
+                f"BRAINBOX_WS={shlex.quote(workspace)} BRAINBOX_PP={shlex.quote(prompt_path)}"
+                f" python3 -c {shlex.quote(py_code)}"
             )
 
         slog.info("configure.role_prompt_injected", metadata={"role": role})
@@ -620,19 +633,26 @@ async def inject_task(
             f"TASK_ID=$(cat {brainbox_dir}/task-id.txt 2>/dev/null || echo '')\n"
             f"HUB=$(cat {brainbox_dir}/hub-url.txt 2>/dev/null || echo '{hub_url}')\n"
             'RESULT="${1:-done}"\n'
+            "# Build JSON body safely to avoid injection from result summary containing quotes\n"
+            "BODY=$(python3 -c 'import json,sys; "
+            'r=sys.argv[1]; print(json.dumps({"payload":{"event":"task.completed","result":r}}))'
+            "' \"$RESULT\")\n"
             "# Try Bearer token auth first, fall back to API key with task ID\n"
             'curl -sf -X POST "${HUB}/api/hub/messages" \\\n'
             '  -H "Authorization: Bearer ${TOKEN}" \\\n'
             '  -H "Content-Type: application/json" \\\n'
-            '  -d "{\\"payload\\": {\\"event\\": \\"task.completed\\", \\"result\\": \\"${RESULT}\\"}}" \\\n'
+            '  -d "$BODY" \\\n'
             "  && echo 'Task marked complete.' \\\n"
             "  || { \\\n"
             f"    APIKEY=$(cat {home}/.brainbox-api-key 2>/dev/null || echo '')\n"
             '    if [ -n "$APIKEY" ]; then \\\n'
+            "      BODY2=$(python3 -c 'import json,sys; "
+            'r,tid=sys.argv[1],sys.argv[2]; print(json.dumps({"payload":{"event":"task.completed","result":r,"task_id":tid}}))'
+            "' \"$RESULT\" \"$TASK_ID\"); \\\n"
             '      curl -sf -X POST "${HUB}/api/hub/messages" \\\n'
             '        -H "X-API-Key: ${APIKEY}" \\\n'
             '        -H "Content-Type: application/json" \\\n'
-            '        -d "{\\"payload\\": {\\"event\\": \\"task.completed\\", \\"result\\": \\"${RESULT}\\", \\"task_id\\": \\"${TASK_ID}\\"}}" \\\n'
+            '        -d "$BODY2" \\\n'
             "        && echo 'Task marked complete (via API key).' \\\n"
             "        || echo 'Warning: could not reach hub.'; \\\n"
             "    else \\\n"

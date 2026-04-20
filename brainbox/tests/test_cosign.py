@@ -272,8 +272,7 @@ class TestProvisionCosignIntegration:
         ]
         mock_client.containers.create.return_value = mock_container
 
-        # Patch docker client at lifecycle level (used for cosign checks and backend)
-        monkeypatch.setattr("brainbox.lifecycle._client", mock_client)
+        # Patch docker client at the backend level (used for cosign checks and backend)
         monkeypatch.setattr("brainbox.backends.docker._client", mock_client)
 
         # Clear session state

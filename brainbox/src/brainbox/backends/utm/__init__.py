@@ -191,6 +191,9 @@ def _write_session_dir(mac_address: str, workspace_home: str, slog) -> None:
                 filtered_lines.append(line)
                 continue
             key = stripped.split("=", 1)[0].strip()
+            # Strip "export " prefix before checking against exclusion set
+            if key.startswith("export "):
+                key = key[len("export "):].strip()
             if key not in _EXCLUDED_ENV_KEYS:
                 filtered_lines.append(line)
         (session_dir / "env").write_text("\n".join(filtered_lines) + "\n")
@@ -242,13 +245,13 @@ async def _discover_vm_ip(mac_address: str, timeout: int = 60) -> str:
     """
     sessions_file = _sessions_file_for_mac(mac_address)
 
-    start_time = asyncio.get_event_loop().time()
+    start_time = asyncio.get_running_loop().time()
 
     # When the share is configured, the VM's init.sh LaunchDaemon writes its IP
     # to the sessions file on boot. Wait exclusively for that file — skip ARP,
     # which can hang when a VM's virtual NIC is initializing.
     if sessions_file is not None:
-        while (asyncio.get_event_loop().time() - start_time) < timeout:
+        while (asyncio.get_running_loop().time() - start_time) < timeout:
             if sessions_file.exists():
                 ip = sessions_file.read_text().strip()
                 if ip:
@@ -262,7 +265,7 @@ async def _discover_vm_ip(mac_address: str, timeout: int = 60) -> str:
     mac_pattern = ":".join(part.lstrip("0") or "0" for part in mac_parts)
 
     ping_done = False
-    while (asyncio.get_event_loop().time() - start_time) < timeout:
+    while (asyncio.get_running_loop().time() - start_time) < timeout:
         # Ping-sweep once to force ARP entries into the table
         if not ping_done:
             await _run_subprocess(
@@ -414,7 +417,7 @@ async def _wait_for_ssh(host: str, port: int, timeout: int = 120, interval: int 
     return False
 
 
-def _find_available_ssh_port(start_port: int = None) -> int:
+def _find_available_ssh_port(start_port: int | None = None) -> int:
     """Find an available SSH port by scanning existing Docker and UTM usage.
 
     Args:

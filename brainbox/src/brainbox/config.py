@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -90,13 +90,13 @@ class CosignSettings(BaseSettings):
 class ArtifactSettings(BaseSettings):
     mode: Literal["off", "warn", "enforce"] = "warn"
     endpoint: str = "http://localhost:9090"
-    access_key: str = ""
-    secret_key: str = ""
+    access_key: SecretStr = SecretStr("")
+    secret_key: SecretStr = SecretStr("")
     bucket: str = "artifacts"
     region: str = "us-east-1"
 
 
-def _langfuse_env_fallback(field: str, *env_names: str) -> str:
+def _langfuse_env_fallback(*env_names: str) -> str:
     """Return the first set env var from the list, or empty string."""
     import os
 
@@ -108,22 +108,22 @@ def _langfuse_env_fallback(field: str, *env_names: str) -> str:
 
 
 def _langfuse_base_url() -> str:
-    return _langfuse_env_fallback("base_url", "LANGFUSE_BASE_URL") or "http://localhost:3000"
+    return _langfuse_env_fallback("LANGFUSE_BASE_URL") or "http://localhost:3000"
 
 
 def _langfuse_public_key() -> str:
-    return _langfuse_env_fallback("public_key", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_API_PUBLIC_KEY")
+    return _langfuse_env_fallback("LANGFUSE_PUBLIC_KEY", "LANGFUSE_API_PUBLIC_KEY")
 
 
 def _langfuse_secret_key() -> str:
-    return _langfuse_env_fallback("secret_key", "LANGFUSE_SECRET_KEY", "LANGFUSE_API_SECRET_KEY")
+    return _langfuse_env_fallback("LANGFUSE_SECRET_KEY", "LANGFUSE_API_SECRET_KEY")
 
 
 class LangfuseSettings(BaseSettings):
     mode: Literal["off", "warn", "enforce"] = "warn"
     base_url: str = Field(default_factory=_langfuse_base_url)
     public_key: str = Field(default_factory=_langfuse_public_key)
-    secret_key: str = Field(default_factory=_langfuse_secret_key)
+    secret_key: SecretStr = Field(default_factory=_langfuse_secret_key)
 
 
 def _qdrant_url() -> str:
@@ -141,7 +141,7 @@ def _qdrant_api_key() -> str:
 class QdrantSettings(BaseSettings):
     enabled: bool = True
     url: str = Field(default_factory=_qdrant_url)
-    api_key: str = Field(default_factory=_qdrant_api_key)
+    api_key: SecretStr = Field(default_factory=_qdrant_api_key)
     collection: str = "brainbox"
 
 
@@ -170,8 +170,8 @@ class OllamaSettings(BaseSettings):
 class CodexSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CODEX_")
 
-    api_key: str = ""  # Falls back to OPENAI_API_KEY in env
-    model: str = "gpt-5.4"
+    api_key: SecretStr = SecretStr("")  # Falls back to OPENAI_API_KEY in env
+    model: str = "gpt-4.5"
 
 
 class UTMSettings(BaseSettings):
@@ -222,7 +222,7 @@ class Settings(BaseSettings):
     health_check_timeout: int = 5  # seconds
     health_check_retries: int = 3
 
-    api_port: int = 9999
+    api_port: int = Field(default=9999, ge=1, le=65535)
     op_vault: str = ""
 
     resources: ResourceSettings = Field(default_factory=ResourceSettings)

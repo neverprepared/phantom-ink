@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 from brainbox.config import LangfuseSettings, settings
 from brainbox.langfuse_client import (
@@ -105,7 +106,7 @@ class TestLangfuseSettings:
         assert s.mode == "warn"
         assert s.base_url == "http://localhost:3000"
         assert s.public_key == ""
-        assert s.secret_key == ""
+        assert s.secret_key.get_secret_value() == ""
 
     def test_explicit_values(self):
         s = LangfuseSettings(
@@ -117,7 +118,7 @@ class TestLangfuseSettings:
         assert s.mode == "enforce"
         assert s.base_url == "http://langfuse.example.com:3000"
         assert s.public_key == "pk-lf-123"
-        assert s.secret_key == "sk-lf-456"
+        assert s.secret_key.get_secret_value() == "sk-lf-456"
 
     def test_invalid_mode_rejected(self):
         with pytest.raises(Exception):
@@ -132,7 +133,7 @@ class TestLangfuseSettings:
 class TestAuthHeader:
     def test_basic_auth_format(self, monkeypatch):
         monkeypatch.setattr(settings.langfuse, "public_key", "pk-test")
-        monkeypatch.setattr(settings.langfuse, "secret_key", "sk-test")
+        monkeypatch.setattr(settings.langfuse, "secret_key", SecretStr("sk-test"))
         header = _auth_header()
         assert header.startswith("Basic ")
         decoded = base64.b64decode(header[6:]).decode()

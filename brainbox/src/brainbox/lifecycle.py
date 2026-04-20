@@ -852,7 +852,7 @@ async def configure(ctx_or_name: SessionContext | str) -> SessionContext:
         resolved["CLAUDE_MODEL"] = ctx.llm_model or settings.ollama.model
 
     elif ctx.llm_provider == "codex":
-        api_key = ctx.codex_api_key or settings.codex.api_key
+        api_key = ctx.codex_api_key or settings.codex.api_key.get_secret_value()
         if api_key:
             # Only set if we have a key — otherwise rely on OPENAI_API_KEY
             # already present in resolved from workspace secrets.
