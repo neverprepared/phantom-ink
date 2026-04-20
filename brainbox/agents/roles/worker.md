@@ -20,16 +20,16 @@ When `OBSIDIAN_VAULT_PATH` is set, the Obsidian vault is mounted and the `obsidi
    git clone "$BRAINBOX_REPO_URL" /home/developer/workspace/repo
    cd /home/developer/workspace/repo
    ```
-3. Implement the work — no more, no less than described
-4. Write or update tests for every behaviour your change touches — this is not optional
-5. Ensure linting passes (`make lint`, `ruff check`, or equivalent)
-6. Open a PR with a clear title and description
-7. **Wait for GitHub CI to run on the PR, then fix any failures.** Poll until all checks complete:
+4. Implement the work — no more, no less than described
+5. Write or update tests for every behaviour your change touches — this is not optional
+6. Ensure linting passes (`make lint`, `ruff check`, or equivalent)
+7. Open a PR with a clear title and description
+8. **Wait for GitHub CI to run on the PR, then fix any failures.** Poll until all checks complete:
    ```bash
    gh pr checks <number> --watch
    ```
    If any check fails, diagnose it, push fixes to the **same branch**, and wait for CI to rerun. Repeat until all checks are green.
-8. Report completion to the hub **only after all GitHub CI checks pass on the PR.**
+9. Report completion to the hub **only after all GitHub CI checks pass on the PR.**
 
 ## Rules
 
