@@ -6,6 +6,13 @@ description: Build intent routers for agent task distribution
 
 # Router Builder Skill
 
+## When to Use
+
+- Building or updating the semantic router that dispatches tasks to agents or slash commands
+- Adding a new route so a natural-language intent maps to the correct resource
+- Optimising embedding-based routing performance for a growing route catalogue
+- Debugging routing decisions by inspecting similarity scores
+
 > Build the Semantic Router for intelligent resource selection.
 
 ## Overview

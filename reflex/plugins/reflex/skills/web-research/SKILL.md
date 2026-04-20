@@ -5,6 +5,17 @@ description: Web search with automatic Qdrant storage for building persistent kn
 
 # Web Research Skill
 
+## Overview
+
+Combines WebSearch with automatic Qdrant storage so that every valuable research finding is persisted for future retrieval. Implements a check-before-search discipline to avoid redundant web calls.
+
+## When to Use
+
+- Researching a topic online while building a persistent, searchable knowledge base
+- Checking stored knowledge before hitting the web to avoid redundant searches
+- Storing web research findings for reuse across sessions
+- Building a corpus of reference material from web sources
+
 Combines WebSearch with automatic Qdrant storage to build a searchable knowledge base.
 
 ## Workflow

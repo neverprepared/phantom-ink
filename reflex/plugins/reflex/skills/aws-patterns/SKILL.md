@@ -5,6 +5,17 @@ description: AWS cloud infrastructure patterns and best practices. Use when desi
 
 # AWS Patterns
 
+## Overview
+
+Best practices and reference patterns for AWS cloud infrastructure, covering compute (Lambda, EC2), storage (S3, DynamoDB), networking (VPC, ALB), and managed services. Use as a design reference and code template source.
+
+## When to Use
+
+- Designing or reviewing an AWS architecture
+- Writing Lambda functions, CDK stacks, or CloudFormation templates
+- Configuring S3 buckets, IAM roles, or VPC networking
+- Implementing AWS-specific security or cost optimisation controls
+
 Best practices for AWS cloud infrastructure design and implementation.
 
 ## Core Services Patterns

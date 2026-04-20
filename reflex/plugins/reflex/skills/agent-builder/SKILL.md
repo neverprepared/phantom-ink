@@ -6,6 +6,12 @@ description: Build specialized sub-agents for the workflow system
 
 # Agent Builder Skill
 
+## When to Use
+
+- Building a new specialized sub-agent for a specific domain or workflow step
+- Decomposing a complex task into agents that can run in parallel
+- Adding a domain expert agent (researcher, coder, reviewer) to an existing pipeline
+
 > Build specialized sub-agents for the workflow system.
 
 ## Overview

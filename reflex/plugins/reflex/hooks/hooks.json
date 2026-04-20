@@ -41,15 +41,11 @@
     ],
     "PostToolUse": [
       {
+        "matcher": ".*",
         "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/langfuse-hook.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/qdrant-websearch-hook.sh",
             "timeout": 5
           },
           {
@@ -65,6 +61,11 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/memory-hook.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/qdrant-websearch-hook.sh",
             "timeout": 5
           }
         ]

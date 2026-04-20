@@ -2,6 +2,12 @@
 # LangFuse integration hook for Reflex
 # Writes tool call data to a queue file and exits immediately.
 # A background drainer (langfuse-drainer.sh) processes the queue asynchronously.
+#
+# NOTE: Claude Code executes hooks via /bin/sh, ignoring the shebang.
+# This script must be POSIX sh-compatible — no bash-specific features:
+#   - No 'pipefail' (bash-only option)
+#   - No BASH_SOURCE (use $0 instead)
+#   - No here-strings <<< (use printf | instead)
 
 set -eu
 

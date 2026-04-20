@@ -6,6 +6,13 @@ description: Migrate and sync vector database collections across environments
 
 # Collection Migration Skill
 
+## When to Use
+
+- Renaming a Qdrant collection after a project is renamed
+- Merging two collections into one when consolidating knowledge bases
+- Syncing a collection across environments (dev → staging → prod)
+- Backing up or restoring a collection before a destructive operation
+
 > Safely move, rename, merge, and manage RAG collections.
 
 ## Overview

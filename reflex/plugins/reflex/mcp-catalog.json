@@ -55,7 +55,7 @@
           "run", "-i", "--rm",
           "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
           "-e", "GITHUB_TOOLSETS",
-          "ghcr.io/github/github-mcp-server"
+          "ghcr.io/github/github-mcp-server:v0.14.0"
         ],
         "env": {
           "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}",
@@ -310,7 +310,7 @@
           "run", "-i", "--rm",
           "-e", "GRAFANA_URL",
           "-e", "GRAFANA_API_KEY",
-          "grafana/mcp-grafana:latest"
+          "grafana/mcp-grafana:0.5.0"
         ],
         "env": {
           "GRAFANA_URL": "${GRAFANA_URL:-http://localhost:3000}",
@@ -325,7 +325,7 @@
       "requires": ["OBSIDIAN_VAULT_PATH"],
       "definition": {
         "command": "npx",
-        "args": ["-y", "github:neverprepared/mcp-obsidian-second-brain"],
+        "args": ["-y", "github:neverprepared/mcp-obsidian-second-brain#ad5b6082ac432b597a8fbfabc46785f7fbce7ae5"],
         "env": {
           "OBSIDIAN_VAULT_PATH": "${OBSIDIAN_VAULT_PATH}",
           "LOG_LEVEL": "${LOG_LEVEL:-info}"

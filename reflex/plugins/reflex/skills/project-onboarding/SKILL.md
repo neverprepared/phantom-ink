@@ -6,6 +6,13 @@ description: Onboard new projects with standardized configuration and documentat
 
 # Project Onboarding Skill
 
+## When to Use
+
+- Starting work on a new project that needs RAG collections and routing rules
+- Standardising the initial configuration for a project entering the agentic workspace
+- Creating baseline documentation and CLAUDE.md for a repository
+- Registering a new project in the semantic router and MCP server inventory
+
 > Quickly onboard a new project into the agentic workspace with RAG collections, routing rules, and baseline knowledge.
 
 ## Overview

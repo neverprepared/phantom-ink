@@ -6,6 +6,13 @@ description: Set up and configure development workspaces
 
 # Workspace Builder Skill
 
+## When to Use
+
+- Initialising a new agentic workspace from scratch
+- Reviewing the master specification before building any workspace component
+- Understanding the overall system architecture and component relationships
+- Onboarding a new developer to the workspace system
+
 > Master specification for building the agentic workflow system.
 > This skill is **reference documentation** - use component-specific skills for building.
 

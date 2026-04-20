@@ -5,6 +5,17 @@ description: Knowledge retrieval and research patterns using Qdrant for stored k
 
 # Research Patterns
 
+## Overview
+
+Structured patterns for knowledge retrieval that prioritise local Qdrant storage over web search, ensuring findings are accumulated rather than repeatedly re-fetched.
+
+## When to Use
+
+- Researching a topic with the intention of building a persistent knowledge base
+- Answering a question that may already be answered in stored Qdrant documents
+- Combining Qdrant retrieval and WebSearch in a principled, cache-first workflow
+- Synthesising information from multiple stored sources into a coherent answer
+
 Patterns for finding and synthesizing information, with Qdrant-first retrieval.
 
 ## Workflow

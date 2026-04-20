@@ -5,6 +5,17 @@ description: Live streaming patterns for YouTube, Twitch, and OBS. Use when sett
 
 # Live Streaming Patterns
 
+## Overview
+
+Configuration patterns and automation workflows for live streaming to YouTube, Twitch, and other RTMP-compatible platforms using OBS, FFmpeg, and platform APIs.
+
+## When to Use
+
+- Setting up or scripting a live stream to YouTube or Twitch
+- Configuring OBS stream keys, scenes, or output settings programmatically
+- Building a multi-platform streaming pipeline with a single RTMP source
+- Automating stream start/stop, thumbnail generation, or VOD publishing
+
 Best practices for live streaming to YouTube, Twitch, and other platforms.
 
 ## Platform Configuration

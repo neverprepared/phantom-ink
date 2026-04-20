@@ -6,6 +6,13 @@ description: Build Retrieval-Augmented Generation systems with vector databases
 
 # RAG Builder Skill
 
+## When to Use
+
+- Setting up the RAG server with Qdrant for a new workspace or project
+- Configuring document ingestion pipelines with chunking and embedding
+- Adding semantic search over a new document corpus
+- Troubleshooting or extending an existing RAG deployment
+
 > Build the RAG (Retrieval-Augmented Generation) server using Qdrant.
 
 ## Overview

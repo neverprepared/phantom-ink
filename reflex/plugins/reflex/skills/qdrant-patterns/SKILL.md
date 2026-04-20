@@ -5,6 +5,17 @@ description: Store and retrieve documents using Qdrant for RAG workflows. Use fo
 
 # Qdrant Patterns
 
+## Overview
+
+Patterns for storing and retrieving documents in Qdrant using the `qdrant-store` and `qdrant-find` MCP tools. Covers collection management, semantic search, and integration with RAG workflows.
+
+## When to Use
+
+- Storing research findings, documentation, or conversation context in persistent memory
+- Performing semantic search over ingested documents
+- Building or querying a RAG knowledge base for a project
+- Managing Qdrant collections (create, list, inspect, clean up)
+
 Use the `qdrant` MCP server tools for persistent vector storage and semantic retrieval.
 
 ## Available Tools

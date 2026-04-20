@@ -10,6 +10,7 @@ Exit codes:
   Non-zero = Error (caller should fail open)
 """
 
+import argparse
 import json
 import os
 import re
@@ -476,7 +477,7 @@ def load_patterns() -> List[Pattern]:
                     field=p["field"],
                 ))
         except (json.JSONDecodeError, KeyError) as e:
-            sys.stderr.write(f'Warning: guardrail-config.json is invalid, using defaults: {e}\n')
+            print(f'Warning: guardrail-config.json is invalid, using defaults: {e}', file=sys.stderr)
 
     return patterns
 
@@ -658,8 +659,11 @@ def list_patterns():
 
 def main():
     """Main entry point."""
-    # Handle --list-patterns flag (no stdin needed, bypasses pattern matching)
-    if len(sys.argv) > 1 and sys.argv[1] == "--list-patterns":
+    parser = argparse.ArgumentParser(description="Guardrail pattern matcher for Claude Code PreToolUse hook.")
+    parser.add_argument("--list-patterns", action="store_true", help="List all configured patterns and exit")
+    args, _ = parser.parse_known_args()
+
+    if args.list_patterns:
         list_patterns()
         sys.exit(0)
 

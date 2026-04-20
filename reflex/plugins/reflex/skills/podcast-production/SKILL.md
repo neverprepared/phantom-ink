@@ -5,6 +5,17 @@ description: Podcast production patterns and workflows. Use when recording podca
 
 # Podcast Production Patterns
 
+## Overview
+
+End-to-end podcast production patterns covering recording setup, audio editing (FFmpeg, Audacity), transcription, show-notes generation, RSS feed management, and distribution to major platforms.
+
+## When to Use
+
+- Setting up or automating a podcast recording and editing workflow
+- Transcribing podcast episodes and generating structured show notes
+- Publishing episodes to an RSS feed and distributing to podcast directories
+- Batch-processing audio files for noise reduction, normalisation, or format conversion
+
 Best practices for podcast production, editing, and distribution.
 
 ## Recording Setup

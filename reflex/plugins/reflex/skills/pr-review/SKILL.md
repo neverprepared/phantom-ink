@@ -5,6 +5,13 @@ description: Discover, review, and act on GitHub pull requests across tracked re
 
 # PR Review Skill
 
+## When to Use
+
+- Reviewing open pull requests across multiple tracked GitHub repositories
+- Getting an AI-assisted code review summary before a human review
+- Submitting a formal review action (approve, request changes, comment) via the agent
+- Tracking which repositories have open PRs awaiting review
+
 > Manage pull request reviews across multiple GitHub repositories with agent-assisted analysis.
 
 ## Overview

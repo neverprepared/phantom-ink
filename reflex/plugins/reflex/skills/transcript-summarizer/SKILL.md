@@ -5,6 +5,13 @@ description: Summarize meeting transcripts into structured notes with decisions,
 
 # Transcript Summarizer Skill
 
+## When to Use
+
+- Summarising a meeting transcript into a structured, actionable document
+- Extracting decisions and action items from a long discussion
+- Processing transcripts in bulk from a directory or file list
+- Generating follow-up emails or Confluence pages from meeting notes
+
 ## Purpose
 
 Convert meeting transcripts into structured, actionable summaries. Supports multiple transcript formats and LLM backends.

@@ -2,6 +2,12 @@
 # LangFuse queue drainer
 # Started as a background daemon by langfuse-hook.sh.
 # Polls the queue file every 2 seconds and processes batches via langfuse-trace.py.
+#
+# NOTE: Claude Code executes hooks via /bin/sh, ignoring the shebang.
+# This script must be POSIX sh-compatible — no bash-specific features:
+#   - No 'pipefail' (bash-only option)
+#   - No BASH_SOURCE (use $0 instead)
+#   - No here-strings <<< (use printf | instead)
 
 set -eu
 

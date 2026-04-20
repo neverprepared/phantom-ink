@@ -6,6 +6,13 @@ description: Crawl and extract content from websites
 
 # Site Crawler Skill
 
+## When to Use
+
+- Crawling a documentation site or knowledge base for RAG ingestion
+- Extracting structured content from a blog or static site
+- Building a searchable corpus from a set of web pages
+- Respecting robots.txt and rate limits while crawling third-party content
+
 > Respectfully crawl documentation sites and web content for RAG ingestion.
 
 ## Overview

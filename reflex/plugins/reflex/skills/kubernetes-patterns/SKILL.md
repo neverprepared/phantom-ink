@@ -5,6 +5,17 @@ description: Kubernetes deployment patterns and best practices. Use when creatin
 
 # Kubernetes Patterns
 
+## Overview
+
+Best practices and manifest templates for Kubernetes deployments, services, Helm charts, and cluster configuration. Covers production readiness, resource limits, health checks, and common troubleshooting patterns.
+
+## When to Use
+
+- Creating or reviewing Kubernetes manifests (Deployments, Services, ConfigMaps, etc.)
+- Writing or templating Helm charts for a new service
+- Troubleshooting pod crashes, OOMKills, or scheduling failures
+- Applying production-readiness patterns (resource limits, probes, PodDisruptionBudgets)
+
 Best practices for Kubernetes deployments and cluster management.
 
 ## Deployment Patterns

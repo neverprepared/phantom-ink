@@ -6,6 +6,10 @@ description: Break down complex tasks into actionable, atomic steps that can be 
 
 # Task Decomposition Skill
 
+## Overview
+
+Break down complex tasks into actionable, atomic steps that can be executed by individual agents.
+
 ## When to Use
 - Receiving complex multi-step requests
 - Planning new feature implementation

@@ -5,6 +5,13 @@ description: Design and implement n8n workflow automations with best practices
 
 # n8n Workflow Patterns
 
+## When to Use
+
+- Designing a multi-step automation that connects two or more external services
+- Building a webhook-triggered workflow without writing a custom server
+- Replacing a brittle cron script with a maintainable visual workflow
+- Integrating AI actions (LLM calls, Claude nodes) into a business automation
+
 > Build robust workflow automations with n8n - the open-source workflow automation tool.
 
 ## Overview

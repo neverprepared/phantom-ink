@@ -5,6 +5,17 @@ description: Video upload patterns for YouTube, TikTok, and Vimeo. Use when uplo
 
 # Video Upload Patterns
 
+## Overview
+
+Patterns and API integrations for uploading videos to YouTube, TikTok, and Vimeo, including metadata management, thumbnail setting, scheduling, and bulk upload workflows.
+
+## When to Use
+
+- Uploading a video to YouTube, TikTok, or Vimeo via API
+- Setting video metadata (title, description, tags, thumbnail) programmatically
+- Scheduling a video release or managing a content publishing pipeline
+- Bulk-uploading a batch of videos with consistent metadata
+
 Best practices for uploading videos to major platforms.
 
 ## YouTube Upload

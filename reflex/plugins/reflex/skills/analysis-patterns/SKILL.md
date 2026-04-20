@@ -5,6 +5,17 @@ description: Data analysis, pattern recognition, and systematic troubleshooting 
 
 # Analysis Patterns
 
+## Overview
+
+Reusable patterns for data analysis, metrics evaluation, pattern recognition, and systematic troubleshooting. Provides structured approaches for turning raw data into actionable findings.
+
+## When to Use
+
+- Analysing logs, metrics, or datasets for anomalies and trends
+- Evaluating performance KPIs or system health indicators
+- Troubleshooting a problem methodically with evidence rather than intuition
+- Visualising relationships in data with Mermaid or Graphviz diagrams
+
 Patterns for data analysis, metrics evaluation, and systematic troubleshooting.
 
 ## Core Approaches

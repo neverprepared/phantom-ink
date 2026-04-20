@@ -5,6 +5,17 @@ description: Database schema migration patterns and best practices. Use when cre
 
 # Database Migration Patterns
 
+## Overview
+
+Reference patterns for safe, repeatable database schema migrations using tools like Alembic, Flyway, and Liquibase. Covers zero-downtime techniques, rollback strategies, and migration file conventions.
+
+## When to Use
+
+- Creating or reviewing database schema migrations
+- Implementing a zero-downtime column add or rename on a live table
+- Setting up or evaluating a migration versioning system
+- Planning data backfills or transformations as part of a schema change
+
 Best practices for safe database schema migrations.
 
 ## Migration File Structure

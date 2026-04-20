@@ -5,6 +5,17 @@ description: Cloud cost optimization patterns for AWS, GCP, and Azure. Use when 
 
 # Cloud Cost Optimization
 
+## Overview
+
+Cloud cost optimization patterns for AWS, GCP, and Azure.
+
+## When to Use
+
+- Auditing cloud spend for waste or idle resources across AWS, GCP, or Azure
+- Generating rightsizing recommendations before a budget review
+- Identifying untagged or unaccountable resources
+- Producing a read-only cost report for stakeholder review — no infrastructure changes are made
+
 Read-only patterns for identifying cost waste and surfacing optimization recommendations across AWS, GCP, and Azure. All commands are query-only. Findings are presented as recommendations for human review and action.
 
 ## Core Principles

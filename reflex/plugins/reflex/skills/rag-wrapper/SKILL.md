@@ -5,6 +5,17 @@ description: Patterns for wrapping any agent with RAG context from Qdrant. Use t
 
 # RAG Wrapper Patterns
 
+## Overview
+
+Patterns for augmenting any agent with Qdrant context retrieval before execution. The RAG proxy fetches relevant stored knowledge and prepends it to the agent's prompt, adding persistent memory without modifying the agent itself.
+
+## When to Use
+
+- Adding persistent memory to an imported or external agent
+- Ensuring an agent consults stored knowledge before reasoning from scratch
+- Wrapping a sub-agent with project-specific context at invocation time
+- Reducing redundant web searches by surfacing relevant cached findings first
+
 Patterns for augmenting any agent with Qdrant context retrieval.
 
 ## Quick Start

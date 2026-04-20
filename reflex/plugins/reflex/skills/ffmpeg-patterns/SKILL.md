@@ -5,6 +5,17 @@ description: FFmpeg video and audio processing patterns. Use when transcoding vi
 
 # FFmpeg Patterns
 
+## Overview
+
+Reference patterns for video and audio processing with FFmpeg, covering transcoding, clipping, filtering, merging, thumbnail extraction, and batch operations.
+
+## When to Use
+
+- Transcoding video or audio to a different format or codec
+- Extracting clips, thumbnails, or audio tracks from media files
+- Applying filters (resize, crop, overlay, denoise) to video or audio
+- Batch-processing a directory of media files
+
 Best practices for video and audio processing with FFmpeg.
 
 ## Basic Operations

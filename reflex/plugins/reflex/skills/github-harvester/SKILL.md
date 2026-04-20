@@ -6,6 +6,13 @@ description: Extract and process data from GitHub repositories
 
 # GitHub Harvester Skill
 
+## When to Use
+
+- Extracting README and documentation from a GitHub repository for RAG ingestion
+- Mining code examples or API usage patterns from a public repo
+- Building a searchable knowledge base from one or more GitHub repositories
+- Refreshing ingested content when a repository's docs are updated
+
 > Extract and ingest content from GitHub repositories into RAG.
 
 ## Overview

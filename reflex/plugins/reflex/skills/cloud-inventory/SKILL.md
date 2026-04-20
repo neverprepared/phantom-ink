@@ -5,6 +5,13 @@ description: Multi-cloud resource graph exploration, indexing, and diagram gener
 
 # Cloud Inventory Skill
 
+## When to Use
+
+- Exploring cloud infrastructure relationships starting from any resource
+- Building or refreshing the local resource index for AWS, Azure, or GCP
+- Generating infrastructure diagrams (Graphviz or Mermaid) from live cloud state
+- Looking up resource metadata by name, ID, or tag without opening the cloud console
+
 > Explore cloud infrastructure as a graph — start from any resource, walk its relationships, store the index locally, and generate diagrams on demand.
 
 ## Overview

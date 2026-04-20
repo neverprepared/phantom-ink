@@ -776,7 +776,7 @@ def main():
         if is_supported(args.path):
             files.append(args.path)
         else:
-            print(f"Unsupported format: {args.path.suffix}")
+            print(f"Unsupported format: {args.path.suffix}", file=sys.stderr)
             sys.exit(1)
     elif args.path.is_dir():
         for dirpath, dirnames, filenames in os.walk(args.path, followlinks=False):
@@ -788,10 +788,10 @@ def main():
                     files.append(p)
 
         if not files:
-            print(f"No supported files found in {args.path}")
+            print(f"No supported files found in {args.path}", file=sys.stderr)
             sys.exit(1)
     else:
-        print(f"Path not found: {args.path}")
+        print(f"Path not found: {args.path}", file=sys.stderr)
         sys.exit(1)
 
     print(f"Found {len(files)} file(s) to ingest")
@@ -812,7 +812,7 @@ def main():
             results.append(result)
         except QdrantConnectionError as e:
             # Connection errors are fatal - stop processing
-            print(f"\nFatal: {e}")
+            print(f"\nFatal: {e}", file=sys.stderr)
             sys.exit(1)
         except FileSizeError as e:
             # File too large - skip with warning
@@ -824,7 +824,7 @@ def main():
             })
         except (ExtractorError, IngestError) as e:
             # Extraction/ingestion errors - log and continue
-            print(f"  Error: {e}")
+            print(f"  Error: {e}", file=sys.stderr)
             results.append({
                 "file": str(path),
                 "status": "error",
@@ -832,7 +832,7 @@ def main():
             })
         except Exception as e:
             # Unexpected errors - log with details and continue
-            print(f"  Unexpected error: {type(e).__name__}: {e}")
+            print(f"  Unexpected error: {type(e).__name__}: {e}", file=sys.stderr)
             results.append({
                 "file": str(path),
                 "status": "error",

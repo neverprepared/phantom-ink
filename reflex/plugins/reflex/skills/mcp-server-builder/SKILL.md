@@ -6,6 +6,12 @@ description: Build Model Context Protocol servers for Claude Code integration
 
 # MCP Server Builder Skill
 
+## When to Use
+
+- Building a new MCP server to expose a new data source or capability to Claude Code
+- Following the established server pattern for configuration, error handling, and tool registration
+- Adding tools to an existing MCP server using the standard template
+
 > Build new MCP servers following established patterns for consistency and reliability.
 
 ## Overview

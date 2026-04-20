@@ -5,6 +5,17 @@ description: Create icon sets for multiple operating systems (macOS, Windows, Li
 
 # Icon Set Maker
 
+## Overview
+
+Complete guidance for producing icon sets across macOS, Windows, Linux, iOS, Android, and web platforms. Covers required sizes, file formats, and conversion toolchains (sips, iconutil, ImageMagick, rsvg-convert).
+
+## When to Use
+
+- Generating a full icon set for a macOS, iOS, or Android application
+- Converting a single SVG or PNG source into platform-specific icon formats
+- Producing .icns, .ico, or web favicon bundles from a source image
+- Automating icon generation as part of a build or release pipeline
+
 Expert guidance for creating complete icon sets across all major platforms.
 
 ## Available Tools

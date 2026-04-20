@@ -1,6 +1,12 @@
 #!/bin/sh
 # PostToolUse hook — sets the memory-checked flag after memory_search completes.
 # This unlocks the next WebSearch/WebFetch for this session.
+#
+# NOTE: Claude Code executes hooks via /bin/sh, ignoring the shebang.
+# This script must be POSIX sh-compatible — no bash-specific features:
+#   - No 'pipefail' (bash-only option)
+#   - No BASH_SOURCE (use $0 instead)
+#   - No here-strings <<< (use printf | instead)
 
 set -eu
 

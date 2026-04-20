@@ -5,6 +5,17 @@ description: Observability patterns for metrics, logs, and traces. Use when impl
 
 # Observability Patterns
 
+## Overview
+
+Best practices for implementing the three pillars of observability — metrics (Prometheus/Grafana), structured logs (Loki, ELK), and distributed traces (Tempo, Jaeger) — in production systems.
+
+## When to Use
+
+- Implementing monitoring for a new service or adding it to an existing one
+- Setting up Prometheus scrape configs, dashboards, or alerting rules
+- Designing a structured logging pipeline or log aggregation stack
+- Adding distributed tracing to a microservices architecture
+
 Best practices for implementing comprehensive observability with metrics, logs, and traces.
 
 ## The Three Pillars

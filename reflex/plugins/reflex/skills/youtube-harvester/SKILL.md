@@ -6,6 +6,13 @@ description: Extract transcripts and metadata from YouTube videos
 
 # YouTube Harvester Skill
 
+## When to Use
+
+- Extracting a YouTube video transcript for RAG ingestion
+- Building a searchable knowledge base from a YouTube channel or playlist
+- Chunking a long video transcript with timestamp metadata preserved
+- Ingesting tutorial or lecture content from YouTube into Qdrant
+
 > Extract and ingest YouTube video transcripts into RAG with proper chunking and metadata.
 
 ## Overview

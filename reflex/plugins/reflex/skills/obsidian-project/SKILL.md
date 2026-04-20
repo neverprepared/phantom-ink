@@ -5,6 +5,10 @@ description: Create and manage projects in the Obsidian second brain. Tracks dea
 
 # Obsidian Project Skill
 
+## Overview
+
+Create and manage projects in the Obsidian second brain. Tracks deadlines, auto-links research, and archives completed work in place.
+
 Manage time-bound projects in the second brain. Projects auto-link to related research and archive in place when complete.
 
 ## Commands

@@ -6,6 +6,13 @@ description: Create and manage reusable prompt templates
 
 # Prompt Template Skill
 
+## When to Use
+
+- Standardising prompts for a recurring agent task to ensure consistent output
+- Building reusable prompt components with variable interpolation
+- Sharing or version-controlling prompt structures across a team
+- Refactoring ad-hoc prompts into maintainable, composable templates
+
 > Standardize prompt construction for agents with reusable, composable templates.
 
 ## Overview

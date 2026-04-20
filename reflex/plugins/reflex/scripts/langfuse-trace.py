@@ -12,6 +12,7 @@ Environment variables:
   LANGFUSE_SESSION_ID  - Optional session ID for grouping traces
 """
 
+import argparse
 import json
 import os
 import sys
@@ -147,7 +148,6 @@ def send_trace(tool_data: dict) -> None:
 
 def main():
     """Read tool data from stdin (or a --batch JSONL file) and send trace(s)."""
-    import argparse
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--batch", metavar="FILE", default=None)
     args, _ = parser.parse_known_args()

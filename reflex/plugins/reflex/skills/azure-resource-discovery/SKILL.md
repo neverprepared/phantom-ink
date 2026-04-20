@@ -5,6 +5,10 @@ description: Azure resource dependency tracing patterns for mapping infrastructu
 
 # Azure Resource Discovery
 
+## Overview
+
+Azure resource dependency tracing patterns for mapping infrastructure topology, networking, security, and identity.
+
 Patterns for tracing Azure resource dependencies, mapping networking and security topology, and generating architecture diagrams.
 
 **SAFETY: All discovery operations are strictly READ-ONLY. NEVER execute `az` commands that create, modify, or delete resources. Only use `show`, `list`, `get`, and `query` operations. This skill is for observation and documentation only.**

@@ -5,6 +5,17 @@ description: Convert images (screenshots, photos, whiteboard) to Mermaid or DOT/
 
 # Image to Diagram Conversion
 
+## Overview
+
+Converts images — screenshots, whiteboard photos, scanned diagrams — into editable Mermaid or DOT/Graphviz code using Claude's vision capabilities.
+
+## When to Use
+
+- Turning a whiteboard photo or screenshot into a version-controlled diagram
+- Extracting a flowchart or architecture diagram from a PDF or slide
+- Producing an editable Mermaid or DOT file from any visual diagram
+- Ingesting converted diagrams into Qdrant for semantic search
+
 Convert visual diagrams into editable, version-controllable code.
 
 ## Workflow

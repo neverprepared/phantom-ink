@@ -5,6 +5,17 @@ description: Terraform infrastructure as code patterns and best practices. Use w
 
 # Terraform Patterns
 
+## Overview
+
+Best practices and module patterns for Terraform infrastructure-as-code, covering project structure, state management, module composition, and multi-environment deployments.
+
+## When to Use
+
+- Writing or reviewing Terraform configurations for any cloud provider
+- Structuring a Terraform project with reusable modules
+- Managing state backends, workspaces, or remote state references
+- Implementing IaC best practices (variable validation, output documentation, tagging)
+
 Best practices for Terraform infrastructure as code.
 
 ## Project Structure

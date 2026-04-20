@@ -7,6 +7,10 @@ description: Search and reference Microsoft code samples and SDK documentation
 
 # Microsoft Code Reference
 
+## Overview
+
+Search and reference Microsoft code samples and SDK documentation
+
 ## Tools
 
 | Need | Tool | Example |

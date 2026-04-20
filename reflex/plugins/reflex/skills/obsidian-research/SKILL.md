@@ -5,6 +5,17 @@ description: Memory-first research using Obsidian second brain with web search f
 
 # Obsidian Research Skill
 
+## Overview
+
+Memory-first research workflow that queries the Obsidian second brain before falling back to web search. New findings are stored automatically so future queries hit local memory instead of the web.
+
+## When to Use
+
+- Answering a question that might already be in the Obsidian knowledge base
+- Researching a topic while building a durable, searchable knowledge trail
+- Avoiding redundant web searches by checking stored findings first
+- Storing a new research finding for reuse in future sessions
+
 Research workflow that checks Obsidian memory first, falls back to web search only when needed, and stores new findings for future recall.
 
 ## Workflow

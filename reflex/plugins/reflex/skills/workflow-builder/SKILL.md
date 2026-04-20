@@ -6,6 +6,13 @@ description: Design and implement multi-step automation workflows
 
 # Workflow Builder Skill
 
+## When to Use
+
+- Designing a new multi-step automation that spans several agents or tools
+- Defining a YAML workflow with variable passing between steps
+- Building a repeatable pipeline for an otherwise manual multi-step process
+- Extending the workflow engine with a new step type or executor
+
 > Build the YAML workflow engine for multi-step agent automation.
 
 ## Overview

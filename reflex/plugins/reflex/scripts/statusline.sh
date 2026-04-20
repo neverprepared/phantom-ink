@@ -1,6 +1,7 @@
 #!/bin/bash
 # Reflex Status Line for Claude Code
 # Mimics Starship prompt configuration from ~/.config/starship.toml
+set -euo pipefail
 
 # Color theme: starship (Gruvbox Dark palette)
 COLOR="${REFLEX_STATUSLINE_COLOR:-starship}"

@@ -5,6 +5,17 @@ description: AI video generation patterns using Sora, Runway, Pika, and other AI
 
 # AI Video Generation Patterns
 
+## Overview
+
+Patterns and API integrations for generating video content with AI tools such as Sora, Runway Gen-3, Pika, and Kling. Covers text-to-video, image-to-video, video editing, and programmatic API access.
+
+## When to Use
+
+- Generating video from a text prompt using an AI video model
+- Converting a still image or image sequence into a short video clip
+- Integrating AI video generation into an automation pipeline
+- Evaluating or comparing AI video platforms for a production use case
+
 Best practices for generating videos with AI tools.
 
 ## Platform Overview

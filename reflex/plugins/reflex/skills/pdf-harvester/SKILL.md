@@ -6,6 +6,13 @@ description: Extract text and data from PDF documents
 
 # PDF Harvester Skill
 
+## When to Use
+
+- Ingesting research papers, manuals, or reports from PDF files into Qdrant
+- Extracting tables or figures from a PDF for further processing
+- Building a searchable knowledge base from a collection of PDF documents
+- Handling PDFs with complex layouts (multi-column, tables, footnotes)
+
 > Extract and ingest PDF documents into RAG with proper text extraction, table handling, and metadata.
 
 ## Overview
