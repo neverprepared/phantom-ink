@@ -73,7 +73,6 @@
     try {
       await a.SetConfig(baseURL, apiKey, workspacesRoot);
       notifications.success('Settings saved');
-      await refreshProfiles();
     } catch (err: any) {
       notifications.error(`Failed to save: ${err}`);
     } finally {
