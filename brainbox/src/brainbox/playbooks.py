@@ -4,12 +4,16 @@ A playbook is a markdown document containing `- [ ]` checklist items.
 Each item becomes a task dispatched sequentially to a fresh ephemeral
 worker session (clean context, no bleed between steps). Progress is
 tracked in module state and broadcast via the event listener pattern.
+
+Built-in playbooks are loaded from ``brainbox/playbooks/*.md`` on startup.
+They appear alongside user-created playbooks but cannot be deleted.
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
+from pathlib import Path
 from typing import Callable
 
 import httpx
@@ -25,6 +29,7 @@ log = get_logger()
 # ---------------------------------------------------------------------------
 
 _playbooks: dict[str, Playbook] = {}
+_builtin_ids: set[str] = set()  # IDs of built-in playbooks (cannot be deleted)
 _run_tasks: dict[str, asyncio.Task] = {}  # playbook_id -> active asyncio.Task
 _listeners: list[Callable] = []
 
@@ -91,6 +96,8 @@ def list_playbooks(profile: str | None = None) -> list[Playbook]:
 def delete_playbook(playbook_id: str) -> None:
     if playbook_id not in _playbooks:
         raise ValueError(f"Playbook '{playbook_id}' not found")
+    if playbook_id in _builtin_ids:
+        raise ValueError("Built-in playbooks cannot be deleted")
     cancel_playbook(playbook_id)
     del _playbooks[playbook_id]
     log.info("playbook.deleted", metadata={"id": playbook_id})
@@ -279,6 +286,59 @@ def _load_api_key() -> str:
         return settings.api_key_file.read_text().strip()
     except FileNotFoundError:
         return ""
+
+
+# ---------------------------------------------------------------------------
+# Built-in playbook loading
+# ---------------------------------------------------------------------------
+
+
+def _builtin_dir() -> Path:
+    """Return the path to the built-in playbooks directory."""
+    return Path(__file__).resolve().parent.parent.parent / "playbooks"
+
+
+def load_builtins() -> int:
+    """Load built-in playbook templates from brainbox/playbooks/*.md.
+
+    Called once at API startup. Returns the number of playbooks loaded.
+    Skips files whose name (slug) is already loaded (idempotent).
+    """
+    pb_dir = _builtin_dir()
+    if not pb_dir.is_dir():
+        return 0
+
+    loaded = 0
+    existing_names = {pb.name for pb in _playbooks.values()}
+
+    for md_file in sorted(pb_dir.glob("*.md")):
+        name = md_file.stem  # e.g. "self-improvement"
+        if name in existing_names:
+            continue
+        try:
+            markdown = md_file.read_text()
+            # Extract title from first heading, fall back to filename
+            title_match = re.match(r"^#\s+(.+)$", markdown, re.MULTILINE)
+            display_name = title_match.group(1).strip() if title_match else name.replace("-", " ").title()
+
+            pb = Playbook(
+                name=display_name,
+                markdown=markdown,
+                tasks=_parse_tasks(markdown),
+                workspace_profile="global",
+            )
+            _playbooks[pb.id] = pb
+            _builtin_ids.add(pb.id)
+            existing_names.add(display_name)
+            loaded += 1
+            log.info(
+                "playbook.builtin_loaded",
+                metadata={"id": pb.id, "name": display_name, "tasks": len(pb.tasks), "file": md_file.name},
+            )
+        except Exception as exc:
+            log.warning("playbook.builtin_load_failed", metadata={"file": md_file.name, "reason": str(exc)})
+
+    return loaded
 
 
 # ---------------------------------------------------------------------------

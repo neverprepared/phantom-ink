@@ -115,6 +115,7 @@ from .playbooks import (
     delete_playbook,
     get_playbook,
     list_playbooks,
+    load_builtins as load_builtin_playbooks,
     on_event as playbook_on_event,
     run_playbook,
 )
@@ -304,6 +305,11 @@ async def lifespan(app: FastAPI):
     setup_logging()
     await hub_init()
     load_or_create_key()
+
+    # Load built-in playbook templates
+    n = load_builtin_playbooks()
+    if n:
+        log.info("api.builtin_playbooks_loaded", metadata={"count": n})
 
     # Forward hub events to SSE
     on_event(
