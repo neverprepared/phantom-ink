@@ -72,8 +72,8 @@ class TestArtifactSettings:
         s = ArtifactSettings()
         assert s.mode == "warn"
         assert s.endpoint == "http://localhost:9090"
-        assert s.access_key == ""
-        assert s.secret_key == ""
+        assert s.access_key.get_secret_value() == ""
+        assert s.secret_key.get_secret_value() == ""
         assert s.bucket == "artifacts"
         assert s.region == "us-east-1"
 
@@ -88,8 +88,8 @@ class TestArtifactSettings:
         )
         assert s.mode == "enforce"
         assert s.endpoint == "http://minio.example.com:9000"
-        assert s.access_key == "mykey"
-        assert s.secret_key == "mysecret"
+        assert s.access_key.get_secret_value() == "mykey"
+        assert s.secret_key.get_secret_value() == "mysecret"
         assert s.bucket == "custom-bucket"
         assert s.region == "eu-west-1"
 
@@ -405,7 +405,7 @@ class TestArtifactAPI:
         with patch("brainbox.api.delete_artifact"):
             resp = await client.request("DELETE", "/api/artifacts/test/f.txt")
         assert resp.status_code == 200
-        assert resp.json()["deleted"] is True
+        assert resp.json()["success"] is True
 
     @pytest.mark.asyncio
     async def test_health(self, client, monkeypatch):

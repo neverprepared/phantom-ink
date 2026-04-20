@@ -60,7 +60,7 @@ class LangfuseError(RuntimeError):
 
 def _auth_header() -> str:
     """Build HTTP Basic Auth header from public_key:secret_key."""
-    creds = f"{settings.langfuse.public_key}:{settings.langfuse.secret_key}"
+    creds = f"{settings.langfuse.public_key}:{settings.langfuse.secret_key.get_secret_value()}"
     encoded = base64.b64encode(creds.encode()).decode()
     return f"Basic {encoded}"
 

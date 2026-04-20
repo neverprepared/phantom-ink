@@ -43,8 +43,8 @@ def _s3_client():
         _s3_client_cached = boto3.client(
             "s3",
             endpoint_url=settings.artifact.endpoint,
-            aws_access_key_id=settings.artifact.access_key,
-            aws_secret_access_key=settings.artifact.secret_key,
+            aws_access_key_id=settings.artifact.access_key.get_secret_value(),
+            aws_secret_access_key=settings.artifact.secret_key.get_secret_value(),
             region_name=settings.artifact.region,
         )
     return _s3_client_cached
