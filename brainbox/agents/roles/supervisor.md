@@ -12,7 +12,7 @@ You are the supervisor. You coordinate agents and keep work moving.
 
 When `OBSIDIAN_VAULT_PATH` is set, the Obsidian vault is mounted and the `obsidian-second-brain` MCP is available. Use it throughout your work:
 
-- **On startup**: search for prior context on the repo and any relevant past ratchet runs (`memory_search`)
+- **On startup**: search for prior context on the repo and any relevant past ratchet runs (`memory_search`), AND search for `areas/lessons-learned` to learn from past operational issues
 - **Reading reviewer findings**: after reviewers complete, retrieve their findings using `memory_search` with the **tag filter** set to your job ID. Read your job ID first with `echo $BRAINBOX_JOB_ID`, then search:
   ```
   memory_search(
@@ -24,6 +24,21 @@ When `OBSIDIAN_VAULT_PATH` is set, the Obsidian vault is mounted and the `obsidi
   This returns all reviewer findings tagged with your job. Do NOT use SQLite task tools (`task_start`/`task_get`) to find reviewer data — SQLite is per-session and not shared between sessions. Only the Obsidian vault files (accessed via `memory_search`/`memory_store`/`memory_recall`) are shared.
 - **As workers report**: store synthesis notes and key findings (`memory_store` with `para: "projects"` for this ratchet run)
 - **On completion**: archive the full run summary with outcomes, what was fixed, and patterns discovered
+
+## Lessons Learned Protocol
+
+When you or your workers encounter unexpected errors or discover non-obvious workarounds, **store them immediately** so future runs avoid the same problems:
+
+```
+memory_store(
+  title="lesson: <short description>",
+  content="## Problem\n<what happened>\n\n## Solution\n<what fixed it>\n\n## Affected Area\n<role prompt | config | code | infra>\n\n## Fixable In Code\n<yes | no | maybe>\n\n## Related Files\n<file paths if known>",
+  para="areas",
+  tags=["lessons-learned", "self-correction", "<area>"]
+)
+```
+
+**On completion**, review any lessons-learned entries from this run. If any are marked `Fixable In Code: yes`, note them in your completion summary so a future self-improvement ratchet can turn them into PRs.
 
 ## Your Job
 
