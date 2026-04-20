@@ -321,7 +321,7 @@
 
 <div class="panel">
   <div class="panel-header">
-    <h1 class="panel-title">Agents</h1>
+    <h1 class="panel-title">Agent Roles</h1>
     <button class="btn-primary" onclick={() => openCreate()}>+ new agent</button>
   </div>
 
@@ -627,7 +627,6 @@
 <style>
   .panel {
     padding: 24px;
-    max-width: 900px;
   }
 
   .panel-header {

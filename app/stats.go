@@ -338,6 +338,47 @@ func (a *App) ScanDiskUsage() DiskOverview {
 	return a.diskOverviewFromCache()
 }
 
+// LogEntry represents a single log line with metadata.
+type LogEntry struct {
+	Line string `json:"line"`
+}
+
+// GetAPILogs returns the last N lines from the brainbox daemon log file.
+func (a *App) GetAPILogs(lines int) []LogEntry {
+	if lines <= 0 {
+		lines = 200
+	}
+	if lines > 2000 {
+		lines = 2000
+	}
+
+	home, _ := os.UserHomeDir()
+	configHome := os.Getenv("XDG_CONFIG_HOME")
+	if configHome == "" {
+		configHome = filepath.Join(home, ".config")
+	}
+	logPath := filepath.Join(configHome, "phantom-ink", "brainbox", "logs", "brainbox.log")
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return nil
+	}
+
+	allLines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	start := len(allLines) - lines
+	if start < 0 {
+		start = 0
+	}
+
+	var entries []LogEntry
+	for _, l := range allLines[start:] {
+		if l != "" {
+			entries = append(entries, LogEntry{Line: l})
+		}
+	}
+	return entries
+}
+
 // SystemInfo holds system-level CPU and memory totals.
 type SystemInfo struct {
 	CPUCores  int     `json:"cpu_cores"`
