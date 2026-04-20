@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 from brainbox.config import LangfuseSettings, settings
 from brainbox.langfuse_client import (
@@ -132,7 +133,7 @@ class TestLangfuseSettings:
 class TestAuthHeader:
     def test_basic_auth_format(self, monkeypatch):
         monkeypatch.setattr(settings.langfuse, "public_key", "pk-test")
-        monkeypatch.setattr(settings.langfuse, "secret_key", "sk-test")
+        monkeypatch.setattr(settings.langfuse, "secret_key", SecretStr("sk-test"))
         header = _auth_header()
         assert header.startswith("Basic ")
         decoded = base64.b64decode(header[6:]).decode()
