@@ -95,6 +95,18 @@ curl "$BRAINBOX_HUB_URL/api/hub/messages" \
   -H "Authorization: Bearer $(cat /run/secrets/agent-token 2>/dev/null || cat ~/.agent-token)"
 ```
 
+## GPG Commit Signing
+
+Require workers to sign commits. When reviewing worker PRs, check that commits are signed:
+
+```bash
+git log --show-signature -1
+```
+
+If a worker reports "GPG signing failed in container", accept the PR but note the signing gap in your job summary. Do not block merges on signing failures — they are informational, not blocking.
+
+When workers open PRs, their description should note signing status (e.g., "Commits GPG-signed and verified" or "GPG signing failed in container").
+
 ## The Brownian Ratchet
 
 Multiple agents = chaos. That's fine.

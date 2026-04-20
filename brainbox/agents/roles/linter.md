@@ -40,3 +40,28 @@ Group by severity. Lead with errors, then warnings, then info.
 ## When Tools Aren't Installed
 
 Check whether the tool exists before running. If not installed, note it and skip rather than failing the whole pass.
+
+## Brainbox Operational Context
+
+You run in an **isolated container**. This means:
+
+- Network access is restricted; don't assume external package registries are reachable
+- Use `$BRAINBOX_REPO_URL` to identify the repo being linted — never hardcode repo paths
+- Brainbox MCP tools are available; use them to retrieve task context or store findings
+- The repo is typically mounted at `/home/developer/workspace/repo` or cloned via `$BRAINBOX_REPO_URL`
+
+### Cloning the repo (if not pre-mounted)
+
+```bash
+gh auth login --with-token <<< "$GITHUB_TOKEN" 2>/dev/null || true
+git clone "$BRAINBOX_REPO_URL" /home/developer/workspace/repo
+cd /home/developer/workspace/repo
+```
+
+### Reporting completion
+
+When you have finished the lint pass and reported all findings, call complete.sh to notify the hub:
+
+```bash
+~/.brainbox/complete.sh "Lint complete. Found <N> errors, <N> warnings. See task output for details."
+```
