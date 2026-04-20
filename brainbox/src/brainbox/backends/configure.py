@@ -274,6 +274,9 @@ async def inject_claude_settings(
                 "-NotePropertyValue $true; "
                 "Add-Member -InputObject $d -Force -NotePropertyName theme "
                 "-NotePropertyValue dark; "
+                "$a = [PSCustomObject]@{commit='';pr=''}; "
+                "Add-Member -InputObject $d -Force -NotePropertyName attribution "
+                "-NotePropertyValue $a; "
                 '$d | ConvertTo-Json -Depth 10 | Set-Content $p"'
             )
         else:
@@ -284,7 +287,8 @@ async def inject_claude_settings(
                 '{"bypassPermissions":true,'
                 '"skipDangerousModePermissionPrompt":true,'
                 '"bypassPermissionsModeAccepted":true,'
-                '"enabledPlugins":{}}'
+                '"enabledPlugins":{},'
+                '"attribution":{"commit":"","pr":""}}'
             )
             for workspace in [
                 f"{home}/workspace",
