@@ -40,6 +40,6 @@ graph TD
 
 The following capabilities have been implemented in brainbox, advancing beyond the original Phase 1 scope:
 
-- **Agent role system**: 6 roles (developer, supervisor, worker, merge-queue, pr-shepherd, reviewer) with JSON definitions and markdown role prompts, absorbed from multiclaude (Dan Lorenc). Role-aware crash recovery — persistent agents auto-restart, transient agents clean up.
+- **Agent role system**: 11 roles (assistant, bash, golang, java, linter, python, qa, reviewer, supervisor, typescript, worker) with JSON definitions and markdown role prompts. Core orchestration roles absorbed from multiclaude (Dan Lorenc); language-specialist roles added for polyglot development workflows. Role-aware crash recovery — persistent agents auto-restart, transient agents clean up.
 - **Multi-repo hub**: Repository management via CRUD endpoints (`/api/hub/repos`) with per-repo agent containers and a dashboard Repos panel.
 - **Claude Code Teams integration**: `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` injected into all containers, enabling native multi-agent coordination.

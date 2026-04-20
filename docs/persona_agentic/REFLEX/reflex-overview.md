@@ -22,7 +22,7 @@ Reflex is an opinionated Claude Code plugin that provides sub-agents, skills, wo
 | **Qdrant** | Docker Compose (REST 6333, gRPC 6334) | Vector DB for semantic search, RAG, persistent memory |
 | **LangFuse** | Docker Compose (6 services: web, worker, postgres, clickhouse, redis, minio) | LLM observability — tool tracing, metrics, analytics |
 | **Guardrails** | Python pattern engine (`guardrail.py`) via PreToolUse hook | Blocks destructive operations (file deletion, git force push, database drops, cloud termination) |
-| **MCP Servers** | 11+ pre-configured servers in `mcp-catalog.json` | Qdrant, Atlassian, Git, GitHub, Azure, Azure DevOps, SQL Server, Playwright, Microsoft Docs |
+| **MCP Servers** | 25 pre-configured servers in `mcp-catalog.json` | Qdrant, Atlassian, Git, GitHub, Azure, Azure DevOps, SQL Server, Playwright, Microsoft Docs, Google Workspace, Kubernetes, Grafana, and more |
 
 ## How Reflex Relates to PHASE_1
 

@@ -111,7 +111,7 @@ mindmap
       Profile credentials
     Hub / Orchestration
       Agent registry
-      Role system (6 roles)
+      Role system (11 roles)
       Role prompts (markdown)
       Token issuance
       Task routing
@@ -133,7 +133,7 @@ mindmap
       Audit logging
       Container hardening
     Dashboard
-      Svelte 5 SPA
+      Wails desktop app (Svelte 5)
       Real-time SSE
       Container metrics
       Terminal access
@@ -147,7 +147,7 @@ mindmap
 | Module | Responsibility | Doc |
 |--------|---------------|-----|
 | `api.py` | FastAPI routes, SSE, lifespan | [api-reference.md](api-reference.md) |
-| `mcp_server.py` | MCP tool adapter (16 tools) | [api-reference.md](api-reference.md) |
+| `mcp_server.py` | MCP tool adapter (49 tools) | [api-reference.md](api-reference.md) |
 | `rate_limit.py` | slowapi rate limiter | [api-reference.md](api-reference.md) |
 | `validation.py` | Session name, artifact key, volume, port, role validators | [api-reference.md](api-reference.md) |
 | `models_api.py` | Pydantic request schemas | [api-reference.md](api-reference.md) |
@@ -169,7 +169,7 @@ mindmap
 | `config.py` | Pydantic settings from `CL_*` env vars | [lifecycle.md](lifecycle.md) |
 | `models.py` | Domain models (AgentRole, AgentDefinition, Repository, Session, Task, Token, Message) | [hub.md](hub.md) |
 | `log.py` | structlog JSON logging with session context | [observability.md](observability.md) |
-| `dashboard/` | Svelte 5 SPA with 3 panels | [dashboard.md](dashboard.md) |
+| `dashboard/` | Wails desktop app — Svelte 5 frontend with 3 panels | [dashboard.md](dashboard.md) |
 
 ## Documents
 

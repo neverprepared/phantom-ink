@@ -1,4 +1,4 @@
-# ink-bunny Architecture Overview
+# phantom-ink Architecture Overview
 
 ## System Diagram
 
@@ -7,7 +7,7 @@ graph TB
     subgraph User["User Layer"]
         CLI["Claude Code CLI"]
         Browser["Browser"]
-        Homebrew["Homebrew Tap<br/><i>neverprepared/ink-bunny</i>"]
+        Homebrew["Homebrew Tap<br/><i>neverprepared/phantom-ink</i>"]
     end
 
     subgraph Reflex["Reflex — Claude Code Plugin"]
@@ -27,7 +27,7 @@ graph TB
             PostToolUse["PostToolUse<br/><i>langfuse tracing, notifications</i>"]
         end
 
-        MCPCatalog["MCP Catalog<br/><i>17 server definitions</i>"]
+        MCPCatalog["MCP Catalog<br/><i>25 server definitions</i>"]
         Scripts["Scripts<br/><i>guardrail.py, ingest.py,<br/>summarize.py, langfuse-trace.py</i>"]
     end
 
@@ -163,4 +163,4 @@ sequenceDiagram
 
 ## Distribution
 
-All three packages ship via a single Homebrew tap (`neverprepared/ink-bunny`). Reflex is also available on the Claude Code plugin marketplace. Releases use scoped tags (`brainbox/vX.Y.Z`, `shell-profiler/vX.Y.Z`, `reflex/vX.Y.Z`).
+All three packages ship via a single Homebrew tap (`neverprepared/phantom-ink`). Reflex is also available on the Claude Code plugin marketplace. Releases use scoped tags (`brainbox/vX.Y.Z`, `shell-profiler/vX.Y.Z`, `reflex/vX.Y.Z`).

@@ -8,7 +8,7 @@ The Docker wrapper runs brainbox inside a container, avoiding dependency conflic
 
 ```bash
 # Install via Homebrew
-brew install neverprepared/ink-bunny/brainbox
+brew install neverprepared/phantom-ink/brainbox
 
 # First run will pull the Docker image
 brainbox --help
@@ -40,11 +40,11 @@ For advanced users who want native Python execution:
 
 ```bash
 # Install via Homebrew (may have dependency issues on some systems)
-brew install neverprepared/ink-bunny/brainbox
+brew install neverprepared/phantom-ink/brainbox
 
 # Or install from source
-git clone https://github.com/neverprepared/ink-bunny.git
-cd ink-bunny/brainbox
+git clone https://github.com/neverprepared/phantom-ink.git
+cd phantom-ink/brainbox
 uv sync
 uv run brainbox --help
 ```
@@ -63,8 +63,8 @@ uv run brainbox --help
 
 ```bash
 # Clone repository
-git clone https://github.com/neverprepared/ink-bunny.git
-cd ink-bunny/brainbox
+git clone https://github.com/neverprepared/phantom-ink.git
+cd phantom-ink/brainbox
 
 # Install with uv (recommended)
 uv sync
@@ -88,8 +88,8 @@ If you just want the Docker image without Homebrew:
 docker pull ghcr.io/neverprepared/brainbox:latest
 
 # Or build locally
-git clone https://github.com/neverprepared/ink-bunny.git
-cd ink-bunny
+git clone https://github.com/neverprepared/phantom-ink.git
+cd phantom-ink
 just bb-docker-build
 
 # Run
@@ -124,13 +124,59 @@ Error: permission denied while trying to connect to Docker daemon
 
 ## Configuration
 
-Brainbox stores configuration in `~/.config/developer/` (or `$XDG_CONFIG_HOME/developer/`):
+Brainbox stores configuration in `~/.config/phantom-ink/brainbox/` (or `$XDG_CONFIG_HOME/phantom-ink/brainbox/`):
 - `sessions/` - Session state files
 - `.secrets/` - Resolved secret files
 - `logs/brainbox.log` - API server log
 - `brainbox.pid` - Daemon PID file
 
+The config directory was previously `~/.config/developer/`. Brainbox migrates automatically on first run — no manual action needed.
+
 Configuration is controlled via environment variables (see `brainbox/src/brainbox/config.py`).
+
+---
+
+## GPG Commit Signing
+
+Commits made by brainbox container agents must be GPG signed. This requires forwarding your GPG agent socket into the container.
+
+### Configuring GPG forwarding
+
+1. **Export your GPG key** and ensure it's available on the host:
+
+   ```bash
+   gpg --list-secret-keys --keyid-format LONG
+   ```
+
+2. **Enable GPG agent socket forwarding** — brainbox forwards `~/.gnupg/S.gpg-agent` into containers automatically when present. Verify the socket exists:
+
+   ```bash
+   ls ~/.gnupg/S.gpg-agent
+   ```
+
+3. **Configure signing in your workspace `.gitconfig`**:
+
+   ```ini
+   [user]
+       signingkey = <YOUR_KEY_ID>
+   [commit]
+       gpgsign = true
+   [gpg]
+       program = gpg
+   ```
+
+4. **Inside the container**, verify GPG is available:
+
+   ```bash
+   gpg --list-secret-keys
+   git log --show-signature -1
+   ```
+
+### Container environment notes
+
+- The container runs as user `developer` (non-root). GPG socket forwarding requires the socket path to be readable by this user.
+- If GPG forwarding is unavailable (e.g., the host agent is not running), commits will fail with a signing error. Either configure GPG forwarding or set `commit.gpgsign = false` for agents that don't require signed commits.
+- To verify signing worked after a commit: `git log --show-signature -1`
 
 ---
 
@@ -141,7 +187,7 @@ Configuration is controlled via environment variables (see `brainbox/src/brainbo
 brew uninstall brainbox
 
 # Remove config
-rm -rf ~/.config/developer
+rm -rf ~/.config/phantom-ink/brainbox
 
 # Remove Docker images
 docker rmi brainbox:latest

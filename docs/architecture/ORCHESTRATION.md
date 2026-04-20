@@ -178,7 +178,7 @@ graph LR
 ```mermaid
 graph TB
     subgraph "Host"
-        HostFS[/Users/.../code/ink-bunny]
+        HostFS[/Users/.../code/phantom-ink]
         API[Brainbox API]
     end
 

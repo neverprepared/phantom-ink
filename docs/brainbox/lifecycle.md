@@ -51,6 +51,9 @@ sequenceDiagram
         Note over LC: Phase 2: Configure
         LC->>LC: resolve_secrets() (1Password or files)
         LC->>LC: inject CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+        LC->>LC: inject BRAINBOX_HUB_URL + BRAINBOX_URL
+        LC->>LC: inject BRAINBOX_TASK_ID (if task context)
+        LC->>LC: inject BRAINBOX_JOB_ID (if job context)
         LC->>LC: inject BRAINBOX_REPO_URL (if repo_url set)
         LC->>LC: resolve_oauth_account()
         LC->>BE: backend.configure(ctx, secrets, oauth)
@@ -287,3 +290,30 @@ All settings use the `CL_` env prefix with `__` as nested delimiter.
 | `hub.persistent_token_ttl` | `CL_HUB__PERSISTENT_TOKEN_TTL` | `86400` | Token TTL for persistent agents (24h) |
 
 See `config.py` for the full list of nested settings groups: `ResourceSettings`, `HardeningSettings`, `CosignSettings`, `ArtifactSettings`, `LangfuseSettings`, `QdrantSettings`, `ProfileSettings`, `OllamaSettings`, `UTMSettings`, `HubSettings`.
+
+## Agent-Injected Environment Variables
+
+During the configure phase, brainbox injects the following environment variables into every container. Agents can rely on these being present without any additional setup.
+
+| Variable | Injected When | Description |
+|----------|--------------|-------------|
+| `BRAINBOX_HUB_URL` | Always | HTTP URL of the brainbox hub API (`http://host.docker.internal:<port>`). Used by agent shell scripts for API calls. |
+| `BRAINBOX_URL` | Always | Alias for `BRAINBOX_HUB_URL`. Used by the brainbox MCP server (`BRAINBOX_URL`). Both variables are set to the same value. |
+| `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` | Always (if `hub.enable_teams=true`) | Set to `1` to enable Claude Code's native multi-agent Teams support inside the container. |
+| `BRAINBOX_TASK_ID` | When task context is present | UUID of the hub task this agent is executing. Use this to report results or poll task status. |
+| `BRAINBOX_JOB_ID` | When job context is present | Job ID grouping related tasks (e.g., all workers in a ratchet run share the same job ID). Useful for constructing unique branch names: `ratchet/${BRAINBOX_JOB_ID}`. |
+| `BRAINBOX_REPO_URL` | When `repo_url` is set on the session | HTTPS or SSH URL of the repository associated with this agent's task. Agents use this to clone the correct repo without hardcoding URLs. |
+
+### Usage patterns
+
+```bash
+# Build a unique branch name from job and task IDs
+BRANCH="ratchet/${BRAINBOX_JOB_ID:-$(date +%s)}-docs"
+
+# Clone the repo using the injected URL
+git clone "$BRAINBOX_REPO_URL" repo
+
+# Report back to the hub (using the MCP server or REST API)
+curl -sf "$BRAINBOX_URL/api/hub/tasks/$BRAINBOX_TASK_ID" \
+  -H "Authorization: Bearer $BRAINBOX_AGENT_TOKEN"
+```
