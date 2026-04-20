@@ -16,6 +16,7 @@
   let tasks = $state<any[]>([]);
   let agents = $state<any[]>([]);
   let localProcesses = $state<any[]>([]);
+  let diskUsageMap = $state<Record<string, string>>({}); // container name → writable size
   let sessionHistory = $state<Record<string, any[]>>({});
   let history = $state<any[]>([]);
   let aggregateHoverIdx = $state<number | null>(null);
@@ -146,15 +147,21 @@
     const a = await getApi();
     if (!a) { loading = false; return; }
     try {
-      const [sess, hubState, procs] = await Promise.all([
+      const [sess, hubState, procs, diskStats] = await Promise.all([
         a.GetSessions(),
         a.GetHubState(),
         a.FindClaudeProcesses(),
+        a.GetContainerDiskUsage().catch(() => []),
       ]);
       allSessions = sess ?? [];
       tasks = hubState?.tasks ?? [];
       agents = hubState?.agents ?? [];
       localProcesses = procs ?? [];
+      const dm: Record<string, string> = {};
+      for (const d of (diskStats ?? [])) {
+        dm[d.name] = d.writable_size;
+      }
+      diskUsageMap = dm;
     } catch (err: any) {
       notifications.error(`Failed to load sessions: ${err?.message ?? err}`);
     } finally {
@@ -526,6 +533,12 @@
           <div class="card-meta">
             {#if session.llm_provider}
               <span class="meta-item">{session.llm_provider}{session.llm_model ? ` / ${session.llm_model}` : ''}</span>
+            {/if}
+            {#if diskUsageMap[session.name]}
+              <span class="meta-disk" title="Container writable layer disk usage">
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
+                {diskUsageMap[session.name]}
+              </span>
             {/if}
             {#if active && session.url}
               <a class="meta-url" href={session.url} target="_blank">{session.url.replace('http://', '')}</a>
@@ -1097,6 +1110,15 @@
   }
 
   .meta-item {
+    color: var(--color-text-tertiary);
+  }
+
+  .meta-disk {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-family: var(--font-mono);
+    font-size: 11px;
     color: var(--color-text-tertiary);
   }
 

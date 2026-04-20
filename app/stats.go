@@ -42,6 +42,50 @@ func (a *App) GetDockerStats() ([]ContainerStat, error) {
 	return stats, nil
 }
 
+// ContainerDiskStat represents disk usage for a single container.
+type ContainerDiskStat struct {
+	Name         string `json:"name"`
+	WritableSize string `json:"writable_size"` // e.g. "125MB" — writable layer only
+	VirtualSize  string `json:"virtual_size"`  // e.g. "2.4GB" — image + writable
+}
+
+// GetContainerDiskUsage returns disk usage for all containers (running and stopped).
+// Uses `docker ps --size` which reports the writable layer size and total virtual size.
+func (a *App) GetContainerDiskUsage() ([]ContainerDiskStat, error) {
+	cmd := exec.Command("docker", "ps", "-a", "--size", "--format",
+		`{"name":"{{.Names}}","size":"{{.Size}}"}`)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var stats []ContainerDiskStat
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		var raw struct {
+			Name string `json:"name"`
+			Size string `json:"size"`
+		}
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			continue
+		}
+		// Size format: "125MB (virtual 2.4GB)" — split on " (virtual "
+		writable, virtual := raw.Size, ""
+		if idx := strings.Index(raw.Size, " (virtual "); idx != -1 {
+			writable = raw.Size[:idx]
+			virtual = strings.TrimSuffix(raw.Size[idx+10:], ")")
+		}
+		stats = append(stats, ContainerDiskStat{
+			Name:         raw.Name,
+			WritableSize: writable,
+			VirtualSize:  virtual,
+		})
+	}
+	return stats, nil
+}
+
 // SystemInfo holds system-level CPU and memory totals.
 type SystemInfo struct {
 	CPUCores  int     `json:"cpu_cores"`
