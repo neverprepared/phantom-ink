@@ -13,6 +13,7 @@ Environment variables:
 """
 
 import json
+import logging.handlers
 import os
 import sys
 from datetime import datetime, timezone, timedelta
@@ -59,11 +60,14 @@ def debug_log(msg: str) -> None:
         os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude")),
         "reflex", "langfuse-debug.log"
     )
-    if os.path.exists(log_path) and os.path.getsize(log_path) > 1_000_000:
-        with open(log_path, "w"):
-            pass
-    with open(log_path, "a") as f:
-        f.write(f"[PYTHON] {msg}\n")
+    handler = logging.handlers.RotatingFileHandler(
+        log_path, maxBytes=1_000_000, backupCount=3
+    )
+    logger = logging.getLogger("langfuse_debug")
+    if not logger.handlers:
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+    logger.debug("[PYTHON] %s", msg)
 
 
 def send_trace(tool_data: dict) -> None:

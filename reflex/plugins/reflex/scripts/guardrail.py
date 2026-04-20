@@ -80,7 +80,7 @@ DEFAULT_PATTERNS: List[Dict] = [
         "name": "dd_device",
         "severity": "critical",
         "category": "disk_destruction",
-        "pattern": r"dd\s+.*if=.*(of=/dev/(sd[a-z]|nvme|hd[a-z]|vd[a-z]|disk|rdisk))",
+        "pattern": r"dd(?=.*if=)(?=.*of=/dev/(sd[a-z]|nvme\d*|hd[a-z]|vd[a-z]|disk|rdisk))",
         "description": "Direct disk write with dd (can destroy partitions)",
         "tool": "Bash",
         "field": "command"
@@ -98,7 +98,7 @@ DEFAULT_PATTERNS: List[Dict] = [
         "name": "git_force_push_main",
         "severity": "critical",
         "category": "git_destructive",
-        "pattern": r"git\s+push\s+.*(-f|--force|--force-with-lease).*\s+(origin\s+)?(main|master)(\s|$|:)",
+        "pattern": r"git\s+push(?=.*(-f|--force|--force-with-lease))(?=.*(main|master)(\s|$|:))",
         "description": "Force push to main/master branch",
         "tool": "Bash",
         "field": "command"
@@ -540,19 +540,19 @@ def match_patterns(
         flags = re.IGNORECASE if pattern.category == "database_destructive" else 0
         match_obj = re.search(pattern.pattern, text, flags)
         if match_obj:
-                start = max(0, match_obj.start() - 20)
-                end = min(len(text), match_obj.end() + 20)
-                context = text[start:end]
-                if start > 0:
-                    context = "..." + context
-                if end < len(text):
-                    context = context + "..."
+            start = max(0, match_obj.start() - 20)
+            end = min(len(text), match_obj.end() + 20)
+            context = text[start:end]
+            if start > 0:
+                context = "..." + context
+            if end < len(text):
+                context = context + "..."
 
-                matches.append(Match(
-                    pattern=pattern,
-                    matched_text=match_obj.group(),
-                    context=context,
-                ))
+            matches.append(Match(
+                pattern=pattern,
+                matched_text=match_obj.group(),
+                context=context,
+            ))
 
     return matches
 

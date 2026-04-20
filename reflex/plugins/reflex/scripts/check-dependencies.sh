@@ -5,8 +5,8 @@
 
 set -euo pipefail
 
-# Read input from stdin (SessionStart provides session info)
-read -r INPUT 2>/dev/null || INPUT="{}"
+# Consume stdin to avoid blocking the hook runner
+cat > /dev/null
 
 # =============================================================================
 # Git Configuration Setup
