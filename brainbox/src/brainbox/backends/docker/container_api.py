@@ -20,6 +20,8 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(title="Brainbox Container API", version="0.1.0")
 
+TMUX_SESSION = "main"
+
 
 class QueryRequest(BaseModel):
     """Request to execute a Claude Code query."""
@@ -64,7 +66,7 @@ async def _prepare_working_dir(request: QueryRequest) -> str:
         "tmux",
         "has-session",
         "-t",
-        "main",
+        TMUX_SESSION,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -86,7 +88,7 @@ async def _build_claude_command(request: QueryRequest, working_dir: str) -> int:
         "tmux",
         "send-keys",
         "-t",
-        "main",
+        TMUX_SESSION,
         "C-c",
     )
     await asyncio.sleep(0.5)
@@ -98,7 +100,7 @@ async def _build_claude_command(request: QueryRequest, working_dir: str) -> int:
             "tmux",
             "send-keys",
             "-t",
-            "main",
+            TMUX_SESSION,
             cd_cmd,
             "Enter",
         )
@@ -109,7 +111,7 @@ async def _build_claude_command(request: QueryRequest, working_dir: str) -> int:
         "tmux",
         "capture-pane",
         "-t",
-        "main",
+        TMUX_SESSION,
         "-p",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -122,7 +124,7 @@ async def _build_claude_command(request: QueryRequest, working_dir: str) -> int:
         "tmux",
         "send-keys",
         "-t",
-        "main",
+        TMUX_SESSION,
         request.prompt,
         "Enter",
     )
@@ -147,7 +149,7 @@ async def _run_and_capture(before_line_count: int, timeout: int) -> str:
             "tmux",
             "capture-pane",
             "-t",
-            "main",
+            TMUX_SESSION,
             "-p",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -179,7 +181,7 @@ async def _run_and_capture(before_line_count: int, timeout: int) -> str:
         "tmux",
         "capture-pane",
         "-t",
-        "main",
+        TMUX_SESSION,
         "-p",
         "-S",
         "-100",

@@ -13,10 +13,15 @@ import shlex
 import tarfile
 from typing import Any
 
+from ..auth import get_api_key
 from ..log import get_logger
 from .executor import GuestExecutor
 
 log = get_logger()
+
+# Docker-specific path for workspace profile environment variables.
+# Written as root-owned tmpfs so containers cannot tamper with it.
+PROFILE_ENV_PATH = "/run/profile"
 
 
 def _extract_from_bundle(bundle_bytes: bytes, arcname: str) -> str | None:
@@ -58,6 +63,10 @@ async def inject_env_file(
                     await executor.exec_shell(
                         f'powershell -Command "Set-Content -Path $env:USERPROFILE\\.agent-token'
                         f" -Value '{escaped_value}' -Force\""
+                    )
+                    await executor.exec_shell(
+                        f'powershell -Command "Add-Content -Path $env:USERPROFILE\\.env'
+                        f" -Value 'export BRAINBOX_TOKEN={escaped_value}'\""
                     )
                 else:
                     await executor.exec_shell(
@@ -313,16 +322,16 @@ async def inject_profile_env_docker(
         # The caller must handle root access; we just write the files.
         escaped = shlex.quote(profile_env)
         await executor.exec_shell(
-            f"mkdir -p /run/profile && chmod 777 /run/profile"
-            f" && echo {escaped} > /run/profile/.env"
-            f" && chmod 644 /run/profile/.env"
+            f"mkdir -p {PROFILE_ENV_PATH} && chmod 777 {PROFILE_ENV_PATH}"
+            f" && echo {escaped} > {PROFILE_ENV_PATH}/.env"
+            f" && chmod 644 {PROFILE_ENV_PATH}/.env"
         )
 
         # Source from .bashrc and .env
-        source_line = "[ -f /run/profile/.env ] && set -a && . /run/profile/.env && set +a"
+        source_line = f"[ -f {PROFILE_ENV_PATH}/.env ] && set -a && . {PROFILE_ENV_PATH}/.env && set +a"
         for rc_file in (f"{home}/.bashrc", f"{home}/.env"):
             await executor.exec_shell(
-                f"grep -q /run/profile/.env {rc_file} 2>/dev/null"
+                f"grep -q {PROFILE_ENV_PATH}/.env {rc_file} 2>/dev/null"
                 f" || echo '{source_line}' >> {rc_file}"
             )
 
@@ -448,7 +457,7 @@ async def inject_task(
     task_description: str,
     *,
     task_id: str = "",
-    hub_url: str = "http://host.docker.internal:9999",
+    hub_url: str | None = None,
     slog: Any | None = None,
 ) -> None:
     """Write task description + completion helper script.
@@ -457,6 +466,10 @@ async def inject_task(
     """
     slog = slog or log
     home = executor.home_dir
+
+    if hub_url is None:
+        from ..config import settings
+        hub_url = f"http://host.docker.internal:{settings.api_port}"
 
     if executor.guest_os == "windows":
         slog.info("configure.task_skipped_windows")
@@ -498,7 +511,6 @@ async def inject_task(
         )
 
         # Get API key for fallback auth in complete.sh
-        from ..auth import get_api_key
         api_key = get_api_key()
 
         await executor.exec_shell(

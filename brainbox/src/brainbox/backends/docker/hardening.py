@@ -7,6 +7,7 @@ from typing import Any
 from docker.types import Mount
 
 from ...config import settings
+from ..configure import PROFILE_ENV_PATH
 
 
 def _parse_tmpfs_size(size: str) -> int:
@@ -41,7 +42,7 @@ def get_hardening_kwargs(*, user: str | None = None) -> dict[str, Any]:
                 tmpfs_mode=0o400,
             ),
             Mount(
-                target="/run/profile",
+                target=PROFILE_ENV_PATH,
                 source="",
                 type="tmpfs",
                 tmpfs_size=_parse_tmpfs_size("1M"),

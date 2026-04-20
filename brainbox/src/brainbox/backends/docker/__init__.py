@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import json
+import os
 import re
 import shlex
-import tarfile
 import textwrap
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -18,37 +17,45 @@ from docker.errors import NotFound
 
 from ...log import get_logger
 from ...models import SessionContext, SessionState
+from ..configure import _extract_from_bundle
 
-# Docker client singleton
+# Docker client singleton (local daemon)
 _client: docker.DockerClient | None = None
+# Remote client cache keyed by docker_host URL
+_remote_clients: dict[str, docker.DockerClient] = {}
 _executor = ThreadPoolExecutor(max_workers=4)
 
 log = get_logger()
 
+# Port ttyd listens on inside the container
+TTYD_PORT = 7681
 
-def _extract_from_bundle(bundle_bytes: bytes, arcname: str) -> str | None:
-    """Extract a single text file from a tar.gz bundle by archive name."""
-    try:
-        with tarfile.open(fileobj=io.BytesIO(bundle_bytes), mode="r:gz") as tf:
-            member = tf.getmember(arcname)
-            f = tf.extractfile(member)
-            return f.read().decode("utf-8") if f else None
-    except (KeyError, tarfile.TarError, OSError):
-        return None
+# Mount path excluded from session volume listings (internal Claude config sync)
+# This mount is managed by the hub and should not be surfaced to users.
+CLAUDE_PROJECTS_MOUNT = "/.claude/projects"
 
 
 def _docker(docker_host: str | None = None) -> docker.DockerClient:
     """Get or create Docker client, optionally targeting a remote host."""
     global _client
     if docker_host:
-        # Remote host: create a fresh client (not cached — could be per-session)
-        return docker.DockerClient(base_url=docker_host)
+        if docker_host not in _remote_clients:
+            _remote_clients[docker_host] = docker.DockerClient(base_url=docker_host)
+        return _remote_clients[docker_host]
     if _client is None:
-        macos_sock = Path.home() / ".docker" / "run" / "docker.sock"
-        if macos_sock.is_socket():
-            _client = docker.DockerClient(base_url=f"unix://{macos_sock}")
+        docker_host_env = os.environ.get("DOCKER_HOST")
+        if docker_host_env:
+            _client = docker.DockerClient(base_url=docker_host_env)
         else:
-            _client = docker.from_env()
+            macos_sock = Path.home() / ".docker" / "run" / "docker.sock"
+            # Also check the older path used by Docker Desktop <4.x and Colima
+            legacy_sock = Path.home() / ".docker" / "docker.sock"
+            if macos_sock.is_socket():
+                _client = docker.DockerClient(base_url=f"unix://{macos_sock}")
+            elif legacy_sock.is_socket():
+                _client = docker.DockerClient(base_url=f"unix://{legacy_sock}")
+            else:
+                _client = docker.from_env()
     return _client
 
 
@@ -122,7 +129,7 @@ class DockerBackend:
             pass
 
         # Build create kwargs
-        port_bindings: dict[str, tuple[str, int]] = {"7681/tcp": ("127.0.0.1", ctx.port)}
+        port_bindings: dict[str, tuple[str, int]] = {f"{TTYD_PORT}/tcp": ("127.0.0.1", ctx.port)}
 
         # Add custom port mappings if specified
         if ctx.ports:
@@ -184,6 +191,8 @@ class DockerBackend:
             inject_claude_config,
             inject_claude_settings,
             inject_env_file,
+            inject_profile_env,
+            inject_profile_env_docker,
             inject_role_prompt,
             inject_task,
         )
@@ -241,6 +250,14 @@ class DockerBackend:
             executor = DockerExecExecutor(container)
             await inject_task(executor, ctx.task_description, task_id=ctx.task_id or "", slog=slog)
 
+        # Forward profile env variables if provided
+        if env_content:
+            executor = DockerExecExecutor(container)
+            await inject_profile_env(executor, env_content, slog=slog)
+        if profile_env:
+            executor = DockerExecExecutor(container)
+            await inject_profile_env_docker(executor, profile_env, slog=slog)
+
         # Claude config is delivered via inject_config_bundle() before configure() runs —
         # no staging copy needed here. bypassPermissions is already forced in the bundle.
 
@@ -297,7 +314,7 @@ class DockerBackend:
                         "-t",
                         f"titleFixed={title}",
                         "-p",
-                        "7681",
+                        str(TTYD_PORT),
                         "/home/developer/ttyd-wrapper.sh",
                     ],
                     detach=True,
@@ -311,12 +328,15 @@ class DockerBackend:
 
     async def stop(self, ctx: SessionContext) -> SessionContext:
         """Stop Docker container."""
+        slog = get_logger(session_name=ctx.session_name, container_name=ctx.container_name)
         client = _docker(ctx.docker_host)
         try:
             container = await _run(client.containers.get, ctx.container_name)
             await _run(container.stop, timeout=5)
-        except Exception:
+        except NotFound:
             pass
+        except Exception as exc:
+            slog.warning("container.stop_failed", metadata={"reason": str(exc)})
         return ctx
 
     async def remove(self, ctx: SessionContext) -> SessionContext:
@@ -328,8 +348,10 @@ class DockerBackend:
             container = await _run(client.containers.get, ctx.container_name)
             await _run(container.remove)
             slog.info("container.removed")
-        except Exception:
+        except NotFound:
             pass
+        except Exception as exc:
+            slog.warning("container.remove_failed", metadata={"reason": str(exc)})
 
         return ctx
 
@@ -412,8 +434,10 @@ class DockerBackend:
         client = _docker(ctx.docker_host)
         try:
             container = await _run(client.containers.get, ctx.container_name)
+            executor = DockerExecExecutor(container)
+            home = executor.home_dir
             # put_archive works on stopped containers — Docker-specific fast path.
-            await _run(container.put_archive, "/home/developer", bundle_bytes)
+            await _run(container.put_archive, home, bundle_bytes)
             # exec_run requires a running container; start it now if needed.
             await _run(container.reload)
             if container.status != "running":
@@ -423,7 +447,6 @@ class DockerBackend:
             # The shared function re-extracts from the bundle, which is fine — the
             # put_archive above handles the bulk tar; the shared function handles the
             # settings.json workaround and mcpServers merge.
-            executor = DockerExecExecutor(container)
             # Only do the post-extraction fixups (ownership + settings.json), not the
             # tar extraction itself (already done via put_archive above).
             await _run(
@@ -431,7 +454,7 @@ class DockerBackend:
                 [
                     "sh",
                     "-c",
-                    "chown -R developer:developer /home/developer/.claude 2>/dev/null || true",
+                    f"chown -R developer:developer {home}/.claude 2>/dev/null || true",
                 ],
                 user="root",
             )
@@ -439,7 +462,7 @@ class DockerBackend:
             settings_json = _extract_from_bundle(bundle_bytes, ".claude/settings.json")
             if settings_json:
                 await executor.exec_shell(
-                    f"echo {shlex.quote(settings_json)} > /home/developer/.claude/settings.json"
+                    f"echo {shlex.quote(settings_json)} > {home}/.claude/settings.json"
                 )
 
                 user_mcps = json.loads(settings_json).get("mcpServers", {})
@@ -448,10 +471,10 @@ class DockerBackend:
                     await executor.exec_shell(
                         f'echo {shlex.quote(mcp_json)} | python3 -c "'
                         "import json, pathlib, sys; "
-                        "p = pathlib.Path('/home/developer/.claude.json'); "
+                        f"p = pathlib.Path('{home}/.claude.json'); "
                         "d = json.loads(p.read_text()) if p.exists() else {}; "
                         "u = json.load(sys.stdin); "
-                        "ws = '/home/developer/workspace'; "
+                        f"ws = '{home}/workspace'; "
                         "d.setdefault('projects', {}).setdefault(ws, {}).setdefault('mcpServers', {}).update(u); "
                         "p.write_text(json.dumps(d, indent=2))"
                         '"'
@@ -528,6 +551,7 @@ class DockerBackend:
 
     async def fix_git_credential_paths(self, ctx: SessionContext) -> None:
         """Rewrite git credential helper to use container-local brew path."""
+        slog = get_logger(session_name=ctx.session_name, container_name=ctx.container_name)
         client = _docker(ctx.docker_host)
         container = await _run(client.containers.get, ctx.container_name)
         git_cred_fix = textwrap.dedent("""\
@@ -548,11 +572,11 @@ class DockerBackend:
         except Exception as exc:
             slog.warning("container.git_credential_fix_failed", metadata={"reason": str(exc)})
 
-    def get_sessions_info(self) -> list[dict[str, Any]]:
+    def get_sessions_info(self, docker_host: str | None = None) -> list[dict[str, Any]]:
         """List all managed Docker containers."""
         sessions = []
         try:
-            client = _docker()
+            client = _docker(docker_host)
             containers = client.containers.list(
                 all=True, filters={"label": "brainbox.managed=true"}
             )
@@ -576,10 +600,10 @@ class DockerBackend:
                 # Get volume mounts
                 mounts = c.attrs.get("Mounts", [])
                 bind_mounts = [
-                    f"{m['Source']}:{m['Destination']}"
+                    f"{m['Source']}:{m.get('Destination', '')}"
                     for m in mounts
                     if m.get("Type") == "bind"
-                    and not m["Destination"].endswith("/.claude/projects")
+                    and not m.get("Destination", "").endswith(CLAUDE_PROJECTS_MOUNT)
                 ]
                 if bind_mounts:
                     volume = ", ".join(bind_mounts)
