@@ -297,7 +297,7 @@ async def inject_claude_settings(
             ]:
                 await executor.exec_shell(
                     f"mkdir -p {workspace}/.claude && "
-                    f"echo '{settings_json}' > {workspace}/.claude/settings.local.json"
+                    f"echo {shlex.quote(settings_json)} > {workspace}/.claude/settings.local.json"
                 )
         slog.info("configure.claude_settings_applied")
     except Exception as exc:
@@ -357,7 +357,7 @@ async def inject_profile_env_docker(
         # The caller must handle root access; we just write the files.
         escaped = shlex.quote(profile_env)
         await executor.exec_shell(
-            f"mkdir -p /run/profile && chmod 777 /run/profile"
+            f"mkdir -p /run/profile && chmod 755 /run/profile"
             f" && echo {escaped} > /run/profile/.env"
             f" && chmod 644 /run/profile/.env"
         )
@@ -589,13 +589,17 @@ async def inject_task(
     task_description: str,
     *,
     task_id: str = "",
-    hub_url: str = "http://host.docker.internal:9999",
+    hub_url: str | None = None,
     slog: Any | None = None,
 ) -> None:
     """Write task description + completion helper script.
 
     Creates ~/.brainbox/task.txt, hub-url.txt, and complete.sh.
     """
+    from ..config import settings as _settings
+    if hub_url is None:
+        hub_url = f"http://host.docker.internal:{_settings.api_port}"
+
     slog = slog or log
     home = executor.home_dir
 

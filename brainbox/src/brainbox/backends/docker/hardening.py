@@ -11,10 +11,18 @@ from ...config import settings
 
 def _parse_tmpfs_size(size: str) -> int:
     """Convert human-readable size (e.g. '10M') to bytes."""
+    if not size:
+        raise ValueError("tmpfs size cannot be empty")
     multipliers = {"K": 1024, "M": 1024**2, "G": 1024**3}
-    if size and size[-1].upper() in multipliers:
-        return int(size[:-1]) * multipliers[size[-1].upper()]
-    return int(size)
+    if size[-1].upper() in multipliers:
+        try:
+            return int(size[:-1]) * multipliers[size[-1].upper()]
+        except ValueError:
+            raise ValueError(f"Invalid tmpfs size: {size!r}")
+    try:
+        return int(size)
+    except ValueError:
+        raise ValueError(f"Invalid tmpfs size: {size!r}")
 
 
 def get_hardening_kwargs(*, user: str | None = None) -> dict[str, Any]:

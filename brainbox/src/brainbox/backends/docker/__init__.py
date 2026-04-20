@@ -14,6 +14,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import threading
+
 import docker
 from docker.errors import NotFound
 
@@ -23,6 +25,8 @@ from ...models import SessionContext, SessionState
 # Docker client singletons
 _client: docker.DockerClient | None = None
 _remote_clients: dict[str, docker.DockerClient] = {}
+_client_lock = threading.Lock()
+_remote_clients_lock = threading.Lock()
 _executor = ThreadPoolExecutor(max_workers=4)
 
 log = get_logger()
@@ -43,16 +47,18 @@ def _docker(docker_host: str | None = None) -> docker.DockerClient:
     """Get or create Docker client, optionally targeting a remote host."""
     global _client
     if docker_host:
-        if docker_host not in _remote_clients:
-            _remote_clients[docker_host] = docker.DockerClient(base_url=docker_host)
-        return _remote_clients[docker_host]
-    if _client is None:
-        macos_sock = Path.home() / ".docker" / "run" / "docker.sock"
-        if macos_sock.is_socket():
-            _client = docker.DockerClient(base_url=f"unix://{macos_sock}")
-        else:
-            _client = docker.from_env()
-    return _client
+        with _remote_clients_lock:
+            if docker_host not in _remote_clients:
+                _remote_clients[docker_host] = docker.DockerClient(base_url=docker_host)
+            return _remote_clients[docker_host]
+    with _client_lock:
+        if _client is None:
+            macos_sock = Path.home() / ".docker" / "run" / "docker.sock"
+            if macos_sock.is_socket():
+                _client = docker.DockerClient(base_url=f"unix://{macos_sock}")
+            else:
+                _client = docker.from_env()
+        return _client
 
 
 async def _run(fn: Any, *args: Any, **kwargs: Any) -> Any:
@@ -314,7 +320,6 @@ class DockerBackend:
                     )
 
                 # Brief pause to let tmux session establish before ttyd attaches
-                import asyncio
                 await asyncio.sleep(1)
 
             # Start ttyd — attaches to existing tmux session (task) or starts new one (interactive)
@@ -341,12 +346,15 @@ class DockerBackend:
 
     async def stop(self, ctx: SessionContext) -> SessionContext:
         """Stop Docker container."""
+        slog = get_logger(session_name=ctx.session_name, container_name=ctx.container_name)
         client = _docker(ctx.docker_host)
         try:
             container = await _run(client.containers.get, ctx.container_name)
             await _run(container.stop, timeout=5)
+        except docker.errors.NotFound:
+            pass  # already gone, that's fine
         except Exception:
-            pass
+            slog.warning("container.stop_failed", exc_info=True)
         return ctx
 
     async def remove(self, ctx: SessionContext) -> SessionContext:
@@ -356,10 +364,12 @@ class DockerBackend:
 
         try:
             container = await _run(client.containers.get, ctx.container_name)
-            await _run(container.remove)
+            await _run(container.remove, force=True)
             slog.info("container.removed")
+        except docker.errors.NotFound:
+            pass  # already gone, that's fine
         except Exception:
-            pass
+            slog.warning("container.remove_failed", exc_info=True)
 
         return ctx
 

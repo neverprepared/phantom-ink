@@ -204,6 +204,7 @@ class PipelineSettings(BaseSettings):
 
 class DockerSettings(BaseSettings):
     host: str | None = None  # None = auto-detect local socket
+    # NOTE: tls_verify and cert_path are defined but not yet wired into _docker()
     tls_verify: bool = True
     cert_path: str | None = None
 

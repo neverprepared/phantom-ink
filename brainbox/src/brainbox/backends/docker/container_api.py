@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import subprocess
 import shlex
 import uuid
 from datetime import datetime, timezone
@@ -46,7 +45,7 @@ async def health():
     return {
         "status": "healthy",
         "service": "brainbox-container-api",
-        "claude_available": _check_claude_available(),
+        "claude_available": await _check_claude_available(),
     }
 
 
@@ -245,15 +244,22 @@ async def query(request: QueryRequest) -> QueryResponse:
         before_line_count = await _build_claude_command(request, working_dir)
         output = await _run_and_capture(before_line_count, request.timeout)
         return _format_query_response(output, request.prompt, conversation_id, start_time)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query execution failed: {e}")
 
 
-def _check_claude_available() -> bool:
+async def _check_claude_available() -> bool:
     """Check if Claude CLI is available."""
     try:
-        result = subprocess.run(["which", "claude"], capture_output=True, text=True, timeout=5)
-        return result.returncode == 0
+        proc = await asyncio.create_subprocess_exec(
+            "which", "claude",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await proc.wait()
+        return proc.returncode == 0
     except Exception:
         return False
 
