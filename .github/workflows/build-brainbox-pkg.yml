@@ -1,0 +1,83 @@
+name: Build brainbox package
+
+on:
+  push:
+    tags:
+      - "brainbox/v*"
+  workflow_dispatch:
+
+concurrency:
+  group: brainbox-pkg-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Build .deb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/brainbox/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#brainbox/v}"
+          else
+            VERSION="dev-${GITHUB_SHA::7}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install fpm
+        run: |
+          sudo apt-get install -y --no-install-recommends ruby ruby-dev build-essential
+          sudo gem install fpm --no-document
+
+      - name: Assemble package tree
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p pkg-root/usr/bin pkg-root/usr/share/brainbox
+
+          # Substitute version placeholder in the wrapper script
+          sed "s/@@VERSION@@/$VERSION/g" packages/brainbox/brainbox.sh \
+            > pkg-root/usr/bin/brainbox
+          chmod 0755 pkg-root/usr/bin/brainbox
+
+          cp packages/brainbox/docker-compose.yml \
+            pkg-root/usr/share/brainbox/docker-compose.yml
+
+      - name: Build .deb
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          fpm \
+            -s dir \
+            -t deb \
+            -C pkg-root \
+            -n brainbox \
+            -v "$VERSION" \
+            --description "Docker-based sandboxed Claude Code session manager" \
+            --url "https://github.com/neverprepared/phantom-ink" \
+            --license MIT \
+            --depends docker.io \
+            --architecture all \
+            --deb-no-default-config-files \
+            .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: brainbox-deb
+          path: "*.deb"
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/brainbox/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.deb"
+          tag_name: ${{ github.ref_name }}
+          name: brainbox ${{ github.ref_name }}
+          generate_release_notes: true

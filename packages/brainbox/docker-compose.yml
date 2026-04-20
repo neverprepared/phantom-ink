@@ -1,0 +1,53 @@
+# Brainbox stack — UI + API + Qdrant
+# Usage: brainbox up
+#
+# DooD note: bind mount paths for session containers must be host paths.
+# XDG_CONFIG_HOME and CLAUDE_CONFIG_DIR are mounted at their actual host
+# paths so session container mounts resolve correctly via the Docker daemon.
+services:
+  brainbox-ui:
+    image: ghcr.io/neverprepared/brainbox-ui:latest
+    ports:
+      - "127.0.0.1:9998:80"
+    depends_on:
+      - brainbox-api
+    networks:
+      - brainbox-net
+    restart: unless-stopped
+
+  brainbox-api:
+    image: ghcr.io/neverprepared/brainbox-api:latest
+    ports:
+      - "127.0.0.1:9999:9999"
+    volumes:
+      - "${XDG_CONFIG_HOME:-${HOME}/.config}:${XDG_CONFIG_HOME:-${HOME}/.config}"
+      - "${CLAUDE_CONFIG_DIR:-${HOME}/.claude}:${CLAUDE_CONFIG_DIR:-${HOME}/.claude}:ro"
+      - "${WORKSPACE_HOME:-${HOME}}/.aws:${WORKSPACE_HOME:-${HOME}}/.aws:ro"
+      - "${WORKSPACE_HOME:-${HOME}}/.ssh:${WORKSPACE_HOME:-${HOME}}/.ssh:ro"
+      - "${WORKSPACE_HOME:-${HOME}}/.gitconfig:${WORKSPACE_HOME:-${HOME}}/.gitconfig:ro"
+      - "${WORKSPACE_HOME:-${HOME}}/.azure:${WORKSPACE_HOME:-${HOME}}/.azure:ro"
+      - "${WORKSPACE_HOME:-${HOME}}/.kube:${WORKSPACE_HOME:-${HOME}}/.kube:ro"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    environment:
+      - XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-${HOME}/.config}
+      - CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-${HOME}/.claude}
+      - WORKSPACE_HOME=${WORKSPACE_HOME:-${HOME}}
+      - BRAINBOX_HOST_HOME=${HOME}
+      - SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock
+    networks:
+      - brainbox-net
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "127.0.0.1:6333:6333"
+    volumes:
+      - "${QDRANT_DATA_DIR:-${XDG_CONFIG_HOME:-${HOME}/.config}/qdrant}:/qdrant/storage"
+    networks:
+      - brainbox-net
+    restart: unless-stopped
+
+networks:
+  brainbox-net:
+    name: brainbox-net

@@ -1,0 +1,806 @@
+"""MCP server exposing brainbox API as tools.
+
+Stateless protocol adapter — each tool is an HTTP call to the
+brainbox FastAPI backend.
+
+Usage:
+    brainbox mcp                    # stdio transport (default)
+    brainbox mcp --url http://host:9999  # custom API URL
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("brainbox")
+
+
+def _api_url() -> str:
+    return os.environ.get("BRAINBOX_URL", "http://127.0.0.1:9999")
+
+
+def _api_key() -> str:
+    """Load API key from CL_API_KEY env, key file on disk, or loopback /api/auth/key."""
+    key = os.environ.get("CL_API_KEY", "")
+    if key:
+        return key
+    # Try common key file locations (XDG, WORKSPACE_HOME, home)
+    for candidate in [
+        os.environ.get("XDG_CONFIG_HOME", ""),
+        os.path.join(os.environ.get("WORKSPACE_HOME", ""), ".config"),
+        os.path.join(str(Path.home()), ".config"),
+    ]:
+        if not candidate:
+            continue
+        key_file = Path(candidate) / "developer" / ".api-key"
+        if key_file.exists():
+            return key_file.read_text().strip()
+    # Fall back to loopback endpoint (works regardless of which profile started brainbox)
+    try:
+        req = urllib.request.Request(f"{_api_url()}/api/auth/key")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode())
+            return data.get("key", "")
+    except Exception:
+        return ""
+
+
+def _request_raw(
+    method: str, path: str, data: bytes, content_type: str = "text/plain", timeout: int = 30
+) -> Any:
+    """Make an HTTP request with raw bytes body."""
+    url = f"{_api_url()}{path}"
+    headers = {"Content-Type": content_type}
+    key = _api_key()
+    if key:
+        headers["X-API-Key"] = key
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode() if exc.fp else str(exc)
+        try:
+            detail = json.loads(detail).get("detail", detail)
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        return {"error": detail, "status": exc.code}
+    except urllib.error.URLError as exc:
+        return {"error": f"Cannot reach API at {url}: {exc.reason}"}
+
+
+def _request(method: str, path: str, body: dict[str, Any] | None = None, timeout: int = 30) -> Any:
+    """Make an HTTP request to the brainbox API."""
+    url = f"{_api_url()}{path}"
+    data = json.dumps(body).encode() if body else None
+    headers = {"Content-Type": "application/json"} if data else {}
+    key = _api_key()
+    if key:
+        headers["X-API-Key"] = key
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode() if exc.fp else str(exc)
+        try:
+            detail = json.loads(detail).get("detail", detail)
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        return {"error": detail, "status": exc.code}
+    except urllib.error.URLError as exc:
+        return {"error": f"Cannot reach API at {url}: {exc.reason}"}
+
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def list_sessions() -> list[dict[str, Any]]:
+    """List all container sessions with their ports, volumes, and status."""
+    return _request("GET", "/api/sessions")
+
+
+@mcp.tool()
+def create_session(
+    name: str = "default",
+    volume: str | None = None,
+    role: str = "developer",
+    docker_host: str | None = None,
+) -> dict[str, Any]:
+    """Create and start a new container session.
+
+    Available roles: developer (default interactive), supervisor (orchestrates agents),
+    worker (executes tasks, creates PRs), merge-queue (auto-merges when CI passes),
+    pr-shepherd (coordinates fork PRs), reviewer (reviews PRs).
+
+    Persistent roles (supervisor, merge-queue, pr-shepherd) auto-restart on failure.
+    Transient roles (worker, reviewer) clean up their containers on completion.
+
+    Args:
+        name: Session name (container will be named developer-{name})
+        volume: Optional host:container volume mount (e.g. /path/to/code:/workspace)
+        role: Agent role — controls the system prompt injected into the container
+        docker_host: Docker daemon URL (e.g. tcp://remote:2376). None = local socket.
+    """
+    body: dict[str, Any] = {"name": name, "role": role}
+    if volume:
+        body["volume"] = volume
+    if docker_host:
+        body["docker_host"] = docker_host
+    return _request("POST", "/api/create", body)
+
+
+@mcp.tool()
+def start_session(name: str) -> dict[str, Any]:
+    """Start an existing stopped container session.
+
+    Args:
+        name: Container name (e.g. developer-default)
+    """
+    return _request("POST", "/api/start", {"name": name})
+
+
+@mcp.tool()
+def stop_session(name: str) -> dict[str, Any]:
+    """Stop a running container session.
+
+    Args:
+        name: Container name (e.g. developer-default)
+    """
+    return _request("POST", "/api/stop", {"name": name})
+
+
+@mcp.tool()
+def delete_session(name: str) -> dict[str, Any]:
+    """Delete a container session (stops and removes the container).
+
+    Args:
+        name: Container name (e.g. developer-default)
+    """
+    return _request("POST", "/api/delete", {"name": name})
+
+
+@mcp.tool()
+def push_config(name: str) -> dict[str, Any]:
+    """Re-inject translated ~/.claude config bundle into a running container.
+
+    Use this after updating plugins, skills, hooks, or settings in ~/.claude
+    to propagate changes without reprovisioning the container.
+
+    Args:
+        name: Session name (e.g. default) or container name (e.g. developer-default)
+    """
+    return _request("POST", f"/api/sessions/{name}/push-config")
+
+
+@mcp.tool()
+def get_metrics() -> list[dict[str, Any]]:
+    """Get per-container CPU %, memory usage, and uptime for all running sessions."""
+    return _request("GET", "/api/metrics/containers")
+
+
+@mcp.tool()
+def submit_task(
+    description: str, agent_name: str = "worker", repo_url: str | None = None
+) -> dict[str, Any]:
+    """Submit a task to the hub — spawns an isolated container running the specified agent.
+
+    Multiclaude workflow: register a repo with add_repo(), then submit a supervisor task
+    to coordinate workers. The supervisor spawns workers autonomously; use list_tasks()
+    and get_message_log() to monitor progress.
+
+    Available agent names:
+      supervisor   — orchestrates the overall workflow, spawns workers
+      worker       — executes a specific task and creates a PR (transient)
+      reviewer     — reviews an open PR and posts comments (transient)
+      merge-queue  — watches PRs and merges when CI passes (persistent, prefer add_repo)
+      pr-shepherd  — coordinates PRs for fork repos (persistent, prefer add_repo)
+      developer    — interactive Claude Code session (default for create_session)
+
+    Args:
+        description: Task description / instructions for the agent
+        agent_name: Agent role to run (default: worker)
+        repo_url: Optional GitHub repo URL to associate the task with
+    """
+    body: dict[str, Any] = {
+        "description": description,
+        "agent_name": agent_name,
+    }
+    if repo_url:
+        body["repo_url"] = repo_url
+    return _request("POST", "/api/hub/tasks", body)
+
+
+@mcp.tool()
+def get_task(task_id: str) -> dict[str, Any]:
+    """Get the status and result of a submitted task.
+
+    Args:
+        task_id: The task ID returned by submit_task
+    """
+    return _request("GET", f"/api/hub/tasks/{task_id}")
+
+
+@mcp.tool()
+def list_tasks(status: str | None = None) -> list[dict[str, Any]]:
+    """List hub tasks, optionally filtered by status.
+
+    Args:
+        status: Filter by status (pending, running, completed, failed, cancelled)
+    """
+    path = "/api/hub/tasks"
+    if status:
+        path += f"?status={status}"
+    return _request("GET", path)
+
+
+@mcp.tool()
+def get_hub_state() -> dict[str, Any]:
+    """Get full hub state: agents, tasks, tokens, and message log."""
+    return _request("GET", "/api/hub/state")
+
+
+@mcp.tool()
+def get_session(name: str) -> dict[str, Any]:
+    """Get info for a single session by name.
+
+    Args:
+        name: Session name (e.g. test-1)
+    """
+    return _request("GET", f"/api/sessions/{name}")
+
+
+@mcp.tool()
+def exec_session(name: str, command: str) -> dict[str, Any]:
+    """Execute a shell command inside a running container session.
+
+    Args:
+        name: Session name (e.g. test-1)
+        command: Shell command to run (e.g. "pytest tests/", "git status")
+    """
+    return _request("POST", f"/api/sessions/{name}/exec", {"command": command})
+
+
+@mcp.tool()
+def query_session(
+    name: str,
+    prompt: str,
+    timeout: int = 300,
+) -> dict[str, Any]:
+    """Send a prompt to Claude Code running in a container session.
+
+    Args:
+        name: Session name (e.g. test-1)
+        prompt: The prompt/task to execute in the container
+        timeout: Maximum seconds to wait for response (default: 300)
+    """
+    body: dict[str, Any] = {"prompt": prompt, "timeout": timeout}
+    return _request("POST", f"/api/sessions/{name}/query", body, timeout=timeout + 10)
+
+
+@mcp.tool()
+def cancel_task(task_id: str) -> dict[str, Any]:
+    """Cancel a pending or running task.
+
+    Args:
+        task_id: The task ID to cancel
+    """
+    return _request("DELETE", f"/api/hub/tasks/{task_id}")
+
+
+@mcp.tool()
+def get_langfuse_health() -> dict[str, Any]:
+    """Check LangFuse observability service health and connectivity."""
+    return _request("GET", "/api/langfuse/health")
+
+
+@mcp.tool()
+def get_qdrant_health() -> dict[str, Any]:
+    """Check Qdrant vector database health and connectivity."""
+    return _request("GET", "/api/qdrant/health")
+
+
+@mcp.tool()
+def list_agents() -> list[dict[str, Any]]:
+    """List all registered agents in the hub."""
+    return _request("GET", "/api/hub/agents")
+
+
+@mcp.tool()
+def get_agent(name: str) -> dict[str, Any]:
+    """Get info for a single registered hub agent.
+
+    Args:
+        name: Agent name (e.g. developer)
+    """
+    return _request("GET", f"/api/hub/agents/{name}")
+
+
+@mcp.tool()
+def list_tokens() -> list[dict[str, Any]]:
+    """List all registered hub tokens (agent identities)."""
+    return _request("GET", "/api/hub/tokens")
+
+
+@mcp.tool()
+def refresh_secrets(name: str) -> dict[str, Any]:
+    """Re-inject secrets into a running container session from the host environment.
+
+    Args:
+        name: Session name (e.g. test-1)
+    """
+    return _request("POST", f"/api/sessions/{name}/refresh-secrets")
+
+
+@mcp.tool()
+def api_info() -> dict[str, Any]:
+    """Get API version and basic health status."""
+    return _request("GET", "/api/info")
+
+
+# ---------------------------------------------------------------------------
+# Artifact tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def artifact_health() -> dict[str, Any]:
+    """Check artifact storage (MinIO) health and connectivity."""
+    return _request("GET", "/api/artifacts/health")
+
+
+@mcp.tool()
+def list_artifacts(prefix: str = "") -> list[dict[str, Any]]:
+    """List stored artifacts, optionally filtered by key prefix.
+
+    Args:
+        prefix: Key prefix to filter by (e.g. "myproject/")
+    """
+    path = "/api/artifacts"
+    if prefix:
+        path += f"?prefix={prefix}"
+    return _request("GET", path)
+
+
+@mcp.tool()
+def upload_artifact(key: str, content: str) -> dict[str, Any]:
+    """Upload a text artifact to storage.
+
+    Args:
+        key: Storage key / path (e.g. "myproject/report.md")
+        content: Text content to store
+    """
+    return _request_raw(
+        "POST", f"/api/artifacts/{key}", content.encode(), content_type="text/plain"
+    )
+
+
+@mcp.tool()
+def download_artifact(key: str) -> dict[str, Any]:
+    """Download an artifact from storage.
+
+    Args:
+        key: Storage key / path (e.g. "myproject/report.md")
+    """
+    return _request("GET", f"/api/artifacts/{key}")
+
+
+@mcp.tool()
+def delete_artifact(key: str) -> dict[str, Any]:
+    """Delete an artifact from storage.
+
+    Args:
+        key: Storage key / path (e.g. "myproject/report.md")
+    """
+    return _request("DELETE", f"/api/artifacts/{key}")
+
+
+# ---------------------------------------------------------------------------
+# LangFuse trace tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def get_langfuse_session_traces(session_name: str, limit: int = 50) -> list[dict[str, Any]]:
+    """List LangFuse traces for a container session.
+
+    Args:
+        session_name: Session name (e.g. test-1)
+        limit: Maximum number of traces to return (default: 50)
+    """
+    return _request("GET", f"/api/langfuse/sessions/{session_name}/traces?limit={limit}")
+
+
+@mcp.tool()
+def get_langfuse_session_summary(session_name: str) -> dict[str, Any]:
+    """Get trace count, error count, and tool breakdown for a session.
+
+    Args:
+        session_name: Session name (e.g. test-1)
+    """
+    return _request("GET", f"/api/langfuse/sessions/{session_name}/summary")
+
+
+@mcp.tool()
+def get_langfuse_trace_detail(trace_id: str) -> dict[str, Any]:
+    """Get full detail for a single LangFuse trace including observations.
+
+    Args:
+        trace_id: LangFuse trace ID
+    """
+    return _request("GET", f"/api/langfuse/traces/{trace_id}")
+
+
+# ---------------------------------------------------------------------------
+# Repository management tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def list_repos() -> list[dict[str, Any]]:
+    """List all tracked repositories with their agent containers and settings."""
+    return _request("GET", "/api/hub/repos")
+
+
+@mcp.tool()
+def add_repo(
+    url: str,
+    name: str | None = None,
+    merge_queue_enabled: bool = False,
+    pr_shepherd_enabled: bool = False,
+    target_branch: str = "main",
+    is_fork: bool = False,
+    upstream_url: str | None = None,
+) -> dict[str, Any]:
+    """Register a GitHub repository for multi-agent management.
+
+    Persistent agents (merge-queue, PR shepherd) are auto-launched when enabled.
+
+    Args:
+        url: GitHub repository URL (e.g. https://github.com/org/repo)
+        name: Optional short name (derived from URL if omitted)
+        merge_queue_enabled: Auto-merge PRs when CI passes
+        pr_shepherd_enabled: Coordinate human code reviewers
+        target_branch: Branch for merge operations (default: main)
+        is_fork: Whether this repo is a fork
+        upstream_url: Upstream repo URL if this is a fork
+    """
+    body: dict[str, Any] = {
+        "url": url,
+        "merge_queue_enabled": merge_queue_enabled,
+        "pr_shepherd_enabled": pr_shepherd_enabled,
+        "target_branch": target_branch,
+        "is_fork": is_fork,
+    }
+    if name:
+        body["name"] = name
+    if upstream_url:
+        body["upstream_url"] = upstream_url
+    return _request("POST", "/api/hub/repos", body)
+
+
+@mcp.tool()
+def get_repo(name: str) -> dict[str, Any]:
+    """Get details for a tracked repository.
+
+    Args:
+        name: Repository short name
+    """
+    return _request("GET", f"/api/hub/repos/{name}")
+
+
+@mcp.tool()
+def update_repo(
+    name: str,
+    merge_queue_enabled: bool | None = None,
+    pr_shepherd_enabled: bool | None = None,
+    target_branch: str | None = None,
+) -> dict[str, Any]:
+    """Update settings for a tracked repository.
+
+    Args:
+        name: Repository short name
+        merge_queue_enabled: Toggle merge queue automation
+        pr_shepherd_enabled: Toggle PR shepherd coordination
+        target_branch: Change target branch for merge operations
+    """
+    body: dict[str, Any] = {}
+    if merge_queue_enabled is not None:
+        body["merge_queue_enabled"] = merge_queue_enabled
+    if pr_shepherd_enabled is not None:
+        body["pr_shepherd_enabled"] = pr_shepherd_enabled
+    if target_branch is not None:
+        body["target_branch"] = target_branch
+    return _request("PATCH", f"/api/hub/repos/{name}", body)
+
+
+@mcp.tool()
+def delete_repo(name: str) -> dict[str, Any]:
+    """Remove a tracked repository and stop its persistent agents.
+
+    Args:
+        name: Repository short name
+    """
+    return _request("DELETE", f"/api/hub/repos/{name}")
+
+
+@mcp.tool()
+def get_message_log(limit: int = 50) -> list[dict[str, Any]]:
+    """Return the hub inter-agent message audit log.
+
+    Shows messages exchanged between agents (supervisor → worker, worker → hub lifecycle
+    events, merge-queue → supervisor status updates, etc.). Useful for monitoring
+    multiclaude workflow progress without pulling the full hub state.
+
+    Args:
+        limit: Maximum number of recent messages to return (default: 50)
+    """
+    log = _request("GET", "/api/hub/message-log")
+    if isinstance(log, list):
+        return log[-limit:]
+    return log
+
+
+@mcp.tool()
+def multiclaude_status() -> dict[str, Any]:
+    """Summarise the current multiclaude workflow state in one call.
+
+    Returns a structured snapshot of:
+      - repos: tracked repositories and their persistent agent containers
+      - tasks: active (pending/running) tasks grouped by agent role
+      - recent_messages: last 20 inter-agent messages
+      - agents: available agent roles
+
+    Use this as the primary monitoring tool during a multiclaude session.
+    """
+    state = _request("GET", "/api/hub/state")
+    if "error" in state:
+        return state
+
+    active_tasks = [t for t in state.get("tasks", []) if t.get("status") in ("pending", "running")]
+    recent_messages = state.get("messages", [])[-20:]
+
+    by_role: dict[str, list[dict]] = {}
+    for task in active_tasks:
+        role = task.get("agent_name", "unknown")
+        by_role.setdefault(role, []).append(
+            {
+                "id": task.get("id"),
+                "status": task.get("status"),
+                "description": (task.get("description") or "")[:120],
+                "repo_url": task.get("repo_url"),
+                "created_at": task.get("created_at"),
+            }
+        )
+
+    repos = [
+        {
+            "name": r.get("name"),
+            "url": r.get("url"),
+            "merge_queue": r.get("merge_queue_enabled"),
+            "pr_shepherd": r.get("pr_shepherd_enabled"),
+            "target_branch": r.get("target_branch"),
+        }
+        for r in state.get("repos", [])
+    ]
+
+    return {
+        "repos": repos,
+        "active_tasks": by_role,
+        "active_task_count": len(active_tasks),
+        "recent_messages": recent_messages,
+        "available_agents": [a.get("name") for a in state.get("agents", [])],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Group chat channel tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def channel_read(channel_id: str, since_id: str | None = None) -> list[dict[str, Any]]:
+    """Read new messages from a group channel. Poll every few seconds.
+
+    Returns messages since since_id (or all messages if omitted).
+    Each message has: id, from_participant, content, summary, addressed_to, type, timestamp.
+
+    Args:
+        channel_id: The channel ID to read from
+        since_id: Return only messages after this message ID (use the last id you received)
+    """
+    path = f"/api/hub/channels/{channel_id}/messages"
+    if since_id:
+        path += f"?since_id={since_id}"
+    return _request("GET", path)
+
+
+@mcp.tool()
+def channel_send(
+    channel_id: str,
+    from_participant: str,
+    content: str,
+    summary: str | None = None,
+    addressed_to: str | None = None,
+) -> dict[str, Any]:
+    """Send a message to a group channel.
+
+    Args:
+        channel_id: The channel ID to post to
+        from_participant: Your participant name in this channel
+        content: The message content
+        summary: Brief 1-2 sentence summary of your key point (used for context management)
+        addressed_to: Participant name for a directed message, omit for broadcast
+    """
+    body: dict[str, Any] = {
+        "from_participant": from_participant,
+        "content": content,
+    }
+    if summary:
+        body["summary"] = summary
+    if addressed_to:
+        body["addressed_to"] = addressed_to
+    return _request("POST", f"/api/hub/channels/{channel_id}/messages", body)
+
+
+@mcp.tool()
+def channel_complete(channel_id: str, by: str, reason: str | None = None) -> dict[str, Any]:
+    """Signal that a group channel discussion is complete.
+
+    Call this when you believe the conversation has reached a conclusion.
+
+    Args:
+        channel_id: The channel ID to complete
+        by: Your participant name
+        reason: Optional reason or summary of the conclusion
+    """
+    body: dict[str, Any] = {"by": by}
+    if reason:
+        body["reason"] = reason
+    return _request("POST", f"/api/hub/channels/{channel_id}/complete", body)
+
+
+# ---------------------------------------------------------------------------
+# Playbook tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def list_playbooks(workspace_profile: str = "global") -> list[dict[str, Any]]:
+    """List playbooks, optionally filtered by workspace profile.
+
+    Args:
+        workspace_profile: Filter by profile name, or 'global' for all-profile playbooks
+    """
+    path = "/api/hub/playbooks"
+    if workspace_profile:
+        path += f"?profile={workspace_profile}"
+    return _request("GET", path)
+
+
+@mcp.tool()
+def get_playbook(playbook_id: str) -> dict[str, Any]:
+    """Get a single playbook by ID, including its task list and status.
+
+    Args:
+        playbook_id: The playbook ID
+    """
+    return _request("GET", f"/api/hub/playbooks/{playbook_id}")
+
+
+@mcp.tool()
+def create_playbook(name: str, markdown: str, workspace_profile: str = "global") -> dict[str, Any]:
+    """Create a new playbook from a markdown checklist.
+
+    Each `- [ ] task description` line becomes a sequential step dispatched
+    to a fresh ephemeral worker session.
+
+    Args:
+        name: Display name for the playbook
+        markdown: Markdown content with `- [ ]` checklist items as steps
+        workspace_profile: Profile scope, or 'global' for all profiles
+    """
+    return _request("POST", "/api/hub/playbooks", {
+        "name": name,
+        "markdown": markdown,
+        "workspace_profile": workspace_profile,
+    })
+
+
+@mcp.tool()
+def run_playbook(playbook_id: str) -> dict[str, Any]:
+    """Start sequential execution of a playbook's checklist steps.
+
+    Each step runs in a fresh ephemeral worker session. Progress can be
+    tracked by polling get_playbook().
+
+    Args:
+        playbook_id: The playbook ID to run
+    """
+    return _request("POST", f"/api/hub/playbooks/{playbook_id}/run", {})
+
+
+@mcp.tool()
+def cancel_playbook(playbook_id: str) -> dict[str, Any]:
+    """Cancel a running playbook, stopping after the current step completes.
+
+    Args:
+        playbook_id: The playbook ID to cancel
+    """
+    return _request("POST", f"/api/hub/playbooks/{playbook_id}/cancel", {})
+
+
+# ---------------------------------------------------------------------------
+# Worktree tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def list_worktrees(repo: str = "") -> list[dict[str, Any]]:
+    """List git worktrees, optionally filtered by repo name.
+
+    Args:
+        repo: Filter by registered repository name (omit for all worktrees)
+    """
+    path = "/api/hub/worktrees"
+    if repo:
+        path += f"?repo={repo}"
+    return _request("GET", path)
+
+
+@mcp.tool()
+def create_worktree(repo_name: str, branch: str) -> dict[str, Any]:
+    """Create a new git worktree for a registered repository branch.
+
+    Runs `git worktree add -B <branch> <path>` on the host. The worktree
+    persists independently of sessions — ideal for parallel agent work or
+    staged PR branches.
+
+    Args:
+        repo_name: Name of the registered repository
+        branch: Git branch name to create or checkout in the worktree
+    """
+    return _request("POST", "/api/hub/worktrees", {
+        "repo_name": repo_name,
+        "branch": branch,
+    })
+
+
+@mcp.tool()
+def delete_worktree(worktree_id: str) -> dict[str, Any]:
+    """Remove a git worktree from disk and deregister it.
+
+    Runs `git worktree remove --force`. The branch itself is not deleted.
+
+    Args:
+        worktree_id: The worktree ID to remove
+    """
+    return _request("DELETE", f"/api/hub/worktrees/{worktree_id}")
+
+
+@mcp.tool()
+def create_worktree_session(worktree_id: str) -> dict[str, Any]:
+    """Start a brainbox session mounted on a git worktree.
+
+    The worktree path is mounted at /home/developer/workspace/repo inside
+    the container. Session name is derived from the worktree ID.
+
+    Args:
+        worktree_id: The worktree ID to create a session for
+    """
+    return _request("POST", f"/api/hub/worktrees/{worktree_id}/session", {})
+
+
+def run() -> None:
+    """Run the MCP server on stdio transport."""
+    mcp.run(transport="stdio")
