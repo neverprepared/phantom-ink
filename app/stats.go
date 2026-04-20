@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -44,9 +45,35 @@ func (a *App) GetDockerStats() ([]ContainerStat, error) {
 
 // ContainerDiskStat represents disk usage for a single container.
 type ContainerDiskStat struct {
-	Name         string `json:"name"`
-	WritableSize string `json:"writable_size"` // e.g. "125MB" — writable layer only
-	VirtualSize  string `json:"virtual_size"`  // e.g. "2.4GB" — image + writable
+	Name              string `json:"name"`
+	WritableSize      string `json:"writable_size"`       // e.g. "125MB" — writable layer only
+	WritableSizeBytes int64  `json:"writable_size_bytes"` // writable layer in bytes for graphing
+	VirtualSize       string `json:"virtual_size"`        // e.g. "2.4GB" — image + writable
+}
+
+// parseDockerSize converts a Docker size string (e.g. "125MB", "2.4GB") to bytes.
+// Docker uses SI units (powers of 1000).
+func parseDockerSize(s string) int64 {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0B" {
+		return 0
+	}
+	var num float64
+	var unit string
+	fmt.Sscanf(s, "%f%s", &num, &unit)
+	switch strings.ToUpper(unit) {
+	case "B":
+		return int64(num)
+	case "KB":
+		return int64(num * 1_000)
+	case "MB":
+		return int64(num * 1_000_000)
+	case "GB":
+		return int64(num * 1_000_000_000)
+	case "TB":
+		return int64(num * 1_000_000_000_000)
+	}
+	return 0
 }
 
 // GetContainerDiskUsage returns disk usage for all containers (running and stopped).
@@ -78,9 +105,10 @@ func (a *App) GetContainerDiskUsage() ([]ContainerDiskStat, error) {
 			virtual = strings.TrimSuffix(raw.Size[idx+10:], ")")
 		}
 		stats = append(stats, ContainerDiskStat{
-			Name:         raw.Name,
-			WritableSize: writable,
-			VirtualSize:  virtual,
+			Name:              raw.Name,
+			WritableSize:      writable,
+			WritableSizeBytes: parseDockerSize(writable),
+			VirtualSize:       virtual,
 		})
 	}
 	return stats, nil

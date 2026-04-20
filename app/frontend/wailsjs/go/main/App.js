@@ -122,6 +122,10 @@ export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
 
+export function GetContainerDiskUsage() {
+  return window['go']['main']['App']['GetContainerDiskUsage']();
+}
+
 export function GetContainerMetrics() {
   return window['go']['main']['App']['GetContainerMetrics']();
 }

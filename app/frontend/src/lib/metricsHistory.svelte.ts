@@ -19,6 +19,11 @@ export interface LocalSample {
   mem: number; // MB
 }
 
+export interface DiskSample {
+  ts: number;    // Date.now() ms
+  bytes: number; // writable layer bytes
+}
+
 // Aggregate history: Docker containers + local Claude processes combined.
 let _combinedHistory = $state<CombinedSample[]>([]);
 
@@ -26,6 +31,24 @@ export const combinedHistory = {
   get value() { return _combinedHistory; },
   push(sample: CombinedSample) {
     _combinedHistory = [..._combinedHistory, sample].slice(-MAX_SAMPLES);
+  },
+};
+
+// Per-container disk history keyed by container name.
+let _diskHistory = $state<Record<string, DiskSample[]>>({});
+
+export const diskHistory = {
+  get value() { return _diskHistory; },
+  update(key: string, sample: DiskSample) {
+    const prev = _diskHistory[key] ?? [];
+    _diskHistory = { ..._diskHistory, [key]: [...prev, sample].slice(-MAX_SAMPLES) };
+  },
+  pruneKeys(activeKeys: Set<string>) {
+    const next: Record<string, DiskSample[]> = {};
+    for (const k of activeKeys) {
+      if (_diskHistory[k]) next[k] = _diskHistory[k];
+    }
+    _diskHistory = next;
   },
 };
 
