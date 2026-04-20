@@ -1,4 +1,31 @@
-"""Application settings from environment variables and defaults."""
+"""Application settings from environment variables and defaults.
+
+Configuration is read from environment variables with the ``CL_`` prefix
+(nested via ``CL__`` double-underscore delimiter).  For example:
+
+    CL_API_PORT=9999            # top-level field
+    CL_LANGFUSE__BASE_URL=...   # nested LangfuseSettings.base_url
+
+Container-injected environment variables
+-----------------------------------------
+The following variables are injected by brainbox into worker/task containers
+at session-creation time:
+
+``BRAINBOX_TASK_ID``
+    UUID of the hub task assigned to this container.  Workers use this to
+    report completion back to the hub via ``POST /api/hub/messages``.
+
+``BRAINBOX_JOB_ID``
+    UUID of the parent supervisor job that spawned this worker.  Set when a
+    supervisor passes its own task ID as ``job_id`` in ``submit_task()``.
+    Workers can include this in task-completion payloads so the supervisor
+    can correlate results.
+
+``BRAINBOX_REPO_URL``
+    GitHub repository URL associated with the task (e.g.
+    ``https://github.com/org/repo``).  Set when the task was submitted with a
+    ``repo_url`` argument.  Workers use this to clone the repo and open PRs.
+"""
 
 from __future__ import annotations
 
@@ -197,7 +224,7 @@ class HubSettings(BaseSettings):
 
 class PipelineSettings(BaseSettings):
     builtin_dir: str = ""  # Empty = auto-detect brainbox/pipelines/
-    config_dir: str = ""  # Empty = ~/.config/developer/pipelines/
+    config_dir: str = ""  # Empty = ~/.config/phantom-ink/brainbox/pipelines/
     workspace_dir: str = ""  # Empty = $BRAINBOX_PIPELINES_DIR env var
     default_timeout: int = 600  # seconds per step
     max_concurrent_steps: int = 4

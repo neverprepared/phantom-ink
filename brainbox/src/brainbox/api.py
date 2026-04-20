@@ -768,6 +768,91 @@ async def api_start_session(
 async def api_create_session(
     request: Request, body: CreateSessionRequest, _key=Depends(require_api_key)
 ):
+    """Create and start a new container session.
+
+    Provisions a Docker container (or UTM virtual machine) running Claude Code,
+    injects secrets and configuration, then starts the session and begins
+    lifecycle monitoring.
+
+    Request body fields (``CreateSessionRequest``):
+        name (str, optional):
+            Session name; the container is named ``{role}-{name}``.
+            Defaults to ``"default"``.
+        role (str, optional):
+            Agent role injected as the system prompt.  Supported values:
+            ``developer`` (default), ``supervisor``, ``worker``, ``reviewer``,
+            ``merge-queue``, ``pr-shepherd``.
+        volumes (list[str], optional):
+            Host-to-container volume mounts, each formatted as
+            ``/host/path:/container/path[:ro]``.
+        volume (str, optional):
+            Legacy single-volume shorthand; normalised to ``volumes``.
+        llm_provider (str):
+            LLM backend — ``"claude"`` (default), ``"ollama"``, or
+            ``"codex"``.
+        llm_model (str, optional):
+            Model identifier for the chosen provider
+            (e.g. ``"claude-opus-4-7"``).
+        llm_effort (str, optional):
+            Claude extended-thinking budget: ``"low"``, ``"medium"``, or
+            ``"high"``.
+        ollama_host (str, optional):
+            Ollama API base URL; overrides ``OLLAMA_HOST`` env var.
+        codex_api_key (str, optional):
+            OpenAI API key for Codex provider.
+        workspace_profile (str, optional):
+            Workspace profile name.  Selects the matching ``.env`` file and
+            credentials bundle from the profiles directory.
+        workspace_home (str, optional):
+            Override for the host workspace home directory mounted into the
+            container.
+        backend (str):
+            Compute backend — ``"docker"`` (default) or ``"utm"``.
+        vm_template (str, optional):
+            UTM template VM name (UTM backend only).
+        guest_os (str):
+            Guest OS for UTM sessions: ``"linux"`` (default), ``"macos"``,
+            or ``"windows"``.
+        task (str, optional):
+            Initial task description sent to Claude on first launch.  The
+            session is also registered in the hub so it appears in the
+            dashboard.
+        ports (dict[str, int], optional):
+            Extra port mappings as ``{container_port: host_port}``.
+        docker_host (str, optional):
+            Docker daemon URL (e.g. ``tcp://remote:2376``).  ``None`` means
+            the local socket.
+        repo (RepoConfig, optional):
+            Repository access configuration.  Supports ``worktree-mount``
+            (host path mounted read-write), ``clone`` (shallow clone),
+            ``clone-worktree`` (clone into a worktree), and ``ci-ratchet``
+            (full multiclaude ratchet workflow — clones repo, runs task,
+            opens PR).
+
+    Returns:
+        Docker backend: ``{"success": true, "backend": "docker",
+        "url": "http://localhost:{port}"}``
+
+        UTM backend: ``{"success": true, "backend": "utm",
+        "ssh_port": <int>, "url": null}``
+
+    Raises:
+        400 if request validation fails.
+        500 if provisioning or Docker/UTM interaction fails.
+
+    Example::
+
+        POST /api/create
+        {
+          "name": "my-task",
+          "role": "worker",
+          "volumes": ["/home/user/code:/workspace"],
+          "task": "Fix the failing tests in tests/",
+          "repo": {"url": "https://github.com/org/repo",
+                   "mode": "ci-ratchet",
+                   "task": "Fix the failing tests in tests/"}
+        }
+    """
     try:
         # Register as a hub task when a task description is provided
         hub_token = None
@@ -1372,7 +1457,27 @@ def _get_container_metrics() -> list[dict[str, Any]]:
 
 @app.get("/api/metrics/containers")
 async def api_container_metrics():
-    """Per-container CPU %, memory usage, and uptime."""
+    """Per-container resource metrics for all running brainbox-managed containers.
+
+    Each element in the returned list describes one container:
+
+    - ``name`` (str): Full container name (e.g. ``worker-my-task``).
+    - ``session_name`` (str): Session name with role prefix stripped.
+    - ``role`` (str): Agent role (e.g. ``developer``, ``worker``).
+    - ``llm_provider`` (str): LLM backend the session was started with.
+    - ``workspace_profile`` (str): Active workspace profile, or empty string.
+    - ``cpu_percent`` (float): CPU usage as a percentage of one core (e.g.
+      ``45.2`` means 45.2 % of one CPU).
+    - ``mem_usage`` (int): Memory used by the container in **bytes**.
+    - ``mem_usage_human`` (str): Human-readable memory usage (e.g. ``"1.2 GB"``).
+    - ``mem_limit`` (int): Container memory limit in **bytes**.
+    - ``mem_limit_human`` (str): Human-readable memory limit.
+    - ``uptime_seconds`` (int): Seconds since the container was started.
+    - ``trace_count`` (int): Number of LangFuse traces recorded for this
+      session (cached for 60 s; 0 when LangFuse is disabled or unreachable).
+    - ``error_count`` (int): Number of error-level LangFuse traces for this
+      session (cached alongside ``trace_count``).
+    """
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _get_container_metrics)
 
