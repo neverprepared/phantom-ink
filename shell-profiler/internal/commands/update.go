@@ -196,6 +196,7 @@ func updateDirectories(profileDir string, dryRun bool) ([]string, error) {
 	requiredDirs := []string{
 		".config/1Password",
 		".config/claude",
+		".codex",
 		".config/gemini",
 		".ssh",
 		".aws",
@@ -255,6 +256,8 @@ func updateEnvrc(profileDir, _profileName string, dryRun, _force bool) (bool, er
 		"AZURE_CONFIG_DIR",
 		"CLOUDSDK_CONFIG",
 		"CLAUDE_CONFIG_DIR",
+		"CODEX_HOME",
+		"CODEX_PLUGIN_DIR",
 		"GEMINI_CONFIG_DIR",
 	}
 
@@ -406,6 +409,8 @@ func updateEnvFile(profileDir, profileName string, dryRun bool) (bool, error) {
 		"AZURE_CONFIG_DIR":            `"$WORKSPACE_HOME/.azure"`,
 		"CLOUDSDK_CONFIG":             `"$WORKSPACE_HOME/.gcloud"`,
 		"CLAUDE_CONFIG_DIR":           `"$WORKSPACE_HOME/.config/claude"`,
+		"CODEX_HOME":                  `"$WORKSPACE_HOME/.codex"`,
+		"CODEX_PLUGIN_DIR":            `"${WORKSPACE_HOME:-$HOME}/.codex-plugins/reflex"`,
 		"GEMINI_CONFIG_DIR":           `"$WORKSPACE_HOME/.config/gemini"`,
 	}
 

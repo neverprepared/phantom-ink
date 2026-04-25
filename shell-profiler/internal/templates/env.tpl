@@ -54,3 +54,7 @@ GEMINI_CONFIG_DIR="$WORKSPACE_HOME/.config/gemini"
 # Codex CLI configuration
 # Point Codex to workspace-specific config directory
 CODEX_HOME="$WORKSPACE_HOME/.codex"
+
+# Codex plugin directory (reflex codex skills, hooks, config)
+# Falls back to $HOME/.codex-plugins if not set
+CODEX_PLUGIN_DIR="${WORKSPACE_HOME:-$HOME}/.codex-plugins/reflex"
