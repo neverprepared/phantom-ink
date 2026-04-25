@@ -3,7 +3,7 @@
   import AppShell from './lib/layout/AppShell.svelte';
   import CommandPalette from './lib/components/CommandPalette.svelte';
   import Notifications from './lib/components/Notifications.svelte';
-  import { commandPalette, currentPanel, profileState, featureFlags } from './lib/stores.svelte';
+  import { commandPalette, currentPanel, profileState, profileColorStore, featureFlags } from './lib/stores.svelte';
   import { notifications } from './lib/notifications.svelte';
   import { startEventListener } from './lib/events.svelte';
 
@@ -32,6 +32,12 @@
         enabled: s.enabled,
         running: s.running,
       }));
+
+      // Load profile color overrides
+      try {
+        const colors = await mod.GetProfileColors();
+        profileColorStore.overrides = colors ?? {};
+      } catch {}
 
       // Run preflight checks and notify on issues
       try {

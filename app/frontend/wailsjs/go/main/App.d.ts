@@ -87,6 +87,8 @@ export function GetPlatform():Promise<string>;
 
 export function GetPlaybook(arg1:string):Promise<brainbox.Playbook>;
 
+export function GetProfileColors():Promise<Record<string, string>>;
+
 export function GetProfileSecrets(arg1:string):Promise<Array<main.SecretKeyStatus>>;
 
 export function GetRepoActivity(arg1:string):Promise<Array<main.RepoEvent>>;
@@ -143,7 +145,7 @@ export function RestartBrainboxAPI():Promise<void>;
 
 export function RestoreProfile(arg1:string):Promise<void>;
 
-export function RunPlaybook(arg1:string):Promise<brainbox.Playbook>;
+export function RunPlaybook(arg1:string,arg2:string):Promise<brainbox.Playbook>;
 
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
 
@@ -154,6 +156,8 @@ export function ScanProfiles():Promise<Array<main.Profile>>;
 export function SetActiveProfile(arg1:string):Promise<void>;
 
 export function SetConfig(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function SetProfileColor(arg1:string,arg2:string):Promise<void>;
 
 export function SetServiceConfig(arg1:string,arg2:boolean,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 

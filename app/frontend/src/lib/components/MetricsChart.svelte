@@ -272,4 +272,8 @@
     cursor: crosshair;
     overflow: visible;
   }
+
+  .chart-card.compact svg {
+    height: 20px;
+  }
 </style>

@@ -7,11 +7,12 @@ import (
 
 // Setting key constants — single source of truth for database key names.
 const (
-	settingBaseURL        = "base_url"
-	settingAPIKey         = "api_key"
-	settingActiveProfile  = "active_profile"
-	settingWorkspacesRoot = "workspaces_root"
-	settingTheme          = "theme"
+	settingBaseURL             = "base_url"
+	settingAPIKey              = "api_key"
+	settingActiveProfile       = "active_profile"
+	settingWorkspacesRoot      = "workspaces_root"
+	settingTheme               = "theme"
+	settingProfileColorPrefix  = "profile_color:"
 )
 
 // Config is the in-memory representation of app settings.

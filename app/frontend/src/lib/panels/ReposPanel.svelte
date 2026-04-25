@@ -2,7 +2,8 @@
   import { getApi, openInBrowser } from '../utils/api';
   import { onMount } from 'svelte';
   import { notifications } from '../notifications.svelte';
-  import { profileState } from '../stores.svelte';
+  import { profileState, profileColorStore } from '../stores.svelte';
+  import { getProfileColor, profileColorStyle } from '../utils/profileColors';
   import { brainboxEvents } from '../events.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Modal from '../components/Modal.svelte';
@@ -20,6 +21,18 @@
     error?: string;
   }
 
+  interface RepoPR {
+    number: number;
+    title: string;
+    branch: string;
+    author: string;
+    url: string;
+    is_draft: boolean;
+    created_at: string;
+    ci_status: string; // "passing", "failing", "pending", ""
+    labels: string[];
+  }
+
   let allRepos = $state<any[]>([]);
   let hubTasks = $state<any[]>([]);
   let loading = $state(true);
@@ -31,12 +44,21 @@
   let selectedProfile = $state('');
   let isAdding = $state(false);
 
+  // PR state
+  let repoPRs = $state<Record<string, RepoPR[]>>({});
+
+  // Branch count state
+  let branchCounts = $state<Record<string, number>>({});
+
   // Worktree state
   let worktrees = $state<Record<string, Worktree[]>>({});
   let newBranch = $state<Record<string, string>>({});
   let creatingWorktree = $state<Record<string, boolean>>({});
   let launchingSession = $state<Record<string, boolean>>({});
   let confirmDeleteWt = $state<string | null>(null);
+
+  // Card-level collapse: collapsed by default
+  let expandedCards = $state<Set<string>>(new Set());
 
   // Expanded sections per repo: repoName → Set<'prs' | 'workers' | 'worktrees'>
   let expandedSections = $state<Record<string, Set<string>>>({});
@@ -89,6 +111,39 @@
       ]);
       allRepos = repos ?? [];
       hubTasks = hs?.tasks ?? [];
+      // Eagerly load worktrees and PRs for badge counts
+      const repoList = repos ?? [];
+      const [wtResults, prResults, branchResults] = await Promise.all([
+        Promise.all(
+          repoList.map(async (r: any) => {
+            try { return { name: r.name, wts: await a.ListWorktrees(r.name) ?? [] }; }
+            catch { return { name: r.name, wts: [] }; }
+          })
+        ),
+        Promise.all(
+          repoList.map(async (r: any) => {
+            try { return { name: r.name, prs: await a.GetRepoPRs(r.url) ?? [] }; }
+            catch { return { name: r.name, prs: [] }; }
+          })
+        ),
+        Promise.all(
+          repoList.map(async (r: any) => {
+            try {
+              const branches = await a.GetRepoBranches(r.url) ?? [];
+              return { name: r.name, count: branches.length };
+            } catch { return { name: r.name, count: 0 }; }
+          })
+        ),
+      ]);
+      const wtMap: Record<string, Worktree[]> = {};
+      for (const { name, wts } of wtResults) wtMap[name] = wts;
+      worktrees = wtMap;
+      const prMap: Record<string, RepoPR[]> = {};
+      for (const { name, prs } of prResults) prMap[name] = prs;
+      repoPRs = prMap;
+      const bcMap: Record<string, number> = {};
+      for (const { name, count } of branchResults) bcMap[name] = count;
+      branchCounts = bcMap;
     } catch (err: any) {
       notifications.error(`Failed to load repos: ${err?.message ?? err}`);
     } finally {
@@ -105,6 +160,17 @@
     } catch (err: any) {
       notifications.error('Failed to fetch worktrees: ' + (err?.message ?? err));
     }
+  }
+
+  function toggleCard(rname: string) {
+    const next = new Set(expandedCards);
+    if (next.has(rname)) next.delete(rname);
+    else {
+      next.add(rname);
+      // Load worktrees on first expand if not already loaded
+      if (!worktrees[rname]) loadWorktrees(rname);
+    }
+    expandedCards = next;
   }
 
   function isSectionExpanded(rname: string, section: string): boolean {
@@ -283,6 +349,11 @@
         {@const workers = tasksForRepo(repo.url)}
         {@const workerCount = workers.length}
         {@const repoWorktrees = worktrees[repo.name] ?? []}
+        {@const openPRs = repoPRs[repo.name] ?? []}
+        {@const prCount = openPRs.length}
+        {@const branchCount = branchCounts[repo.name] ?? 0}
+        {@const cardExpanded = expandedCards.has(repo.name)}
+        {@const wtCount = repoWorktrees.length}
         {@const prExpanded = isSectionExpanded(repo.name, 'prs')}
         {@const workersExpanded = isSectionExpanded(repo.name, 'workers')}
         {@const worktreesExpanded = isSectionExpanded(repo.name, 'worktrees')}
@@ -290,6 +361,9 @@
         <div class="repo-card">
           <!-- Card header -->
           <div class="card-header">
+            <button class="card-expand-btn" onclick={() => toggleCard(repo.name)} aria-expanded={cardExpanded}>
+              <svg class="card-chevron" class:expanded={cardExpanded} xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
             <span class="status-dot" class:active={workerCount > 0}></span>
             <button class="repo-name-btn" onclick={() => openInBrowser(repo.url)}>
               {repo.name}
@@ -299,18 +373,30 @@
               <span class="tag fork-tag">fork</span>
             {/if}
             {#if !activeProfile && repo.workspace_profile}
-              <span class="tag profile-tag">{repo.workspace_profile}</span>
+              <span class="tag profile-tag" style={profileColorStyle(getProfileColor(repo.workspace_profile, profileColorStore.getOverride(repo.workspace_profile)))}>{repo.workspace_profile}</span>
             {/if}
             <div class="header-spacer"></div>
-            {#if workerCount > 0}
-              <span class="worker-badge">
-                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                {workerCount} worker{workerCount !== 1 ? 's' : ''}
-              </span>
-            {/if}
+            <!-- Badge counts (always visible) -->
+            <span class="header-badge" class:has-count={prCount > 0} title="Open PRs">
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
+              {prCount}
+            </span>
+            <span class="header-badge" class:has-count={branchCount > 0} title="Branches">
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+              {branchCount}
+            </span>
+            <span class="header-badge" class:has-count={workerCount > 0} title="Active workers">
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              {workerCount}
+            </span>
+            <span class="header-badge" class:has-count={wtCount > 0} title="Worktrees">
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+              {wtCount}
+            </span>
             <button class="btn-remove" onclick={() => handleDelete(repo.name)}>remove</button>
           </div>
 
+          {#if cardExpanded}
           <!-- Repo meta -->
           <div class="card-meta">
             <span class="meta-item">
@@ -367,14 +453,31 @@
                 <svg class="chevron" xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
                 open prs
+                {#if prCount > 0}
+                  <span class="section-count">{prCount}</span>
+                {/if}
               </button>
               {#if prExpanded}
                 <div class="section-body">
-                  <!-- TODO: implement GetRepoPRs(url) in Go backend, then fetch here -->
-                  <div class="placeholder-row">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                    PR data not yet available — add <code>GetRepoPRs(url)</code> to the Go backend
-                  </div>
+                  {#if openPRs.length === 0}
+                    <div class="empty-section">No open PRs</div>
+                  {:else}
+                    {#each openPRs as pr (pr.number)}
+                      <div class="pr-row">
+                        <span class="pr-ci {pr.ci_status || 'none'}" title={pr.ci_status || 'no checks'}></span>
+                        <button class="pr-title-btn" onclick={() => openInBrowser(pr.url)}>
+                          <span class="pr-number">#{pr.number}</span>
+                          {pr.title}
+                        </button>
+                        {#if pr.is_draft}
+                          <span class="tag draft-tag">draft</span>
+                        {/if}
+                        <div class="header-spacer"></div>
+                        <span class="pr-branch">{pr.branch}</span>
+                        <span class="pr-author">{pr.author}</span>
+                      </div>
+                    {/each}
+                  {/if}
                 </div>
               {/if}
             </div>
@@ -484,6 +587,7 @@
             </div>
 
           </div><!-- /sections -->
+          {/if}
         </div><!-- /repo-card -->
       {/each}
     </div>
@@ -594,7 +698,48 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+
+  .repo-card:has(.card-meta) .card-header {
     margin-bottom: 8px;
+  }
+
+  .card-expand-btn {
+    background: none;
+    border: none;
+    padding: 2px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    color: var(--color-text-tertiary);
+    flex-shrink: 0;
+    transition: color 0.15s;
+  }
+  .card-expand-btn:hover { color: var(--color-text-secondary); }
+
+  .card-chevron {
+    transition: transform 0.15s;
+  }
+  .card-chevron.expanded {
+    transform: rotate(90deg);
+  }
+
+  .header-badge {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    color: var(--color-text-muted);
+    padding: 2px 6px;
+    border-radius: 9999px;
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-primary);
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .header-badge.has-count {
+    color: var(--color-text-secondary);
+    border-color: var(--color-border-secondary);
   }
 
   .status-dot {
@@ -646,23 +791,7 @@
   }
 
   .profile-tag {
-    background: rgba(245, 158, 11, 0.1);
-    color: var(--color-accent);
-    border: 1px solid rgba(245, 158, 11, 0.2);
-  }
-
-  .worker-badge {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--color-success);
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.2);
-    border-radius: 9999px;
-    padding: 2px 8px;
-    flex-shrink: 0;
+    border: 1px solid transparent;
   }
 
   .btn-remove {
@@ -822,30 +951,82 @@
     padding: 4px 0 10px 18px;
   }
 
-  /* Placeholder */
-  .placeholder-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    color: var(--color-text-tertiary);
-    font-style: italic;
-    padding: 2px 0;
-  }
-  .placeholder-row code {
-    font-family: var(--font-mono, monospace);
-    font-style: normal;
-    font-size: 10px;
-    background: var(--color-bg-tertiary);
-    padding: 1px 4px;
-    border-radius: 3px;
-  }
-
   /* Empty section */
   .empty-section {
     font-size: 12px;
     color: var(--color-text-tertiary);
     padding: 2px 0;
+  }
+
+  /* PRs */
+  .pr-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 0;
+    border-top: 1px solid var(--color-border-primary);
+    font-size: 12px;
+  }
+  .pr-row:first-child { border-top: none; }
+
+  .pr-ci {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .pr-ci.passing  { background: #6ee7b7; }
+  .pr-ci.failing  { background: #f87171; }
+  .pr-ci.pending  { background: var(--color-warning, #fbbf24); }
+  .pr-ci.none     { background: var(--color-text-muted); }
+
+  .pr-title-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 12px;
+    color: var(--color-text-primary);
+    text-align: left;
+    cursor: pointer;
+    transition: color 0.15s;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .pr-title-btn:hover { color: var(--color-accent); }
+
+  .pr-number {
+    color: var(--color-text-tertiary);
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
+  .draft-tag {
+    background: rgba(148, 163, 184, 0.1);
+    color: var(--color-text-tertiary);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+  }
+
+  .pr-branch {
+    font-size: 11px;
+    font-family: var(--font-mono, monospace);
+    color: var(--color-text-tertiary);
+    flex-shrink: 0;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pr-author {
+    font-size: 11px;
+    color: var(--color-text-tertiary);
+    flex-shrink: 0;
   }
 
   /* Workers */

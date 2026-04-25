@@ -170,6 +170,10 @@ export function GetPlaybook(arg1) {
   return window['go']['main']['App']['GetPlaybook'](arg1);
 }
 
+export function GetProfileColors() {
+  return window['go']['main']['App']['GetProfileColors']();
+}
+
 export function GetProfileSecrets(arg1) {
   return window['go']['main']['App']['GetProfileSecrets'](arg1);
 }
@@ -282,8 +286,8 @@ export function RestoreProfile(arg1) {
   return window['go']['main']['App']['RestoreProfile'](arg1);
 }
 
-export function RunPlaybook(arg1) {
-  return window['go']['main']['App']['RunPlaybook'](arg1);
+export function RunPlaybook(arg1, arg2) {
+  return window['go']['main']['App']['RunPlaybook'](arg1, arg2);
 }
 
 export function RunPreflightChecks() {
@@ -304,6 +308,10 @@ export function SetActiveProfile(arg1) {
 
 export function SetConfig(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetConfig'](arg1, arg2, arg3);
+}
+
+export function SetProfileColor(arg1, arg2) {
+  return window['go']['main']['App']['SetProfileColor'](arg1, arg2);
 }
 
 export function SetServiceConfig(arg1, arg2, arg3, arg4, arg5) {
