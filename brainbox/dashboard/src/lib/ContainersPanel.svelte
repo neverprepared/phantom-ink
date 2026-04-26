@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { fetchSessions, connectSSE } from './api.js';
   import { notifications } from './notifications.svelte.js';
+  import { getProfileColor } from './utils/profileColors.js';
   import StatsGrid from './StatsGrid.svelte';
   import SessionCard from './SessionCard.svelte';
   import TerminalFrame from './TerminalFrame.svelte';
@@ -125,11 +126,13 @@
         aria-label="Show all sessions"
       >ALL</button>
       {#each profiles as profile}
+        {@const pc = getProfileColor(profile.toLowerCase())}
         <button
           class="profile-tab"
           class:active={activeProfile === profile}
           onclick={() => selectProfile(profile)}
           aria-label={`Switch to ${profile.toUpperCase()} profile`}
+          style={activeProfile === profile ? `color: ${pc.text}; border-bottom-color: ${pc.text};` : ''}
         >
           {profile.toUpperCase()}
         </button>
@@ -247,12 +250,12 @@
 
   .profile-tab:hover {
     color: var(--color-text-primary);
-    border-bottom-color: rgba(245, 158, 11, 0.3);
+    border-bottom-color: var(--color-text-muted);
   }
 
+  /* Active color + border set via inline style per profile */
   .profile-tab.active {
-    color: #f59e0b;
-    border-bottom-color: #f59e0b;
+    border-bottom-color: currentColor;
   }
 
   .session-grid {

@@ -102,7 +102,7 @@
     <Badge type="role" variant={displayRole} text={displayRole} />
     <Badge type="provider" variant={llmVisibility} text={llmVisibility} />
     {#if workspaceProfile}
-      <Badge type="profile" variant="workspace" text={workspaceProfile} />
+      <Badge type="profile" variant="workspace" text={workspaceProfile} profileName={session.workspace_profile} />
     {/if}
   </div>
 

@@ -373,7 +373,8 @@
               <span class="tag fork-tag">fork</span>
             {/if}
             {#if !activeProfile && repo.workspace_profile}
-              <span class="tag profile-tag" style={profileColorStyle(getProfileColor(repo.workspace_profile, profileColorStore.getOverride(repo.workspace_profile)))}>{repo.workspace_profile}</span>
+              {@const rwp = repo.workspace_profile.toLowerCase()}
+              <span class="tag profile-tag" style={profileColorStyle(getProfileColor(rwp, profileColorStore.getOverride(rwp)))}>{rwp}</span>
             {/if}
             <div class="header-spacer"></div>
             <!-- Badge counts (always visible) -->

@@ -591,7 +591,8 @@
               {/if}
             {/if}
             {#if !activeProfile && session.workspace_profile}
-              <span class="profile-badge" style={profileColorStyle(getProfileColor(session.workspace_profile, profileColorStore.getOverride(session.workspace_profile)))}>{session.workspace_profile}</span>
+              {@const wp = session.workspace_profile.toLowerCase()}
+              <span class="profile-badge" style={profileColorStyle(getProfileColor(wp, profileColorStore.getOverride(wp)))}>{wp}</span>
             {/if}
           </div>
 
@@ -688,7 +689,8 @@
               </span>
               <span class="local-type-badge">local</span>
               {#if !activeProfile && proc.workspace_profile}
-                <span class="local-profile-badge" style={profileColorStyle(getProfileColor(proc.workspace_profile, profileColorStore.getOverride(proc.workspace_profile)))}>{proc.workspace_profile}</span>
+                {@const lwp = proc.workspace_profile.toLowerCase()}
+                <span class="local-profile-badge" style={profileColorStyle(getProfileColor(lwp, profileColorStore.getOverride(lwp)))}>{lwp}</span>
               {/if}
               <button class="btn-focus" onclick={() => handleFocusTab(proc.tty)} title="Focus terminal tab ({proc.tty})">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>

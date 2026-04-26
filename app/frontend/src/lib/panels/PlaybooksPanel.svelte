@@ -268,7 +268,8 @@
           <h2 class="detail-title">{selected.name}</h2>
           <span class="detail-status {statusClass(selected.status)}">{selected.status}</span>
           {#if selected.workspace_profile !== 'global'}
-            <span class="detail-profile" style={profileColorStyle(getProfileColor(selected.workspace_profile, profileColorStore.getOverride(selected.workspace_profile)))}>{selected.workspace_profile}</span>
+            {@const pbwp = selected.workspace_profile.toLowerCase()}
+            <span class="detail-profile" style={profileColorStyle(getProfileColor(pbwp, profileColorStore.getOverride(pbwp)))}>{pbwp}</span>
           {/if}
         </div>
         <div class="detail-meta">
