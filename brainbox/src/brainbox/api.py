@@ -438,8 +438,9 @@ async def api_get_key(request: Request):
 
 
 _ROLE_PREFIXES = (
-    "developer-", "researcher-", "performer-",
+    "assistant-", "developer-", "researcher-", "performer-",
     "supervisor-", "worker-", "merge-queue-", "pr-shepherd-", "reviewer-",
+    "bash-", "golang-", "java-", "linter-", "python-", "qa-", "typescript-",
 )
 
 
@@ -498,8 +499,9 @@ def _get_sessions_info() -> list[dict[str, Any]]:
         docker_backend = create_backend("docker")
         docker_sessions = docker_backend.get_sessions_info()
         for sess in docker_sessions:
-            # Add legacy fields for backward compatibility
-            sess["session_name"] = _extract_session_name(sess["name"])
+            # Prefer session_name from Docker label; fall back to prefix stripping
+            if not sess.get("session_name"):
+                sess["session_name"] = _extract_session_name(sess["name"])
             sess["role"] = sess.get("role", "developer")
         sessions.extend(docker_sessions)
     except Exception as exc:
