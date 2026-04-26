@@ -936,33 +936,22 @@ class UTMBackend:
         # updates UTM's in-memory state (random MAC, name). Raw plist
         # edits are ignored by Apple Virtualization.framework.
         if template_backend == "Apple" and _has_mcp_utm():
-            from mcp_utm.applescript import clone_vm as as_clone, set_vm_shares
+            from mcp_utm.applescript import clone_vm as as_clone
 
             slog.info("utm.apple_vf_clone_via_applescript", metadata={
                 "template": image_or_template, "clone": vm_name,
             })
 
-            # Clone with random MAC via AppleScript
+            # Clone with random MAC via AppleScript.
+            # VirtioFS shares are inherited from the template (configured once
+            # via UTM GUI). AppleScript's update registry requires sandboxing
+            # entitlements that a background daemon doesn't have.
             clone_config = await asyncio.to_thread(
                 as_clone, image_or_template, vm_name, True
             )
             ctx.mac_address = clone_config.mac_address
             ctx.ssh_port = 22
             slog.info("utm.mac_assigned", metadata={"mac": ctx.mac_address})
-
-            # Configure VirtioFS shares via AppleScript registry API
-            share_paths = []
-            for host_path in volumes:
-                share_paths.append(host_path)
-            # Add .ssh share for key injection
-            ssh_dir = _get_ssh_dir()
-            if ssh_dir:
-                share_paths.append(str(ssh_dir))
-            if share_paths:
-                await asyncio.to_thread(set_vm_shares, vm_name, share_paths)
-                slog.info("utm.shares_configured", metadata={"count": len(share_paths)})
-
-            ctx._virtiofs_mounts = {p: p.rsplit("/", 1)[-1] for p in share_paths}  # type: ignore
 
         # ── QEMU path: plist edits (unchanged) ──────────────────────────
         else:
