@@ -374,6 +374,17 @@
         }
       }
     },
+    "utm": {
+      "description": "UTM virtual machine management — clone, configure, start/stop, network, shares, and drives via AppleScript",
+      "category": "macos",
+      "url": "https://github.com/neverprepared/mcp-utm",
+      "requires": [],
+      "definition": {
+        "command": "uvx",
+        "args": ["mcp-utm"],
+        "env": {}
+      }
+    },
     "obsidian-second-brain": {
       "description": "Obsidian second brain — read and search notes from a local vault using the PARA method",
       "category": "knowledge",
