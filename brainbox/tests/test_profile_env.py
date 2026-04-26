@@ -778,7 +778,7 @@ class TestProvisionProfileMounts:
 
         create_call = mock_client.containers.create.call_args
         labels = create_call[1]["labels"]
-        assert labels["brainbox.workspace_profile"] == "PERSONAL"
+        assert labels["brainbox.workspace_profile"] == "personal"
 
     @pytest.mark.asyncio
     async def test_provision_no_mounts_when_dirs_missing(self):
