@@ -1,0 +1,70 @@
+# Shared versions and package lists — keep in sync with docker/brainbox/Dockerfile
+---
+developer_user: phantomink
+
+# -- Node.js (via nvm) --------------------------------------------------------
+nvm_version: "0.40.1"
+node_versions:
+  - "22"
+  - "20"
+node_default: "22"
+
+# -- Python (via uv) ----------------------------------------------------------
+python_versions:
+  - "3.12"
+  - "3.11"
+python_default: "3.12"
+
+# -- Go (via goenv) -----------------------------------------------------------
+goenv_versions:
+  - "1.22.5"
+  - "1.21.12"
+goenv_default: "1.22.5"
+
+# -- Rust ----------------------------------------------------------------------
+rustup_toolchain: stable
+
+# -- npm MCP servers (global install) -----------------------------------------
+npm_mcp_packages:
+  - "@playwright/mcp"
+  - "@modelcontextprotocol/server-memory"
+  - "@modelcontextprotocol/server-filesystem"
+  - "@modelcontextprotocol/server-github"
+  - "chrome-devtools-mcp"
+  - "mcp-remote"
+  - "@azure/mcp@2.0.0-beta.10"
+  - "@azure-devops/mcp@2.2.2"
+  - "mssql-mcp@2.1.1"
+  - "@microsoft/devbox-mcp@0.0.3-alpha.4"
+  - "kubernetes-mcp-server@0.0.56"
+  - "argocd-mcp@0.5.0"
+  - "@neverprepared/mcp-markdown-to-confluence"
+  - "@neverprepared/mcp-obsidian-second-brain"
+  - "@neverprepared/mcp-cloudflare-dns"
+  - "@neverprepared/mcp-uptime-kuma"
+  - "@neverprepared/mcp-new-relic"
+
+# -- Python MCP servers (uv tool install) -------------------------------------
+python_mcp_packages:
+  - { name: "mcp-server-qdrant", spec: "mcp-server-qdrant==0.8.1", extras: "--with fastembed" }
+  - { name: "mcp-atlassian",    spec: "mcp-atlassian==0.13.0",     extras: "" }
+  - { name: "mcp-server-git",   spec: "mcp-server-git==2025.12.18", extras: "" }
+  - { name: "markitdown-mcp",   spec: "markitdown-mcp",             extras: "" }
+  - { name: "workspace-mcp",    spec: "workspace-mcp==1.7.1",       extras: "" }
+  - name: "mcp-uptime-kuma"
+    spec: "git+https://github.com/neverprepared/kuma_uptime_mcp.git"
+    extras: ""
+    from_flag: "mcp-uptime-kuma"
+
+# -- Hook Python deps (pre-warm fastembed model) -------------------------------
+hook_python_deps:
+  - "fastembed>=0.3.0"
+  - "qdrant-client>=1.8.0"
+  - "langfuse>=2.0.0"
+  - "requests>=2.31.0"
+
+# -- Claude config (onboarding bypass) ----------------------------------------
+claude_trusted_paths:
+  - "/Users/phantomink/workspace"
+  - "/Users/phantomink/task-repo"
+  - "/Users/phantomink"

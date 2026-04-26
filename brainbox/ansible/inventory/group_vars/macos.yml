@@ -1,0 +1,25 @@
+---
+homebrew_prefix: /opt/homebrew
+developer_home: /Users/phantomink
+
+brew_packages:
+  - fd
+  - fzf
+  - gh
+  - ripgrep
+  - tree
+  - yq
+  - tmux
+  - jq
+
+brew_tap_packages: []
+
+brew_extra_packages:
+  - tenv
+  - kubectl
+  - awscli
+  - azure-cli
+
+brew_cask_packages:
+  - claude
+  - chatgpt

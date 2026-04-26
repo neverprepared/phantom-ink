@@ -1,0 +1,14 @@
+{
+  "hasCompletedOnboarding": true,
+  "bypassPermissionsModeAccepted": true,
+  "projects": {
+{% for path in claude_trusted_paths %}
+    "{{ path }}": {
+      "allowedTools": [],
+      "mcpContextUris": [],
+      "hasTrustDialogAccepted": true,
+      "projectOnboardingSeenCount": 0
+    }{{ "," if not loop.last else "" }}
+{% endfor %}
+  }
+}

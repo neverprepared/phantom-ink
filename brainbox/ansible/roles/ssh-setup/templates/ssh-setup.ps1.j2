@@ -1,0 +1,21 @@
+# VirtioFS shares are mounted under drive letters by WinFsp/VirtioFSSvc.
+# Find the drive letter that contains id_ed25519.pub.
+$driveLetter = $null
+foreach ($letter in @("Z","Y","X","W","V")) {
+    if (Test-Path "${letter}:\id_ed25519.pub") { $driveLetter = $letter; break }
+}
+
+if ($null -eq $driveLetter) {
+    Write-Output "brainbox-ssh: share not present (non-brainbox boot, skipping)"
+    exit 0
+}
+
+$user = (Get-WmiObject Win32_ComputerSystem).UserName.Split("\")[-1]
+if (-not $user) { $user = $env:USERNAME }
+$sshDir  = "C:\Users\$user\.ssh"
+$authKey = "$sshDir\authorized_keys"
+
+New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
+Copy-Item -Path "${driveLetter}:\id_ed25519.pub" -Destination $authKey -Force
+icacls $authKey /inheritance:r /grant "${user}:(F)" | Out-Null
+Write-Output "brainbox-ssh: authorized_keys updated from ${driveLetter}:"
