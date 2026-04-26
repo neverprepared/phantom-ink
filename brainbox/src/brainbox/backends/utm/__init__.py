@@ -120,11 +120,23 @@ async def _run_subprocess(
 
 def _generate_mac() -> str:
     """Generate a random locally administered unicast MAC address."""
-    import random
+    try:
+        from mcp_utm.applescript import generate_mac
+        return generate_mac()
+    except ImportError:
+        import random
+        first = random.randint(0, 255) & 0xFE | 0x02
+        rest = [random.randint(0, 255) for _ in range(5)]
+        return ":".join(f"{b:02x}" for b in [first, *rest])
 
-    first = random.randint(0, 255) & 0xFE | 0x02  # unicast + locally administered
-    rest = [random.randint(0, 255) for _ in range(5)]
-    return ":".join(f"{b:02x}" for b in [first, *rest])
+
+def _has_mcp_utm() -> bool:
+    """Check if mcp-utm is available (macOS only)."""
+    try:
+        import mcp_utm.applescript  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 def _session_dir_for_mac(mac_address: str) -> Path | None:
@@ -850,19 +862,117 @@ class UTMBackend:
             except Exception as exc:
                 slog.warning("utm.remove_failed", metadata={"reason": str(exc)})
 
-        # Clone template via utmctl — preserves the registry entry (VirtioFS shares,
-        # security-scoped bookmarks) so shared directories work in Apple VF guests.
-        await _clone_vm_via_utmctl(utmctl, image_or_template, vm_name, slog)
+        # Detect UTM backend type from template config to choose provision path.
+        config_plist = utm_docs / f"{image_or_template}.utm" / "config.plist"
+        template_backend = "QEMU"
+        if config_plist.exists():
+            try:
+                tpl_config = await asyncio.to_thread(_plist_load, config_plist)
+                template_backend = tpl_config.get("Backend", "QEMU")
+            except Exception:
+                pass
+        ctx._utm_backend_type = template_backend  # type: ignore[attr-defined]
 
         # Allocate SSH port (I/O-bound; run off the event loop)
         ssh_port = await asyncio.to_thread(_find_available_ssh_port)
 
-        # Edit config.plist
-        config_plist = vm_path / "config.plist"
-        if not config_plist.exists():
-            raise FileNotFoundError(f"config.plist not found in cloned VM: {config_plist}")
-
         try:
+            await self._provision_clone(
+                ctx, template_backend, image_or_template, vm_name, vm_path,
+                utmctl, ssh_port, volumes, slog,
+            )
+        except Exception as exc:
+            slog.error("utm.provision_failed", metadata={"reason": str(exc)})
+            raise
+
+        # Write per-session bootstrap files (authorized_keys, env, gitconfig)
+        # into brainbox/sessions/<MAC>/ before the VM boots, scoped to this
+        # workspace profile so multiple profiles don't cross-contaminate.
+        # Also remove any stale ip file so _discover_vm_ip waits for the new
+        # VM to write it rather than reusing an address from a previous session.
+        if ctx.mac_address:
+            workspace_home = os.environ.get("WORKSPACE_HOME", str(Path.home()))
+            await asyncio.to_thread(_write_session_dir, ctx.mac_address, workspace_home, slog)
+            stale_ip = _sessions_file_for_mac(ctx.mac_address)
+            if stale_ip is not None and stale_ip.exists():
+                stale_ip.unlink()
+                slog.info("utm.stale_ip_cleared", metadata={"mac": ctx.mac_address})
+
+        # Update context
+        ctx.vm_path = str(vm_path)
+        ctx.ssh_port = ssh_port
+        ctx.state = SessionState.CONFIGURING
+
+        slog.info(
+            "utm.provisioned",
+            metadata={
+                "template": image_or_template,
+                "vm_name": vm_name,
+                "backend_type": template_backend,
+                "mac": ctx.mac_address or "n/a",
+                "ssh_port": ctx.ssh_port,
+                "shared_dirs": len(volumes),
+            },
+        )
+
+        return ctx
+
+    async def _provision_clone(
+        self,
+        ctx: SessionContext,
+        template_backend: str,
+        image_or_template: str,
+        vm_name: str,
+        vm_path: Path,
+        utmctl: str,
+        ssh_port: int,
+        volumes: dict[str, dict[str, str]],
+        slog,
+    ) -> None:
+        """Clone and configure the VM. Dispatches to AppleScript or plist path."""
+
+        # ── Apple VF path: use mcp-utm AppleScript API ──────────────────
+        # AppleScript's `duplicate` + `update configuration` properly
+        # updates UTM's in-memory state (random MAC, name). Raw plist
+        # edits are ignored by Apple Virtualization.framework.
+        if template_backend == "Apple" and _has_mcp_utm():
+            from mcp_utm.applescript import clone_vm as as_clone, set_vm_shares
+
+            slog.info("utm.apple_vf_clone_via_applescript", metadata={
+                "template": image_or_template, "clone": vm_name,
+            })
+
+            # Clone with random MAC via AppleScript
+            clone_config = await asyncio.to_thread(
+                as_clone, image_or_template, vm_name, True
+            )
+            ctx.mac_address = clone_config.mac_address
+            ctx.ssh_port = 22
+            slog.info("utm.mac_assigned", metadata={"mac": ctx.mac_address})
+
+            # Configure VirtioFS shares via AppleScript registry API
+            share_paths = []
+            for host_path in volumes:
+                share_paths.append(host_path)
+            # Add .ssh share for key injection
+            ssh_dir = _get_ssh_dir()
+            if ssh_dir:
+                share_paths.append(str(ssh_dir))
+            if share_paths:
+                await asyncio.to_thread(set_vm_shares, vm_name, share_paths)
+                slog.info("utm.shares_configured", metadata={"count": len(share_paths)})
+
+            ctx._virtiofs_mounts = {p: p.rsplit("/", 1)[-1] for p in share_paths}  # type: ignore
+
+        # ── QEMU path: plist edits (unchanged) ──────────────────────────
+        else:
+            # Clone template via utmctl
+            await _clone_vm_via_utmctl(utmctl, image_or_template, vm_name, slog)
+
+            config_plist = vm_path / "config.plist"
+            if not config_plist.exists():
+                raise FileNotFoundError(f"config.plist not found in cloned VM: {config_plist}")
+
             config = await asyncio.to_thread(_plist_load, config_plist)
 
             # Update VM name
@@ -871,37 +981,21 @@ class UTMBackend:
                 config["Information"] = {}
             config["Information"]["Name"] = vm_name
 
-            # Configure networking for SSH access.
-            #
-            # Apple VF (macOS VMs):
-            #   UTM Shared mode assigns a 192.168.64.x IP reachable from the host.
-            #   Port forwarding is silently ignored by Apple VF — use ARP discovery.
-            #   Keep whatever mode the template has; just grab the MAC for ARP.
-            #
-            # QEMU (Linux/Windows VMs):
-            #   Bridged → ARP discovery (real LAN IP).
-            #   Shared → port forwarding (localhost:ssh_port → VM:22).
-            backend_type = config.get("Backend", "QEMU")
-            ctx._utm_backend_type = backend_type  # type: ignore[attr-defined]
             network_list = config.setdefault("Network", [{"Mode": "Shared"}])
             if not network_list:
                 network_list.append({"Mode": "Shared"})
             iface = network_list[0]
             current_mode = iface.get("Mode", "Shared")
 
-            if backend_type == "Apple":
-                # Apple VF: always ARP-discover the 192.168.64.x IP.
-                # Do not add port forwarding — it is ignored by the Apple hypervisor.
-                # NOTE: Virtualization.framework ignores MacAddress in config.plist;
-                # the VM always boots with the template MAC. Use it as-is for ARP/sessions.
+            if template_backend == "Apple":
+                # Apple VF without mcp-utm: fall back to reading template MAC
                 iface.pop("PortForward", None)
                 mac_address = iface.get("MacAddress")
                 if mac_address:
                     ctx.mac_address = mac_address
                 ctx.ssh_port = 22
             elif current_mode == "Bridged":
-                # QEMU Bridged: ARP discovery. Assign a fresh MAC so concurrent clones
-                # don't collide (QEMU does respect MacAddress in config.plist).
+                # QEMU Bridged: ARP discovery with fresh MAC
                 iface.pop("PortForward", None)
                 new_mac = _generate_mac()
                 iface["MacAddress"] = new_mac
@@ -909,7 +1003,7 @@ class UTMBackend:
                 ctx.ssh_port = 22
                 slog.info("utm.mac_assigned", metadata={"mac": new_mac})
             else:
-                # QEMU Shared/NAT: port forwarding.
+                # QEMU Shared/NAT: port forwarding
                 iface["Mode"] = "Shared"
                 port_forward = iface.setdefault("PortForward", [])
                 port_forward[:] = [
@@ -928,50 +1022,11 @@ class UTMBackend:
                 )
                 ctx.ssh_port = ssh_port
 
-            # Add VirtioFS shared directories for volume mounts.
-            # Note: Apple VF (Virtualization.framework) ignores SharedDirectories written
-            # to config.plist directly — VirtioFS tags are not mountable on macOS guests
-            # via mount_virtiofs. Only QEMU VMs support this path. Apple VF sessions use
-            # ARP discovery + SSH for all host→guest communication.
             ctx._virtiofs_mounts = _configure_shared_dirs(config, volumes)  # type: ignore
-            if backend_type != "Apple":
+            if template_backend != "Apple":
                 _add_ssh_share(config, slog)
 
-            # Write updated config
             await asyncio.to_thread(_plist_dump, config_plist, config)
-
-            # Write per-session bootstrap files (authorized_keys, env, gitconfig)
-            # into brainbox/sessions/<MAC>/ before the VM boots, scoped to this
-            # workspace profile so multiple profiles don't cross-contaminate.
-            # Also remove any stale ip file so _discover_vm_ip waits for the new
-            # VM to write it rather than reusing an address from a previous session.
-            if ctx.mac_address:
-                workspace_home = os.environ.get("WORKSPACE_HOME", str(Path.home()))
-                await asyncio.to_thread(_write_session_dir, ctx.mac_address, workspace_home, slog)
-                stale_ip = _sessions_file_for_mac(ctx.mac_address)
-                if stale_ip is not None and stale_ip.exists():
-                    stale_ip.unlink()
-                    slog.info("utm.stale_ip_cleared", metadata={"mac": ctx.mac_address})
-
-        except Exception as exc:
-            slog.error("utm.config_update_failed", metadata={"reason": str(exc)})
-            raise
-
-        # Update context
-        ctx.vm_path = str(vm_path)
-        ctx.ssh_port = ssh_port
-        ctx.state = SessionState.CONFIGURING
-
-        slog.info(
-            "utm.provisioned",
-            metadata={
-                "template": image_or_template,
-                "vm_name": vm_name,
-                "ssh_port": ssh_port,
-                "shared_dirs": len(volumes),
-            },
-        )
-        return ctx
 
     async def configure(
         self,
