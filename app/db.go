@@ -234,6 +234,25 @@ func (db *DB) AllIntegrations() ([]IntegrationRow, error) {
 	return result, nil
 }
 
+// GetSettingsWithPrefix returns all settings whose key starts with the given
+// prefix. Keys in the returned map have the prefix stripped.
+func (db *DB) GetSettingsWithPrefix(prefix string) (map[string]string, error) {
+	rows, err := db.conn.Query("SELECT key, value FROM settings WHERE key LIKE ?", prefix+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[string]string)
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			continue
+		}
+		result[k[len(prefix):]] = v
+	}
+	return result, nil
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

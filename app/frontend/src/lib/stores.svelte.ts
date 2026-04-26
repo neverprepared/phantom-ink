@@ -117,6 +117,23 @@ export const featureFlags = {
 };
 
 // ---------------------------------------------------------------------------
+// Profile color overrides (profile name → palette index string)
+// ---------------------------------------------------------------------------
+
+let _profileColorOverrides = $state<Record<string, string>>({});
+
+export const profileColorStore = {
+  get overrides() { return _profileColorOverrides; },
+  set overrides(v: Record<string, string>) { _profileColorOverrides = v; },
+  setOverride(name: string, idx: string) {
+    _profileColorOverrides = { ..._profileColorOverrides, [name]: idx };
+  },
+  getOverride(name: string): string {
+    return _profileColorOverrides[name] ?? '';
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Connection status
 // ---------------------------------------------------------------------------
 

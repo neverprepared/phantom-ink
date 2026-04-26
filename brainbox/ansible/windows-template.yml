@@ -1,0 +1,23 @@
+---
+- name: Provision brainbox Windows UTM template
+  hosts: windows
+  gather_facts: true
+  become: false
+
+  roles:
+    - role: languages
+      tags: [languages]
+    - role: cli-tools
+      tags: [cli-tools]
+    - role: cloud-clis
+      tags: [cloud-clis]
+    - role: ai-tools
+      tags: [ai-tools]
+    - role: mcp-servers
+      tags: [mcp-servers]
+    - role: ssh-setup
+      tags: [ssh-setup]
+    - role: shell-config
+      tags: [shell-config]
+    - role: claude-config
+      tags: [claude-config]

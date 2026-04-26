@@ -1,0 +1,16 @@
+---
+developer_home: C:\Users\developer
+
+# Windows package manager — chocolatey or winget
+win_choco_packages:
+  - fd
+  - fzf
+  - gh
+  - ripgrep
+  - tree
+  - yq
+  - jq
+  - tenv
+  - kubernetes-cli
+  - awscli
+  - azure-cli

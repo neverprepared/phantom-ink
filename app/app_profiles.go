@@ -133,6 +133,26 @@ func (a *App) ListBackups() ([]string, error) {
 }
 
 // ---------------------------------------------------------------------------
+// Profile colors
+// ---------------------------------------------------------------------------
+
+// GetProfileColors returns all profile color overrides as a map of name → palette index.
+func (a *App) GetProfileColors() (map[string]string, error) {
+	if a.db == nil {
+		return map[string]string{}, nil
+	}
+	return a.db.GetSettingsWithPrefix(settingProfileColorPrefix)
+}
+
+// SetProfileColor saves (or clears) a color override for a profile.
+func (a *App) SetProfileColor(name, colorIndex string) error {
+	if a.db == nil {
+		return nil
+	}
+	return a.db.SetSetting(settingProfileColorPrefix+name, colorIndex)
+}
+
+// ---------------------------------------------------------------------------
 // Secrets
 // ---------------------------------------------------------------------------
 

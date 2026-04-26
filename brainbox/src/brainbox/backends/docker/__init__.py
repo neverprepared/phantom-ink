@@ -164,7 +164,7 @@ class DockerBackend:
                 "brainbox.role": ctx.role,
                 "brainbox.llm_provider": ctx.llm_provider,
                 "brainbox.llm_model": ctx.llm_model or "",
-                "brainbox.workspace_profile": (ctx.workspace_profile or "").upper(),
+                "brainbox.workspace_profile": (ctx.workspace_profile or "").lower(),
                 "brainbox.task_id": ctx.task_id or "",
                 "brainbox.job_id": ctx.job_id or ctx.task_id or "",
             },
@@ -633,12 +633,15 @@ class DockerBackend:
                 labels = c.labels or {}
                 llm_provider = labels.get("brainbox.llm_provider", "claude")
                 llm_model = labels.get("brainbox.llm_model", "")
-                workspace_profile = labels.get("brainbox.workspace_profile", "")
+                workspace_profile = labels.get("brainbox.workspace_profile", "").lower()
+                role = labels.get("brainbox.role", "developer")
+                session_name = labels.get("brainbox.session_name", "")
 
                 sessions.append(
                     {
                         "backend": "docker",
                         "name": name,
+                        "session_name": session_name,
                         "port": port,
                         "url": f"http://localhost:{port}" if port else None,
                         "volume": volume,
@@ -646,6 +649,7 @@ class DockerBackend:
                         "llm_provider": llm_provider,
                         "llm_model": llm_model,
                         "workspace_profile": workspace_profile,
+                        "role": role,
                     }
                 )
 

@@ -3,7 +3,8 @@
   import { onMount } from 'svelte';
   import { brainboxEvents } from '../events.svelte';
   import { notifications } from '../notifications.svelte';
-  import { profileState } from '../stores.svelte';
+  import { profileState, profileColorStore } from '../stores.svelte';
+  import { getProfileColor, profileColorStyle } from '../utils/profileColors';
   import Modal from '../components/Modal.svelte';
   import EmptyState from '../components/EmptyState.svelte';
 
@@ -267,7 +268,8 @@
           <h2 class="detail-title">{selected.name}</h2>
           <span class="detail-status {statusClass(selected.status)}">{selected.status}</span>
           {#if selected.workspace_profile !== 'global'}
-            <span class="detail-profile">{selected.workspace_profile}</span>
+            {@const pbwp = selected.workspace_profile.toLowerCase()}
+            <span class="detail-profile" style={profileColorStyle(getProfileColor(pbwp, profileColorStore.getOverride(pbwp)))}>{pbwp}</span>
           {/if}
         </div>
         <div class="detail-meta">
@@ -537,10 +539,9 @@
 
   .detail-profile {
     font-size: 11px;
-    color: var(--color-text-muted);
-    background: var(--color-surface-hover);
     padding: 2px 7px;
     border-radius: var(--radius-sm);
+    border: 1px solid transparent;
   }
 
   .detail-meta {

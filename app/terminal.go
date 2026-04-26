@@ -26,12 +26,12 @@ type LocalProcess struct {
 	WorkspaceHome    string `json:"workspace_home"`
 }
 
-// FindClaudeProcesses finds running Claude Code processes on the host,
+// FindClaudeProcesses finds running AI agent processes on the host (Claude, Codex, Ollama),
 // including their workspace profile from the process environment.
 func (a *App) FindClaudeProcesses() ([]LocalProcess, error) {
 	// First get PID, TTY, CPU, RSS, command
 	cmd := exec.Command("bash", "-c",
-		`ps -eo pid=,tty=,%cpu=,rss=,comm= | grep -i 'claude' | grep -v grep | grep -v 'phantom-ink'`)
+		`ps -eo pid=,tty=,%cpu=,rss=,comm= | grep -iE 'claude|codex|ollama' | grep -v grep | grep -v 'phantom-ink'`)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, nil
@@ -71,9 +71,13 @@ func (a *App) FindClaudeProcesses() ([]LocalProcess, error) {
 		// Read environment from the process using `ps eww`
 		profile, wsHome := readProcessEnv(pid)
 
+		// Derive agent name from the command
+		commLower := strings.ToLower(strings.Join(fields[4:], " "))
 		name := "claude"
-		if profile != "" {
-			name = "claude (" + profile + ")"
+		if strings.Contains(commLower, "codex") {
+			name = "codex"
+		} else if strings.Contains(commLower, "ollama") {
+			name = "ollama"
 		}
 
 		procs = append(procs, LocalProcess{

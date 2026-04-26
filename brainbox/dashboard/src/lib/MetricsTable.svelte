@@ -76,7 +76,7 @@
           <tr>
             <td class="name">{m.session_name || m.name}</td>
             <td class="role-cell"><Badge type="role" variant={m.role || 'developer'} text={m.role || 'developer'} /></td>
-            <td class="profile-cell">{#if m.workspace_profile}<Badge type="profile" variant="workspace" text={m.workspace_profile.toUpperCase()} />{:else}<span class="empty-cell">—</span>{/if}</td>
+            <td class="profile-cell">{#if m.workspace_profile}<Badge type="profile" variant="workspace" text={m.workspace_profile.toUpperCase()} profileName={m.workspace_profile} />{:else}<span class="empty-cell">—</span>{/if}</td>
             <td class="llm-cell"><Badge type="provider" variant={m.llm_provider === 'ollama' ? 'private' : 'public'} text={m.llm_provider === 'ollama' ? 'private' : 'public'} /></td>
             <td class="num">{(m.cpu_percent ?? 0).toFixed(1)}%</td>
             <td class="num">{m.mem_usage_human} / {m.mem_limit_human}</td>

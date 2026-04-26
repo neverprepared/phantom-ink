@@ -214,6 +214,8 @@ AZURE_CONFIG_DIR="x"
 CLOUDSDK_CONFIG="x"
 CLAUDE_CONFIG_DIR="x"
 GEMINI_CONFIG_DIR="x"
+CODEX_HOME="x"
+CODEX_PLUGIN_DIR="x"
 `
 	if err := os.WriteFile(filepath.Join(tmpDir, ".env"), []byte(allVars), 0644); err != nil {
 		t.Fatal(err)

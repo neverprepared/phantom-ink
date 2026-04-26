@@ -1,0 +1,42 @@
+# Codex plugin configuration
+# MCP servers + hooks for the Codex CLI
+
+# ─── MCP Servers ──────────────────────────────────────────────────────────────
+
+[mcp.servers.obsidian-second-brain]
+command = "mcp-obsidian-second-brain"
+args = []
+startup_timeout_sec = 15
+tool_timeout_sec = 30
+
+[mcp.servers.obsidian-second-brain.env]
+OBSIDIAN_VAULT_PATH = "${OBSIDIAN_VAULT_PATH}"
+LOG_LEVEL = "${LOG_LEVEL:-info}"
+
+# ─── Hooks ────────────────────────────────────────────────────────────────────
+# Hook scripts live in reflex/plugins/codex/scripts/.
+# CODEX_PLUGIN_DIR is set by shell-profiler to $WORKSPACE_HOME/.codex-plugins/reflex
+# (falls back to $HOME/.codex-plugins/reflex when no profile is active).
+
+[features]
+codex_hooks = true
+
+# PreToolUse: block web_search until memory_search has been called
+[[hooks.PreToolUse]]
+matcher = "^(web_search|web_fetch)$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "python3 ${CODEX_PLUGIN_DIR}/scripts/memory-first-check.py"
+timeout = 5
+statusMessage = "Checking second brain before web search"
+
+# PostToolUse: set the memory-checked flag after memory_search completes
+[[hooks.PostToolUse]]
+matcher = "^mcp__obsidian-second-brain__memory_search$"
+
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "python3 ${CODEX_PLUGIN_DIR}/scripts/memory-first-flag.py"
+timeout = 5
+statusMessage = "Unlocking web search"

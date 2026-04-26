@@ -2,7 +2,8 @@
   import { getApi } from '../utils/api';
   import { onMount } from 'svelte';
   import { notifications } from '../notifications.svelte';
-  import { profileState, type Profile } from '../stores.svelte';
+  import { profileState, profileColorStore, type Profile } from '../stores.svelte';
+  import { getProfileColor, profileColorStyle, PROFILE_PALETTE } from '../utils/profileColors';
   import PieChart from '../components/PieChart.svelte';
 
   let profiles = $derived(profileState.profiles);
@@ -22,8 +23,27 @@
   let backups = $state<string[]>([]);
 
   onMount(async () => {
-    await Promise.all([refreshProfiles(), loadBackups(), refreshDisk()]);
+    await Promise.all([refreshProfiles(), loadBackups(), refreshDisk(), loadProfileColors()]);
   });
+
+  async function loadProfileColors() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const colors = await a.GetProfileColors();
+      profileColorStore.overrides = colors ?? {};
+    } catch { /* first run — no overrides yet */ }
+  }
+
+  async function setColor(name: string, idx: number) {
+    const current = profileColorStore.getOverride(name);
+    const currentIdx = current !== '' ? parseInt(current, 10) : getProfileColor(name).index;
+    // Clicking the already-active swatch clears the override (reset to hash)
+    const newVal = idx === currentIdx && current !== '' ? '' : String(idx);
+    profileColorStore.setOverride(name, newVal);
+    const a = await getApi();
+    if (a) await a.SetProfileColor(name, newVal);
+  }
 
   async function refreshProfiles() {
     scanning = true;
@@ -255,9 +275,17 @@
         <span class="profile-meta">no filter</span>
       </button>
       {#each profiles as p}
+        {@const pColor = getProfileColor(p.name, profileColorStore.getOverride(p.name))}
+        {@const isActive = activeProfile?.name === p.name}
         <div class="profile-row">
-          <button class="profile-item" class:active={activeProfile?.name === p.name} onclick={() => selectProfile(p.name)}>
-            <span class="profile-name">{p.name}</span>
+          <span class="profile-dot" style="background: {pColor.text};"></span>
+          <button
+            class="profile-item"
+            class:active={isActive}
+            style={isActive ? `background: ${pColor.bg}; border-color: ${pColor.border};` : ''}
+            onclick={() => selectProfile(p.name)}
+          >
+            <span class="profile-name" style={isActive ? `color: ${pColor.text};` : ''}>{p.name}</span>
             <span class="profile-meta">
               {#if profileDiskMap.has(p.name)}
                 <span class="disk-badge">{profileDiskMap.get(p.name)}</span>
@@ -270,6 +298,18 @@
           <button class="btn-delete-profile" onclick={() => confirmDelete = confirmDelete === p.name ? null : p.name} title="Delete profile" aria-label="Delete profile {p.name}">
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
+        </div>
+        <div class="color-swatches">
+          {#each PROFILE_PALETTE as swatch (swatch.index)}
+            <button
+              class="swatch"
+              class:selected={pColor.index === swatch.index}
+              style="background: {swatch.text};"
+              onclick={() => setColor(p.name, swatch.index)}
+              title="Color {swatch.index}"
+              aria-label="Set color {swatch.index} for {p.name}"
+            ></button>
+          {/each}
         </div>
         {#if confirmDelete === p.name}
           <div class="confirm-delete">
@@ -454,10 +494,8 @@
     width: 100%;
   }
   .profile-item:hover { background: var(--color-bg-secondary); border-color: var(--color-border-primary); }
-  .profile-item.active { background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.25); }
 
   .profile-name { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
-  .profile-item.active .profile-name { color: var(--color-accent); }
 
   .profile-meta {
     font-size: 11px;
@@ -483,6 +521,36 @@
 
   .profile-row { display: flex; align-items: center; gap: 4px; }
   .profile-row .profile-item { flex: 1; }
+
+  .profile-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .color-swatches {
+    display: flex;
+    gap: 4px;
+    padding: 2px 0 6px 16px;
+  }
+
+  .swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    padding: 0;
+    cursor: pointer;
+    transition: all 0.15s;
+    opacity: 0.6;
+  }
+  .swatch:hover { opacity: 1; transform: scale(1.2); }
+  .swatch.selected {
+    opacity: 1;
+    border-color: var(--color-text-primary);
+    transform: scale(1.15);
+  }
 
   .btn-delete-profile {
     background: transparent; border: none; color: var(--color-text-tertiary);

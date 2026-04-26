@@ -1,0 +1,27 @@
+---
+- name: Provision brainbox macOS UTM template
+  hosts: macos
+  gather_facts: true
+  become: false
+
+  roles:
+    - role: homebrew
+      tags: [homebrew]
+    - role: sudo-setup
+      tags: [sudo]
+    - role: languages
+      tags: [languages]
+    - role: cli-tools
+      tags: [cli-tools]
+    - role: cloud-clis
+      tags: [cloud-clis]
+    - role: ai-tools
+      tags: [ai-tools]
+    - role: mcp-servers
+      tags: [mcp-servers]
+    - role: ssh-setup
+      tags: [ssh-setup]
+    - role: shell-config
+      tags: [shell-config]
+    - role: claude-config
+      tags: [claude-config]

@@ -574,6 +574,7 @@ func createREADME(profileDir string, opts CreateOptions) error {
 		"- Claude Code will automatically use profile-specific settings\n\n" +
 		"### Codex CLI\n" +
 		"- CODEX_HOME: Path to profile-specific Codex config directory\n" +
+		"- CODEX_PLUGIN_DIR: Path to Codex plugin directory (skills, hooks, config)\n" +
 		"- Codex CLI will automatically use profile-specific settings\n\n" +
 		"### Gemini CLI\n" +
 		"- GEMINI_CONFIG_DIR: Path to profile-specific Gemini CLI config directory\n" +

@@ -4,7 +4,8 @@
   import { brainboxEvents } from '../events.svelte';
   import { notifications } from '../notifications.svelte';
   import { combinedHistory as combinedHistoryStore, localHistory as localHistoryStore, diskHistory as diskHistoryStore } from '../metricsHistory.svelte';
-  import { profileState, featureFlags } from '../stores.svelte';
+  import { profileState, profileColorStore, featureFlags } from '../stores.svelte';
+  import { getProfileColor, profileColorStyle } from '../utils/profileColors';
   import EmptyState from '../components/EmptyState.svelte';
   import Badge from '../components/Badge.svelte';
   import Modal from '../components/Modal.svelte';
@@ -550,6 +551,26 @@
           <div class="card-header">
             <span class="status-dot" class:active></span>
             <span class="session-name">{session.session_name ?? session.name}</span>
+            {#if active}
+              {@const sname = session.session_name ?? session.name}
+              {@const hist = sessionHistory[sname] ?? []}
+              {@const latestMem = hist.length ? (() => { const v = hist[hist.length-1].mem_usage; return v < 1024*1024 ? `${(v/1024).toFixed(0)} KB` : `${(v/1024/1024).toFixed(1)} MB`; })() : ''}
+              {@const latestCPU = hist.length ? `${hist[hist.length-1].cpu_percent.toFixed(1)}%` : ''}
+              {#if latestCPU}
+                <span class="meta-metric" title="CPU usage">
+                  <span class="meta-metric-dot" style="background: var(--color-info)"></span>
+                  <span class="meta-metric-label">cpu</span>
+                  <span class="meta-metric-value">{latestCPU}</span>
+                </span>
+              {/if}
+              {#if latestMem}
+                <span class="meta-metric" title="Memory usage">
+                  <span class="meta-metric-dot" style="background: var(--color-success)"></span>
+                  <span class="meta-metric-label">mem</span>
+                  <span class="meta-metric-value">{latestMem}</span>
+                </span>
+              {/if}
+            {/if}
             <Badge text={role} variant={role} />
             <span class="backend-badge" class:vm={backend === 'utm'}>
               {backend === 'utm' ? 'vm' : 'container'}
@@ -570,7 +591,8 @@
               {/if}
             {/if}
             {#if !activeProfile && session.workspace_profile}
-              <span class="profile-badge">{session.workspace_profile}</span>
+              {@const wp = session.workspace_profile.toLowerCase()}
+              <span class="profile-badge" style={profileColorStyle(getProfileColor(wp, profileColorStore.getOverride(wp)))}>{wp}</span>
             {/if}
           </div>
 
@@ -588,75 +610,6 @@
               <a class="meta-url" href={session.url} target="_blank">{session.url.replace('http://', '')}</a>
             {/if}
           </div>
-
-          {#if active}
-            {@const sname = session.session_name ?? session.name}
-            {@const hist = sessionHistory[sname] ?? []}
-            {@const diskHist = diskHistoryStore.value[session.name] ?? []}
-            {@const memData = hist.map((s: any) => ({ ts: s.ts, value: s.mem_usage / 1024 / 1024 }))}
-            {@const cpuData = hist.map((s: any) => ({ ts: s.ts, value: s.cpu_percent }))}
-            {@const diskData = diskHist.map((s: any) => ({ ts: s.ts / 1000, value: s.bytes / 1024 / 1024 }))}
-            {@const latestMem = hist.length ? (() => { const v = hist[hist.length-1].mem_usage; return v < 1024*1024 ? `${(v/1024).toFixed(0)} KB` : `${(v/1024/1024).toFixed(1)} MB`; })() : '–'}
-            {@const latestCPU = hist.length ? `${hist[hist.length-1].cpu_percent.toFixed(1)}%` : '–'}
-            {@const latestDisk = diskHist.length ? (() => { const v = diskHist[diskHist.length-1].bytes; return v < 1024*1024 ? `${(v/1024).toFixed(0)} KB` : `${(v/1024/1024).toFixed(1)} MB`; })() : (diskUsageMap[session.name] || '–')}
-            {#if hist.length >= 2}
-              <div class="card-charts">
-                <div class="card-chart">
-                  <div class="card-chart-label">
-                    <span>memory</span>
-                    <span class="card-chart-current">{latestMem}</span>
-                  </div>
-                  <MetricsChart
-                    data={memData}
-                    label="{sname}-mem"
-                    current={latestMem}
-                    color="var(--color-success)"
-                    formatY={(v) => `${v.toFixed(0)}MB`}
-                    width={80}
-                    height={20}
-                    compact={true}
-                    strokeWidth={0.5}
-                  />
-                </div>
-                <div class="card-chart">
-                  <div class="card-chart-label">
-                    <span>cpu</span>
-                    <span class="card-chart-current">{latestCPU}</span>
-                  </div>
-                  <MetricsChart
-                    data={cpuData}
-                    label="{sname}-cpu"
-                    current={latestCPU}
-                    color="var(--color-info)"
-                    formatY={(v) => `${v.toFixed(1)}%`}
-                    width={80}
-                    height={20}
-                    compact={true}
-                    strokeWidth={0.5}
-                  />
-                </div>
-                {#if diskHist.length >= 2}
-                  <div class="card-chart">
-                    <div class="card-chart-label">
-                      <span>disk</span>
-                      <span class="card-chart-current">{latestDisk}</span>
-                    </div>
-                    <MetricsChart
-                      data={diskData}
-                      label="{sname}-disk"
-                      current={latestDisk}
-                      color="var(--color-accent)"
-                      formatY={(v) => `${v.toFixed(0)}MB`}
-                      width={80}
-                      height={20}
-                      compact={true}
-                      strokeWidth={0.5}
-                    />
-                  </div>
-                {/if}
-              </div>
-            {/if}
-          {/if}
 
           {#if mounts.length > 0}
             <div class="card-mounts">
@@ -722,56 +675,28 @@
             <div class="local-row">
               <span class="local-dot"></span>
               <span class="local-name">{proc.name}</span>
+              <span class="local-meta">PID {proc.pid}</span>
+              <div class="local-spacer"></div>
+              <span class="meta-metric" title="CPU usage">
+                <span class="meta-metric-dot" style="background: var(--color-info)"></span>
+                <span class="meta-metric-label">cpu</span>
+                <span class="meta-metric-value">{latestLCPU}</span>
+              </span>
+              <span class="meta-metric" title="Memory usage">
+                <span class="meta-metric-dot" style="background: var(--color-success)"></span>
+                <span class="meta-metric-label">mem</span>
+                <span class="meta-metric-value">{latestLMem}</span>
+              </span>
               <span class="local-type-badge">local</span>
               {#if !activeProfile && proc.workspace_profile}
-                <span class="local-profile-badge">{proc.workspace_profile}</span>
+                {@const lwp = proc.workspace_profile.toLowerCase()}
+                <span class="local-profile-badge" style={profileColorStyle(getProfileColor(lwp, profileColorStore.getOverride(lwp)))}>{lwp}</span>
               {/if}
-              <span class="local-meta">PID {proc.pid}</span>
               <button class="btn-focus" onclick={() => handleFocusTab(proc.tty)} title="Focus terminal tab ({proc.tty})">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                 focus
               </button>
             </div>
-            {#if lhist.length >= 2}
-              <div class="local-charts">
-                <div class="card-chart">
-                  <div class="card-chart-label">
-                    <span>cpu</span>
-                    <span class="card-chart-current">{latestLCPU}</span>
-                  </div>
-                  <MetricsChart
-                    data={lcpuData}
-                    label="{lkey}-cpu"
-                    current={latestLCPU}
-                    color="var(--color-info)"
-                    formatY={(v) => `${v.toFixed(1)}%`}
-                    width={80}
-                    height={20}
-                    compact={true}
-                    strokeWidth={0.5}
-                  />
-                </div>
-                <div class="card-chart">
-                  <div class="card-chart-label">
-                    <span>memory</span>
-                    <span class="card-chart-current">{latestLMem}</span>
-                  </div>
-                  <MetricsChart
-                    data={lmemData}
-                    label="{lkey}-mem"
-                    current={latestLMem}
-                    color="var(--color-success)"
-                    formatY={(v) => `${v.toFixed(0)} MB`}
-                    width={80}
-                    height={20}
-                    compact={true}
-                    strokeWidth={0.5}
-                  />
-                </div>
-              </div>
-            {:else}
-              <div class="local-stats-text">{proc.cpu_perc} cpu &middot; {proc.mem_mb} mem</div>
-            {/if}
           </div>
         {/each}
       </div>
@@ -1096,9 +1021,7 @@
     letter-spacing: 0.04em;
     padding: 1px 6px;
     border-radius: 9999px;
-    background: rgba(245, 158, 11, 0.1);
-    color: var(--color-accent);
-    border: 1px solid rgba(245, 158, 11, 0.2);
+    border: 1px solid transparent;
     flex-shrink: 0;
   }
 
@@ -1196,38 +1119,33 @@
   }
   .meta-url:hover { text-decoration: underline; }
 
-  /* Charts row inside card */
-  .card-charts {
-    margin: 6px 0 4px;
-    display: flex;
-    gap: 16px;
-  }
-
-  .card-chart {
-    display: flex;
+  /* Inline metric pills in card-meta */
+  .meta-metric {
+    display: inline-flex;
     align-items: center;
-    gap: 10px;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .card-chart-label {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    flex-shrink: 0;
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    gap: 4px;
+    font-size: 11px;
     color: var(--color-text-tertiary);
   }
 
-  .card-chart-current {
-    font-size: 13px;
+  .meta-metric-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .meta-metric-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .meta-metric-value {
+    font-family: var(--font-mono);
+    font-size: 11px;
     font-weight: 600;
-    color: var(--color-text-primary);
-    text-transform: none;
-    letter-spacing: 0;
+    color: var(--color-text-secondary);
   }
 
   /* Mounts section */
@@ -1537,11 +1455,6 @@
     gap: 10px;
   }
 
-  .local-charts {
-    display: flex;
-    gap: 16px;
-    margin-top: 10px;
-  }
 
   .local-stats-text {
     font-size: 11px;
@@ -1562,8 +1475,7 @@
     font-size: 13px;
     font-weight: 500;
     color: var(--color-text-primary);
-    flex: 1;
-    min-width: 0;
+    flex-shrink: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1589,11 +1501,11 @@
     letter-spacing: 0.04em;
     padding: 1px 6px;
     border-radius: 9999px;
-    background: rgba(245, 158, 11, 0.1);
-    color: var(--color-accent);
-    border: 1px solid rgba(245, 158, 11, 0.2);
+    border: 1px solid transparent;
     flex-shrink: 0;
   }
+
+  .local-spacer { flex: 1; }
 
   .local-meta {
     font-size: 11px;
