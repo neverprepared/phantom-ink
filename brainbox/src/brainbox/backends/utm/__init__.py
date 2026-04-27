@@ -904,12 +904,10 @@ class UTMBackend:
         """
         slog = get_logger(session_name=ctx.session_name, container_name=ctx.container_name)
 
-        # Resolve SSH user: settings > env $USER > model default ("developer")
+        # Resolve SSH user: settings override > model default ("phantomink")
         from ...config import settings as _settings
         if _settings.utm.ssh_user:
             ctx.ssh_user = _settings.utm.ssh_user
-        elif ctx.ssh_user == "developer":
-            ctx.ssh_user = os.environ.get("USER", "developer")
 
         utm_docs = _get_utm_docs_dir()
 

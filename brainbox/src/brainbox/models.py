@@ -96,7 +96,7 @@ class SessionContext(BaseModel):
     docker_host: str | None = None  # Docker daemon host (None = local socket)
     ports: dict[str, int] | None = None  # Additional port mappings (container_port: host_port)
     ssh_port: int | None = None  # UTM only: SSH port for VM access (deprecated - use vm_ip)
-    ssh_user: str = "developer"  # UTM SSH username
+    ssh_user: str = "phantomink"  # UTM SSH username
     vm_template: str | None = None  # UTM only: Template VM name used for cloning
     vm_path: str | None = None  # UTM only: Full path to .utm package
     vm_ip: str | None = None  # UTM only: VM's IP address (bridged networking)
