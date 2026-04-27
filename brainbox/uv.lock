@@ -99,6 +99,7 @@ dependencies = [
     { name = "docker" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "mcp-utm", marker = "sys_platform == 'darwin'" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyyaml" },
@@ -134,6 +135,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "mcp", extras = ["cli"], marker = "extra == 'mcp'", specifier = ">=1.9" },
+    { name = "mcp-utm", marker = "sys_platform == 'darwin'", specifier = ">=0.1.2" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "pyyaml", specifier = ">=6.0" },
@@ -827,6 +829,18 @@ wheels = [
 cli = [
     { name = "python-dotenv" },
     { name = "typer" },
+]
+
+[[package]]
+name = "mcp-utm"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mcp", extra = ["cli"] },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/63/ff/1b210a32d3f919885de81d17e4c84e8544d2f116a6d6264e4cf52dd26dd8/mcp_utm-0.1.2.tar.gz", hash = "sha256:f2e25b3e774af03d368bf17e5a0db3c90d67421b5f93d14a4f8f8efc012ccddb", size = 54982, upload-time = "2026-04-26T02:24:26.177Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/17/8e/9ea95021c60b07c89fa6681cda32a50581c4b5e156ab2661d21fbe69a09f/mcp_utm-0.1.2-py3-none-any.whl", hash = "sha256:5468f1a6a742d028f1b821392fa934b4069fffe64c549ddacfd49ea3fa1d44a1", size = 10168, upload-time = "2026-04-26T02:24:25.034Z" },
 ]
 
 [[package]]

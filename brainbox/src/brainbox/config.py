@@ -211,6 +211,7 @@ class UTMSettings(BaseSettings):
     ssh_key_path: str = ""  # Empty = use ~/.ssh/id_ed25519
     docs_dir: str = ""  # Empty = use ~/Library/Containers/com.utmapp.UTM/Data/Documents
     share_dir: str = ""  # Host path of the VirtioFS 'brainbox' share; empty = ARP-only
+    ssh_user: str = ""  # VM SSH username; empty = use OS username ($USER)
 
 
 class HubSettings(BaseSettings):
