@@ -259,19 +259,19 @@ async def _discover_vm_ip(mac_address: str, timeout: int = 60) -> str:
 
     start_time = asyncio.get_running_loop().time()
 
-    # When the share is configured, the VM's init.sh LaunchDaemon writes its IP
-    # to the sessions file on boot. Wait exclusively for that file — skip ARP,
-    # which can hang when a VM's virtual NIC is initializing.
+    # Try sessions file first (fast, no network sweep) — the VM's init.sh
+    # LaunchDaemon writes its IP here on boot. Give it 30s before falling
+    # back to ARP, which works for VMs that don't have the init.sh daemon.
     if sessions_file is not None:
-        while (asyncio.get_running_loop().time() - start_time) < timeout:
+        file_timeout = min(30, timeout // 2)
+        while (asyncio.get_running_loop().time() - start_time) < file_timeout:
             if sessions_file.exists():
                 ip = sessions_file.read_text().strip()
                 if ip:
                     return ip
             await asyncio.sleep(2)
-        raise TimeoutError(f"VM IP not found after {timeout}s (MAC: {mac_address})")
 
-    # Fallback: ARP table polling (share not configured — no sessions file available)
+    # ARP table polling — works for all VMs regardless of init.sh setup.
     # Normalize MAC address for ARP matching (handles missing leading zeros)
     mac_parts = mac_address.lower().split(":")
     mac_pattern = ":".join(part.lstrip("0") or "0" for part in mac_parts)
