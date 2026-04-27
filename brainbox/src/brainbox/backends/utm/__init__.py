@@ -608,6 +608,72 @@ async def _wait_for_ready_signal(
     return None
 
 
+async def _mount_sshfs_volumes(
+    executor: Any,
+    volume_mounts: list[str],
+    host_gateway: str,
+    host_user: str,
+    slog,
+) -> list[str]:
+    """Mount host directories into the VM via sshfs.
+
+    Uses reverse SSH — the VM connects back to the host to mount
+    directories. Requires macFUSE + sshfs installed in the VM
+    (via Ansible provisioning) and the VM's SSH key authorized on the host.
+
+    Args:
+        executor: SSHExecutor for running commands in the VM
+        volume_mounts: List of "host_path:guest_path[:mode]" strings
+        host_gateway: Host IP reachable from the VM (e.g. 192.168.64.1)
+        host_user: Username on the host for SSH
+        slog: Structured logger
+
+    Returns:
+        List of successfully mounted guest paths
+    """
+    mounted = []
+    for vol in volume_mounts:
+        parts = vol.split(":")
+        if len(parts) < 2:
+            continue
+        host_path = parts[0]
+        guest_path = parts[1]
+
+        # Create mount point
+        rc, out = await executor.exec_shell(f"mkdir -p {shlex.quote(guest_path)}")
+        if rc != 0:
+            slog.warning("utm.sshfs_mkdir_failed", metadata={
+                "guest_path": guest_path, "output": out,
+            })
+            continue
+
+        # Mount via sshfs with SSH key auth, no strict host checking
+        sshfs_cmd = (
+            f"sshfs {shlex.quote(host_user)}@{host_gateway}:{shlex.quote(host_path)} "
+            f"{shlex.quote(guest_path)} "
+            f"-o IdentityFile=~/.ssh/host_key "
+            f"-o StrictHostKeyChecking=no "
+            f"-o UserKnownHostsFile=/dev/null "
+            f"-o reconnect "
+            f"-o ServerAliveInterval=15 "
+            f"-o ServerAliveCountMax=3 "
+            f"-o volname={shlex.quote(guest_path.rsplit('/', 1)[-1])}"
+        )
+        rc, out = await executor.exec_shell(sshfs_cmd, timeout=30)
+        if rc != 0:
+            slog.warning("utm.sshfs_mount_failed", metadata={
+                "host_path": host_path, "guest_path": guest_path, "output": out,
+            })
+            continue
+
+        mounted.append(guest_path)
+        slog.info("utm.sshfs_mounted", metadata={
+            "host_path": host_path, "guest_path": guest_path,
+        })
+
+    return mounted
+
+
 def _configure_shared_dirs(
     config: dict, volumes: dict[str, dict[str, str]]
 ) -> list[tuple[str, str]]:
@@ -1104,6 +1170,33 @@ class UTMBackend:
         await inject_claude_settings(executor, slog=slog)
         if profile_env:
             await inject_profile_env(executor, profile_env, slog=slog)
+
+        # Copy the host's SSH key into the VM so sshfs can reverse-connect.
+        # The same key used to SSH into the VM is authorized on the host.
+        ssh_key = _get_ssh_key_path()
+        if ssh_key.exists():
+            key_content = ssh_key.read_text()
+            escaped_key = key_content.replace("'", "'\\''")
+            rc, _ = await executor.exec_shell(
+                f"mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+                f"printf '%s' '{escaped_key}' > ~/.ssh/host_key && "
+                f"chmod 600 ~/.ssh/host_key"
+            )
+            if rc == 0:
+                slog.info("utm.host_ssh_key_injected")
+
+        # Mount host directories via sshfs (reverse SSH from VM to host).
+        # The gateway IP 192.168.64.1 is the host on Apple VF's shared network.
+        if ctx.volume_mounts:
+            host_user = os.environ.get("USER", "developer")
+            mounted = await _mount_sshfs_volumes(
+                executor, ctx.volume_mounts,
+                host_gateway="192.168.64.1",
+                host_user=host_user,
+                slog=slog,
+            )
+            if mounted:
+                slog.info("utm.sshfs_volumes_ready", metadata={"count": len(mounted)})
 
         # Store connection details for start()
         ctx._ssh_host_after_configure = ssh_host  # type: ignore[attr-defined]
