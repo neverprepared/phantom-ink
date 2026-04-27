@@ -608,30 +608,39 @@ async def _wait_for_ready_signal(
     return None
 
 
-async def _mount_sshfs_volumes(
-    executor: Any,
+async def _rsync_volumes_to_vm(
     volume_mounts: list[str],
-    host_gateway: str,
-    host_user: str,
+    ssh_host: str,
+    ssh_port: int,
+    ssh_user: str,
+    ssh_key: Path,
     slog,
 ) -> list[str]:
-    """Mount host directories into the VM via sshfs.
+    """Rsync host directories into the VM over SSH.
 
-    Uses reverse SSH — the VM connects back to the host to mount
-    directories. Requires macFUSE + sshfs installed in the VM
-    (via Ansible provisioning) and the VM's SSH key authorized on the host.
+    Copies each volume mount from host to guest. Uses rsync (pre-installed
+    on macOS) so no additional dependencies are needed in the VM.
 
     Args:
-        executor: SSHExecutor for running commands in the VM
         volume_mounts: List of "host_path:guest_path[:mode]" strings
-        host_gateway: Host IP reachable from the VM (e.g. 192.168.64.1)
-        host_user: Username on the host for SSH
+        ssh_host: VM IP address
+        ssh_port: VM SSH port
+        ssh_user: VM SSH username
+        ssh_key: Path to SSH private key
         slog: Structured logger
 
     Returns:
-        List of successfully mounted guest paths
+        List of successfully synced guest paths
     """
-    mounted = []
+    synced = []
+    ssh_opts = (
+        f"ssh -i {shlex.quote(str(ssh_key))} "
+        f"-o StrictHostKeyChecking=no "
+        f"-o UserKnownHostsFile=/dev/null "
+        f"-o LogLevel=ERROR "
+        f"-p {ssh_port}"
+    )
+
     for vol in volume_mounts:
         parts = vol.split(":")
         if len(parts) < 2:
@@ -639,42 +648,59 @@ async def _mount_sshfs_volumes(
         host_path = parts[0]
         guest_path = parts[1]
 
-        # Create mount point (sudo in case path is outside home dir)
-        rc, out = await executor.exec_shell(
-            f"sudo mkdir -p {shlex.quote(guest_path)} && "
-            f"sudo chown $(whoami) {shlex.quote(guest_path)}"
-        )
-        if rc != 0:
-            slog.warning("utm.sshfs_mkdir_failed", metadata={
-                "guest_path": guest_path, "output": out,
-            })
-            continue
+        # Ensure host path has trailing slash so rsync copies contents, not dir
+        src = host_path.rstrip("/") + "/"
+        dest = f"{ssh_user}@{ssh_host}:{guest_path}"
 
-        # Mount via sshfs with SSH key auth, no strict host checking
-        sshfs_cmd = (
-            f"sshfs {shlex.quote(host_user)}@{host_gateway}:{shlex.quote(host_path)} "
-            f"{shlex.quote(guest_path)} "
-            f"-o IdentityFile=~/.ssh/host_key "
-            f"-o StrictHostKeyChecking=no "
-            f"-o UserKnownHostsFile=/dev/null "
-            f"-o reconnect "
-            f"-o ServerAliveInterval=15 "
-            f"-o ServerAliveCountMax=3 "
-            f"-o volname={shlex.quote(guest_path.rsplit('/', 1)[-1])}"
+        # Create guest directory first
+        mkdir_cmd = [
+            "ssh", "-i", str(ssh_key),
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "LogLevel=ERROR",
+            "-p", str(ssh_port),
+            f"{ssh_user}@{ssh_host}",
+            f"sudo mkdir -p {shlex.quote(guest_path)} && sudo chown {ssh_user} {shlex.quote(guest_path)}",
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *mkdir_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        rc, out = await executor.exec_shell(sshfs_cmd, timeout=30)
-        if rc != 0:
-            slog.warning("utm.sshfs_mount_failed", metadata={
-                "host_path": host_path, "guest_path": guest_path, "output": out,
-            })
-            continue
+        await proc.communicate()
 
-        mounted.append(guest_path)
-        slog.info("utm.sshfs_mounted", metadata={
+        # Rsync from host to VM
+        rsync_cmd = [
+            "rsync", "-az", "--delete",
+            "-e", ssh_opts,
+            src, dest,
+        ]
+        slog.info("utm.rsync_starting", metadata={
             "host_path": host_path, "guest_path": guest_path,
         })
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *rsync_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+            if proc.returncode == 0:
+                synced.append(guest_path)
+                slog.info("utm.rsync_complete", metadata={
+                    "host_path": host_path, "guest_path": guest_path,
+                })
+            else:
+                slog.warning("utm.rsync_failed", metadata={
+                    "host_path": host_path, "guest_path": guest_path,
+                    "output": (stderr or stdout or b"").decode().strip(),
+                })
+        except asyncio.TimeoutError:
+            slog.warning("utm.rsync_timeout", metadata={
+                "host_path": host_path, "guest_path": guest_path,
+            })
 
-    return mounted
+    return synced
 
 
 def _configure_shared_dirs(
@@ -1180,32 +1206,19 @@ class UTMBackend:
         if profile_env:
             await inject_profile_env(executor, profile_env, slog=slog)
 
-        # Copy the host's SSH key into the VM so sshfs can reverse-connect.
-        # The same key used to SSH into the VM is authorized on the host.
-        ssh_key = _get_ssh_key_path()
-        if ssh_key.exists():
-            key_content = ssh_key.read_text()
-            escaped_key = key_content.replace("'", "'\\''")
-            rc, _ = await executor.exec_shell(
-                f"mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
-                f"printf '%s' '{escaped_key}' > ~/.ssh/host_key && "
-                f"chmod 600 ~/.ssh/host_key"
-            )
-            if rc == 0:
-                slog.info("utm.host_ssh_key_injected")
-
-        # Mount host directories via sshfs (reverse SSH from VM to host).
-        # The gateway IP 192.168.64.1 is the host on Apple VF's shared network.
+        # Rsync host directories into the VM.
+        # Runs from the host side (not reverse SSH) — no extra deps in the VM.
         if ctx.volume_mounts:
-            host_user = os.environ.get("USER", "developer")
-            mounted = await _mount_sshfs_volumes(
-                executor, ctx.volume_mounts,
-                host_gateway="192.168.64.1",
-                host_user=host_user,
+            synced = await _rsync_volumes_to_vm(
+                ctx.volume_mounts,
+                ssh_host=ssh_host,
+                ssh_port=ssh_port,
+                ssh_user=ctx.ssh_user,
+                ssh_key=ssh_key,
                 slog=slog,
             )
-            if mounted:
-                slog.info("utm.sshfs_volumes_ready", metadata={"count": len(mounted)})
+            if synced:
+                slog.info("utm.volumes_synced", metadata={"count": len(synced)})
 
         # Store connection details for start()
         ctx._ssh_host_after_configure = ssh_host  # type: ignore[attr-defined]

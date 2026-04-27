@@ -19,9 +19,7 @@ brew_extra_packages:
   - kubectl
   - awscli
   - azure-cli
-  - sshfs
 
 brew_cask_packages:
   - claude
   - chatgpt
-  - macfuse
