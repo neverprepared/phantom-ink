@@ -639,8 +639,11 @@ async def _mount_sshfs_volumes(
         host_path = parts[0]
         guest_path = parts[1]
 
-        # Create mount point
-        rc, out = await executor.exec_shell(f"mkdir -p {shlex.quote(guest_path)}")
+        # Create mount point (sudo in case path is outside home dir)
+        rc, out = await executor.exec_shell(
+            f"sudo mkdir -p {shlex.quote(guest_path)} && "
+            f"sudo chown $(whoami) {shlex.quote(guest_path)}"
+        )
         if rc != 0:
             slog.warning("utm.sshfs_mkdir_failed", metadata={
                 "guest_path": guest_path, "output": out,
@@ -900,6 +903,14 @@ class UTMBackend:
             Updated SessionContext with vm_path and ssh_port
         """
         slog = get_logger(session_name=ctx.session_name, container_name=ctx.container_name)
+
+        # Resolve SSH user: settings > env $USER > model default ("developer")
+        from ...config import settings as _settings
+        if _settings.utm.ssh_user:
+            ctx.ssh_user = _settings.utm.ssh_user
+        elif ctx.ssh_user == "developer":
+            ctx.ssh_user = os.environ.get("USER", "developer")
+
         utm_docs = _get_utm_docs_dir()
 
         # Validate utmctl exists (raises RuntimeError if not found)
@@ -1153,7 +1164,7 @@ class UTMBackend:
             ssh_port,
             ctx.ssh_user,
             ssh_key,
-            home_dir="/Users/developer",
+            home_dir=f"/Users/{ctx.ssh_user}",
             guest_os="macos",
         )
 
@@ -1310,7 +1321,7 @@ class UTMBackend:
             ssh_port,
             ctx.ssh_user,
             ssh_key,
-            home_dir="/Users/developer",
+            home_dir=f"/Users/{ctx.ssh_user}",
             guest_os="macos",
         )
 
