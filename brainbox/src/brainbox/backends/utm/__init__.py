@@ -608,99 +608,6 @@ async def _wait_for_ready_signal(
     return None
 
 
-async def _rsync_volumes_to_vm(
-    volume_mounts: list[str],
-    ssh_host: str,
-    ssh_port: int,
-    ssh_user: str,
-    ssh_key: Path,
-    slog,
-) -> list[str]:
-    """Rsync host directories into the VM over SSH.
-
-    Copies each volume mount from host to guest. Uses rsync (pre-installed
-    on macOS) so no additional dependencies are needed in the VM.
-
-    Args:
-        volume_mounts: List of "host_path:guest_path[:mode]" strings
-        ssh_host: VM IP address
-        ssh_port: VM SSH port
-        ssh_user: VM SSH username
-        ssh_key: Path to SSH private key
-        slog: Structured logger
-
-    Returns:
-        List of successfully synced guest paths
-    """
-    synced = []
-    ssh_opts = (
-        f"ssh -i {shlex.quote(str(ssh_key))} "
-        f"-o StrictHostKeyChecking=no "
-        f"-o UserKnownHostsFile=/dev/null "
-        f"-o LogLevel=ERROR "
-        f"-p {ssh_port}"
-    )
-
-    for vol in volume_mounts:
-        parts = vol.split(":")
-        if len(parts) < 2:
-            continue
-        host_path = parts[0]
-        guest_path = parts[1]
-
-        # Ensure host path has trailing slash so rsync copies contents, not dir
-        src = host_path.rstrip("/") + "/"
-        dest = f"{ssh_user}@{ssh_host}:{guest_path}"
-
-        # Create guest directory first
-        mkdir_cmd = [
-            "ssh", "-i", str(ssh_key),
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "LogLevel=ERROR",
-            "-p", str(ssh_port),
-            f"{ssh_user}@{ssh_host}",
-            f"sudo mkdir -p {shlex.quote(guest_path)} && sudo chown {ssh_user} {shlex.quote(guest_path)}",
-        ]
-        proc = await asyncio.create_subprocess_exec(
-            *mkdir_cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await proc.communicate()
-
-        # Rsync from host to VM
-        rsync_cmd = [
-            "rsync", "-az", "--delete",
-            "-e", ssh_opts,
-            src, dest,
-        ]
-        slog.info("utm.rsync_starting", metadata={
-            "host_path": host_path, "guest_path": guest_path,
-        })
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *rsync_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-            if proc.returncode == 0:
-                synced.append(guest_path)
-                slog.info("utm.rsync_complete", metadata={
-                    "host_path": host_path, "guest_path": guest_path,
-                })
-            else:
-                slog.warning("utm.rsync_failed", metadata={
-                    "host_path": host_path, "guest_path": guest_path,
-                    "output": (stderr or stdout or b"").decode().strip(),
-                })
-        except asyncio.TimeoutError:
-            slog.warning("utm.rsync_timeout", metadata={
-                "host_path": host_path, "guest_path": guest_path,
-            })
-
-    return synced
 
 
 def _configure_shared_dirs(
@@ -1206,19 +1113,31 @@ class UTMBackend:
         if profile_env:
             await inject_profile_env(executor, profile_env, slog=slog)
 
-        # Rsync host directories into the VM.
-        # Runs from the host side (not reverse SSH) — no extra deps in the VM.
+        # Mount host directories into the VM via NFS.
+        # The host exports each path scoped to the UTM subnet, then the VM
+        # mounts via `mount -t nfs`. Live bidirectional, no extra deps needed.
         if ctx.volume_mounts:
-            synced = await _rsync_volumes_to_vm(
-                ctx.volume_mounts,
-                ssh_host=ssh_host,
-                ssh_port=ssh_port,
-                ssh_user=ctx.ssh_user,
-                ssh_key=ssh_key,
-                slog=slog,
-            )
-            if synced:
-                slog.info("utm.volumes_synced", metadata={"count": len(synced)})
+            from .nfs import ensure_nfs_export, mount_nfs_in_vm
+
+            host_ip = "192.168.64.1"  # host gateway on Apple VF network
+            mounted = []
+            for vol in ctx.volume_mounts:
+                parts = vol.split(":")
+                if len(parts) < 2:
+                    continue
+                host_path, guest_path = parts[0], parts[1]
+                try:
+                    await ensure_nfs_export(host_path, slog=slog)
+                    ok = await mount_nfs_in_vm(executor, host_ip, host_path, guest_path, slog=slog)
+                    if ok:
+                        mounted.append(guest_path)
+                except Exception as exc:
+                    slog.warning("utm.nfs_mount_error", metadata={
+                        "host_path": host_path, "guest_path": guest_path,
+                        "error": str(exc),
+                    })
+            if mounted:
+                slog.info("utm.nfs_volumes_ready", metadata={"count": len(mounted)})
 
         # Store connection details for start()
         ctx._ssh_host_after_configure = ssh_host  # type: ignore[attr-defined]

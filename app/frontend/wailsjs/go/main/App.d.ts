@@ -3,6 +3,8 @@
 import {brainbox} from '../models';
 import {main} from '../models';
 
+export function AddNFSExport(arg1:string):Promise<void>;
+
 export function AddRepo(arg1:brainbox.AddRepoRequest):Promise<brainbox.Repo>;
 
 export function BrowseFolder():Promise<string>;
@@ -121,6 +123,8 @@ export function ListBackups():Promise<Array<string>>;
 
 export function ListChannels():Promise<Array<brainbox.Channel>>;
 
+export function ListNFSExports():Promise<Array<main.NFSExport>>;
+
 export function ListOllamaModels():Promise<Array<brainbox.OllamaModel>>;
 
 export function ListPlaybooks(arg1:string):Promise<Array<brainbox.Playbook>>;
@@ -140,6 +144,8 @@ export function PostChannelMessage(arg1:string,arg2:brainbox.PostChannelMessageR
 export function PullOllamaModel(arg1:string):Promise<string>;
 
 export function PurgeBackup(arg1:string):Promise<void>;
+
+export function RemoveNFSExport(arg1:string):Promise<void>;
 
 export function RestartBrainboxAPI():Promise<void>;
 

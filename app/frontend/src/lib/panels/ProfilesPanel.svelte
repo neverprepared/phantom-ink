@@ -22,8 +22,12 @@
   let confirmDelete = $state<string | null>(null);
   let backups = $state<string[]>([]);
 
+  // NFS shares
+  let nfsExports = $state<{path: string, options: string}[]>([]);
+  let nfsLoading = $state(false);
+
   onMount(async () => {
-    await Promise.all([refreshProfiles(), loadBackups(), refreshDisk(), loadProfileColors()]);
+    await Promise.all([refreshProfiles(), loadBackups(), refreshDisk(), loadProfileColors(), refreshNFS()]);
   });
 
   async function loadProfileColors() {
@@ -184,6 +188,41 @@
     }
   }
 
+  // NFS exports
+  async function refreshNFS() {
+    const a = await getApi();
+    if (!a) return;
+    nfsLoading = true;
+    try {
+      nfsExports = (await a.ListNFSExports()) ?? [];
+    } catch { nfsExports = []; }
+    finally { nfsLoading = false; }
+  }
+
+  async function handleAddNFSExport() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      await a.AddNFSExport('');
+      notifications.success('NFS export added');
+      await refreshNFS();
+    } catch (err: any) {
+      notifications.error(`Failed to add export: ${err}`);
+    }
+  }
+
+  async function handleRemoveNFSExport(path: string) {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      await a.RemoveNFSExport(path);
+      notifications.success(`NFS export removed: ${path}`);
+      await refreshNFS();
+    } catch (err: any) {
+      notifications.error(`Failed to remove export: ${err}`);
+    }
+  }
+
   // Build pie slices from disk overview
   let pieSlices = $derived.by(() => {
     if (!diskOverview) return [];
@@ -319,6 +358,28 @@
             <button class="btn-confirm cancel" onclick={() => confirmDelete = null}>cancel</button>
           </div>
         {/if}
+      {/each}
+    {/if}
+  </div>
+
+  <div class="nfs-section">
+    <div class="nfs-header">
+      <h3>nfs shares</h3>
+      <button class="btn-small" onclick={handleAddNFSExport}>+ add directory</button>
+    </div>
+    {#if nfsLoading}
+      <p class="empty">loading...</p>
+    {:else if nfsExports.length === 0}
+      <p class="empty">no NFS exports — directories shared here are live-mounted into UTM VMs</p>
+    {:else}
+      {#each nfsExports as exp}
+        <div class="nfs-row">
+          <svg class="nfs-icon" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+          <span class="nfs-path" title={exp.path}>{exp.path}</span>
+          <button class="btn-nfs-remove" onclick={() => handleRemoveNFSExport(exp.path)} title="Remove NFS export" aria-label="Remove NFS export {exp.path}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
       {/each}
     {/if}
   </div>
@@ -580,4 +641,37 @@
   .backup-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--radius-sm); }
   .backup-row:nth-child(odd) { background: rgba(255, 255, 255, 0.015); }
   .backup-name { flex: 1; font-size: 13px; font-weight: 500; color: var(--color-text-secondary); }
+
+  /* NFS shares */
+  .nfs-section { margin-top: 24px; }
+  .nfs-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .nfs-header h3 { font-size: 14px; font-weight: 600; color: var(--color-text-secondary); text-transform: lowercase; }
+  .nfs-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+  }
+  .nfs-row:nth-child(odd) { background: rgba(255, 255, 255, 0.015); }
+  .nfs-icon { color: var(--color-text-muted); flex-shrink: 0; }
+  .nfs-path {
+    flex: 1;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    color: var(--color-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .btn-nfs-remove {
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    padding: 2px;
+    border-radius: var(--radius-sm);
+    transition: all 0.15s;
+  }
+  .btn-nfs-remove:hover { color: var(--color-error); background: rgba(239, 68, 68, 0.1); }
 </style>
