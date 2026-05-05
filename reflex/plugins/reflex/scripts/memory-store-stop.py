@@ -1,26 +1,17 @@
 #!/usr/bin/env python3
 """
-Stop-hook closeout enforcement for the obsidian-second-brain task lifecycle.
+Stop-hook closeout enforcement for the "store what you learned" guardrail.
 
-When Claude Code is about to end the session, check whether an active task
-is still uncompleted. If so, the user's mental model says: storage is the
-output of finished work. Block (or warn) the stop, surface the recent
-WebSearch/WebFetch activity from memory.db as task evidence, and tell
-Claude to attach those events as findings via task_update before
-task_complete.
+If the session has unstored web research (web events since the last
+memory_store / memory_update / task_complete), block the stop, surface the
+recent activity from memory.db as evidence, and tell Claude to promote
+those findings before stopping.
 
-State file:   ${TMPDIR:-/tmp}/reflex-task-state/{session_id}.active_task.json
+State file:   ${TMPDIR:-/tmp}/reflex-memory-state/{session_id}.json
 Activity log: $REFLEX_HOME/memory.db (queried via memory.py recent --hours N)
 
-Toggle: REFLEX_TASK_ENFORCE = hard | soft | off (default hard).
+Toggle: REFLEX_MEMORY_ENFORCE = hard | soft | off (default hard).
         Set to "off" → shell wrapper exits 0 before invoking python.
-
-Behavior:
-  no state file       → exit 0 (no active task to close)
-  state, dirty=False  → exit 0 (task started but no work logged; treat as
-                                empty, let Claude decide whether to complete)
-  state, dirty=True   → emit systemMessage with activity evidence;
-                        in hard mode also deny the stop.
 
 Fail open on any error.
 """
@@ -38,9 +29,9 @@ MEMORY_LOOKBACK_HOURS = 24
 
 
 def state_path(session_id: str) -> Path:
-    d = Path(os.environ.get("TMPDIR", "/tmp")) / "reflex-task-state"
+    d = Path(os.environ.get("TMPDIR", "/tmp")) / "reflex-memory-state"
     d.mkdir(exist_ok=True)
-    return d / f"{session_id}.active_task.json"
+    return d / f"{session_id}.json"
 
 
 def parse_iso(ts: str) -> datetime | None:
@@ -51,24 +42,22 @@ def parse_iso(ts: str) -> datetime | None:
 
 
 def memory_py_path() -> Path:
-    """The activity-log CLI lives next to this script."""
     return Path(__file__).resolve().parent / "memory.py"
 
 
-def query_recent_events(started_at: datetime) -> list[dict]:
-    """
-    Pull WebSearch / WebFetch events from memory.db that occurred during the
-    task's lifetime. Uses memory.py's --hours window (rounded up) and then
-    filters in-process by ts >= started_at.
-
+def query_recent_events(since: datetime | None) -> list[dict]:
+    """Pull WebSearch / WebFetch events from memory.db since the given time.
     Returns [] on any failure — never block the stop because of a query error.
     """
     fp = memory_py_path()
     if not fp.exists():
         return []
 
-    elapsed = datetime.now(timezone.utc) - started_at
-    hours = max(1, int(elapsed.total_seconds() / 3600) + 1)
+    if since is not None:
+        elapsed = datetime.now(timezone.utc) - since
+        hours = max(1, int(elapsed.total_seconds() / 3600) + 1)
+    else:
+        hours = MEMORY_LOOKBACK_HOURS
     if hours > MEMORY_LOOKBACK_HOURS:
         hours = MEMORY_LOOKBACK_HOURS
 
@@ -86,7 +75,7 @@ def query_recent_events(started_at: datetime) -> list[dict]:
         return []
 
     events: list[dict] = []
-    started_iso = started_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    since_iso = since.strftime("%Y-%m-%dT%H:%M:%SZ") if since else ""
     for line in result.stdout.splitlines():
         line = line.strip()
         if not line:
@@ -95,7 +84,7 @@ def query_recent_events(started_at: datetime) -> list[dict]:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if row.get("ts", "") >= started_iso:
+        if not since_iso or row.get("ts", "") >= since_iso:
             events.append(row)
     return events
 
@@ -147,15 +136,11 @@ def main() -> None:
     except (OSError, json.JSONDecodeError):
         sys.exit(0)
 
-    if not state.get("dirty"):
-        # Task started but nothing logged. Don't force a complete on emptiness.
+    if not state.get("pending"):
         sys.exit(0)
 
-    task_id = state.get("task_id", "<unknown>")
-    started_at_str = state.get("started_at", "")
-    started_at = parse_iso(started_at_str)
-
-    events = query_recent_events(started_at) if started_at else []
+    last_web_at = parse_iso(state.get("last_web_at", ""))
+    events = query_recent_events(last_web_at)
 
     if events:
         bullets = [format_event(e) for e in events[:MAX_EVENTS_IN_REMINDER]]
@@ -163,22 +148,28 @@ def main() -> None:
             bullets.append(f"  …and {len(events) - MAX_EVENTS_IN_REMINDER} more events")
         evidence = "\n".join(bullets)
     else:
-        evidence = "  (no web activity logged for this task window)"
+        # State says we have pending web work but the activity log is empty —
+        # could be a memory.db / hook ordering issue. Fall back to last_query/url.
+        snippet = state.get("last_query") or state.get("last_url") or "(no details)"
+        evidence = f"- {snippet}"
 
     msg = (
-        f"🧠 Task `{task_id}` is unfinished — close it before stopping.\n\n"
-        f"Started: {started_at_str}\n"
-        f"Activity logged from this session:\n{evidence}\n\n"
-        "Recommended next steps:\n"
-        "  1. Call mcp__obsidian-second-brain__task_update with a finding for each\n"
-        "     meaningful piece of work above (importance: medium or high so it\n"
-        "     promotes to long-term memory).\n"
-        "  2. Call mcp__obsidian-second-brain__task_complete to close the loop —\n"
-        "     this auto-promotes medium/high findings to the second-brain vault.\n\n"
-        "Toggle: set REFLEX_TASK_ENFORCE=soft for warnings only, or =off to disable."
+        "🧠 Memory-store guardrail: this session researched something the long-term\n"
+        "memory doesn't know about yet. Promote it before stopping.\n\n"
+        f"Unstored web activity:\n{evidence}\n\n"
+        "Pick one path:\n"
+        "  - Synthesize and store as a curated memory:\n"
+        "      mcp__obsidian-second-brain__memory_store\n"
+        '        title:  "<descriptive title>"\n'
+        '        content: "<synthesized findings + source links>"\n'
+        '        para:   "resources"\n'
+        '        tags:   [...]\n\n'
+        "  - Or, if a task is open, complete it (auto-promotes findings):\n"
+        "      mcp__obsidian-second-brain__task_complete\n\n"
+        "Toggle: set REFLEX_MEMORY_ENFORCE=soft for warnings only, or =off to disable."
     )
 
-    mode = os.environ.get("REFLEX_TASK_ENFORCE", "hard").lower()
+    mode = os.environ.get("REFLEX_MEMORY_ENFORCE", "hard").lower()
     if mode == "soft":
         warn(msg)
     else:
