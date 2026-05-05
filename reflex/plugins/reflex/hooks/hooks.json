@@ -37,16 +37,6 @@
             "timeout": 5
           }
         ]
-      },
-      {
-        "matcher": ".*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/task-enforce-pre.sh",
-            "timeout": 5
-          }
-        ]
       }
     ],
     "PostToolUse": [
@@ -89,11 +79,11 @@
         ]
       },
       {
-        "matcher": "mcp__obsidian-second-brain__task_start|mcp__obsidian-second-brain__task_update|mcp__obsidian-second-brain__task_complete",
+        "matcher": "WebSearch|WebFetch|mcp__obsidian-second-brain__memory_store|mcp__obsidian-second-brain__memory_update|mcp__obsidian-second-brain__task_complete",
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/task-enforce-set.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/memory-store-track.sh",
             "timeout": 5
           }
         ]
@@ -104,7 +94,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/task-enforce-stop.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/memory-store-stop.sh",
             "timeout": 10
           }
         ]
