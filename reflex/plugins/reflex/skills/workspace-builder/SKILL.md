@@ -38,10 +38,10 @@ This workspace provides a reusable, multi-project automation system with:
         └─────────┘     └─────────┘     └─────────┘
                               │
                               ▼
-                    ┌─────────────────┐
-                    │   RAG Server    │
-                    │    (Qdrant)     │
-                    └─────────────────┘
+                    ┌──────────────────────────┐
+                    │   Second Brain MCP       │
+                    │   (sqlite-vec + FTS5)    │
+                    └──────────────────────────┘
 ```
 
 ## Component Build Order
@@ -72,29 +72,18 @@ Build in this sequence for incremental testing:
 
 ## Key Technical Decisions
 
-### Vector Database: Qdrant
-```python
-# Why Qdrant:
-# - High performance vector search
-# - Production-ready with persistence
-# - REST and gRPC APIs
-# - Excellent filtering capabilities
+### Vector + Keyword Storage: obsidian-second-brain MCP
 
-from qdrant_client import QdrantClient
-client = QdrantClient(url="http://localhost:6333")
-# Collections managed via MCP server with COLLECTION_NAME env var
-```
+The second-brain MCP owns the vault's storage layer. One SQLite file at `{vault}/_index/vectors.db` holds both a sqlite-vec KNN index and an FTS5 BM25 index, sharing the same connection. Hybrid search (vector + keyword, fused by rank) is the default when both indexes are populated.
 
-### Embeddings: all-MiniLM-L6-v2
-```python
-# Shared across RAG and Router
-# - Fast (384 dimensions)
-# - Good quality
-# - Runs locally
+Why this instead of a standalone vector service:
+- Single file, no daemon to run alongside the workspace
+- Hybrid search out of the box (vectors miss exact identifiers; FTS5 misses paraphrase)
+- PARA-aware storage with TTL/freshness/confidence built into the schema
 
-from sentence_transformers import SentenceTransformer
-model = SentenceTransformer('all-MiniLM-L6-v2')
-```
+### Embeddings: nomic-embed-text via Ollama
+
+The MCP embeds memory content via local Ollama (`OLLAMA_BASE_URL`, default `http://localhost:11434`) using `nomic-embed-text` (768 dims). No API key, no remote round-trip.
 
 ### Routing: Semantic Router
 ```python
@@ -225,10 +214,10 @@ print(f'Routed to: {result.category}/{result.resource_name}')
 pyyaml>=6.0
 python-dotenv>=1.0.0
 mcp>=1.0.0
-qdrant-client>=1.7.0
-sentence-transformers>=2.2.0
 semantic-router>=0.1.0
 aiofiles>=23.0.0
 httpx>=0.25.0
+# Vector + FTS storage for the vault is provided by the obsidian-second-brain
+# MCP (Node, not Python). Install separately: npm i -g @neverprepared/mcp-obsidian-second-brain
 ```
 

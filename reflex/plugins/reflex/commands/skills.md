@@ -48,13 +48,13 @@ PYEOF
 
 | Category | Skills |
 |----------|--------|
-| **RAG & Knowledge** | qdrant-patterns, rag-builder, rag-wrapper, knowledge-ingestion-patterns, research-patterns, web-research |
+| **Knowledge & Memory** | obsidian-research, knowledge-ingestion-patterns |
 | **Harvesting** | github-harvester, youtube-harvester, pdf-harvester, site-crawler |
 | **Publishing** | obsidian-publisher, joplin-publisher |
 | **Infrastructure** | aws-patterns, terraform-patterns, kubernetes-patterns, docker-patterns, observability-patterns |
-| **Database** | database-migration-patterns, collection-migration, embedding-comparison |
+| **Database** | database-migration-patterns |
 | **Video/Streaming** | ffmpeg-patterns, streaming-patterns, video-upload-patterns, ai-video-generation, podcast-production |
-| **Building** | agent-builder, workflow-builder, router-builder, mcp-server-builder, workspace-builder, rag-builder |
+| **Building** | agent-builder, workflow-builder, router-builder, mcp-server-builder, workspace-builder |
 | **Diagrams** | image-to-diagram, graphviz-diagrams |
 | **Analysis** | analysis-patterns, task-decomposition, project-onboarding |
 | **Microsoft** | microsoft-docs, microsoft-code-reference |

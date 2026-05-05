@@ -23,7 +23,6 @@ Reflex integrates with the following MCP servers. We gratefully acknowledge the 
 
 | Server | Description | Maintainer | Repository |
 |--------|-------------|------------|------------|
-| Qdrant | Vector database for RAG and memory | [Qdrant](https://qdrant.tech/) | [qdrant/mcp-server-qdrant](https://github.com/qdrant/mcp-server-qdrant) |
 | Atlassian | Jira and Confluence integration | [sooperset](https://github.com/sooperset) | [sooperset/mcp-atlassian](https://github.com/sooperset/mcp-atlassian) |
 | Git | Git repository operations | [Model Context Protocol](https://github.com/modelcontextprotocol) | [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers) |
 | GitHub | GitHub repos, issues, PRs, and code security | [GitHub](https://github.com) | [github/github-mcp-server](https://github.com/github/github-mcp-server) |

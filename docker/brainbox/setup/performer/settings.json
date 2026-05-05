@@ -15,11 +15,6 @@
             "type": "command",
             "command": "/home/developer/.claude/hooks/langfuse-hook.sh",
             "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "/home/developer/.claude/hooks/qdrant-websearch-hook.sh",
-            "timeout": 5
           }
         ]
       }

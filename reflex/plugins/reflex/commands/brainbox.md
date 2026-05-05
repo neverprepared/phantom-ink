@@ -734,7 +734,7 @@ Report success or error. On success: "Session `<name>` deleted."
 
 ### `/reflex:brainbox health`
 
-Check health status of observability services (LangFuse, Qdrant).
+Check health status of observability services.
 
 ```bash
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
@@ -755,12 +755,6 @@ echo ""
 LANGFUSE=$(curl -sf "${URL}/api/langfuse/health" --max-time 3 2>/dev/null || echo '{"healthy":false}')
 LANGFUSE_STATUS=$(echo "$LANGFUSE" | jq -r 'if .healthy then "Online" else "Offline" end')
 echo "**LangFuse:** ${LANGFUSE_STATUS}"
-
-# Qdrant
-QDRANT=$(curl -sf "${URL}/api/qdrant/health" --max-time 3 2>/dev/null || echo '{"healthy":false}')
-QDRANT_STATUS=$(echo "$QDRANT" | jq -r 'if .healthy then "Online" else "Offline" end')
-QDRANT_URL=$(echo "$QDRANT" | jq -r '.url // "unknown"')
-echo "**Qdrant:** ${QDRANT_STATUS} (${QDRANT_URL})"
 ```
 
 ### `/reflex:brainbox config`
@@ -842,7 +836,7 @@ Management:
   query      Send a query to a running session
              Syntax: query <session-name> <query-text>
   dashboard  Open the dashboard in browser
-  health     Check observability services (LangFuse, Qdrant)
+  health     Check observability services (LangFuse)
   config     Show/set configuration (url, autostart)
 
 Roles (for create): developer (default), supervisor, worker, reviewer, merge-queue, pr-shepherd

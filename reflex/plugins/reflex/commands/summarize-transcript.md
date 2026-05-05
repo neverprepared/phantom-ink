@@ -1,6 +1,6 @@
 ---
 description: Summarize a meeting transcript into structured notes
-allowed-tools: Read, Write, Bash(uvx:*), Bash(wc:*), Bash(mkdir:*), Bash(cp:*), mcp__qdrant__qdrant-store, mcp__google-workspace__get_doc_content, mcp__google-workspace__get_drive_file_content, mcp__markitdown__convert_to_markdown
+allowed-tools: Read, Write, Bash(uvx:*), Bash(wc:*), Bash(mkdir:*), Bash(cp:*), mcp__obsidian-second-brain__memory_store, mcp__google-workspace__get_doc_content, mcp__google-workspace__get_drive_file_content, mcp__markitdown__convert_to_markdown
 argument-hint: <source> [--to <directory>] [--llm ollama|openai|anthropic] [--model NAME] [--title "Title"]
 ---
 
@@ -123,32 +123,27 @@ Capture the stdout output and write it to `<output_dir>/summary.md`.
 
 If the script exits with a non-zero code, report the stderr error to the user and stop.
 
-### Step 7: Store in Qdrant
+### Step 7: Store in the Second Brain
 
-Always store the summary in Qdrant for RAG retrieval.
-
-Parse the summary to extract metadata, then call `qdrant-store`:
+Always store the summary as a memory so future searches can find decisions and action items by topic.
 
 ```
-Tool: qdrant-store
-Information: "<full summary.md content>"
-Metadata:
-  source: "meeting_transcript"
-  content_type: "meeting_summary"
-  harvested_at: "<current ISO 8601 timestamp>"
-  meeting_title: "<title from summary>"
-  meeting_date: "<YYYY-MM-DD>"
-  meeting_time: "<HH-MM>"
-  attendees: "<comma-separated from summary, or 'unknown'>"
-  output_dir: "<full path to YYYY-MM-DD/HH-MM directory>"
-  source_format: "<vtt|srt|txt|docx|gdoc|pasted>"
-  action_item_count: <count from action items table>
-  decision_count: <count from decisions section>
-  topics: "<comma-separated key topics from summary>"
-  category: "business"
-  type: "meeting_summary"
+Tool: mcp__obsidian-second-brain__memory_store
+Arguments:
+  title: "Meeting: <title> (<YYYY-MM-DD>)"
+  content: "<full summary.md content>"
+  para: "areas"
+  tags: ["meeting", "<derived topic tags>"]
+  source: "import"
+  source_urls: []
   confidence: "high"
+  ttl_days: 365
 ```
+
+Notes:
+- PARA `areas` for ongoing programs/teams; `projects` for time-bound initiative meetings; `archives` once the topic is fully resolved.
+- Long TTL — meeting decisions and action items rarely become stale.
+- Per-meeting metadata (output_dir path, source_format, action item counts) lives in the markdown body, not in separate fields.
 
 ### Step 8: Report Results
 
@@ -160,7 +155,7 @@ Summarize what was done:
   - `readable.md` (cleaned transcript)
   - `summary.md` (structured summary)
 - Number of key topics, decisions, action items, and open questions extracted
-- Qdrant storage confirmation
+- Second-brain storage confirmation (memory id)
 
 ## Examples
 

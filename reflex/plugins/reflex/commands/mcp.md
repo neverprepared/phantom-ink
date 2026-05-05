@@ -60,7 +60,7 @@ Show all catalog servers with their enabled/disabled status.
 | kubernetes | disabled | cloud | Kubernetes cluster operations |
 ```
 
-5. Add a note: "`qdrant` and `brainbox` are plugin-declared — always available as `/reflex:qdrant` and `/reflex:brainbox`."
+5. Add a note: "`brainbox` is plugin-declared — always available as `/reflex:brainbox`."
 6. Show hint: `Manage: /reflex:mcp select | /reflex:mcp enable <name> | /reflex:mcp disable <name>`
 
 ---
@@ -100,7 +100,7 @@ jq --argjson s "$NEW_SERVERS" '.mcpServers = $s' "$CLAUDE_JSON" > /tmp/mcp.tmp &
 
 6. Output: "Updated — {N} servers enabled. Restart Claude Code to apply."
 
-Note: `qdrant` and `brainbox` are plugin-declared and excluded from this selection.
+Note: `brainbox` is plugin-declared and excluded from this selection.
 
 ---
 

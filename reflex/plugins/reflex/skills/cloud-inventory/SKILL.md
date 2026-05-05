@@ -360,4 +360,4 @@ For parsers that return flat lists of ARNs/IDs (not objects), add a custom handl
 - **Depth tuning**: `--depth 1` gives immediate neighbors only; `--depth 3` can be slow for large VPCs. Default is 2.
 - **Stale index**: Run `/reflex:inventory refresh <resource>` to re-walk and upsert. The previous relationships are cleared before re-traversal.
 - **Multi-account AWS**: Set `AWS_PROFILE` before exploring to scope queries to a specific account. Each account's resources get their own compound ID prefix.
-- **azure-discover migration**: `/reflex:azure-discover` now delegates to this system. Existing traces stored in Qdrant remain accessible; new traces are also stored in `inventory.db`.
+- **azure-discover migration**: `/reflex:azure-discover` now delegates to this system. New traces are stored in `inventory.db`.

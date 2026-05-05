@@ -38,17 +38,16 @@ Reflex works best with these plugins (checked on session start):
 
 | Agent | Purpose |
 |-------|---------|
-| `rag-proxy` | RAG wrapper for any agent, enriches with Qdrant context |
+| `rag-proxy` | RAG wrapper for any agent, enriches with second-brain (sqlite-vec + FTS5) context |
 | `workflow-orchestrator` | Orchestrates multi-step workflows across specialized subagents |
 
-### 42 Skills
+### Skills
 
 Skills provide reusable knowledge patterns. Run `/reflex:skills` to list all.
 
 Key skills include:
-- `qdrant-patterns` - Vector storage and retrieval
+- `obsidian-research` - Memory-first research with web fallback
 - `analysis-patterns` - Data analysis and troubleshooting
-- `research-patterns` - Knowledge retrieval workflows
 - `task-decomposition` - Breaking down complex tasks
 - `docker-patterns` - Container best practices
 - `ffmpeg-patterns` - Video/audio processing
@@ -68,10 +67,8 @@ Key skills include:
 | `/reflex:certcollect <hostname>` | Collect SSL certificates |
 | `/reflex:notify <on\|off\|status\|test>` | macOS popup notifications |
 | `/reflex:speak <on\|off\|status\|test>` | Spoken notifications via `say` |
-| `/reflex:qdrant [status]` | Show Qdrant connection status |
 | `/reflex:langfuse [status]` | Show LangFuse observability status and configuration |
 | `/reflex:guardrail <on\|off\|status>` | Control destructive operation guardrails |
-| `/reflex:ingest <path>` | Ingest files into Qdrant |
 | `/reflex:update-mcp <check\|apply>` | Check/apply MCP package updates |
 | `/reflex:workflow <apply\|list\|create\|edit\|delete\|sync\|compose\|status\|variables\|diff\|steps>` | Manage workflow templates |
 | `/reflex:init <service\|workflow>` | Initialize MCP server credentials or project workflows |
@@ -104,10 +101,6 @@ Notifications auto-trigger on:
 Docker compose files are in the `docker/` directory at the monorepo root:
 
 ```bash
-# Start Qdrant vector database
-just reflex-qdrant
-# or: cd docker/qdrant && docker compose up -d
-
 # Start LangFuse observability stack
 just reflex-langfuse
 # or: cd docker/langfuse && docker compose up -d
@@ -119,7 +112,6 @@ Reflex includes a catalog of 17 MCP servers. Use `/reflex:mcp select` to choose 
 
 | Server | Category | Purpose |
 |--------|----------|---------|
-| qdrant | data | Vector database storage |
 | atlassian | collaboration | Jira/Confluence |
 | git | development | Local git operations |
 | github | development | GitHub API |
@@ -158,10 +150,10 @@ plugins/reflex/
 
 ## How It Works
 
-Reflex provides skills (reusable knowledge patterns) and RAG integration via Qdrant.
+Reflex provides skills (reusable knowledge patterns) and second-brain integration via the `obsidian-second-brain` MCP (sqlite-vec + FTS5 hybrid search over a PARA-structured vault).
 
 - **Skills**: Invoke with the Skill tool for domain-specific guidance
-- **RAG**: Use `/reflex:task --rag` to enrich tasks with stored knowledge
+- **Memory**: Use `obsidian-research` skill for memory-first research; `rag-proxy` agent enriches sub-agents with second-brain context
 - **Agents**: Use official plugin agents (python-pro, security-auditor, etc.) for implementation
 
 ## License
