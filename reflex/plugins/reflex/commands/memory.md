@@ -98,7 +98,7 @@ Generate or retrieve a daily summary. Defaults to today.
    ──────────────────────────────────────────────
    The session focused on designing a local-first memory system for Claude Code,
    researching SQLite FTS5 internals, hybrid vector retrieval with Reciprocal Rank
-   Fusion, and evaluating sqlite-vec vs Qdrant for local embedding storage.
+   Fusion, and tuning sqlite-vec for local embedding storage.
 
    Key topics (9): sqlite fts5, reciprocal rank fusion, sqlite-vec, ollama embeddings,
                    WAL mode, langfuse hook pattern, vector index design, nomic-embed-text,

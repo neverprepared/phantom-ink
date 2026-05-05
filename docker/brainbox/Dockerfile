@@ -200,13 +200,7 @@ USER developer
 # work out-of-the-box when delivered via config bundle at provision time
 # =============================================================================
 COPY docker/brainbox/hooks-requirements.txt /tmp/hooks-requirements.txt
-RUN uvx --python 3.12 --with-requirements /tmp/hooks-requirements.txt python -c "\
-from fastembed import TextEmbedding; \
-from pathlib import Path; \
-cache = str(Path.home() / '.cache' / 'fastembed'); \
-m = TextEmbedding('sentence-transformers/all-MiniLM-L6-v2', cache_dir=cache); \
-list(m.embed(['warmup'])); \
-print('fastembed model cached')"
+RUN uvx --python 3.12 --with-requirements /tmp/hooks-requirements.txt python -c "import langfuse; print('hook deps installed')"
 
 # =============================================================================
 # MCP servers — pre-install all packages
@@ -239,8 +233,7 @@ RUN bash -c '. "$NVM_DIR/nvm.sh" && npm install -g \
     @neverprepared/mcp-new-relic'
 
 # Python MCP servers — uv tool install pre-downloads packages and puts tools on PATH
-RUN uv tool install --python 3.12 --with fastembed 'mcp-server-qdrant==0.8.1' \
-    && uv tool install --python 3.12 'mcp-atlassian==0.13.0' \
+RUN uv tool install --python 3.12 'mcp-atlassian==0.13.0' \
     && uv tool install --python 3.12 'mcp-server-git==2025.12.18' \
     && uv tool install --python 3.12 markitdown-mcp \
     && uv tool install --python 3.12 'workspace-mcp==1.7.1' \

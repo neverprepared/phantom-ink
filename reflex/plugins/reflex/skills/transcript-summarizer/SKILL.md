@@ -35,7 +35,7 @@ ${REFLEX_TRANSCRIPT_DST_DIR:-./meetings}/
     └── <HH-MM>/
         ├── original.txt    # Raw transcript (unmodified source)
         ├── readable.md     # Cleaned, formatted transcript
-        └── summary.md      # Structured summary (stored in Qdrant)
+        └── summary.md      # Structured summary (stored as a memory)
 ```
 
 ### File Descriptions
@@ -54,7 +54,7 @@ ${REFLEX_TRANSCRIPT_DST_DIR:-./meetings}/
 
 **summary.md**
 - Structured summary following the Summary Template
-- This is the file stored in Qdrant for RAG retrieval
+- This is the file stored as a second-brain memory for retrieval
 - Contains executive summary, decisions, action items, etc.
 
 ### Directory Naming
@@ -68,7 +68,7 @@ ${REFLEX_TRANSCRIPT_DST_DIR:-./meetings}/
 1. **Copy** original transcript to `original.txt`
 2. **Clean** transcript using format-specific preprocessing → `readable.md`
 3. **Summarize** cleaned transcript → `summary.md`
-4. **Store** summary.md content in Qdrant with metadata pointing to directory
+4. **Store** summary.md content via `mcp__obsidian-second-brain__memory_store` with metadata pointing to directory
 
 ## Summary Template
 
@@ -176,44 +176,30 @@ Send entire cleaned transcript to LLM with the system prompt and template.
 2. **Extract**: Summarize each chunk independently, extracting topics, decisions, action items, and questions
 3. **Synthesize**: Combine chunk summaries into a single coherent summary, deduplicating items and merging topics
 
-## Qdrant Storage Schema
+## Storage Schema (second brain)
 
-Always store summaries in Qdrant for RAG retrieval. The **full summary content** must be stored in the `information` field to enable semantic search across meeting contents.
+Always store summaries via the obsidian-second-brain MCP for retrieval. The **full summary markdown** goes into `content` so vector + FTS5 hybrid search can match queries against the meeting body.
 
-**Information Field (embedded content):**
-Store the complete generated summary markdown, including:
-- Executive summary
-- Key topics with descriptions
-- Decisions with reasoning
-- Action items (as formatted text)
-- Open questions
-
-This enables queries like "what did we decide about X?" or "who is responsible for Y?" to find relevant meetings.
-
-**Metadata Fields:**
-```yaml
-source: "meeting_transcript"
-content_type: "meeting_summary"
-harvested_at: "<ISO 8601 timestamp>"
-
-# Meeting context
-meeting_title: "<title>"
-meeting_date: "<YYYY-MM-DD>"
-meeting_time: "<HH-MM>"
-attendees: "<comma-separated names>"
-output_dir: "<path to YYYY-MM-DD/HH-MM directory>"
-source_format: "<vtt|srt|txt|docx|gdoc|pasted>"
-
-# Extracted counts (for filtering)
-action_item_count: <integer>
-decision_count: <integer>
-topics: "<comma-separated key topics>"
-
-# Classification
-category: "business"
-type: "meeting_summary"
-confidence: "high"
 ```
+mcp__obsidian-second-brain__memory_store(
+  title: "Meeting: <title> (<YYYY-MM-DD>)",
+  content: "<the full summary.md content>",
+  para: "areas",
+  tags: ["meeting", "<project-tag>", "<topic-tag>"],
+  source: "import",
+  source_urls: [],
+  confidence: "high",
+  ttl_days: 365
+)
+```
+
+This enables queries like "what did we decide about X?" or "who is responsible for Y?" via `memory_search`. To find a specific meeting again, use `memory_recall` with the returned id.
+
+**Notes on the schema:**
+- PARA `areas` for ongoing meetings/programs; `projects` for time-bound initiative meetings; `archives` once the topic is fully resolved.
+- Tags should include the project, the team, and the meeting type (`standup`, `planning`, `retro`, `1-1`).
+- Long TTL (365d) — meetings rarely become stale at the decision/action level.
+- Action item counts and per-meeting metadata can live in the markdown body; the second-brain schema doesn't need separate metadata fields for them.
 
 ## LLM System Prompt
 

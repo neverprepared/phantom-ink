@@ -1,20 +1,6 @@
 {
   "version": 1,
   "servers": {
-    "qdrant": {
-      "description": "Qdrant vector database for RAG and memory",
-      "category": "data",
-      "url": "https://github.com/qdrant/mcp-server-qdrant",
-      "requires": ["QDRANT_URL"],
-      "definition": {
-        "command": "uvx",
-        "args": ["--python", "3.12", "--with", "fastembed", "mcp-server-qdrant==0.8.1"],
-        "env": {
-          "QDRANT_URL": "${QDRANT_URL:-http://localhost:6333}",
-          "COLLECTION_NAME": "${WORKSPACE_PROFILE:-default}_memories"
-        }
-      }
-    },
     "atlassian": {
       "description": "Jira and Confluence integration",
       "category": "collaboration",

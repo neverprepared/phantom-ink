@@ -1,6 +1,6 @@
 ---
 description: Trace Azure resource dependencies and generate topology diagrams
-allowed-tools: Bash(az:*), Bash(dot:*), Write, AskUserQuestion, mcp__qdrant__qdrant-store
+allowed-tools: Bash(az:*), Bash(dot:*), Write, AskUserQuestion, mcp__obsidian-second-brain__memory_store
 argument-hint: <resource-name> [--subscription NAME] [--output FILE] [--store]
 ---
 
@@ -10,7 +10,7 @@ argument-hint: <resource-name> [--subscription NAME] [--output FILE] [--store]
 > - `Explore:` `/reflex:inventory explore <resource> --provider azure`
 > - `Diagram:` `/reflex:inventory diagram <resource> --provider azure`
 >
-> `/reflex:azure-discover` remains available for its detailed markdown report output and Qdrant `--store` integration.
+> `/reflex:azure-discover` remains available for its detailed markdown report output and second-brain `--store` integration.
 
 # Azure Resource Dependency Tracer
 
@@ -31,7 +31,7 @@ Trace all dependencies of a specific Azure resource — networking, security, id
 | `<resource-name>` | Yes | — | Name of the Azure resource to trace |
 | `--subscription` | No | (current default) | Subscription name or ID to narrow search |
 | `--output` | No | `<resource-name>-topology.md` | Output file name for the report |
-| `--store` | No | `false` | Store the report in Qdrant for RAG queries |
+| `--store` | No | `false` | Store the topology summary in the second-brain vault for retrieval by future queries |
 
 ## Environment Variables
 
@@ -47,7 +47,7 @@ Parse the user's input to extract:
 - First positional argument: `<resource-name>` (required — if missing, ask the user)
 - `--subscription` — narrows search scope
 - `--output` — custom output file name (default: `<resource-name>-topology.md`)
-- `--store` — whether to store in Qdrant after generating
+- `--store` — whether to store the topology summary in the second-brain after generating
 
 Resolve the output directory by running:
 
@@ -142,38 +142,42 @@ Assemble the report using the **Markdown Report Template** from the **azure-reso
 
 Write the report to the output directory resolved in Step 1, combined with the output file name.
 
-### Step 9: Store in Qdrant (Optional) and Report Results
+### Step 9: Store in the Second Brain (Optional) and Report Results
 
-If `--store` was specified, store a **summary** in Qdrant (not the full report — structured documents with tables and diagrams fragment poorly in vector search). The full report stays on disk; the Qdrant entry is a retrieval pointer.
+If `--store` was specified, store a **summary** as a second-brain memory (not the full report — structured documents with tables and diagrams fragment poorly in semantic search). The full report stays on disk; the memory is a retrieval pointer.
 
 Build a concise summary (3-5 sentences) covering: what resource was traced, key dependencies found, networking topology highlights, and any notable security findings.
 
 ```
-Tool: qdrant-store
-Information: "Azure topology trace for <resource-name> (<type-shorthand>) in <resource-group>, <location>. <summary of key dependencies — e.g., 'Runs in prod-vnet/app-subnet, secured by app-nsg, pulls images from prodregistry ACR, authenticates via user-assigned managed identity, secrets from prod-keyvault.'> <dependency-count> dependencies traced. Full report: <output-file-path>"
-Metadata:
-  source: "azure_discovery"
-  content_type: "infrastructure_summary"
-  harvested_at: "<current ISO 8601 timestamp>"
-  subscription_name: "<subscription name>"
-  subscription_id: "<subscription ID>"
-  resource_name: "<target resource name>"
-  resource_type: "<target resource type>"
-  resource_group: "<target resource group>"
-  dependency_count: <total count>
-  regions: "<comma-separated regions>"
-  report_path: "<full output file path>"
-  category: "devops"
-  subcategory: "azure"
-  type: "topology_report"
+Tool: mcp__obsidian-second-brain__memory_store
+Arguments:
+  title: "Azure topology: <resource-name> (<type-shorthand>)"
+  content: |
+    <3-5 sentence summary as described above>
+
+    **Subscription:** <name> (<id>)
+    **Resource group:** <resource-group>
+    **Region:** <location>
+    **Dependency count:** <total>
+    **Full report:** <output-file-path>
+  para: "resources"
+  tags: ["azure", "topology", "<resource-type-shorthand>", "<resource-group>"]
+  source: "import"
+  source_urls: []
   confidence: "high"
+  ttl_days: 90
 ```
+
+Notes:
+- TTL 90d — Azure topologies churn (resources added/removed); short enough that stale traces get re-discovered, long enough to be useful between manual re-traces.
+- PARA `resources` — reusable knowledge keyed by resource name and tags.
+- Tag the resource group so a future `memory_search` for that RG surfaces all traced resources within it.
 
 Summarize what was done:
 - Target resource traced (name, type, resource group)
 - Total dependencies discovered, broken down by category
 - Output file path
-- Qdrant storage confirmation (if `--store` was used)
+- Second-brain memory id (if `--store` was used)
 - Any commands that failed or returned errors
 
 ## Examples
@@ -188,7 +192,7 @@ Summarize what was done:
 # Custom output file name (written to $REFLEX_AZURE_DISCOVER_OUTPUT_DIR or ~/Desktop)
 /reflex:azure-discover my-webapp --output webapp-deps.md
 
-# Trace and store in Qdrant
+# Trace and store the topology summary in the second brain
 /reflex:azure-discover my-vm --store
 
 # Full options

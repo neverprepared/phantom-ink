@@ -7,23 +7,12 @@ This directory contains Docker images and Compose configurations for the phantom
 | Directory | Service | Purpose |
 |-----------|---------|---------|
 | `brainbox/` | Brainbox | Container image for sandboxed Claude Code sessions |
-| `qdrant/` | Qdrant | Vector database for RAG and semantic search |
 | `langfuse/` | LangFuse | LLM observability and tracing |
 | `minio/` | MinIO | S3-compatible object storage for artifacts |
 
 ## Quick Start
 
-### Qdrant (Required for RAG features)
-
-```bash
-cd qdrant
-cp .env.example .env
-docker compose up -d
-```
-
-Dashboard: http://localhost:6333/dashboard
-
-### LangFuse (Optional - for observability)
+### LangFuse (Optional — for observability)
 
 ```bash
 cd langfuse

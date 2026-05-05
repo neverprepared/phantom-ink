@@ -1,14 +1,14 @@
 ---
 description: Initialize MCP server credentials or project workflows
 allowed-tools: Bash(*), Read(*), Write(*), Edit(*), AskUserQuestion(*)
-argument-hint: <langfuse|atlassian|qdrant|azure|azure-devops|github|sql-server|all|status|workflow>
+argument-hint: <langfuse|atlassian|azure|azure-devops|github|sql-server|all|status|workflow>
 ---
 
 # Credential Initialization
 
 Configure credentials for MCP servers and store them in a `.env` file.
 
-**Supported services:** LangFuse, Atlassian, Qdrant, Azure, Azure DevOps, GitHub, SQL Server
+**Supported services:** LangFuse, Atlassian, Azure, Azure DevOps, GitHub, SQL Server
 
 ## Instructions
 
@@ -86,21 +86,6 @@ Configure Atlassian (Jira/Confluence) credentials.
 **Validation:**
 ```bash
 curl -s -o /dev/null -w "%{http_code}" -u "$JIRA_USERNAME:$JIRA_API_TOKEN" "$JIRA_URL/rest/api/2/myself"
-# Expected: 200
-```
-
-### qdrant
-
-Configure Qdrant vector database credentials.
-
-**Required variables:**
-- `QDRANT_URL` - Qdrant server URL (e.g., `http://localhost:6333`)
-- `QDRANT_API_KEY` - API key (optional for local instances)
-- `QDRANT_COLLECTION_NAME` - Default collection name (e.g., `claude-memory`)
-
-**Validation:**
-```bash
-curl -s -o /dev/null -w "%{http_code}" -H "api-key: $QDRANT_API_KEY" "$QDRANT_URL/collections"
 # Expected: 200
 ```
 
@@ -191,7 +176,6 @@ Configure all services. This is the default when no argument is provided.
 **Services configured:**
 - LangFuse (observability)
 - Atlassian (Jira/Confluence)
-- Qdrant (vector database)
 - Azure (resource management)
 - Azure DevOps (CI/CD, repos)
 - GitHub (repos, issues, PRs)
@@ -280,14 +264,13 @@ For backwards compatibility, running `/reflex:init workflow` proceeds with the a
 If no argument or an invalid argument is provided, show usage:
 
 ```
-Usage: /reflex:init <langfuse|atlassian|qdrant|azure|azure-devops|github|sql-server|all|status|workflow>
+Usage: /reflex:init <langfuse|atlassian|azure|azure-devops|github|sql-server|all|status|workflow>
 
 Initialize and configure MCP server credentials, or set up project workflows.
 
 Commands:
   langfuse      Configure LangFuse observability credentials
   atlassian     Configure Atlassian (Jira/Confluence) credentials
-  qdrant        Configure Qdrant vector database credentials
   azure         Configure Azure resource management credentials
   azure-devops  Configure Azure DevOps credentials
   github        Configure GitHub API credentials
@@ -307,7 +290,6 @@ These are the npm/PyPI packages used by each MCP server:
 
 | Server | Package | Runtime |
 |--------|---------|---------|
-| qdrant | `mcp-server-qdrant` | uvx (Python 3.12) |
 | atlassian | `mcp-atlassian` | uvx (Python 3.12) |
 | git | `mcp-server-git` | uvx |
 | github | `@modelcontextprotocol/server-github` | npx |
@@ -367,11 +349,6 @@ JIRA_URL=https://company.atlassian.net
 JIRA_USERNAME=user@example.com
 JIRA_API_TOKEN=xxx
 CONFLUENCE_URL=https://company.atlassian.net
-
-# Qdrant
-QDRANT_URL=http://localhost:6333
-QDRANT_API_KEY=
-QDRANT_COLLECTION_NAME=claude-memory
 
 # Azure
 AZURE_SUBSCRIPTION_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx

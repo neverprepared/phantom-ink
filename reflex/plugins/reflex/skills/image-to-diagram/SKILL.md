@@ -10,7 +10,7 @@ Convert visual diagrams into editable, version-controllable code.
 ## Workflow
 
 ```
-Image → Claude Vision → Mermaid/DOT code → Save → Optionally ingest to Qdrant
+Image → Claude Vision → Mermaid/DOT code → Save → Optionally store as a memory
 ```
 
 ## Supported Input
@@ -104,14 +104,22 @@ style NodeName fill:#hexcolor,stroke:#bordercolor,color:#textcolor
 %% Purple: fill:#7c3aed,stroke:#8b5cf6,color:#fff
 ```
 
-### 5. Save and Optionally Ingest
+### 5. Save and Optionally Store as a Memory
 
 ```bash
 # Save to file
 # Write to ~/Desktop/diagram-name.mmd
+```
 
-# Ingest to Qdrant for pattern reuse
-/reflex:ingest ~/Desktop/diagram-name.mmd --collection personal_memories
+To make the diagram retrievable later by topic, store the source as a memory:
+
+```
+mcp__obsidian-second-brain__memory_store(
+  title: "Microservices architecture diagram",
+  content: "<mermaid source>",
+  para: "resources",
+  tags: ["diagram", "architecture", "mermaid"]
+)
 ```
 
 ## Tips for Best Results
@@ -130,7 +138,7 @@ style NodeName fill:#hexcolor,stroke:#bordercolor,color:#textcolor
 
 "Create a sequence diagram from this interaction flow screenshot"
 
-"Convert to Mermaid, save as microservices-arch.mmd, and ingest to Qdrant"
+"Convert to Mermaid, save as microservices-arch.mmd, and store the source as a memory"
 ```
 
 ## After Conversion
@@ -138,6 +146,6 @@ style NodeName fill:#hexcolor,stroke:#bordercolor,color:#textcolor
 The diagram can be:
 - Committed to version control
 - Rendered in documentation (GitHub, GitLab, Notion)
-- Ingested to Qdrant for semantic search and pattern reuse
+- Stored as a memory for semantic search and pattern reuse
 - Edited and refined as text
 - Used as a template for similar architectures

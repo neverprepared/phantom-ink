@@ -156,6 +156,6 @@ Most research output goes to `resources`. Use tags and `related` links to connec
 
 ## Integration
 
-- **Supersedes**: `web-research` skill for Obsidian-backed workflows
-- **Complements**: `research-patterns`, `qdrant-patterns` for vector-backed search
-- **Depends on**: `mcp__obsidian-memory__*` tools with freshness fields (last_accessed, source_urls, ttl_days)
+- **Supersedes**: the previous `web-research` skill (deleted) — this is the canonical research workflow now
+- **Hybrid retrieval**: `memory_search` runs sqlite-vec KNN + FTS5 BM25 against `{vault}/_index/vectors.db` and fuses the rankings — handles both conceptual queries and exact-term recall
+- **Depends on**: `mcp__obsidian-second-brain__*` tools with freshness fields (last_accessed, source_urls, ttl_days)

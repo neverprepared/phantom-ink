@@ -17,12 +17,12 @@ List all available agents in the Reflex plugin.
 
 | Agent | Purpose | Key Skills |
 |-------|---------|------------|
-| rag-proxy | RAG wrapper for any agent - enriches with Qdrant context | qdrant-patterns, rag-wrapper |
+| rag-proxy | RAG wrapper for any agent — enriches with second-brain (sqlite-vec + FTS5) context before delegation | obsidian-research |
 
 ## Note
 
 Most agent functionality is now provided by:
 - **Official plugins**: testing-suite, security-pro, documentation-generator, developer-essentials
-- **Skills**: analysis-patterns, research-patterns, task-decomposition, etc.
+- **Skills**: analysis-patterns, obsidian-research, task-decomposition, etc.
 
 Use the Task tool directly with official plugin agents, or invoke skills for domain-specific guidance.

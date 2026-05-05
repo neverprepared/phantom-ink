@@ -15,7 +15,7 @@ A Claude Code plugin for application development, infrastructure, and data engin
 
 | Component | Count | Description |
 |-----------|-------|-------------|
-| Skills | 42 | Development patterns, RAG, harvesting, infrastructure |
+| Skills | 36 | Development patterns, harvesting, infrastructure, knowledge management |
 | Commands | 19 | `/reflex:agents`, `/reflex:skills`, `/reflex:handoff`, etc. |
 | Agents | 2 | `rag-proxy`, `workflow-orchestrator` |
 
@@ -25,23 +25,19 @@ The `docker/` directory at the **monorepo root** contains Docker Compose configu
 
 | Service | Purpose | Port |
 |---------|---------|------|
-| [Qdrant](../docker/qdrant) | Vector database for RAG | 6333 |
 | [LangFuse](../docker/langfuse) | LLM observability | 3000 |
 
 ### Quick Start
 
 ```bash
-# Qdrant (required for RAG features)
-cd ../docker/qdrant
-cp .env.example .env
-docker compose up -d
-
-# LangFuse (optional - for observability)
+# LangFuse (optional — for observability)
 cd ../docker/langfuse
 cp .env.example .env
 # Edit .env and generate secrets
 docker compose up -d
 ```
+
+> Vector + keyword storage for the second-brain vault is provided by the [`obsidian-second-brain`](https://github.com/neverprepared/mcp-obsidian-second-brain) MCP, which uses sqlite-vec + FTS5 in a single SQLite file at `{vault}/_index/vectors.db`. No separate service to run.
 
 ## Structure
 
@@ -55,7 +51,6 @@ reflex/
     └── scripts/           # Helper scripts
 
 ../docker/                 # Docker services (monorepo root)
-    ├── qdrant/            # Vector database
     └── langfuse/          # LLM observability
 ```
 
