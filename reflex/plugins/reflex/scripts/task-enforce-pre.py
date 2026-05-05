@@ -63,6 +63,7 @@ def emit(payload: dict) -> None:
 def deny(message: str) -> None:
     emit({
         "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
         },
         "systemMessage": message,
