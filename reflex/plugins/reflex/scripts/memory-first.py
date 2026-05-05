@@ -59,6 +59,7 @@ def main():
     # No valid flag — block and tell Claude to check memory first
     output = {
         "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
         },
         "systemMessage": "\n".join([
