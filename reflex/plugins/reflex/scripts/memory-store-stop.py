@@ -105,12 +105,12 @@ def emit(payload: dict) -> None:
 
 
 def deny(message: str) -> None:
+    # Stop hook output schema differs from PreToolUse:
+    # there's no hookSpecificOutput variant for Stop. Use top-level
+    # decision: "block" + reason to prevent session-end continuation.
     emit({
-        "hookSpecificOutput": {
-            "hookEventName": "Stop",
-            "permissionDecision": "deny",
-        },
-        "systemMessage": message,
+        "decision": "block",
+        "reason": message,
     })
 
 
