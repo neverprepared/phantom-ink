@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/phantom-ink.png" alt="phantom-ink" width="220">
+</p>
+
 # phantom-ink
 
 A macOS desktop app (built with [Wails](https://wails.io)) for managing workspace profiles, orchestrating the [Brainbox](docs/brainbox/README.md) AI-agent infrastructure, and controlling local AI services via [Ollama](https://ollama.com).
