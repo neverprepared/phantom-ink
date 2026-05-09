@@ -148,13 +148,6 @@ var knownServices = []ServiceDef{
 		Port:        9090,
 	},
 	{
-		Name:        "uptime-kuma",
-		Label:       "Uptime Kuma",
-		Description: "Lightweight service health monitoring and alerting",
-		DefaultURL:  "http://localhost:3001",
-		Port:        3001,
-	},
-	{
 		Name:        "ollama",
 		Label:       "Ollama",
 		Description: "Local LLM inference server for private model hosting",
