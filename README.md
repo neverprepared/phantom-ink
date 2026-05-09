@@ -10,7 +10,7 @@ A macOS desktop app (built with [Wails](https://wails.io)) for managing workspac
 
 - **Workspace profiles** — browse, switch, create, and delete shell-profiler profiles backed by direnv. Each profile carries its own git identity, credentials, and tool configuration.
 - **Brainbox integration** — connect to a running Brainbox API, inspect hub state, manage sessions and agents, and restart the service (Docker or Homebrew daemon).
-- **Service management** — enable/disable local integrations (Qdrant, n8n, Langfuse, Uptime Kuma, MinIO, …) with one click; track per-service health and URLs.
+- **Service management** — enable/disable local integrations (Qdrant, n8n, Langfuse, MinIO, …) with one click; track per-service health and URLs.
 - **Ollama** — list installed models and query status of the local Ollama daemon.
 - **API key management** — store a Brainbox API key, masked in the UI.
 
