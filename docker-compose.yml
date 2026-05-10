@@ -8,7 +8,13 @@ services:
   brainbox-api:
     image: ghcr.io/neverprepared/brainbox-api:latest
     ports:
-      - "127.0.0.1:9999:9999"
+      - "${BRAINBOX_API_BIND:-127.0.0.1}:9999:9999"
+    # Container runs as uid 1000 (appuser); add the host docker group so the
+    # bind-mounted /var/run/docker.sock is readable. On Linux, set DOCKER_GID
+    # to the host's docker group GID: `DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)`.
+    # Docker Desktop on macOS doesn't need it but tolerates the override.
+    group_add:
+      - "${DOCKER_GID:-999}"
     volumes:
       # API config (sessions, api key, state) — mounted at the same path as on the host
       # so that session container bind mounts reference real host paths.
@@ -32,6 +38,9 @@ services:
       - HOST_TMPDIR=${TMPDIR:-/tmp}
       # SSH agent socket (Docker Desktop for Mac)
       - SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock
+      # Route bundle sealing through the laptop daemon (`brainbox cc poll`).
+      # Leave unset for local-only deployments — inline sealing is the default.
+      - BRAINBOX_CC_QUEUE=${BRAINBOX_CC_QUEUE:-0}
     networks:
       - brainbox-net
     restart: unless-stopped
@@ -39,7 +48,7 @@ services:
   brainbox-ui:
     image: ghcr.io/neverprepared/brainbox-ui:latest
     ports:
-      - "127.0.0.1:9998:80"
+      - "${BRAINBOX_UI_BIND:-127.0.0.1}:9998:80"
     depends_on:
       - brainbox-api
     networks:
@@ -49,7 +58,7 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     ports:
-      - "127.0.0.1:6333:6333"
+      - "${QDRANT_BIND:-127.0.0.1}:6333:6333"
     volumes:
       - "${QDRANT_DATA_DIR:-${XDG_CONFIG_HOME:-${HOME}/.config}/qdrant}:/qdrant/storage"
     networks:
