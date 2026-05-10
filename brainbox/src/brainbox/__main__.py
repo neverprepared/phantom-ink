@@ -69,6 +69,26 @@ def main() -> None:
         "--url", default=None, help="API URL (default: $BRAINBOX_URL or http://127.0.0.1:9999)"
     )
 
+    # cc — command center primitives (credential bundle building/unsealing)
+    p_cc = sub.add_parser("cc", help="credential bundle utilities")
+    cc_sub = p_cc.add_subparsers(dest="cc_command")
+
+    p_cc_keygen = cc_sub.add_parser("keygen", help="generate an X25519 identity keypair")
+    p_cc_keygen.add_argument("--out", default=None, help="write identity to file (chmod 0600)")
+
+    p_cc_bundle = cc_sub.add_parser("bundle", help="build and seal a credential bundle")
+    p_cc_bundle.add_argument("--profile", required=True, help="workspace profile name")
+    p_cc_bundle.add_argument(
+        "--workspace-home", default=None, help="profile home dir (default: $WORKSPACES_HOME/$profile)"
+    )
+    p_cc_bundle.add_argument("--recipient", required=True, help="age recipient pubkey (age1...)")
+    p_cc_bundle.add_argument("-o", "--output", required=True, help="output path for sealed bundle")
+
+    p_cc_unseal = cc_sub.add_parser("unseal", help="unseal a bundle into a directory")
+    p_cc_unseal.add_argument("-i", "--identity", required=True, help="path to identity secret file")
+    p_cc_unseal.add_argument("bundle", help="sealed bundle path")
+    p_cc_unseal.add_argument("dest", help="destination directory")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -92,6 +112,8 @@ def main() -> None:
             _status_daemon(args)
         elif args.command == "restart":
             _restart_daemon(args)
+        elif args.command == "cc":
+            _cc_dispatch(args, p_cc)
     except Exception as exc:
         print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
         sys.exit(1)
@@ -216,6 +238,111 @@ def _restart_daemon(args: argparse.Namespace) -> None:
     manager = DaemonManager()
     pid, message = manager.restart(host=args.host, port=args.port, reload=args.reload)
     print(message)
+
+
+def _cc_dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if args.cc_command == "keygen":
+        _cc_keygen(args)
+    elif args.cc_command == "bundle":
+        _cc_bundle(args)
+    elif args.cc_command == "unseal":
+        _cc_unseal(args)
+    else:
+        parser.print_help()
+        sys.exit(1)
+
+
+def _cc_keygen(args: argparse.Namespace) -> None:
+    import os
+
+    from .credentials import generate_identity
+
+    pub, ident = generate_identity()
+    if args.out:
+        out = args.out
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(ident + "\n")
+        os.chmod(out, 0o600)
+        print(json.dumps({"ok": True, "recipient": pub, "identity_path": out}))
+    else:
+        print(json.dumps({"ok": True, "recipient": pub, "identity": ident}))
+
+
+def _cc_bundle(args: argparse.Namespace) -> None:
+    import os
+    from pathlib import Path
+
+    from .credentials import pack, seal
+    from .lifecycle import _resolve_profile_env, _resolve_profile_mounts
+
+    workspace_home = args.workspace_home
+    if not workspace_home:
+        ws_root = os.environ.get("WORKSPACES_HOME") or os.environ.get("WORKSPACE_HOME")
+        if ws_root:
+            workspace_home = str(Path(ws_root) / args.profile)
+
+    mounts = _resolve_profile_mounts(workspace_profile=args.profile, workspace_home=workspace_home)
+    sources: list[tuple[Path, str, int | None]] = []
+    for host_path, spec in mounts.items():
+        target = spec["bind"].removeprefix("/home/developer/").removeprefix("/home/developer")
+        if not target or target == "/":
+            continue
+        sources.append((Path(host_path), target, None))
+
+    env_text = _resolve_profile_env(
+        workspace_profile=args.profile, workspace_home=workspace_home
+    )
+    env: dict[str, str] = {}
+    if env_text:
+        for line in env_text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            k, _, v = stripped.partition("=")
+            env[k.strip()] = v
+
+    plaintext = pack(sources, env, args.profile)
+    ciphertext = seal(plaintext, args.recipient)
+
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(ciphertext)
+    os.chmod(out, 0o600)
+
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "output": str(out),
+                "files": len(sources),
+                "env_vars": len(env),
+                "bytes_sealed": len(ciphertext),
+            }
+        )
+    )
+
+
+def _cc_unseal(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from .credentials import unpack, unseal
+
+    identity = Path(args.identity).read_text().strip()
+    ciphertext = Path(args.bundle).read_bytes()
+    plaintext = unseal(ciphertext, identity)
+    manifest = unpack(plaintext, Path(args.dest))
+
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "profile": manifest.profile,
+                "files": len(manifest.files),
+                "env_vars": len(manifest.env),
+                "dest": args.dest,
+            }
+        )
+    )
 
 
 def _format_uptime(seconds: int) -> str:
