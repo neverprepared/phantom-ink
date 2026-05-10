@@ -598,6 +598,123 @@ async def credentials_sealed(
     return {"ok": True, "bytes": len(body)}
 
 
+@app.post("/api/credentials/seal-request")
+async def credentials_seal_request(
+    request: Request, _key=Depends(require_api_key)
+):
+    """HTTP bridge to the cc queue — used by remote runners that can't talk
+    to the in-process queue. Body: {workspace_profile, workspace_home, recipient}.
+    Blocks until the cc poll daemon seals and posts the ciphertext back.
+    Returns the sealed bytes as application/octet-stream.
+    """
+    import asyncio
+
+    from .credentials.queue import get_queue
+
+    body = await request.json()
+    recipient = body.get("recipient", "")
+    if not isinstance(recipient, str) or not recipient.startswith("age1"):
+        raise HTTPException(status_code=400, detail="recipient must be an age1... pubkey")
+    queue = get_queue()
+    req = await queue.enqueue(
+        workspace_profile=body.get("workspace_profile"),
+        workspace_home=body.get("workspace_home"),
+        recipient=recipient,
+    )
+    try:
+        sealed = await asyncio.wait_for(req.fut, timeout=float(body.get("timeout", 60)))
+    except asyncio.TimeoutError as exc:
+        await queue.cancel(req.id, "seal-request timed out")
+        raise HTTPException(status_code=504, detail="no laptop daemon responded") from exc
+    return Response(content=sealed, media_type="application/octet-stream")
+
+
+# ---------------------------------------------------------------------------
+# Runner registry — remote agents register here and long-poll for work.
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/runners/register")
+async def runners_register(request: Request, _key=Depends(require_api_key)):
+    from .runners import get_registry
+
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+    caps = body.get("capabilities") or {}
+    if not isinstance(caps, dict):
+        raise HTTPException(status_code=400, detail="capabilities must be an object")
+    reg = get_registry()
+    info = await reg.register(
+        name=name,
+        capabilities={k: bool(v) for k, v in caps.items()},
+        tags=body.get("tags") or [],
+        version=body.get("version") or "",
+    )
+    return {
+        "ok": True,
+        "runner": {
+            "name": info.name,
+            "capabilities": info.capabilities,
+            "tags": info.tags,
+        },
+        "poll_interval": 30,
+    }
+
+
+@app.get("/api/runners")
+async def runners_list(_key=Depends(require_api_key)):
+    from .runners import get_registry
+
+    reg = get_registry()
+    runners = await reg.list_runners()
+    return [
+        {
+            "name": r.name,
+            "capabilities": r.capabilities,
+            "tags": r.tags,
+            "version": r.version,
+            "registered_at": r.registered_at,
+            "last_seen": r.last_seen,
+        }
+        for r in runners
+    ]
+
+
+@app.get("/api/runners/{name}/pending")
+async def runners_pending(name: str, _key=Depends(require_api_key)):
+    from .runners import get_registry
+
+    reg = get_registry()
+    info = await reg.get(name)
+    if info is None:
+        raise HTTPException(status_code=404, detail="runner not registered")
+    item = await reg.next_pending(name, timeout=30.0)
+    if item is None:
+        return Response(status_code=204)
+    return {
+        "id": item.id,
+        "kind": item.kind,
+        "payload": item.payload,
+    }
+
+
+@app.post("/api/runners/{name}/result/{work_id}")
+async def runners_result(
+    name: str, work_id: str, request: Request, _key=Depends(require_api_key)
+):
+    from .runners import get_registry
+
+    body = await request.json()
+    reg = get_registry()
+    if await reg.get(name) is None:
+        raise HTTPException(status_code=404, detail="runner not registered")
+    if not await reg.fulfill(work_id, body):
+        raise HTTPException(status_code=404, detail="work item not found or already fulfilled")
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------------------
 # Session management routes (from dashboard/server.js)
 # ---------------------------------------------------------------------------
@@ -960,6 +1077,7 @@ async def api_create_session(
             task_description=body.task,
             task_id=task_id,
             delivery=body.delivery,
+            runner=body.runner,
         )
         _audit_log(request, "session.create", session_name=body.name, success=True)
         _broadcast_sse(json.dumps({"action": "session.create", "session": body.name, "profile": body.workspace_profile or ""}))

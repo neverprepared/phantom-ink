@@ -61,6 +61,7 @@ class CreateSessionRequest(BaseModel):
     docker_host: str | None = None  # Docker daemon host (None = local socket)
     repo: RepoConfig | None = None  # Repo access mode (worktree-mount, clone, clone-worktree)
     delivery: str | None = None  # "bind" (default) or "bundle"
+    runner: str | None = None  # Runner name to dispatch this session to (None = local execution)
 
     @field_validator("name")
     @classmethod

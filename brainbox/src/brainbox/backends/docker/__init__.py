@@ -334,7 +334,14 @@ class DockerBackend:
             )
         recipient = rcat.output.decode().strip()
 
-        if os.environ.get("BRAINBOX_CC_QUEUE", "").lower() in ("1", "true", "yes"):
+        if os.environ.get("BRAINBOX_CC_API_URL"):
+            # Runner path — post seal-request to the central API; the API
+            # relays through its cc queue to the laptop daemon.
+            ciphertext = await self._seal_via_central_api(
+                os.environ["BRAINBOX_CC_API_URL"], ctx, recipient
+            )
+            sealed_via = "central_api"
+        elif os.environ.get("BRAINBOX_CC_QUEUE", "").lower() in ("1", "true", "yes"):
             ciphertext = await self._seal_via_queue(ctx, recipient)
             sealed_via = "queue"
         elif os.environ.get("BRAINBOX_CC_URL"):
@@ -456,6 +463,41 @@ class DockerBackend:
         if not ciphertext:
             raise RuntimeError("laptop daemon returned empty bundle (build error?)")
         return ciphertext
+
+    async def _seal_via_central_api(
+        self, api_url: str, ctx: SessionContext, recipient: str
+    ) -> bytes:
+        """Post a seal-request to the central brainbox API. Used by runner
+        processes that don't have their own cc queue or filesystem creds."""
+        import os
+
+        import httpx
+
+        api_key = (
+            os.environ.get("BRAINBOX_CC_API_KEY")
+            or os.environ.get("CL_API_KEY")
+            or ""
+        )
+        if not api_key:
+            raise RuntimeError(
+                "BRAINBOX_CC_API_URL is set but BRAINBOX_CC_API_KEY/CL_API_KEY is missing"
+            )
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                api_url.rstrip("/") + "/api/credentials/seal-request",
+                headers={"X-API-Key": api_key},
+                json={
+                    "workspace_profile": ctx.workspace_profile,
+                    "workspace_home": ctx.workspace_home,
+                    "recipient": recipient,
+                    "timeout": 90,
+                },
+            )
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"central /api/credentials/seal-request failed ({resp.status_code}): {resp.text[:200]}"
+            )
+        return resp.content
 
     async def _seal_via_daemon(
         self, cc_url: str, ctx: SessionContext, recipient: str

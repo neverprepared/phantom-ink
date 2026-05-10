@@ -94,6 +94,9 @@ class SessionContext(BaseModel):
     # bind: credential dirs are bind-mounted from the host (legacy default).
     # bundle: credentials shipped as a sealed age bundle injected via docker exec / put_archive.
     delivery: Literal["bind", "bundle"] = "bind"
+    # Runner that owns this session. None or "local" = executed in-process by
+    # the API host; any other value routes through the runner work queue.
+    runner_name: str | None = None
     # Backend-specific fields
     backend: Literal["docker", "utm"] = "docker"
     docker_host: str | None = None  # Docker daemon host (None = local socket)

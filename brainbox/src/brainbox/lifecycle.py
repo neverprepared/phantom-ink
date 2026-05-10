@@ -709,6 +709,62 @@ async def _verify_cosign(image: Any, image_name: str, slog: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Runner dispatch — when a session names a remote runner, we hand the whole
+# provision/configure/start cycle off to it and just await the result.
+# ---------------------------------------------------------------------------
+
+
+async def _provision_via_runner(*, runner: str, **payload: Any) -> SessionContext:
+    """Enqueue a session.create work item for a runner and await the
+    SessionContext it builds. Caller is expected to have already validated
+    that the runner exists."""
+    from .runners import get_registry
+
+    reg = get_registry()
+    info = await reg.get(runner)
+    if info is None:
+        raise RuntimeError(
+            f"runner {runner!r} is not registered — start it with `brainbox runner`"
+        )
+
+    # Capability gate: the requested backend must be supported.
+    requested_backend = payload.get("backend") or "docker"
+    if not info.capabilities.get(requested_backend):
+        raise RuntimeError(
+            f"runner {runner!r} does not advertise capability {requested_backend!r}"
+        )
+
+    serializable = {
+        k: (v.model_dump() if hasattr(v, "model_dump") else v)
+        for k, v in payload.items()
+        if v is not None
+    }
+    item = await reg.enqueue(
+        runner=runner,
+        kind="session.create",
+        payload=serializable,
+    )
+    timeout = float(os.environ.get("BRAINBOX_RUNNER_TIMEOUT", "300"))
+    try:
+        result = await asyncio.wait_for(item.fut, timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        await reg.cancel(item.id, "runner timed out")
+        raise RuntimeError(
+            f"runner {runner!r} did not return a result within {timeout}s"
+        ) from exc
+    if not result.get("ok"):
+        raise RuntimeError(
+            f"runner {runner!r} failed session.create: {result.get('error', 'unknown error')}"
+        )
+    ctx_data = result.get("data") or {}
+    ctx = SessionContext(**ctx_data)
+    if not ctx.runner_name:
+        ctx.runner_name = runner
+    _sessions[ctx.session_name] = ctx
+    return ctx
+
+
+# ---------------------------------------------------------------------------
 # Phase 1: Provision
 # ---------------------------------------------------------------------------
 
@@ -739,8 +795,40 @@ async def provision(
     job_id: str | None = None,
     docker_host: str | None = None,
     delivery: str | None = None,
+    runner: str | None = None,
 ) -> SessionContext:
     from .backends import create_backend
+
+    # Runner routing — if a remote runner is named, dispatch the whole
+    # provision request to it and return the SessionContext it builds.
+    if runner and runner != "local":
+        return await _provision_via_runner(
+            runner=runner,
+            session_name=session_name,
+            role=role,
+            port=port,
+            hardened=hardened,
+            ttl=ttl,
+            volume_mounts=volume_mounts,
+            token=token,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+            llm_effort=llm_effort,
+            ollama_host=ollama_host,
+            codex_api_key=codex_api_key,
+            workspace_profile=workspace_profile,
+            workspace_home=workspace_home,
+            backend=backend,
+            vm_template=vm_template,
+            guest_os=guest_os,
+            ports=ports,
+            repo_url=repo_url,
+            task_description=task_description,
+            task_id=task_id,
+            job_id=job_id,
+            docker_host=docker_host,
+            delivery=delivery,
+        )
 
     resolved_role = role or settings.role
     resolved_prefix = settings.container_prefix or f"{resolved_role}-"
@@ -1252,6 +1340,7 @@ async def run_pipeline(
     docker_host: str | None = None,
     repo: Any = None,  # RepoConfig | None — avoid circular import
     delivery: str | None = None,
+    runner: str | None = None,
 ) -> SessionContext:
     # Pre-provision: ci-ratchet sets defaults (branch, role, task_description).
     # "Brownian ratchet" concept from multiclaude by Dan Lorenc et al.:
@@ -1296,7 +1385,14 @@ async def run_pipeline(
         job_id=job_id,
         docker_host=docker_host,
         delivery=delivery,
+        runner=runner,
     )
+
+    # If the session was dispatched to a remote runner, the runner has already
+    # driven provision → configure → start. Skip the local config bundle and
+    # remaining pipeline steps; the runner owns the lifecycle from here.
+    if ctx.runner_name and ctx.runner_name != "local":
+        return ctx
 
     # Profile .claude is mounted read-only at provision time (see _build_volume_map).
     # Config bundle injection is no longer needed — MCP servers, settings, and
