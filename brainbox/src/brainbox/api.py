@@ -558,6 +558,47 @@ async def sse_events(
 
 
 # ---------------------------------------------------------------------------
+# Credential bundle queue (Phase 5) — laptop daemon polls these endpoints
+# from outside the API host. The docker backend enqueues directly via the
+# in-process singleton when BRAINBOX_CC_QUEUE=1.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/credentials/pending")
+async def credentials_pending(_key=Depends(require_api_key)):
+    """Long-poll for the next pending bundle request. 204 if none."""
+    from .credentials.queue import get_queue
+
+    queue = get_queue()
+    req = await queue.next_pending(timeout=30.0)
+    if req is None:
+        return Response(status_code=204)
+    return {
+        "id": req.id,
+        "workspace_profile": req.workspace_profile,
+        "workspace_home": req.workspace_home,
+        "recipient": req.recipient,
+        "created_at": req.created_at,
+    }
+
+
+@app.post("/api/credentials/{request_id}/sealed")
+async def credentials_sealed(
+    request_id: str, request: Request, _key=Depends(require_api_key)
+):
+    """Daemon uploads sealed ciphertext. Resolves the awaiting producer."""
+    from .credentials.queue import get_queue
+
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="empty body")
+    queue = get_queue()
+    if not await queue.fulfill(request_id, body):
+        raise HTTPException(status_code=404, detail="request not found or already fulfilled")
+    return {"ok": True, "bytes": len(body)}
+
+
+# ---------------------------------------------------------------------------
 # Session management routes (from dashboard/server.js)
 # ---------------------------------------------------------------------------
 

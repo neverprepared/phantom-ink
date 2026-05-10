@@ -334,9 +334,13 @@ class DockerBackend:
             )
         recipient = rcat.output.decode().strip()
 
-        cc_url = os.environ.get("BRAINBOX_CC_URL")
-        if cc_url:
-            ciphertext = await self._seal_via_daemon(cc_url, ctx, recipient)
+        if os.environ.get("BRAINBOX_CC_QUEUE", "").lower() in ("1", "true", "yes"):
+            ciphertext = await self._seal_via_queue(ctx, recipient)
+            sealed_via = "queue"
+        elif os.environ.get("BRAINBOX_CC_URL"):
+            ciphertext = await self._seal_via_daemon(
+                os.environ["BRAINBOX_CC_URL"], ctx, recipient
+            )
             sealed_via = "daemon"
         else:
             from ...credentials import build_sealed_bundle
@@ -425,6 +429,33 @@ class DockerBackend:
                 f"docker exec write to {dest_path} failed (exit {proc.returncode}): "
                 f"{stderr.decode(errors='replace')[:200]}"
             )
+
+    async def _seal_via_queue(self, ctx: SessionContext, recipient: str) -> bytes:
+        """Enqueue a seal request and wait for the laptop daemon (cc poll) to
+        return ciphertext. Used when BRAINBOX_CC_QUEUE=1 — the API host doesn't
+        have access to the user's plaintext credentials, only the laptop does."""
+        import asyncio
+        import os
+
+        from ...credentials.queue import get_queue
+
+        timeout = float(os.environ.get("BRAINBOX_CC_QUEUE_TIMEOUT", "60"))
+        queue = get_queue()
+        req = await queue.enqueue(
+            workspace_profile=ctx.workspace_profile,
+            workspace_home=ctx.workspace_home,
+            recipient=recipient,
+        )
+        try:
+            ciphertext = await asyncio.wait_for(req.fut, timeout=timeout)
+        except asyncio.TimeoutError as exc:
+            await queue.cancel(req.id, "timed out waiting for laptop daemon")
+            raise RuntimeError(
+                f"no laptop daemon responded within {timeout}s — is `brainbox cc poll` running?"
+            ) from exc
+        if not ciphertext:
+            raise RuntimeError("laptop daemon returned empty bundle (build error?)")
+        return ciphertext
 
     async def _seal_via_daemon(
         self, cc_url: str, ctx: SessionContext, recipient: str

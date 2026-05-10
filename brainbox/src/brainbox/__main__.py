@@ -93,6 +93,12 @@ def main() -> None:
     p_cc_serve.add_argument("--host", default="127.0.0.1")
     p_cc_serve.add_argument("--port", type=int, default=9888)
 
+    p_cc_poll = cc_sub.add_parser(
+        "poll", help="poll an API for pending bundle requests and seal them"
+    )
+    p_cc_poll.add_argument("--api", required=True, help="brainbox API base URL (e.g. https://...)")
+    p_cc_poll.add_argument("--api-key", default=None, help="API key (default: $CL_API_KEY)")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -253,6 +259,8 @@ def _cc_dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> N
         _cc_unseal(args)
     elif args.cc_command == "serve":
         _cc_serve(args)
+    elif args.cc_command == "poll":
+        _cc_poll(args)
     else:
         parser.print_help()
         sys.exit(1)
@@ -312,6 +320,17 @@ def _cc_serve(args: argparse.Namespace) -> None:
     from .credentials.daemon import serve
 
     serve(host=args.host, port=args.port)
+
+
+def _cc_poll(args: argparse.Namespace) -> None:
+    import os
+
+    from .credentials.poll import poll_loop
+
+    api_key = args.api_key or os.environ.get("CL_API_KEY") or os.environ.get("BRAINBOX_CC_API_KEY") or ""
+    if not api_key:
+        raise RuntimeError("--api-key or $CL_API_KEY required")
+    poll_loop(args.api, api_key)
 
 
 def _cc_unseal(args: argparse.Namespace) -> None:
