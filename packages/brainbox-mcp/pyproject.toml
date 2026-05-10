@@ -1,15 +1,24 @@
 [project]
 name = "brainbox-mcp"
 version = "0.0.0"  # overridden at build time via --no-isolation + hatch version
-description = "Brainbox MCP server — exposes the brainbox API as Claude MCP tools"
+description = "Brainbox guest helpers — MCP server + bb-init credential bundle applier"
 requires-python = ">=3.11"
 dependencies = [
     "mcp[cli]>=1.9",
     "structlog>=24.4",
+    "pyrage>=1.2",
+    "zstandard>=0.22",
 ]
 
 [project.scripts]
 brainbox-mcp = "brainbox_mcp.__main__:main"
+brainbox-init = "brainbox_mcp.init:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -17,3 +26,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/brainbox_mcp"]
+# brainbox_mcp/_credentials is a symlink to ../../brainbox/src/brainbox/credentials —
+# single source of truth, traversed at wheel-build time so the container install
+# needs only this package (no cross-package install ordering).
