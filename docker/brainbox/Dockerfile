@@ -241,10 +241,12 @@ RUN uv tool install --python 3.12 'mcp-atlassian==0.13.0' \
         --from 'git+https://github.com/neverprepared/kuma_uptime_mcp.git' \
         mcp-uptime-kuma
 
-# Brainbox MCP server — minimal package providing the brainbox-mcp binary
-COPY --chown=developer:developer packages/brainbox-mcp /tmp/brainbox-mcp-pkg
-RUN uv tool install --python 3.12 /tmp/brainbox-mcp-pkg \
-    && rm -rf /tmp/brainbox-mcp-pkg
+# Brainbox MCP server (+ brainbox-init for credential bundle delivery).
+# Wheel is built on the host before docker build so the _credentials symlink
+# is resolved into real files; see brainbox/scripts/build.sh.
+COPY --chown=developer:developer packages/brainbox-mcp/dist /tmp/brainbox-mcp-dist
+RUN uv tool install --python 3.12 /tmp/brainbox-mcp-dist/brainbox_mcp-*.whl \
+    && rm -rf /tmp/brainbox-mcp-dist
 
 # Skip onboarding and pre-trust common working directories
 RUN bash -c 'if [ -f /home/developer/.claude.json ]; then \

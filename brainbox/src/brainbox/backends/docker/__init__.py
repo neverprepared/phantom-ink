@@ -184,7 +184,7 @@ class DockerBackend:
                     target="/run/brainbox",
                     source="",
                     type="tmpfs",
-                    tmpfs_size=4 * 1024 * 1024,
+                    tmpfs_size=64 * 1024 * 1024,
                     tmpfs_mode=0o1777,
                 )
             )
@@ -304,9 +304,7 @@ class DockerBackend:
         $BRAINBOX_CC_URL is set, the command-center daemon does it instead —
         same ciphertext shape either way.
         """
-        import io
         import os
-        import tarfile
 
         kg = await _run(
             container.exec_run,
@@ -351,13 +349,24 @@ class DockerBackend:
             )
             sealed_via = "inline"
 
-        buf = io.BytesIO()
-        with tarfile.open(fileobj=buf, mode="w") as tf:
-            info = tarfile.TarInfo("bundle.age")
-            info.size = len(ciphertext)
-            info.mode = 0o644
-            tf.addfile(info, io.BytesIO(ciphertext))
-        await _run(container.put_archive, "/run/brainbox", buf.getvalue())
+        # put_archive on a running container that has socket bind mounts (notably
+        # the GPG agent socket) trips a Docker Desktop bug — the daemon tries to
+        # rbind-mount the socket as a directory and fails. Stream the ciphertext
+        # in over stdin via `docker exec -i` instead, which uses the exec API
+        # rather than the archive endpoint.
+        await self._write_file_via_exec(
+            ctx.container_name, "/run/brainbox/bundle.age", ciphertext
+        )
+
+        # Docker creates parent dirs for bind-mounted sockets/files as root, so
+        # /home/developer/.gnupg (and any other dir Docker auto-creates for our
+        # surviving bind mounts) lands root-owned. Reclaim ownership for
+        # developer before brainbox-init writes files into those paths.
+        await _run(
+            container.exec_run,
+            ["sh", "-c", "chown -R developer:developer /home/developer"],
+            user="root",
+        )
 
         ap = await _run(
             container.exec_run,
@@ -385,6 +394,37 @@ class DockerBackend:
                 "sealed_bytes": len(ciphertext),
             },
         )
+
+    async def _write_file_via_exec(
+        self, container_name: str, dest_path: str, data: bytes
+    ) -> None:
+        """Stream bytes into a file inside a running container via `docker exec -i`.
+
+        Workaround for a Docker Desktop bug where put_archive against a running
+        container with bind-mounted sockets fails. base64 is POSIX-standard and
+        present in the brainbox image.
+        """
+        import asyncio
+        import base64
+
+        proc = await asyncio.create_subprocess_exec(
+            "docker",
+            "exec",
+            "-i",
+            container_name,
+            "sh",
+            "-c",
+            f"base64 -d > {dest_path}",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _stdout, stderr = await proc.communicate(input=base64.b64encode(data))
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"docker exec write to {dest_path} failed (exit {proc.returncode}): "
+                f"{stderr.decode(errors='replace')[:200]}"
+            )
 
     async def _seal_via_daemon(
         self, cc_url: str, ctx: SessionContext, recipient: str
