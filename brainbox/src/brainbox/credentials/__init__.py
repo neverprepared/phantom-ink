@@ -5,10 +5,11 @@ Backend wiring lives in later phases.
 """
 
 from .build import build_sealed_bundle
-from .bundle import FileEntry, Manifest, pack, unpack
+from .bundle import DirEntry, FileEntry, Manifest, pack, unpack
 from .seal import generate_identity, recipient_of, seal, unseal
 
 __all__ = [
+    "DirEntry",
     "FileEntry",
     "Manifest",
     "build_sealed_bundle",

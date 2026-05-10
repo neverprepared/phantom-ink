@@ -41,11 +41,18 @@ class FileEntry:
     size: int
 
 
+@dataclass(frozen=True)
+class DirEntry:
+    target: str
+    mode: int
+
+
 @dataclass
 class Manifest:
     profile: str
     created_at: str
     files: list[FileEntry] = field(default_factory=list)
+    dirs: list[DirEntry] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     version: int = BUNDLE_FORMAT_VERSION
 
@@ -58,6 +65,7 @@ class Manifest:
                 {"arcname": f.arcname, "target": f.target, "mode": f.mode, "size": f.size}
                 for f in self.files
             ],
+            "dirs": [{"target": d.target, "mode": d.mode} for d in self.dirs],
             "env": self.env,
         }
         return json.dumps(payload, indent=2, sort_keys=True)
@@ -70,6 +78,7 @@ class Manifest:
             profile=d["profile"],
             created_at=d["created_at"],
             files=[FileEntry(**f) for f in d["files"]],
+            dirs=[DirEntry(**dd) for dd in d.get("dirs", [])],
             env=d.get("env", {}),
         )
 
@@ -94,10 +103,24 @@ def pack(
 
     Each source is (host_path, target_relative_to_home, mode_override).
     Directories are walked recursively; mode_override only applies to single-file
-    sources (directory contents preserve filesystem modes).
+    sources (directory contents preserve filesystem modes). Dir modes are
+    captured so unpack() can chmod parent dirs that already exist on the guest
+    (e.g. /home/developer/.gnupg is auto-created by Docker as 0755 before apply
+    runs; the manifest records 0700 from the host so apply tightens it).
     """
     entries: list[FileEntry] = []
+    dirs: dict[str, int] = {}
     buf = io.BytesIO()
+
+    def record_dir(host_dir: Path, target_dir: str) -> None:
+        if not target_dir or target_dir == ".":
+            return
+        try:
+            mode = _stat_mode(host_dir)
+        except OSError:
+            return
+        # Last write wins; same target should always have the same host source.
+        dirs[target_dir] = mode
 
     with tarfile.open(fileobj=buf, mode="w") as tf:
         for host_path, raw_target, mode_override in sources:
@@ -110,24 +133,35 @@ def pack(
                 data = host_path.read_bytes()
                 _add_file(tf, arcname, data, mode)
                 entries.append(FileEntry(arcname, target, mode, len(data)))
+                # Capture the host-side parent dir mode so the guest can match it.
+                target_parent = Path(target).parent.as_posix()
+                if target_parent and target_parent != ".":
+                    record_dir(host_path.parent, target_parent)
             elif host_path.is_dir():
+                record_dir(host_path, target)
                 for sub in sorted(host_path.rglob("*")):
-                    if not sub.is_file() or sub.is_symlink():
+                    if sub.is_symlink():
                         continue
                     rel = sub.relative_to(host_path).as_posix()
                     sub_target = f"{target}/{rel}"
-                    arcname = FILES_PREFIX + sub_target
-                    mode = _stat_mode(sub)
-                    data = sub.read_bytes()
-                    _add_file(tf, arcname, data, mode)
-                    entries.append(FileEntry(arcname, sub_target, mode, len(data)))
+                    if sub.is_dir():
+                        record_dir(sub, sub_target)
+                    elif sub.is_file():
+                        arcname = FILES_PREFIX + sub_target
+                        mode = _stat_mode(sub)
+                        data = sub.read_bytes()
+                        _add_file(tf, arcname, data, mode)
+                        entries.append(FileEntry(arcname, sub_target, mode, len(data)))
             else:
                 continue
 
+        # Sort dirs by depth so parents land before children when applied.
+        sorted_dirs = sorted(dirs.items(), key=lambda kv: (kv[0].count("/"), kv[0]))
         manifest = Manifest(
             profile=profile,
             created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             files=entries,
+            dirs=[DirEntry(target=t, mode=m) for t, m in sorted_dirs],
             env=env,
         )
         _add_file(tf, MANIFEST_NAME, manifest.to_json().encode("utf-8"), 0o600)
@@ -164,6 +198,14 @@ def unpack(data: bytes, dest: Path) -> Manifest:
             target_path.parent.mkdir(parents=True, exist_ok=True, mode=DEFAULT_DIR_MODE)
             target_path.write_bytes(src.read())
             os.chmod(target_path, entry.mode)
+
+        # chmod recorded dirs (parents-first per pack()'s sort). Dirs may have
+        # been auto-created by the host (Docker bind mount parent) at a looser
+        # mode than the host source — this tightens them.
+        for d in manifest.dirs:
+            dir_path = dest / d.target
+            if dir_path.is_dir():
+                os.chmod(dir_path, d.mode)
 
         for member in tf.getmembers():
             if member.name == MANIFEST_NAME:

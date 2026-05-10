@@ -140,6 +140,45 @@ def test_pack_mode_override(fake_profile: Path, tmp_path: Path):
     assert _read_perm(dest / ".gitconfig") == 0o400
 
 
+def test_pack_records_dir_modes_and_unpack_tightens_existing_dirs(
+    fake_profile: Path, tmp_path: Path
+):
+    """A dir created loosely by the guest (e.g. Docker auto-creating .gnupg
+    at 0755 for a socket bind) must be tightened to the host's source mode."""
+    # Tighten host source dir to a non-default mode we'll look for after unpack.
+    os.chmod(fake_profile / ".ssh", 0o700)
+    sources = [(fake_profile / ".ssh", ".ssh", None)]
+    raw = pack(sources, {}, profile="x")
+
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    # Pre-create the target dir at a *looser* mode, simulating Docker's behavior.
+    (dest / ".ssh").mkdir(mode=0o755)
+    os.chmod(dest / ".ssh", 0o755)
+
+    manifest = unpack(raw, dest)
+    assert any(d.target == ".ssh" and d.mode == 0o700 for d in manifest.dirs)
+    assert _read_perm(dest / ".ssh") == 0o700
+
+
+def test_pack_records_parent_dir_for_file_source(fake_profile: Path, tmp_path: Path):
+    """File-mount sources (e.g. .gnupg/pubring.kbx) should still record the parent
+    dir's mode so unpack can tighten the target parent if needed."""
+    gnupg = fake_profile / ".gnupg"
+    gnupg.mkdir(mode=0o700)
+    pubring = gnupg / "pubring.kbx"
+    pubring.write_bytes(b"\x00\x01")
+    os.chmod(pubring, 0o600)
+
+    raw = pack([(pubring, ".gnupg/pubring.kbx", None)], {}, profile="x")
+    dest = tmp_path / "out"
+    dest.mkdir()
+    (dest / ".gnupg").mkdir(mode=0o755)
+    manifest = unpack(raw, dest)
+    assert any(d.target == ".gnupg" and d.mode == 0o700 for d in manifest.dirs)
+    assert _read_perm(dest / ".gnupg") == 0o700
+
+
 def test_unpack_rejects_extra_tar_members(fake_profile: Path, tmp_path: Path):
     """Defends against tampered bundles with files outside the manifest."""
     import io
