@@ -9,12 +9,11 @@ services:
     image: ghcr.io/neverprepared/brainbox-api:latest
     ports:
       - "${BRAINBOX_API_BIND:-127.0.0.1}:9999:9999"
-    # Container runs as uid 1000 (appuser); add the host docker group so the
-    # bind-mounted /var/run/docker.sock is readable. On Linux, set DOCKER_GID
-    # to the host's docker group GID: `DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)`.
-    # Docker Desktop on macOS doesn't need it but tolerates the override.
-    group_add:
-      - "${DOCKER_GID:-999}"
+    # The API needs full access to the host's docker.sock (DooD — it spawns
+    # session containers). Bind-mount socket permissions vary across Docker
+    # Desktop / Linux distros, so just run as root inside the container. The
+    # security boundary is the docker socket itself, not the API process.
+    user: "0:0"
     volumes:
       # API config (sessions, api key, state) — mounted at the same path as on the host
       # so that session container bind mounts reference real host paths.
