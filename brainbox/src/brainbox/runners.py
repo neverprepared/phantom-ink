@@ -167,3 +167,85 @@ def get_registry() -> RunnerRegistry:
 def reset_registry_for_tests() -> None:
     global _singleton
     _singleton = None
+
+
+# ---------------------------------------------------------------------------
+# Pairing — one-time tokens that let a new runner claim an api_url + api_key
+# without the operator pasting the key by hand. The Wails app calls /pair/start
+# with the URL+key it already has, shows the resulting token as a QR / phrase,
+# and the runner calls /pair/claim with that token.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PairingTicket:
+    token: str
+    api_url: str
+    api_key: str
+    runner_name_suggestion: str
+    expires_at: float  # epoch seconds
+    consumed: bool = False
+
+
+class PairingStore:
+    """In-memory, single-use, TTL-bound pairing tickets. Stays small (a few
+    tickets at a time) so no LRU eviction — expired entries are cleaned on
+    every access."""
+
+    def __init__(self) -> None:
+        self._tickets: dict[str, PairingTicket] = {}
+        self._lock = asyncio.Lock()
+
+    async def issue(
+        self,
+        *,
+        api_url: str,
+        api_key: str,
+        runner_name_suggestion: str = "",
+        ttl_seconds: float = 300.0,
+    ) -> PairingTicket:
+        # Short, URL-safe, unambiguous-ish. 12 chars of secrets.token_urlsafe
+        # gives ~9 bytes of entropy — plenty for a 5-minute single-use token.
+        token = secrets.token_urlsafe(9)
+        ticket = PairingTicket(
+            token=token,
+            api_url=api_url,
+            api_key=api_key,
+            runner_name_suggestion=runner_name_suggestion,
+            expires_at=time.time() + ttl_seconds,
+        )
+        async with self._lock:
+            self._sweep_expired_locked()
+            self._tickets[token] = ticket
+        return ticket
+
+    async def claim(self, token: str) -> PairingTicket | None:
+        async with self._lock:
+            self._sweep_expired_locked()
+            ticket = self._tickets.get(token)
+            if ticket is None or ticket.consumed:
+                return None
+            ticket.consumed = True
+            # Drop immediately on successful claim; no second look.
+            self._tickets.pop(token, None)
+            return ticket
+
+    def _sweep_expired_locked(self) -> None:
+        now = time.time()
+        for tok in [t for t, tk in self._tickets.items() if tk.expires_at < now]:
+            self._tickets.pop(tok, None)
+
+
+_pairing_singleton: PairingStore | None = None
+
+
+def get_pairing_store() -> PairingStore:
+    global _pairing_singleton
+    if _pairing_singleton is None:
+        _pairing_singleton = PairingStore()
+    return _pairing_singleton
+
+
+def reset_pairing_store_for_tests() -> None:
+    global _pairing_singleton
+    _pairing_singleton = None

@@ -715,6 +715,60 @@ async def runners_result(
     return {"ok": True}
 
 
+@app.post("/api/runners/pair/start")
+async def runners_pair_start(request: Request, _key=Depends(require_api_key)):
+    """Issue a one-time pairing ticket. Caller must already be authenticated —
+    they're delegating their api_url + api_key to a new runner. Body fields:
+    api_url (required), api_key (optional; defaults to caller's auth), ttl,
+    runner_name_suggestion."""
+    from .auth import get_api_key
+    from .runners import get_pairing_store
+
+    body = await request.json() if await request.body() else {}
+    api_url = (body.get("api_url") or "").strip()
+    if not api_url:
+        raise HTTPException(status_code=400, detail="api_url required")
+    api_key = body.get("api_key") or get_api_key()
+    if not api_key:
+        raise HTTPException(status_code=500, detail="server has no api key to share")
+    ttl = float(body.get("ttl") or 300)
+    if ttl <= 0 or ttl > 1800:
+        raise HTTPException(status_code=400, detail="ttl must be 0 < ttl <= 1800")
+    store = get_pairing_store()
+    ticket = await store.issue(
+        api_url=api_url,
+        api_key=api_key,
+        runner_name_suggestion=body.get("runner_name_suggestion") or "",
+        ttl_seconds=ttl,
+    )
+    return {
+        "token": ticket.token,
+        "expires_at": ticket.expires_at,
+        "api_url": ticket.api_url,
+    }
+
+
+@app.post("/api/runners/pair/claim")
+async def runners_pair_claim(request: Request):
+    """Exchange a pairing token for the api_url + api_key. No auth: the token
+    itself is the proof. Single-use; rate-limited by token scarcity + TTL."""
+    from .runners import get_pairing_store
+
+    body = await request.json() if await request.body() else {}
+    token = (body.get("token") or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="token required")
+    store = get_pairing_store()
+    ticket = await store.claim(token)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="token not found, expired, or already used")
+    return {
+        "api_url": ticket.api_url,
+        "api_key": ticket.api_key,
+        "runner_name_suggestion": ticket.runner_name_suggestion,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Session management routes (from dashboard/server.js)
 # ---------------------------------------------------------------------------
