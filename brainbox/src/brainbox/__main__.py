@@ -89,6 +89,10 @@ def main() -> None:
     p_cc_unseal.add_argument("bundle", help="sealed bundle path")
     p_cc_unseal.add_argument("dest", help="destination directory")
 
+    p_cc_serve = cc_sub.add_parser("serve", help="run the command-center sealing daemon")
+    p_cc_serve.add_argument("--host", default="127.0.0.1")
+    p_cc_serve.add_argument("--port", type=int, default=9888)
+
     args = parser.parse_args()
 
     if not args.command:
@@ -247,6 +251,8 @@ def _cc_dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> N
         _cc_bundle(args)
     elif args.cc_command == "unseal":
         _cc_unseal(args)
+    elif args.cc_command == "serve":
+        _cc_serve(args)
     else:
         parser.print_help()
         sys.exit(1)
@@ -272,8 +278,7 @@ def _cc_bundle(args: argparse.Namespace) -> None:
     import os
     from pathlib import Path
 
-    from .credentials import pack, seal
-    from .lifecycle import _resolve_profile_env, _resolve_profile_mounts
+    from .credentials import build_sealed_bundle
 
     workspace_home = args.workspace_home
     if not workspace_home:
@@ -281,28 +286,11 @@ def _cc_bundle(args: argparse.Namespace) -> None:
         if ws_root:
             workspace_home = str(Path(ws_root) / args.profile)
 
-    mounts = _resolve_profile_mounts(workspace_profile=args.profile, workspace_home=workspace_home)
-    sources: list[tuple[Path, str, int | None]] = []
-    for host_path, spec in mounts.items():
-        target = spec["bind"].removeprefix("/home/developer/").removeprefix("/home/developer")
-        if not target or target == "/":
-            continue
-        sources.append((Path(host_path), target, None))
-
-    env_text = _resolve_profile_env(
-        workspace_profile=args.profile, workspace_home=workspace_home
+    ciphertext = build_sealed_bundle(
+        workspace_profile=args.profile,
+        workspace_home=workspace_home,
+        recipient=args.recipient,
     )
-    env: dict[str, str] = {}
-    if env_text:
-        for line in env_text.splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#") or "=" not in stripped:
-                continue
-            k, _, v = stripped.partition("=")
-            env[k.strip()] = v
-
-    plaintext = pack(sources, env, args.profile)
-    ciphertext = seal(plaintext, args.recipient)
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -314,12 +302,16 @@ def _cc_bundle(args: argparse.Namespace) -> None:
             {
                 "ok": True,
                 "output": str(out),
-                "files": len(sources),
-                "env_vars": len(env),
                 "bytes_sealed": len(ciphertext),
             }
         )
     )
+
+
+def _cc_serve(args: argparse.Namespace) -> None:
+    from .credentials.daemon import serve
+
+    serve(host=args.host, port=args.port)
 
 
 def _cc_unseal(args: argparse.Namespace) -> None:

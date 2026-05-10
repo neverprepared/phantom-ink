@@ -297,17 +297,16 @@ class DockerBackend:
     async def _inject_credential_bundle(
         self, ctx: SessionContext, container: Any, *, slog: Any
     ) -> None:
-        """Bundle delivery flow: keygen in container → seal on host → apply in container.
+        """Bundle delivery flow: keygen in container → seal (inline or daemon) → apply in container.
 
         The guest's private key never leaves /run/brainbox (tmpfs). The host only
-        ever sees the recipient pubkey. Re-derives credential sources via the same
-        functions the bind path uses, so bind and bundle stay in lockstep.
+        ever sees the recipient pubkey. Sealing happens inline by default; when
+        $BRAINBOX_CC_URL is set, the command-center daemon does it instead —
+        same ciphertext shape either way.
         """
         import io
+        import os
         import tarfile
-
-        from ...credentials import pack, seal
-        from ...lifecycle import _resolve_credential_sources, _resolve_profile_env
 
         kg = await _run(
             container.exec_run,
@@ -337,23 +336,20 @@ class DockerBackend:
             )
         recipient = rcat.output.decode().strip()
 
-        sources = _resolve_credential_sources(ctx.workspace_profile, ctx.workspace_home)
-        env_text = _resolve_profile_env(
-            workspace_profile=ctx.workspace_profile, workspace_home=ctx.workspace_home
-        )
-        env: dict[str, str] = {}
-        if env_text:
-            for raw in env_text.splitlines():
-                line = raw.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                if line.startswith("export "):
-                    line = line[7:]
-                k, _, v = line.partition("=")
-                env[k.strip()] = v
+        cc_url = os.environ.get("BRAINBOX_CC_URL")
+        if cc_url:
+            ciphertext = await self._seal_via_daemon(cc_url, ctx, recipient)
+            sealed_via = "daemon"
+        else:
+            from ...credentials import build_sealed_bundle
 
-        plaintext = pack(sources, env, profile=ctx.workspace_profile or "default")
-        ciphertext = seal(plaintext, recipient)
+            ciphertext = await _run(
+                build_sealed_bundle,
+                ctx.workspace_profile,
+                ctx.workspace_home,
+                recipient,
+            )
+            sealed_via = "inline"
 
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w") as tf:
@@ -385,11 +381,39 @@ class DockerBackend:
         slog.info(
             "container.bundle_applied",
             metadata={
-                "files": len(sources),
-                "env_vars": len(env),
+                "sealed_via": sealed_via,
                 "sealed_bytes": len(ciphertext),
             },
         )
+
+    async def _seal_via_daemon(
+        self, cc_url: str, ctx: SessionContext, recipient: str
+    ) -> bytes:
+        import os
+
+        import httpx
+
+        api_key = os.environ.get("BRAINBOX_CC_API_KEY") or os.environ.get("CL_API_KEY") or ""
+        if not api_key:
+            raise RuntimeError(
+                "BRAINBOX_CC_URL is set but BRAINBOX_CC_API_KEY/CL_API_KEY is missing"
+            )
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                cc_url.rstrip("/") + "/seal",
+                headers={"X-API-Key": api_key},
+                json={
+                    "workspace_profile": ctx.workspace_profile,
+                    "workspace_home": ctx.workspace_home,
+                    "recipient": recipient,
+                },
+            )
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"command-center /seal failed ({resp.status_code}): {resp.text[:200]}"
+            )
+        return resp.content
 
     async def start(self, ctx: SessionContext) -> SessionContext:
         """Start Docker container and launch ttyd terminal."""
