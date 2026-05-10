@@ -99,13 +99,6 @@ def main() -> None:
     p_cc_poll.add_argument("--api", required=True, help="brainbox API base URL (e.g. https://...)")
     p_cc_poll.add_argument("--api-key", default=None, help="API key (default: $CL_API_KEY)")
 
-    # runner — execute work pulled from a central brainbox API
-    p_runner = sub.add_parser("runner", help="run as a remote brainbox runner")
-    p_runner.add_argument("--api", required=True, help="central brainbox API base URL")
-    p_runner.add_argument("--name", required=True, help="unique name to register under")
-    p_runner.add_argument("--api-key", default=None, help="API key (default: $CL_API_KEY)")
-    p_runner.add_argument("--tag", action="append", default=[], help="tag (repeatable)")
-
     args = parser.parse_args()
 
     if not args.command:
@@ -131,8 +124,6 @@ def main() -> None:
             _restart_daemon(args)
         elif args.command == "cc":
             _cc_dispatch(args, p_cc)
-        elif args.command == "runner":
-            _start_runner(args)
     except Exception as exc:
         print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
         sys.exit(1)
@@ -329,20 +320,6 @@ def _cc_serve(args: argparse.Namespace) -> None:
     from .credentials.daemon import serve
 
     serve(host=args.host, port=args.port)
-
-
-def _start_runner(args: argparse.Namespace) -> None:
-    import os
-
-    from .runner import serve as runner_serve
-
-    api_key = args.api_key or os.environ.get("CL_API_KEY") or ""
-    runner_serve(
-        api_url=args.api,
-        api_key=api_key,
-        name=args.name,
-        tags=args.tag or [],
-    )
 
 
 def _cc_poll(args: argparse.Namespace) -> None:
