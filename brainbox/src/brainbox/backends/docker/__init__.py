@@ -176,6 +176,19 @@ class DockerBackend:
         # Apply hardening or legacy settings
         kwargs.update(hardening_kwargs)
 
+        if ctx.delivery == "bundle":
+            from docker.types import Mount
+
+            kwargs.setdefault("mounts", []).append(
+                Mount(
+                    target="/run/brainbox",
+                    source="",
+                    type="tmpfs",
+                    tmpfs_size=4 * 1024 * 1024,
+                    tmpfs_mode=0o1777,
+                )
+            )
+
         try:
             await _run(client.containers.create, **kwargs)
         except Exception as exc:
@@ -227,7 +240,9 @@ class DockerBackend:
         # sets bypass flags. Runs in all modes.
         await inject_claude_settings(executor, slog=slog)
 
-        if ctx.hardened:
+        if ctx.delivery == "bundle":
+            await self._inject_credential_bundle(ctx, container, slog=slog)
+        elif ctx.hardened:
             # Write each secret to /run/secrets (Docker-specific, no UTM equivalent)
             for name, value in secrets.items():
                 if not re.match(r"^[A-Za-z0-9_.-]+$", name):
@@ -253,6 +268,9 @@ class DockerBackend:
                     )
         else:
             await inject_env_file(executor, secrets, ctx.session_name, slog=slog)
+
+        # Claude OAuth config: needed in non-hardened mode regardless of delivery.
+        if not ctx.hardened:
             await inject_claude_config(executor, oauth_account, slog=slog)
 
         # Inject role prompt file for --append-system-prompt-file
@@ -275,6 +293,103 @@ class DockerBackend:
         ctx.state = SessionState.STARTING
         slog.info("container.configured", metadata={"hardened": ctx.hardened})
         return ctx
+
+    async def _inject_credential_bundle(
+        self, ctx: SessionContext, container: Any, *, slog: Any
+    ) -> None:
+        """Bundle delivery flow: keygen in container → seal on host → apply in container.
+
+        The guest's private key never leaves /run/brainbox (tmpfs). The host only
+        ever sees the recipient pubkey. Re-derives credential sources via the same
+        functions the bind path uses, so bind and bundle stay in lockstep.
+        """
+        import io
+        import tarfile
+
+        from ...credentials import pack, seal
+        from ...lifecycle import _resolve_credential_sources, _resolve_profile_env
+
+        kg = await _run(
+            container.exec_run,
+            [
+                "brainbox-init",
+                "keygen",
+                "--identity-out",
+                "/run/brainbox/identity.key",
+                "--recipient-out",
+                "/run/brainbox/recipient.txt",
+            ],
+            user="developer",
+        )
+        if kg.exit_code:
+            raise RuntimeError(
+                f"brainbox-init keygen failed (exit {kg.exit_code}): {kg.output.decode(errors='replace')}"
+            )
+
+        rcat = await _run(
+            container.exec_run,
+            ["cat", "/run/brainbox/recipient.txt"],
+            user="developer",
+        )
+        if rcat.exit_code:
+            raise RuntimeError(
+                f"failed to read recipient: {rcat.output.decode(errors='replace')}"
+            )
+        recipient = rcat.output.decode().strip()
+
+        sources = _resolve_credential_sources(ctx.workspace_profile, ctx.workspace_home)
+        env_text = _resolve_profile_env(
+            workspace_profile=ctx.workspace_profile, workspace_home=ctx.workspace_home
+        )
+        env: dict[str, str] = {}
+        if env_text:
+            for raw in env_text.splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                if line.startswith("export "):
+                    line = line[7:]
+                k, _, v = line.partition("=")
+                env[k.strip()] = v
+
+        plaintext = pack(sources, env, profile=ctx.workspace_profile or "default")
+        ciphertext = seal(plaintext, recipient)
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            info = tarfile.TarInfo("bundle.age")
+            info.size = len(ciphertext)
+            info.mode = 0o644
+            tf.addfile(info, io.BytesIO(ciphertext))
+        await _run(container.put_archive, "/run/brainbox", buf.getvalue())
+
+        ap = await _run(
+            container.exec_run,
+            [
+                "brainbox-init",
+                "apply",
+                "--identity",
+                "/run/brainbox/identity.key",
+                "--bundle",
+                "/run/brainbox/bundle.age",
+                "--home",
+                "/home/developer",
+            ],
+            user="developer",
+        )
+        if ap.exit_code:
+            raise RuntimeError(
+                f"brainbox-init apply failed (exit {ap.exit_code}): {ap.output.decode(errors='replace')}"
+            )
+
+        slog.info(
+            "container.bundle_applied",
+            metadata={
+                "files": len(sources),
+                "env_vars": len(env),
+                "sealed_bytes": len(ciphertext),
+            },
+        )
 
     async def start(self, ctx: SessionContext) -> SessionContext:
         """Start Docker container and launch ttyd terminal."""

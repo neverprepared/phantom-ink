@@ -91,6 +91,9 @@ class SessionContext(BaseModel):
     profile_mounts: set[str] = Field(default_factory=set)  # {"aws", "azure", "kube", "ssh", ...}
     workspace_profile: str | None = None  # Caller's profile name
     workspace_home: str | None = None  # Caller's workspace home path
+    # bind: credential dirs are bind-mounted from the host (legacy default).
+    # bundle: credentials shipped as a sealed age bundle injected via docker exec / put_archive.
+    delivery: Literal["bind", "bundle"] = "bind"
     # Backend-specific fields
     backend: Literal["docker", "utm"] = "docker"
     docker_host: str | None = None  # Docker daemon host (None = local socket)
