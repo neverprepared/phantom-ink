@@ -15,6 +15,7 @@
   import EventFeedPanel from '../panels/EventFeedPanel.svelte';
   import ProfilesPanel from '../panels/ProfilesPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
+  import RunnersPanel from '../panels/RunnersPanel.svelte';
 </script>
 
 <div class="shell">
@@ -42,6 +43,8 @@
         <ProfilesPanel />
       {:else if currentPanel.value === 'settings'}
         <SettingsPanel />
+      {:else if currentPanel.value === 'runners'}
+        <RunnersPanel />
       {/if}
     </main>
   </div>

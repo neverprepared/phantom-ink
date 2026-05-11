@@ -715,6 +715,21 @@ async def runners_result(
     return {"ok": True}
 
 
+@app.delete("/api/runners/{name}")
+async def runners_delete(name: str, _key=Depends(require_api_key)):
+    """Deregister a runner. Pending work for it is cancelled so callers
+    stop waiting. Sessions already running on the runner are untouched —
+    cleaning those up is a separate operation (sessions own their own
+    container/VM teardown)."""
+    from .runners import get_registry
+
+    reg = get_registry()
+    removed = await reg.deregister(name)
+    if not removed:
+        raise HTTPException(status_code=404, detail="runner not registered")
+    return {"ok": True}
+
+
 @app.post("/api/runners/pair/start")
 async def runners_pair_start(request: Request, _key=Depends(require_api_key)):
     """Issue a one-time pairing ticket. Caller must already be authenticated —

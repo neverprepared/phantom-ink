@@ -89,6 +89,22 @@ class RunnerRegistry:
         async with self._lock:
             return self._runners.get(name)
 
+    async def deregister(self, name: str) -> bool:
+        """Remove a runner. Pending work for that runner is cancelled with a
+        clear reason so producers stop waiting. Returns True if the runner
+        existed and was removed."""
+        async with self._lock:
+            info = self._runners.pop(name, None)
+            pending = self._pending.pop(name, [])
+            self._events.pop(name, None)
+        if info is None:
+            return False
+        for item in pending:
+            if not item.fut.done():
+                item.fut.set_exception(RuntimeError(f"runner {name!r} was removed"))
+            self._by_work_id.pop(item.id, None)
+        return True
+
     # -- work dispatch --------------------------------------------------------
 
     async def enqueue(

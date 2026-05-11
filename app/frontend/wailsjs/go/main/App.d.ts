@@ -43,6 +43,8 @@ export function DeleteProfile(arg1:string,arg2:boolean):Promise<void>;
 
 export function DeleteRepo(arg1:string):Promise<void>;
 
+export function DeleteRunner(arg1:string):Promise<void>;
+
 export function DeleteSession(arg1:string):Promise<brainbox.SessionActionResponse>;
 
 export function DeleteWorktree(arg1:string):Promise<void>;

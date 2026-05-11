@@ -3,7 +3,6 @@
   import { onMount } from 'svelte';
   import { notifications } from '../notifications.svelte';
   import { profileState, type Profile } from '../stores.svelte';
-  import PairRunnerModal from '../components/PairRunnerModal.svelte';
 
 
   // --- Connection settings ---
@@ -12,10 +11,6 @@
 
   // --- Workspace settings ---
   let workspacesRoot = $state('');
-
-  // --- Runners ---
-  let runners = $state<any[]>([]);
-  let showingPair = $state(false);
 
   // --- General ---
   let platform = $state('');
@@ -34,22 +29,12 @@
       theme = cfg?.theme ?? 'dark';
       platform = plat ?? 'unknown';
       applyTheme(theme);
-      await refreshRunners();
     } catch (err: any) {
       notifications.error(`Failed to load settings: ${err?.message ?? err}`);
     } finally {
       loaded = true;
     }
   });
-
-  async function refreshRunners() {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const list = await a.ListRunners();
-      runners = list ?? [];
-    } catch { /* runner endpoints unavailable; silent */ }
-  }
 
   function resolveAutoTheme(): 'dark' | 'light' {
     const hour = new Date().getHours();
@@ -170,32 +155,6 @@
         <p class="hint">manage profiles, disk usage, and backups in the <strong>Profiles</strong> panel</p>
       </div>
 
-      <!-- Runners -->
-      <div class="section">
-        <h2>runners</h2>
-        {#if runners.length === 0}
-          <p class="hint">no runners registered yet — pair one to dispatch sessions to another mac</p>
-        {:else}
-          <ul class="runner-list">
-            {#each runners as r (r.name)}
-              <li>
-                <span class="runner-dot" class:on={Date.now() - r.last_seen < 60000}></span>
-                <div class="runner-info">
-                  <span class="runner-name">{r.name}</span>
-                  <span class="runner-meta">
-                    {Object.entries(r.capabilities || {}).filter(([_, v]) => v).map(([k]) => k).join(' · ') || 'none'}
-                    {#if r.tags?.length}
-                      · {r.tags.join(' ')}
-                    {/if}
-                  </span>
-                </div>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-        <button class="btn-add" onclick={() => (showingPair = true)}>+ pair a runner</button>
-      </div>
-
       <!-- Save -->
       <div class="form-actions">
         <button class="btn-save" onclick={handleSave} disabled={saving}>
@@ -203,9 +162,6 @@
         </button>
       </div>
 
-      {#if showingPair}
-        <PairRunnerModal onClose={async () => { showingPair = false; await refreshRunners(); }} />
-      {/if}
 
       <!-- About -->
       <div class="section info-section">

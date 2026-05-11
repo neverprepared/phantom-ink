@@ -26,6 +26,11 @@ func (c *Client) ListRunners() ([]Runner, error) {
 	return runners, nil
 }
 
+// DeleteRunner deregisters a runner. Pending work for it is cancelled.
+func (c *Client) DeleteRunner(name string) error {
+	return c.do("DELETE", "/api/runners/"+name, nil, nil)
+}
+
 // StartRunnerPairing issues a one-time pairing token. The caller's apiURL is
 // echoed back so the runner knows where to claim. ttlSeconds <= 0 uses the
 // server default (300).

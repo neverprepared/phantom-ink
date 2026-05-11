@@ -82,6 +82,10 @@ export function DeleteRepo(arg1) {
   return window['go']['main']['App']['DeleteRepo'](arg1);
 }
 
+export function DeleteRunner(arg1) {
+  return window['go']['main']['App']['DeleteRunner'](arg1);
+}
+
 export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
 }
