@@ -116,45 +116,25 @@ jobs:
       - name: Re-sign with entitlements
         working-directory: ${{ env.RUNNER_DIR }}
         run: |
-          echo "=== Export path layout ==="
-          ls -la "$EXPORT_PATH/" || true
-          echo "=== Find any app bundle ==="
-          find "$EXPORT_PATH" -maxdepth 2 -name "*.app" -print
-          echo "=== Find brainbox-bundler anywhere in build ==="
-          find build -name brainbox-bundler -print 2>/dev/null || true
           echo "=== Entitlements file ==="
           cat BrainboxRunner/BrainboxRunner.entitlements
-
-          # The exported .app may use PRODUCT_NAME ("Brainbox Runner.app")
-          # rather than $APP_NAME — discover whichever exists.
-          APP_PATH=$(find "$EXPORT_PATH" -maxdepth 2 -name "*.app" -print | head -1)
-          if [ -z "$APP_PATH" ]; then
-            echo "ERROR: no .app found in $EXPORT_PATH" >&2
-            exit 1
-          fi
-          echo "APP_PATH=$APP_PATH"
-
           # Nested helper binary must be signed (hardened runtime) before
           # the outer bundle re-sign so notarization accepts it.
-          HELPER="$APP_PATH/Contents/Resources/brainbox-bundler"
+          HELPER="$EXPORT_PATH/$APP_NAME/Contents/Resources/brainbox-bundler"
           if [ -f "$HELPER" ]; then
             codesign --force --options runtime --timestamp \
               --sign "${{ secrets.MACOS_IDENTITY }}" \
               "$HELPER"
           else
             echo "ERROR: brainbox-bundler helper missing from app Resources at $HELPER" >&2
-            echo "=== Resources/ contents ==="
-            ls -la "$APP_PATH/Contents/Resources/" || true
+            ls -la "$EXPORT_PATH/$APP_NAME/Contents/Resources/" || true
             exit 1
           fi
           codesign --force --options runtime \
             --entitlements BrainboxRunner/BrainboxRunner.entitlements \
             --sign "${{ secrets.MACOS_IDENTITY }}" \
-            "$APP_PATH"
-          codesign --verify --deep --strict "$APP_PATH"
-
-          # Export the canonical app path for downstream steps.
-          echo "RESOLVED_APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+            "$EXPORT_PATH/$APP_NAME"
+          codesign --verify --deep --strict "$EXPORT_PATH/$APP_NAME"
 
       - name: Verify entitlements embedded
         working-directory: ${{ env.RUNNER_DIR }}
