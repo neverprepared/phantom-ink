@@ -1,0 +1,42 @@
+name: Runner CI
+
+on:
+  pull_request:
+    paths:
+      - "app/runner/**"
+      - ".github/workflows/runner-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "app/runner/**"
+      - ".github/workflows/runner-ci.yml"
+
+jobs:
+  build:
+    name: Build (Debug, unsigned)
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: app/runner
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build
+        run: |
+          xcodebuild \
+            -project BrainboxRunner.xcodeproj \
+            -scheme BrainboxRunner \
+            -configuration Debug \
+            -destination "generic/platform=macOS" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
