@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"phantom-ink/brainbox"
 	goruntime "runtime"
 	"strings"
@@ -191,34 +192,97 @@ func (a *App) restartViaDocker() error {
 }
 
 func (a *App) restartViaDaemon() error {
-	// Find the running brainbox API process.
-	pgrepOut, err := exec.Command("pgrep", "-f", "python.*-m brainbox api").Output()
-	if err != nil || strings.TrimSpace(string(pgrepOut)) == "" {
+	if _, err := exec.Command("pgrep", "-f", "python.*-m brainbox api").Output(); err != nil {
 		return fmt.Errorf("no brainbox daemon process found")
 	}
-	pid := strings.TrimSpace(strings.SplitN(string(pgrepOut), "\n", 2)[0])
-
-	// Resolve the process working directory so we can restart via uv.
-	lsofOut, err := exec.Command("lsof", "-p", pid, "-d", "cwd", "-Fn").Output()
-	if err != nil {
-		return fmt.Errorf("could not resolve daemon cwd: %w", err)
+	projectDir := a.findBrainboxProject()
+	if projectDir == "" {
+		return fmt.Errorf("could not locate brainbox project (none of cwd ancestors, workspaces, or $HOME contained brainbox/pyproject.toml)")
 	}
-	cwd := ""
-	for _, line := range strings.Split(string(lsofOut), "\n") {
-		if strings.HasPrefix(line, "n") {
-			cwd = strings.TrimPrefix(line, "n")
-			break
-		}
-	}
-	if cwd == "" {
-		return fmt.Errorf("could not determine brainbox process working directory")
-	}
-
-	cmd := exec.Command("uv", "run", "--directory", cwd, "python", "-m", "brainbox", "restart")
+	cmd := exec.Command("uv", "run", "--directory", projectDir, "python", "-m", "brainbox", "restart")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("daemon restart failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
+}
+
+// findBrainboxProject locates the brainbox Python project (the directory
+// containing pyproject.toml that declares name = "brainbox"). Tries, in order:
+//   1. The running daemon's cwd and its ancestors
+//   2. <WorkspacesRoot>/<profile>/code/phantom-ink/brainbox for every profile
+//   3. $HOME/workspaces/profiles/*/code/phantom-ink/brainbox
+//   4. $HOME/code/phantom-ink/brainbox
+// Returns "" if none look right. Existence + a pyproject.toml that names
+// the project "brainbox" are both required.
+func (a *App) findBrainboxProject() string {
+	candidates := []string{}
+
+	if pgrepOut, err := exec.Command("pgrep", "-f", "python.*-m brainbox api").Output(); err == nil {
+		pid := strings.TrimSpace(strings.SplitN(string(pgrepOut), "\n", 2)[0])
+		if pid != "" {
+			if lsofOut, err := exec.Command("lsof", "-p", pid, "-d", "cwd", "-Fn").Output(); err == nil {
+				for _, line := range strings.Split(string(lsofOut), "\n") {
+					if strings.HasPrefix(line, "n") {
+						candidates = append(candidates, strings.TrimPrefix(line, "n"))
+						break
+					}
+				}
+			}
+		}
+	}
+
+	a.mu.RLock()
+	wsRoot := a.config.WorkspacesRoot
+	a.mu.RUnlock()
+	if wsRoot != "" {
+		if entries, err := os.ReadDir(wsRoot); err == nil {
+			for _, e := range entries {
+				if e.IsDir() {
+					candidates = append(candidates, filepath.Join(wsRoot, e.Name(), "code", "phantom-ink", "brainbox"))
+				}
+			}
+		}
+	}
+
+	home := os.Getenv("HOME")
+	if home != "" {
+		profilesDir := filepath.Join(home, "workspaces", "profiles")
+		if entries, err := os.ReadDir(profilesDir); err == nil {
+			for _, e := range entries {
+				if e.IsDir() {
+					candidates = append(candidates, filepath.Join(profilesDir, e.Name(), "code", "phantom-ink", "brainbox"))
+				}
+			}
+		}
+		candidates = append(candidates, filepath.Join(home, "code", "phantom-ink", "brainbox"))
+	}
+
+	for _, c := range candidates {
+		if root := walkForBrainboxRoot(c); root != "" {
+			return root
+		}
+	}
+	return ""
+}
+
+// walkForBrainboxRoot returns the deepest dir at-or-above `start` that contains
+// a pyproject.toml declaring name = "brainbox". Empty string if none.
+func walkForBrainboxRoot(start string) string {
+	dir := start
+	for i := 0; i < 8; i++ {  // bounded ascent
+		py := filepath.Join(dir, "pyproject.toml")
+		if data, err := os.ReadFile(py); err == nil {
+			if strings.Contains(string(data), `name = "brainbox"`) {
+				return dir
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir { // root
+			return ""
+		}
+		dir = parent
+	}
+	return ""
 }
 
 func (a *App) waitAndReconnect() error {
