@@ -262,6 +262,10 @@ export function ListRepos() {
   return window['go']['main']['App']['ListRepos']();
 }
 
+export function ListRunners() {
+  return window['go']['main']['App']['ListRunners']();
+}
+
 export function ListServices() {
   return window['go']['main']['App']['ListServices']();
 }
@@ -332,6 +336,10 @@ export function SetServiceConfig(arg1, arg2, arg3, arg4, arg5) {
 
 export function SetTheme(arg1) {
   return window['go']['main']['App']['SetTheme'](arg1);
+}
+
+export function StartRunnerPairing(arg1, arg2) {
+  return window['go']['main']['App']['StartRunnerPairing'](arg1, arg2);
 }
 
 export function StartService(arg1) {

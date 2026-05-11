@@ -133,6 +133,8 @@ export function ListProfileDirs(arg1:string):Promise<Array<string>>;
 
 export function ListRepos():Promise<Array<brainbox.Repo>>;
 
+export function ListRunners():Promise<Array<brainbox.Runner>>;
+
 export function ListServices():Promise<Array<main.ServiceStatus>>;
 
 export function ListTasks(arg1:string):Promise<Array<brainbox.Task>>;
@@ -168,6 +170,8 @@ export function SetProfileColor(arg1:string,arg2:string):Promise<void>;
 export function SetServiceConfig(arg1:string,arg2:boolean,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 
 export function SetTheme(arg1:string):Promise<void>;
+
+export function StartRunnerPairing(arg1:string,arg2:number):Promise<brainbox.PairingTicket>;
 
 export function StartService(arg1:string):Promise<void>;
 

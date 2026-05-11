@@ -537,6 +537,22 @@ export namespace brainbox {
 	        this.digest = source["digest"];
 	    }
 	}
+	export class PairingTicket {
+	    token: string;
+	    expires_at: number;
+	    api_url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PairingTicket(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.token = source["token"];
+	        this.expires_at = source["expires_at"];
+	        this.api_url = source["api_url"];
+	    }
+	}
 	export class PlaybookTask {
 	    id: string;
 	    index: number;
@@ -631,6 +647,28 @@ export namespace brainbox {
 	    }
 	}
 	
+	export class Runner {
+	    name: string;
+	    capabilities: Record<string, boolean>;
+	    tags: string[];
+	    version: string;
+	    registered_at: number;
+	    last_seen: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Runner(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.capabilities = source["capabilities"];
+	        this.tags = source["tags"];
+	        this.version = source["version"];
+	        this.registered_at = source["registered_at"];
+	        this.last_seen = source["last_seen"];
+	    }
+	}
 	export class Session {
 	    name: string;
 	    session_name: string;
