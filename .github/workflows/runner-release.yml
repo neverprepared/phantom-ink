@@ -27,6 +27,12 @@ jobs:
         with:
           ref: main      # need branch history for the Cask sha256 commit
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: app/runner/bundler/go.sum
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
@@ -112,6 +118,17 @@ jobs:
         run: |
           echo "=== Entitlements file ==="
           cat BrainboxRunner/BrainboxRunner.entitlements
+          # Nested helper binary must be signed (hardened runtime) before
+          # the outer bundle re-sign so notarization accepts it.
+          HELPER="$EXPORT_PATH/$APP_NAME/Contents/Resources/brainbox-bundler"
+          if [ -f "$HELPER" ]; then
+            codesign --force --options runtime --timestamp \
+              --sign "${{ secrets.MACOS_IDENTITY }}" \
+              "$HELPER"
+          else
+            echo "ERROR: brainbox-bundler helper missing from app Resources" >&2
+            exit 1
+          fi
           codesign --force --options runtime \
             --entitlements BrainboxRunner/BrainboxRunner.entitlements \
             --sign "${{ secrets.MACOS_IDENTITY }}" \
