@@ -1,5 +1,7 @@
 package brainbox
 
+import "net/url"
+
 // Runner describes a registered remote runner returned by GET /api/runners.
 type Runner struct {
 	Name         string          `json:"name"`
@@ -27,8 +29,10 @@ func (c *Client) ListRunners() ([]Runner, error) {
 }
 
 // DeleteRunner deregisters a runner. Pending work for it is cancelled.
+// Names with spaces / unicode are URL-encoded so we don't accidentally
+// craft invalid request lines for the "Curtis's MacBook Pro (2)" case.
 func (c *Client) DeleteRunner(name string) error {
-	return c.do("DELETE", "/api/runners/"+name, nil, nil)
+	return c.do("DELETE", "/api/runners/"+url.PathEscape(name), nil, nil)
 }
 
 // StartRunnerPairing issues a one-time pairing token. The caller's apiURL is
