@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // Setting key constants — single source of truth for database key names.
@@ -36,10 +37,13 @@ func loadConfigFromDB(db *DB) *Config {
 		return cfg
 	}
 	if v := db.GetSetting(settingBaseURL, ""); v != "" {
-		cfg.BaseURL = v
+		cfg.BaseURL = strings.TrimSpace(v)
 	}
 	if v := db.GetSetting(settingAPIKey, ""); v != "" {
-		cfg.APIKey = v
+		// Defensive trim: an earlier version stored values verbatim, so
+		// pasted-with-trailing-newline keys made it into SQLite and silently
+		// broke X-API-Key auth. Stripping here covers existing bad rows.
+		cfg.APIKey = strings.TrimSpace(v)
 	}
 	if v := db.GetSetting(settingActiveProfile, ""); v != "" {
 		cfg.ActiveProfile = v

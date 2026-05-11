@@ -115,6 +115,11 @@ func (a *App) SetTheme(theme string) error {
 // SetConfig updates and persists app configuration.
 func (a *App) SetConfig(baseURL, apiKey, workspacesRoot string) error {
 	a.mu.Lock()
+	// Strip any leading/trailing whitespace — paste-from-`cat …` includes
+	// a trailing newline that quietly breaks X-API-Key auth.
+	baseURL = strings.TrimSpace(baseURL)
+	apiKey = strings.TrimSpace(apiKey)
+	workspacesRoot = strings.TrimSpace(workspacesRoot)
 	if apiKey == "••••••••" {
 		apiKey = a.config.APIKey
 	}
