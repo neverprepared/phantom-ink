@@ -565,9 +565,21 @@ async def sse_events(
 
 
 @app.get("/api/credentials/pending")
-async def credentials_pending(_key=Depends(require_api_key)):
-    """Long-poll for the next pending bundle request. 204 if none."""
+async def credentials_pending(
+    as_: str | None = Query(None, alias="as"),
+    _key=Depends(require_api_key),
+):
+    """Long-poll for the next pending bundle request. 204 if none.
+
+    When ?as=<runner_name> is passed and that runner is registered, its
+    last_seen is touched on every poll. Lets the API distinguish a live
+    secret authority from a stale one.
+    """
     from .credentials.queue import get_queue
+    from .runners import get_registry
+
+    if as_:
+        await get_registry().touch(as_)
 
     queue = get_queue()
     req = await queue.next_pending(timeout=30.0)
@@ -606,15 +618,38 @@ async def credentials_seal_request(
     to the in-process queue. Body: {workspace_profile, workspace_home, recipient}.
     Blocks until the cc poll daemon seals and posts the ciphertext back.
     Returns the sealed bytes as application/octet-stream.
+
+    Fail-fast: if there are agents registered with the secret_authority
+    capability but none are recently active (last_seen > 90s ago), return
+    503 immediately instead of enqueueing and timing out. When no
+    secret_authority agent has ever registered, fall back to the legacy
+    anonymous cc-poll behaviour so existing setups keep working.
     """
     import asyncio
+    import time
 
     from .credentials.queue import get_queue
+    from .runners import get_registry
 
     body = await request.json()
     recipient = body.get("recipient", "")
     if not isinstance(recipient, str) or not recipient.startswith("age1"):
         raise HTTPException(status_code=400, detail="recipient must be an age1... pubkey")
+
+    # Fail-fast on stale-but-registered secret authorities.
+    reg = get_registry()
+    all_runners = await reg.list_runners()
+    authorities = [r for r in all_runners if r.capabilities.get("secret_authority")]
+    if authorities:
+        now_ms = int(time.time() * 1000)
+        live = [r for r in authorities if now_ms - r.last_seen < 90_000]
+        if not live:
+            names = ", ".join(r.name for r in authorities)
+            raise HTTPException(
+                status_code=503,
+                detail=f"all secret authorities offline (registered but stale: {names})",
+            )
+
     queue = get_queue()
     req = await queue.enqueue(
         workspace_profile=body.get("workspace_profile"),
@@ -625,7 +660,7 @@ async def credentials_seal_request(
         sealed = await asyncio.wait_for(req.fut, timeout=float(body.get("timeout", 60)))
     except asyncio.TimeoutError as exc:
         await queue.cancel(req.id, "seal-request timed out")
-        raise HTTPException(status_code=504, detail="no laptop daemon responded") from exc
+        raise HTTPException(status_code=504, detail="no secret authority responded in time") from exc
     return Response(content=sealed, media_type="application/octet-stream")
 
 
