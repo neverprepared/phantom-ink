@@ -78,7 +78,7 @@
   function capabilities(r: Runner): string[] {
     return Object.entries(r.capabilities ?? {})
       .filter(([_, v]) => v)
-      .map(([k]) => k);
+      .map(([k]) => k.replace('secret_authority', 'cred-authority'));
   }
 </script>
 
