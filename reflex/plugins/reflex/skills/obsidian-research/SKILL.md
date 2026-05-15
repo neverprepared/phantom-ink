@@ -10,12 +10,12 @@ Research workflow that checks Obsidian memory first, falls back to web search on
 ## Workflow
 
 ```
-1. Search Obsidian memory  → mcp__obsidian-memory__memory_search
+1. Search Obsidian memory  → mcp__obsidian-second-brain__memory_search
 2. Evaluate coverage       → Sufficient & fresh? Use cached. Gaps or stale? Continue.
-3. Recall full content     → mcp__obsidian-memory__memory_recall (for relevant hits)
+3. Recall full content     → mcp__obsidian-second-brain__memory_recall (for relevant hits)
 4. Web search fallback     → WebSearch / WebFetch (only for gaps)
-5. Store new findings      → mcp__obsidian-memory__memory_store
-6. Update stale memories   → mcp__obsidian-memory__memory_update
+5. Store new findings      → mcp__obsidian-second-brain__memory_store
+6. Update stale memories   → mcp__obsidian-second-brain__memory_update
 7. Respond with merged     → Combine cached + new, cite sources
 ```
 
@@ -24,7 +24,7 @@ Research workflow that checks Obsidian memory first, falls back to web search on
 Always search memory first with the user's topic:
 
 ```
-Tool: mcp__obsidian-memory__memory_search
+Tool: mcp__obsidian-second-brain__memory_search
 Arguments:
   query: "<user's question or topic keywords>"
   freshness: "fresh"
@@ -34,7 +34,7 @@ Arguments:
 Also check for stale results that may need refreshing:
 
 ```
-Tool: mcp__obsidian-memory__memory_search
+Tool: mcp__obsidian-second-brain__memory_search
 Arguments:
   query: "<same query>"
   freshness: "stale"
@@ -59,7 +59,7 @@ Use this matrix to decide the next action:
 For each relevant fresh result, get the full content:
 
 ```
-Tool: mcp__obsidian-memory__memory_recall
+Tool: mcp__obsidian-second-brain__memory_recall
 Arguments:
   id: "<memory_id from search results>"
 ```
@@ -90,7 +90,7 @@ When formulating web queries, exclude topics already covered by fresh cached res
 Store synthesized web research as new memories:
 
 ```
-Tool: mcp__obsidian-memory__memory_store
+Tool: mcp__obsidian-second-brain__memory_store
 Arguments:
   title: "<Descriptive Title - Topic & Scope>"
   content: "<synthesized findings in markdown>"
@@ -107,7 +107,7 @@ Arguments:
 When stale memories exist on the same topic, update them instead of creating duplicates:
 
 ```
-Tool: mcp__obsidian-memory__memory_update
+Tool: mcp__obsidian-second-brain__memory_update
 Arguments:
   id: "<stale_memory_id>"
   content: "<refreshed content>"
@@ -153,6 +153,35 @@ Most research output goes to `resources`. Use tags and `related` links to connec
 - **Preserve source URLs**: When updating stale memories, merge new source_urls with existing ones rather than replacing.
 - **Confidence levels**: Use `high` only for official documentation and well-sourced data. Use `medium` for synthesized research. Use `low` for unverified or single-source information.
 - **Chunk large topics**: Rather than one massive memory, split into focused memories that link to each other via `related` slugs.
+
+## Long-Form Output (Library Pattern)
+
+For substantial synthesized research that won't fit comfortably in a single retrievable atom, use the vault's `Library/` folder. It lives outside PARA, is **not indexed by `memory_search`**, and exists for human-readable long-form docs.
+
+Subfolders: `HowTos/`, `Runbooks/`, `Articles/`, `References/`, `Scratch/`.
+
+Pattern:
+1. Write the long-form doc to `Library/Articles/<slug>.md` (or `Runbooks/`, etc.) — human-managed via Obsidian.
+2. Store a short atom in `resources` whose body references the doc via `[[Library/Articles/<slug>]]`. The atom is what future searches find; the wiki-link points to the expansion.
+
+There are no MCP tools that write into `Library/` — surface the long-form content in your reply so the user or parent can place it.
+
+## Activity Lookups
+
+For "what did I research on topic X recently?" or date-bounded coverage questions, prefer `mcp__obsidian-second-brain__memory_timeline` over `memory_search`:
+
+```
+Tool: mcp__obsidian-second-brain__memory_timeline
+Arguments:
+  after: "<ISO date>"
+  para: "resources"        # optional
+  tags: ["<topic>"]        # optional
+  group_by: "day" | "week" | "none"
+  activity: "updated"      # or "created" / "accessed"
+  limit: 30
+```
+
+Returns a chronological view of memory atoms — no retrieval roundtrip, no scoring.
 
 ## Integration
 

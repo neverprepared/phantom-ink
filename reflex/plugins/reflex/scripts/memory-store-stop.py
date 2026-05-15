@@ -10,7 +10,7 @@ those findings before stopping.
 State file:   ${TMPDIR:-/tmp}/reflex-memory-state/{session_id}.json
 Activity log: $REFLEX_HOME/memory.db (queried via memory.py recent --hours N)
 
-Toggle: REFLEX_MEMORY_ENFORCE = hard | soft | off (default hard).
+Toggle: REFLEX_MEMORY_ENFORCE = hard | soft | off (default soft).
         Set to "off" → shell wrapper exits 0 before invoking python.
 
 Fail open on any error.
@@ -169,11 +169,11 @@ def main() -> None:
         "Toggle: set REFLEX_MEMORY_ENFORCE=soft for warnings only, or =off to disable."
     )
 
-    mode = os.environ.get("REFLEX_MEMORY_ENFORCE", "hard").lower()
-    if mode == "soft":
-        warn(msg)
-    else:
+    mode = os.environ.get("REFLEX_MEMORY_ENFORCE", "soft").lower()
+    if mode == "hard":
         deny(msg)
+    else:
+        warn(msg)
 
 
 if __name__ == "__main__":
