@@ -117,7 +117,8 @@ func TestRenderEnv(t *testing.T) {
 				"XDG_CONFIG_HOME=\"$WORKSPACE_HOME/.config\"",
 				"AWS_CONFIG_FILE=\"$WORKSPACE_HOME/.aws/config\"",
 				"KUBECONFIG=\"$WORKSPACE_HOME/.kube/config\"",
-				"CLAUDE_CONFIG_DIR=\"$WORKSPACE_HOME/.config/claude\"",
+				"CLAUDE_CONFIG_DIR=\"$WORKSPACE_HOME/.claude\"",
+				"OBSIDIAN_VAULT_PATH=\"$WORKSPACE_HOME/obsidian/vaults/test-profile-memory\"",
 			},
 		},
 	}
