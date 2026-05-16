@@ -3,7 +3,7 @@
   import { onMount } from 'svelte';
   import { brainboxEvents } from '../events.svelte';
   import { notifications } from '../notifications.svelte';
-  import { profileState } from '../stores.svelte';
+  import { profileState, panelFocus } from '../stores.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Badge from '../components/Badge.svelte';
 
@@ -17,6 +17,13 @@
   let localProcesses = $state<any[]>([]);
   let systemInfo = $state<{ cpu_cores: number; mem_total_gib: number }>({ cpu_cores: 0, mem_total_gib: 0 });
   let loading = $state(true);
+
+  // Autonomous-ops slice — local task queue, schedules, recent task feed.
+  // These come from the in-app SQLite, not brainbox.
+  let taskStats = $state<{ pending: number; running: number; succeeded: number; failed: number; cancelled: number; window_hours: number } | null>(null);
+  let upcomingFires = $state<{ schedule_id: string; chain_id: string; chain_name: string; cron_expr: string; next_fire_at: string }[]>([]);
+  let recentLocalTasks = $state<any[]>([]);
+  let chainNames = $state<Map<string, string>>(new Map());
 
 
   // --- Profile filtering ---
@@ -83,11 +90,15 @@
     const a = await getApi();
     if (!a) { loading = false; return; }
     try {
-      const [sess, hubState, stats, procs] = await Promise.all([
+      const [sess, hubState, stats, procs, ts, fires, localTasks, chains] = await Promise.all([
         a.GetSessions(),
         a.GetHubState(),
         a.GetDockerStats(),
         a.FindClaudeProcesses(),
+        a.GetTaskStats(24),
+        a.ListUpcomingFires(5),
+        a.ListTasks('', 5),
+        a.ListChains(),
       ]);
       sessions = sess ?? [];
       tasks = hubState?.tasks ?? [];
@@ -95,6 +106,10 @@
       tokens = hubState?.tokens ?? [];
       dockerStats = stats ?? [];
       localProcesses = procs ?? [];
+      taskStats = ts ?? null;
+      upcomingFires = (fires ?? []) as any[];
+      recentLocalTasks = (localTasks ?? []) as any[];
+      chainNames = new Map(((chains ?? []) as any[]).map(c => [c.id, c.name]));
     } catch (err: any) {
       notifications.error(`Dashboard refresh failed: ${err?.message ?? err}`);
     } finally {
@@ -238,6 +253,64 @@
           </div>
         </div>
       {/if}
+    </div>
+
+    <!-- Autonomous ops: local task queue summary + upcoming schedules + recent feed -->
+    <div class="section autonomous-section">
+      <h2>autonomous ops</h2>
+      <div class="auto-grid">
+        <div class="auto-card">
+          <span class="auto-label">queue · last {taskStats?.window_hours ?? 24}h</span>
+          {#if taskStats}
+            <div class="auto-stats">
+              <span class="auto-stat"><span class="auto-num running">{taskStats.running}</span> running</span>
+              <span class="auto-stat"><span class="auto-num pending">{taskStats.pending}</span> pending</span>
+              <span class="auto-stat"><span class="auto-num ok">{taskStats.succeeded}</span> ok</span>
+              <span class="auto-stat"><span class="auto-num err">{taskStats.failed}</span> failed</span>
+              {#if taskStats.cancelled > 0}
+                <span class="auto-stat"><span class="auto-num warn">{taskStats.cancelled}</span> cancelled</span>
+              {/if}
+            </div>
+          {:else}
+            <span class="auto-empty">no data</span>
+          {/if}
+        </div>
+
+        <div class="auto-card">
+          <span class="auto-label">upcoming schedules</span>
+          {#if upcomingFires.length === 0}
+            <span class="auto-empty">no enabled schedules</span>
+          {:else}
+            <div class="auto-list">
+              {#each upcomingFires as f (f.schedule_id)}
+                <button class="auto-row" onclick={() => panelFocus.focusChain(f.chain_id)}>
+                  <span class="auto-time">{new Date(f.next_fire_at).toLocaleString()}</span>
+                  <span class="auto-name">{f.chain_name || f.chain_id}</span>
+                  <code class="auto-cron">{f.cron_expr}</code>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
+        <div class="auto-card auto-card-wide">
+          <span class="auto-label">recent tasks</span>
+          {#if recentLocalTasks.length === 0}
+            <span class="auto-empty">no tasks yet</span>
+          {:else}
+            <div class="auto-list">
+              {#each recentLocalTasks as t (t.id)}
+                <button class="auto-row" onclick={() => panelFocus.focusChain(t.chain_id)}>
+                  <span class="run-dot status-{t.status}"></span>
+                  <span class="auto-status">{t.status}</span>
+                  <span class="auto-name">{chainNames.get(t.chain_id) ?? t.chain_id}</span>
+                  <span class="auto-meta">{t.trigger}{t.started_at ? ` · ${new Date(t.started_at).toLocaleTimeString()}` : ''}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
     </div>
 
     <!-- Resource breakdown -->
@@ -460,6 +533,88 @@
 
   /* === Sections === */
   .section { margin-bottom: 28px; }
+
+  /* Autonomous-ops overview row */
+  .autonomous-section { margin-top: 24px; }
+  .auto-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+  }
+  .auto-card {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-lg);
+    padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .auto-card-wide { grid-column: span 2; }
+  @media (max-width: 700px) { .auto-card-wide { grid-column: span 1; } }
+
+  .auto-label {
+    font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--color-text-tertiary);
+  }
+  .auto-stats { display: flex; flex-wrap: wrap; gap: 12px; }
+  .auto-stat {
+    display: inline-flex; align-items: baseline; gap: 4px;
+    font-size: 11px; color: var(--color-text-tertiary);
+  }
+  .auto-num {
+    font-size: 18px; font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-text-primary);
+  }
+  .auto-num.ok { color: var(--color-success); }
+  .auto-num.err { color: var(--color-error); }
+  .auto-num.warn { color: var(--color-warning, #d97706); }
+  .auto-num.running { color: var(--color-info); }
+  .auto-num.pending { color: var(--color-text-secondary); }
+
+  .auto-empty { font-size: 11px; color: var(--color-text-tertiary); font-style: italic; }
+
+  .auto-list { display: flex; flex-direction: column; gap: 2px; }
+  .auto-row {
+    display: flex; align-items: center; gap: 8px;
+    background: none; border: none; padding: 4px 6px;
+    color: inherit; cursor: pointer; font-family: inherit;
+    border-radius: var(--radius-sm); text-align: left;
+    font-size: 11px;
+  }
+  .auto-row:hover { background: rgba(255, 255, 255, 0.03); }
+  .auto-time {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--color-text-tertiary);
+    min-width: 130px;
+  }
+  .auto-status {
+    text-transform: uppercase; letter-spacing: 0.04em;
+    font-size: 9px; font-weight: 600;
+    color: var(--color-text-secondary);
+    min-width: 56px;
+  }
+  .auto-name {
+    flex: 1; color: var(--color-text-primary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .auto-cron {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--color-text-tertiary);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 1px 5px; border-radius: var(--radius-sm);
+  }
+  .auto-meta { font-size: 10px; color: var(--color-text-tertiary); }
+
+  .run-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--color-text-tertiary); flex-shrink: 0;
+  }
+  .run-dot.status-succeeded { background: var(--color-success); }
+  .run-dot.status-failed { background: var(--color-error); }
+  .run-dot.status-running { background: var(--color-info); }
+  .run-dot.status-cancelled { background: var(--color-warning, #d97706); }
+  .run-dot.status-pending { background: var(--color-text-tertiary); opacity: 0.5; }
 
   h2 {
     font-size: 13px;

@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
+  import { panelFocus } from '../stores.svelte';
 
   interface Task {
     id: string;
@@ -148,7 +149,15 @@
           <button class="task-summary" onclick={() => expandedID = expandedID === t.id ? null : t.id}>
             <span class="status-dot status-{t.status}"></span>
             <span class="task-status">{t.status}</span>
-            <span class="task-chain">{chainName(t.chain_id)}</span>
+            <span class="task-chain">
+              <span
+                class="chain-link"
+                role="link"
+                tabindex="0"
+                onclick={(e) => { e.stopPropagation(); panelFocus.focusChain(t.chain_id); }}
+                onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); panelFocus.focusChain(t.chain_id); } }}
+              >{chainName(t.chain_id)}</span>
+            </span>
             <span class="task-meta">
               {t.trigger}
               {#if t.attempts > 1}· try {t.attempts}/{t.max_attempts}{/if}
@@ -277,6 +286,11 @@
     color: var(--color-text-primary);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  .chain-link {
+    color: var(--color-accent); cursor: pointer;
+    border-bottom: 1px dotted transparent;
+  }
+  .chain-link:hover { border-bottom-color: var(--color-accent); }
   .task-meta { font-size: 11px; color: var(--color-text-tertiary); }
   .task-time {
     font-size: 11px; color: var(--color-text-tertiary);

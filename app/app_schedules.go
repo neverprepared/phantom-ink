@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -44,6 +45,8 @@ func (a *App) SaveSchedule(s Schedule) (Schedule, error) {
 }
 
 // ListSchedules returns schedules for a chain. Empty chainID returns all.
+// NextFireAt is computed here so the UI can show "next: …" without needing
+// its own cron parser.
 func (a *App) ListSchedules(chainID string) ([]Schedule, error) {
 	if a.db == nil {
 		return []Schedule{}, fmt.Errorf("database not initialized")
@@ -55,7 +58,127 @@ func (a *App) ListSchedules(chainID string) ([]Schedule, error) {
 	if rows == nil {
 		rows = []Schedule{}
 	}
+	now := time.Now().UTC()
+	for i := range rows {
+		rows[i].NextFireAt = nextFireFor(rows[i], now)
+	}
 	return rows, nil
+}
+
+// UpcomingFire is one entry in the dashboard "upcoming work" list — a single
+// schedule with its next computed fire time and the target chain.
+type UpcomingFire struct {
+	ScheduleID string `json:"schedule_id"`
+	ChainID    string `json:"chain_id"`
+	ChainName  string `json:"chain_name"`
+	CronExpr   string `json:"cron_expr"`
+	NextFireAt string `json:"next_fire_at"`
+}
+
+// ListUpcomingFires returns the next N upcoming schedule fires across all
+// enabled schedules, sorted ascending. Limit defaults to 10. Used by the
+// Dashboard overview.
+func (a *App) ListUpcomingFires(limit int) ([]UpcomingFire, error) {
+	if a.db == nil {
+		return []UpcomingFire{}, fmt.Errorf("database not initialized")
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := a.db.ListSchedules("")
+	if err != nil {
+		return nil, err
+	}
+	chainsByID := make(map[string]string)
+	if list, err := a.db.ListChains(); err == nil {
+		for _, c := range list {
+			chainsByID[c.ID] = c.Name
+		}
+	}
+	now := time.Now().UTC()
+	out := make([]UpcomingFire, 0, len(rows))
+	for _, r := range rows {
+		if !r.Enabled {
+			continue
+		}
+		next := nextFireFor(r, now)
+		if next == "" {
+			continue
+		}
+		out = append(out, UpcomingFire{
+			ScheduleID: r.ID, ChainID: r.ChainID,
+			ChainName: chainsByID[r.ChainID], CronExpr: r.CronExpr,
+			NextFireAt: next,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].NextFireAt < out[j].NextFireAt })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// TaskStats is a small aggregation used by the Dashboard. WindowHours bounds
+// the count window (most recent N hours). Default 24.
+type TaskStats struct {
+	WindowHours int `json:"window_hours"`
+	Pending     int `json:"pending"`
+	Running     int `json:"running"`
+	Succeeded   int `json:"succeeded"`
+	Failed      int `json:"failed"`
+	Cancelled   int `json:"cancelled"`
+}
+
+// GetTaskStats returns counts in the window. Pending/Running are always live
+// (window is irrelevant — they haven't finished yet). Succeeded/Failed/
+// Cancelled are scoped to finished_at within the window.
+func (a *App) GetTaskStats(windowHours int) (TaskStats, error) {
+	if a.db == nil {
+		return TaskStats{}, fmt.Errorf("database not initialized")
+	}
+	if windowHours <= 0 {
+		windowHours = 24
+	}
+	since := time.Now().UTC().Add(-time.Duration(windowHours) * time.Hour).Format(time.RFC3339)
+	stats := TaskStats{WindowHours: windowHours}
+	tasks, err := a.db.ListTasks("", 500)
+	if err != nil {
+		return stats, err
+	}
+	for _, t := range tasks {
+		switch t.Status {
+		case TaskPending:
+			stats.Pending++
+		case TaskRunning:
+			stats.Running++
+		case TaskSucceeded:
+			if t.FinishedAt >= since {
+				stats.Succeeded++
+			}
+		case TaskFailed:
+			if t.FinishedAt >= since {
+				stats.Failed++
+			}
+		case TaskCancelled:
+			if t.FinishedAt >= since {
+				stats.Cancelled++
+			}
+		}
+	}
+	return stats, nil
+}
+
+// nextFireFor returns the RFC3339 timestamp of the next scheduled fire after
+// `now`, or "" when the cron expression is invalid or the schedule disabled.
+func nextFireFor(s Schedule, now time.Time) string {
+	if !s.Enabled {
+		return ""
+	}
+	sched, err := cronParser.Parse(s.CronExpr)
+	if err != nil {
+		return ""
+	}
+	return sched.Next(now).UTC().Format(time.RFC3339)
 }
 
 // DeleteSchedule removes a schedule by ID.

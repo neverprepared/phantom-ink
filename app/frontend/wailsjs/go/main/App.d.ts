@@ -123,6 +123,8 @@ export function GetSystemInfo():Promise<main.SystemInfo>;
 
 export function GetTask(arg1:string):Promise<main.TaskRow>;
 
+export function GetTaskStats(arg1:number):Promise<main.TaskStats>;
+
 export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;
 
 export function GetWorktree(arg1:string):Promise<brainbox.Worktree>;
@@ -162,6 +164,8 @@ export function ListSchedules(arg1:string):Promise<Array<main.ScheduleRow>>;
 export function ListServices():Promise<Array<main.ServiceStatus>>;
 
 export function ListTasks(arg1:string,arg2:number):Promise<Array<main.TaskRow>>;
+
+export function ListUpcomingFires(arg1:number):Promise<Array<main.UpcomingFire>>;
 
 export function ListWorktrees(arg1:string):Promise<Array<brainbox.Worktree>>;
 

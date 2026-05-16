@@ -56,6 +56,28 @@ if (typeof window !== 'undefined') {
 }
 
 // ---------------------------------------------------------------------------
+// Panel focus — one-shot signal for cross-panel navigation. Setter sets the
+// target chain ID and switches the current panel; reader clears after use.
+// Used by TasksPanel (and later, others) to "open this chain" without
+// reinventing routing.
+// ---------------------------------------------------------------------------
+
+let _chainFocus = $state<string>('');
+
+export const panelFocus = {
+  get chainID() { return _chainFocus; },
+  focusChain(id: string) {
+    _chainFocus = id;
+    currentPanel.value = 'chains';
+  },
+  consumeChainFocus(): string {
+    const id = _chainFocus;
+    _chainFocus = '';
+    return id;
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Command palette
 // ---------------------------------------------------------------------------
 

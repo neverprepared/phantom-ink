@@ -1622,6 +1622,7 @@ export namespace main {
 	    created_at: string;
 	    updated_at: string;
 	    last_fired_at: string;
+	    next_fire_at: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ScheduleRow(source);
@@ -1638,6 +1639,7 @@ export namespace main {
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
 	        this.last_fired_at = source["last_fired_at"];
+	        this.next_fire_at = source["next_fire_at"];
 	    }
 	}
 	export class SecretKeyStatus {
@@ -1746,6 +1748,48 @@ export namespace main {
 	        this.max_attempts = source["max_attempts"];
 	        this.last_error = source["last_error"];
 	        this.result_run_id = source["result_run_id"];
+	    }
+	}
+	export class TaskStats {
+	    window_hours: number;
+	    pending: number;
+	    running: number;
+	    succeeded: number;
+	    failed: number;
+	    cancelled: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TaskStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.window_hours = source["window_hours"];
+	        this.pending = source["pending"];
+	        this.running = source["running"];
+	        this.succeeded = source["succeeded"];
+	        this.failed = source["failed"];
+	        this.cancelled = source["cancelled"];
+	    }
+	}
+	export class UpcomingFire {
+	    schedule_id: string;
+	    chain_id: string;
+	    chain_name: string;
+	    cron_expr: string;
+	    next_fire_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpcomingFire(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.schedule_id = source["schedule_id"];
+	        this.chain_id = source["chain_id"];
+	        this.chain_name = source["chain_name"];
+	        this.cron_expr = source["cron_expr"];
+	        this.next_fire_at = source["next_fire_at"];
 	    }
 	}
 

@@ -9,10 +9,10 @@
   import TasksPanel from '../panels/TasksPanel.svelte';
   import AgentRolesPanel from '../panels/AgentRolesPanel.svelte';
   import AgentsPanel from '../panels/AgentsPanel.svelte';
+  import ChainsPanel from '../panels/ChainsPanel.svelte';
   import HubPanel from '../panels/HubPanel.svelte';
   import ReposPanel from '../panels/ReposPanel.svelte';
   import ServicesPanel from '../panels/ServicesPanel.svelte';
-  import ChannelsPanel from '../panels/ChannelsPanel.svelte';
   import PlaybooksPanel from '../panels/PlaybooksPanel.svelte';
   import EventFeedPanel from '../panels/EventFeedPanel.svelte';
   import ProfilesPanel from '../panels/ProfilesPanel.svelte';
@@ -39,8 +39,8 @@
         <ReposPanel />
       {:else if currentPanel.value === 'integrations'}
         <ServicesPanel />
-      {:else if currentPanel.value === 'channels'}
-        <ChannelsPanel />
+      {:else if currentPanel.value === 'chains'}
+        <ChainsPanel />
       {:else if currentPanel.value === 'playbooks'}
         <PlaybooksPanel />
       {:else if currentPanel.value === 'events'}

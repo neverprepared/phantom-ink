@@ -242,6 +242,10 @@ export function GetTask(arg1) {
   return window['go']['main']['App']['GetTask'](arg1);
 }
 
+export function GetTaskStats(arg1) {
+  return window['go']['main']['App']['GetTaskStats'](arg1);
+}
+
 export function GetTraceDetail(arg1) {
   return window['go']['main']['App']['GetTraceDetail'](arg1);
 }
@@ -320,6 +324,10 @@ export function ListServices() {
 
 export function ListTasks(arg1, arg2) {
   return window['go']['main']['App']['ListTasks'](arg1, arg2);
+}
+
+export function ListUpcomingFires(arg1) {
+  return window['go']['main']['App']['ListUpcomingFires'](arg1);
 }
 
 export function ListWorktrees(arg1) {

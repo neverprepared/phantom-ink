@@ -736,6 +736,10 @@ type ScheduleRow struct {
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
 	LastFiredAt  string `json:"last_fired_at"`
+	// NextFireAt is a computed convenience populated by the bindings (not the
+	// table). RFC3339 UTC. Empty when the cron expression is invalid or the
+	// schedule is disabled.
+	NextFireAt string `json:"next_fire_at"`
 }
 
 func (db *DB) UpsertSchedule(s ScheduleRow) error {

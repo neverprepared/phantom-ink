@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
+  import { panelFocus } from '../stores.svelte';
 
   interface UsableAgent {
     id: string;
@@ -50,8 +51,11 @@
 
   let chains = $state<Chain[]>([]);
   let chainable = $state<UsableAgent[]>([]);
-  let expanded = $state(false);
-  let loading = $state(false);
+  let loading = $state(true);
+
+  // Recent task outcomes per chain — shown as colored dots on each card so
+  // users can see "is this chain healthy?" at a glance without opening Tasks.
+  let recentByChain = $state<Map<string, { status: string }[]>>(new Map());
 
   // Editor state
   let editing = $state<Chain | null>(null);
@@ -71,9 +75,26 @@
     const a = await getApi();
     if (!a) { loading = false; return; }
     try {
-      chains = (await a.ListChains()) ?? [];
-      const usable = (await a.UsableAgents()) ?? [];
-      chainable = usable.filter((u: any) => u.invocation?.prompt_mode);
+      const [c, usable, tasks] = await Promise.all([
+        a.ListChains(),
+        a.UsableAgents(),
+        a.ListTasks('', 200),
+      ]);
+      chains = (c ?? []) as Chain[];
+      chainable = ((usable ?? []) as any[]).filter((u: any) => u.invocation?.prompt_mode);
+
+      // Bucket last 5 tasks per chain — ListTasks returns newest first, so
+      // taking the first 5 per chain gives the freshest outcomes.
+      const next = new Map<string, { status: string }[]>();
+      for (const t of (tasks ?? []) as any[]) {
+        if (!t.chain_id) continue;
+        const bucket = next.get(t.chain_id) ?? [];
+        if (bucket.length < 5) {
+          bucket.push({ status: t.status });
+          next.set(t.chain_id, bucket);
+        }
+      }
+      recentByChain = next;
     } catch (err: any) {
       notifications.error(`Failed to load chains: ${err?.message ?? err}`);
     } finally {
@@ -81,7 +102,20 @@
     }
   }
 
-  onMount(load);
+  let highlightedChainID = $state<string>('');
+
+  onMount(async () => {
+    await load();
+    // If we got here via panelFocus.focusChain(), highlight that chain card.
+    const id = panelFocus.consumeChainFocus();
+    if (id) {
+      highlightedChainID = id;
+      await tick();
+      document.getElementById(`chain-card-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Fade highlight after a moment so it doesn't linger.
+      setTimeout(() => { if (highlightedChainID === id) highlightedChainID = ''; }, 2500);
+    }
+  });
   onDestroy(() => unsubscribe?.());
 
   // ---------- Schedules ----------
@@ -95,6 +129,7 @@
     created_at: string;
     updated_at: string;
     last_fired_at: string;
+    next_fire_at: string;
   }
 
   let openSchedulesFor = $state<string | null>(null);
@@ -128,7 +163,7 @@
       await a.SaveSchedule({
         id: '', chain_id: chainID, cron_expr: newCron.trim(),
         input: newSchedInput, cwd: '', enabled: true,
-        created_at: '', updated_at: '', last_fired_at: '',
+        created_at: '', updated_at: '', last_fired_at: '', next_fire_at: '',
       });
       notifications.success('Schedule added');
       newCron = '*/15 * * * *';
@@ -324,14 +359,15 @@
   }
 </script>
 
-<section class="chains-section">
-  <button class="section-toggle" onclick={() => { expanded = !expanded; if (expanded && chains.length === 0 && !loading) load(); }}>
-    <svg class="chevron" class:expanded xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
-    <span class="section-title">chains</span>
-    <span class="section-count">{chains.length}</span>
-  </button>
+<div class="panel">
+  <header class="panel-header">
+    <h1><span class="panel-accent">chains</span></h1>
+    <button class="btn-refresh" onclick={load} title="Refresh" aria-label="Refresh">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+    </button>
+  </header>
 
-  {#if expanded}
+  <section class="chains-section">
     <div class="section-body">
       <p class="hint">
         Pipe one agent's output into the next. Only enabled, detected agents with a wired invocation are pickable as steps.
@@ -354,12 +390,20 @@
       {:else}
         <div class="chain-list">
           {#each chains as c (c.id)}
-            <div class="chain-card">
+            {@const recent = recentByChain.get(c.id) ?? []}
+            <div class="chain-card" id="chain-card-{c.id}" class:highlight={highlightedChainID === c.id}>
               <div class="chain-head">
                 <div class="chain-identity">
                   <span class="chain-name">{c.name}</span>
                   {#if c.description}
                     <span class="chain-desc">{c.description}</span>
+                  {/if}
+                  {#if recent.length > 0}
+                    <div class="recent-runs" title="last {recent.length} runs (newest left)">
+                      {#each recent as r, i (i)}
+                        <span class="run-dot status-{r.status}"></span>
+                      {/each}
+                    </div>
                   {/if}
                 </div>
                 <div class="chain-tools">
@@ -420,11 +464,18 @@
                       {#if s.input}
                         <span class="sched-input" title={s.input}>{s.input.slice(0, 40)}{s.input.length > 40 ? '…' : ''}</span>
                       {/if}
-                      {#if s.last_fired_at}
-                        <span class="sched-meta">last: {new Date(s.last_fired_at).toLocaleString()}</span>
-                      {:else}
-                        <span class="sched-meta">never fired</span>
-                      {/if}
+                      <span class="sched-meta">
+                        {#if s.next_fire_at}
+                          next: {new Date(s.next_fire_at).toLocaleString()}
+                        {:else if !s.enabled}
+                          disabled
+                        {:else}
+                          —
+                        {/if}
+                        {#if s.last_fired_at}
+                          · last: {new Date(s.last_fired_at).toLocaleString()}
+                        {/if}
+                      </span>
                       <button class="btn-icon danger" onclick={() => removeSchedule(c.id, s)} title="Delete schedule" aria-label="Delete schedule">×</button>
                     </div>
                   {/each}
@@ -440,8 +491,8 @@
         </div>
       {/if}
     </div>
-  {/if}
-</section>
+  </section>
+</div>
 
 <!-- Editor modal -->
 {#if editorOpen && editing}
@@ -599,31 +650,36 @@
 {/if}
 
 <style>
-  .chains-section {
-    margin-top: 20px;
-    border-top: 1px solid var(--color-border-primary);
-    padding-top: 14px;
+  .panel { padding: var(--panel-padding); }
+  .chains-section { /* legacy class kept so nested rules below match */ }
+  .section-body { padding-top: 0; }
+
+  /* Recent-runs dots — quick health glance on each chain card */
+  .recent-runs {
+    display: inline-flex; gap: 3px; margin-top: 4px;
+  }
+  .run-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--color-text-tertiary);
+  }
+  .run-dot.status-succeeded { background: var(--color-success); }
+  .run-dot.status-failed { background: var(--color-error); }
+  .run-dot.status-cancelled { background: var(--color-warning, #d97706); }
+  .run-dot.status-running {
+    background: var(--color-info);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  .run-dot.status-pending { background: var(--color-text-tertiary); opacity: 0.5; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
   }
 
-  .section-toggle {
-    display: flex; align-items: center; gap: 8px;
-    background: none; border: none; padding: 4px 0;
-    color: var(--color-text-secondary); cursor: pointer; font-family: inherit;
+  /* Highlight a card when navigated to from another panel */
+  .chain-card.highlight {
+    box-shadow: 0 0 0 2px var(--color-accent);
+    transition: box-shadow 0.4s ease-out;
   }
-  .section-toggle:hover { color: var(--color-text-primary); }
-  .chevron { color: var(--color-text-tertiary); transition: transform 0.15s; }
-  .chevron.expanded { transform: rotate(90deg); }
-  .section-title {
-    font-size: 11px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.06em;
-  }
-  .section-count {
-    font-size: 11px; color: var(--color-text-tertiary);
-    background: rgba(255, 255, 255, 0.05); padding: 0 6px;
-    border-radius: var(--radius-sm);
-  }
-
-  .section-body { padding-top: 10px; }
   .hint { font-size: 12px; color: var(--color-text-tertiary); margin: 6px 0; }
   .warn { font-size: 12px; color: var(--color-warning, #d97706); margin: 6px 0; }
 

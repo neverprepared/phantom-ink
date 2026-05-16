@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
-  import ChainsSection from '../components/ChainsSection.svelte';
 
   interface Agent {
     id: string;
@@ -139,8 +138,6 @@
       {/each}
     </div>
   {/if}
-
-  <ChainsSection />
 </div>
 
 <style>
