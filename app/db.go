@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -147,6 +148,32 @@ var migrations = []migration{
 			log_json     TEXT NOT NULL DEFAULT '[]'
 		);
 		CREATE INDEX IF NOT EXISTS idx_chain_runs_chain_id ON chain_runs(chain_id);
+	`},
+	// v6: task queue — durable work items that the in-app worker drains. A
+	// task targets a chain and, on dispatch, becomes a chain_runs row. status
+	// is one of: pending | running | succeeded | failed | cancelled. trigger
+	// is one of: manual | schedule | webhook | followup.
+	{version: 6, sql: `
+		CREATE TABLE IF NOT EXISTS tasks (
+			id              TEXT PRIMARY KEY,
+			chain_id        TEXT NOT NULL,
+			status          TEXT NOT NULL DEFAULT 'pending',
+			priority        INTEGER NOT NULL DEFAULT 0,
+			input           TEXT NOT NULL DEFAULT '',
+			cwd             TEXT NOT NULL DEFAULT '',
+			trigger         TEXT NOT NULL DEFAULT 'manual',
+			parent_task_id  TEXT NOT NULL DEFAULT '',
+			enqueued_at     TEXT NOT NULL DEFAULT '',
+			scheduled_for   TEXT NOT NULL DEFAULT '',
+			started_at      TEXT NOT NULL DEFAULT '',
+			finished_at     TEXT NOT NULL DEFAULT '',
+			attempts        INTEGER NOT NULL DEFAULT 0,
+			max_attempts    INTEGER NOT NULL DEFAULT 1,
+			last_error      TEXT NOT NULL DEFAULT '',
+			result_run_id   TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, priority DESC, enqueued_at);
+		CREATE INDEX IF NOT EXISTS idx_tasks_chain_id ON tasks(chain_id);
 	`},
 }
 
@@ -469,6 +496,198 @@ func (db *DB) ListChainRuns(chainID string, limit int) ([]ChainRunRow, error) {
 			continue
 		}
 		out = append(out, r)
+	}
+	return out, nil
+}
+
+// ---------------------------------------------------------------------------
+// Tasks (queue)
+// ---------------------------------------------------------------------------
+
+// TaskRow mirrors the tasks table. The runtime Task type lives in queue.go.
+type TaskRow struct {
+	ID            string `json:"id"`
+	ChainID       string `json:"chain_id"`
+	Status        string `json:"status"`
+	Priority      int    `json:"priority"`
+	Input         string `json:"input"`
+	Cwd           string `json:"cwd"`
+	Trigger       string `json:"trigger"`
+	ParentTaskID  string `json:"parent_task_id"`
+	EnqueuedAt    string `json:"enqueued_at"`
+	ScheduledFor  string `json:"scheduled_for"`
+	StartedAt     string `json:"started_at"`
+	FinishedAt    string `json:"finished_at"`
+	Attempts      int    `json:"attempts"`
+	MaxAttempts   int    `json:"max_attempts"`
+	LastError     string `json:"last_error"`
+	ResultRunID   string `json:"result_run_id"`
+}
+
+func (db *DB) InsertTask(t TaskRow) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO tasks (
+			id, chain_id, status, priority, input, cwd, trigger, parent_task_id,
+			enqueued_at, scheduled_for, started_at, finished_at,
+			attempts, max_attempts, last_error, result_run_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.ChainID, t.Status, t.Priority, t.Input, t.Cwd, t.Trigger, t.ParentTaskID,
+		t.EnqueuedAt, t.ScheduledFor, t.StartedAt, t.FinishedAt,
+		t.Attempts, t.MaxAttempts, t.LastError, t.ResultRunID)
+	return err
+}
+
+// ClaimNextTask atomically transitions the highest-priority eligible pending
+// task to "running" and returns it. Returns (TaskRow{}, false) when nothing
+// is ready. "Eligible" means status='pending' AND (scheduled_for='' OR
+// scheduled_for <= nowRFC3339).
+func (db *DB) ClaimNextTask(nowRFC3339 string) (TaskRow, bool) {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return TaskRow{}, false
+	}
+	defer tx.Rollback()
+
+	var t TaskRow
+	err = tx.QueryRow(`
+		SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id,
+		       enqueued_at, scheduled_for, started_at, finished_at,
+		       attempts, max_attempts, last_error, result_run_id
+		FROM tasks
+		WHERE status = 'pending'
+		  AND (scheduled_for = '' OR scheduled_for <= ?)
+		ORDER BY priority DESC, enqueued_at ASC
+		LIMIT 1`, nowRFC3339).Scan(
+		&t.ID, &t.ChainID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID,
+		&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
+		&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID)
+	if err != nil {
+		return TaskRow{}, false
+	}
+
+	if _, err := tx.Exec(
+		`UPDATE tasks SET status = 'running', started_at = ?, attempts = attempts + 1 WHERE id = ?`,
+		nowRFC3339, t.ID); err != nil {
+		return TaskRow{}, false
+	}
+	if err := tx.Commit(); err != nil {
+		return TaskRow{}, false
+	}
+	t.Status = "running"
+	t.StartedAt = nowRFC3339
+	t.Attempts++
+	return t, true
+}
+
+func (db *DB) MarkTaskSucceeded(id, finishedAt, runID string) error {
+	_, err := db.conn.Exec(
+		`UPDATE tasks SET status = 'succeeded', finished_at = ?, result_run_id = ?, last_error = '' WHERE id = ?`,
+		finishedAt, runID, id)
+	return err
+}
+
+// MarkTaskFailed records a failure. If attempts < max_attempts the task is
+// requeued (status reset to pending) with scheduled_for set for backoff.
+// Returns true when the task is requeued.
+func (db *DB) MarkTaskFailed(id, finishedAt, runID, errMsg, retryAt string) (requeued bool, err error) {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var attempts, maxAttempts int
+	if err := tx.QueryRow(`SELECT attempts, max_attempts FROM tasks WHERE id = ?`, id).Scan(&attempts, &maxAttempts); err != nil {
+		return false, err
+	}
+	if attempts < maxAttempts && retryAt != "" {
+		if _, err := tx.Exec(
+			`UPDATE tasks SET status = 'pending', scheduled_for = ?, last_error = ?, started_at = '' WHERE id = ?`,
+			retryAt, errMsg, id); err != nil {
+			return false, err
+		}
+		requeued = true
+	} else {
+		if _, err := tx.Exec(
+			`UPDATE tasks SET status = 'failed', finished_at = ?, result_run_id = ?, last_error = ? WHERE id = ?`,
+			finishedAt, runID, errMsg, id); err != nil {
+			return false, err
+		}
+	}
+	return requeued, tx.Commit()
+}
+
+func (db *DB) CancelTask(id string) error {
+	res, err := db.conn.Exec(
+		`UPDATE tasks SET status = 'cancelled', finished_at = ? WHERE id = ? AND status IN ('pending', 'running')`,
+		time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("task %q not pending or running", id)
+	}
+	return nil
+}
+
+func (db *DB) RetryTask(id string) error {
+	_, err := db.conn.Exec(
+		`UPDATE tasks SET status = 'pending', started_at = '', finished_at = '', last_error = '', scheduled_for = '', attempts = 0 WHERE id = ? AND status IN ('failed', 'cancelled')`,
+		id)
+	return err
+}
+
+func (db *DB) GetTask(id string) (TaskRow, bool) {
+	var t TaskRow
+	err := db.conn.QueryRow(`
+		SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id,
+		       enqueued_at, scheduled_for, started_at, finished_at,
+		       attempts, max_attempts, last_error, result_run_id
+		FROM tasks WHERE id = ?`, id).Scan(
+		&t.ID, &t.ChainID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID,
+		&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
+		&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID)
+	if err != nil {
+		return t, false
+	}
+	return t, true
+}
+
+// ListTasks returns tasks filtered by status (empty string = all). Limit is
+// capped at 200 to keep the UI snappy.
+func (db *DB) ListTasks(status string, limit int) ([]TaskRow, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 200
+	}
+	var rows *sql.Rows
+	var err error
+	if status == "" {
+		rows, err = db.conn.Query(`
+			SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id,
+			       enqueued_at, scheduled_for, started_at, finished_at,
+			       attempts, max_attempts, last_error, result_run_id
+			FROM tasks ORDER BY enqueued_at DESC LIMIT ?`, limit)
+	} else {
+		rows, err = db.conn.Query(`
+			SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id,
+			       enqueued_at, scheduled_for, started_at, finished_at,
+			       attempts, max_attempts, last_error, result_run_id
+			FROM tasks WHERE status = ? ORDER BY enqueued_at DESC LIMIT ?`, status, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TaskRow
+	for rows.Next() {
+		var t TaskRow
+		if err := rows.Scan(
+			&t.ID, &t.ChainID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID,
+			&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
+			&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID,
+		); err != nil {
+			continue
+		}
+		out = append(out, t)
 	}
 	return out, nil
 }

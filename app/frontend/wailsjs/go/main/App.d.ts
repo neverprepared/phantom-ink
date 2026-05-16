@@ -9,6 +9,8 @@ export function AddRepo(arg1:brainbox.AddRepoRequest):Promise<brainbox.Repo>;
 
 export function BrowseFolder():Promise<string>;
 
+export function CancelHubTask(arg1:string):Promise<void>;
+
 export function CancelPlaybook(arg1:string):Promise<void>;
 
 export function CancelTask(arg1:string):Promise<void>;
@@ -52,6 +54,8 @@ export function DeleteSession(arg1:string):Promise<brainbox.SessionActionRespons
 export function DeleteWorktree(arg1:string):Promise<void>;
 
 export function DownloadArtifact(arg1:string):Promise<Array<number>>;
+
+export function EnqueueTask(arg1:main.EnqueueTaskRequest):Promise<string>;
 
 export function ExportSecretsTemplate(arg1:string):Promise<string>;
 
@@ -115,6 +119,8 @@ export function GetSessionsMetricsHistory():Promise<Record<string, Array<brainbo
 
 export function GetSystemInfo():Promise<main.SystemInfo>;
 
+export function GetTask(arg1:string):Promise<main.TaskRow>;
+
 export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;
 
 export function GetWorktree(arg1:string):Promise<brainbox.Worktree>;
@@ -135,6 +141,8 @@ export function ListChains():Promise<Array<main.Chain>>;
 
 export function ListChannels():Promise<Array<brainbox.Channel>>;
 
+export function ListHubTasks(arg1:string):Promise<Array<brainbox.Task>>;
+
 export function ListNFSExports():Promise<Array<main.NFSExport>>;
 
 export function ListOllamaModels():Promise<Array<brainbox.OllamaModel>>;
@@ -149,7 +157,7 @@ export function ListRunners():Promise<Array<brainbox.Runner>>;
 
 export function ListServices():Promise<Array<main.ServiceStatus>>;
 
-export function ListTasks(arg1:string):Promise<Array<brainbox.Task>>;
+export function ListTasks(arg1:string,arg2:number):Promise<Array<main.TaskRow>>;
 
 export function ListWorktrees(arg1:string):Promise<Array<brainbox.Worktree>>;
 
@@ -168,6 +176,8 @@ export function RescanAgents():Promise<Array<main.DetectedAgent>>;
 export function RestartBrainboxAPI():Promise<void>;
 
 export function RestoreProfile(arg1:string):Promise<void>;
+
+export function RetryTask(arg1:string):Promise<void>;
 
 export function RunChain(arg1:string,arg2:string,arg3:string):Promise<string>;
 

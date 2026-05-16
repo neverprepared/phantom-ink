@@ -45,7 +45,9 @@ func (a *App) GetHubState() (brainbox.HubState, error) {
 	return a.client.GetHubState()
 }
 
-func (a *App) ListTasks(status string) ([]brainbox.Task, error) {
+// ListHubTasks returns brainbox hub tasks. Renamed from ListTasks to avoid
+// shadowing the new App.ListTasks which reads the local task queue.
+func (a *App) ListHubTasks(status string) ([]brainbox.Task, error) {
 	return a.client.ListTasks(status)
 }
 
@@ -53,7 +55,9 @@ func (a *App) SubmitTask(req brainbox.SubmitTaskRequest) (brainbox.Task, error) 
 	return a.client.SubmitTask(req)
 }
 
-func (a *App) CancelTask(taskID string) error {
+// CancelHubTask cancels a brainbox hub task. Renamed from CancelTask to
+// avoid shadowing the local-queue CancelTask binding.
+func (a *App) CancelHubTask(taskID string) error {
 	return a.client.CancelTask(taskID)
 }
 

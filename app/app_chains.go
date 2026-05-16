@@ -151,13 +151,16 @@ func (a *App) RunChain(id, input, cwdOverride string) (string, error) {
 		baseCwd = row.Cwd
 	}
 
-	go a.executeChain(runID, id, input, baseCwd, steps)
+	go func() { _ = a.executeChain(runID, id, input, baseCwd, steps) }()
 	return runID, nil
 }
 
 // executeChain runs every step in order, streaming events as it goes. It
-// catches the first failure and stops; downstream steps are skipped.
-func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps []ChainStep) {
+// catches the first failure and stops; downstream steps are skipped. Returns
+// nil on success or a wrapped error describing which step failed. Callers
+// that want fire-and-forget behavior (the RunChain binding) discard the error;
+// the queue worker uses it to decide retry vs. final-failure.
+func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps []ChainStep) error {
 	ctx := a.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -215,6 +218,79 @@ func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps [
 	}
 
 	emit(ChainRunEvent{Phase: "run:done", Status: status, Error: failure})
+	if status != "success" {
+		return fmt.Errorf("%s", failure)
+	}
+	return nil
+}
+
+// runChainForTask is the queue worker's synchronous entry point. It validates
+// the task's chain, allocates a run row, executes the chain, and returns the
+// runID plus any error. Unlike RunChain (which kicks off a goroutine and
+// returns immediately), this blocks until the chain completes so the worker
+// can mark the task succeeded/failed accordingly.
+func (a *App) runChainForTask(ctx context.Context, task TaskRow) (string, error) {
+	if a.db == nil {
+		return "", fmt.Errorf("database not initialized")
+	}
+	row, ok := a.db.GetChain(task.ChainID)
+	if !ok {
+		return "", fmt.Errorf("chain %q not found", task.ChainID)
+	}
+	steps, err := chainStepsFromJSON(row.StepsJSON)
+	if err != nil {
+		return "", err
+	}
+	if len(steps) == 0 {
+		return "", fmt.Errorf("chain has no steps")
+	}
+
+	usable, err := a.UsableAgents()
+	if err != nil {
+		return "", err
+	}
+	usableByID := make(map[string]DetectedAgent, len(usable))
+	for _, u := range usable {
+		usableByID[u.ID] = u
+	}
+	for i, step := range steps {
+		if _, ok := usableByID[step.AgentID]; !ok {
+			return "", fmt.Errorf("step %d: agent %q is not enabled or not detected", i+1, step.AgentID)
+		}
+		switch step.Executor {
+		case "", "host":
+		default:
+			return "", fmt.Errorf("step %d: executor %q not implemented", i+1, step.Executor)
+		}
+	}
+
+	runID := newRunID()
+	startedAt := time.Now().UTC().Format(time.RFC3339)
+	if err := a.db.InsertChainRun(ChainRunRow{
+		ID: runID, ChainID: task.ChainID, StartedAt: startedAt, Status: "running", LogJSON: "[]",
+	}); err != nil {
+		return "", err
+	}
+
+	cwd := task.Cwd
+	if cwd == "" {
+		cwd = row.Cwd
+	}
+	_ = ctx // executeChain reads ctx from a.ctx; we don't pass it through yet
+	return runID, a.executeChain(runID, task.ChainID, task.Input, cwd, steps)
+}
+
+// emitTaskEvent pushes a state change to the frontend, mirroring the chain
+// event pattern. The Tasks panel listens on task:event for live updates.
+func (a *App) emitTaskEvent(taskID, chainID, status string, attempts int, errMsg string) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, taskEventName, taskEvent{
+		TaskID: taskID, ChainID: chainID, Status: status,
+		Attempts: attempts, Error: errMsg,
+		At: time.Now().UTC().Format(time.RFC3339),
+	})
 }
 
 // newChainID returns a short opaque chain identifier.

@@ -135,6 +135,26 @@
     }
   }
 
+  async function enqueueTask(c: Chain) {
+    const input = prompt(`Initial input for "${c.name}" task:`, '');
+    if (input === null) return;
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const id = await a.EnqueueTask({
+        chain_id: c.id,
+        input,
+        cwd: c.cwd ?? '',
+        priority: 0,
+        max_attempts: 1,
+        trigger: 'manual',
+      });
+      notifications.success(`Queued ${id} — see Tasks panel`);
+    } catch (err: any) {
+      notifications.error(`Queue failed: ${err?.message ?? err}`);
+    }
+  }
+
   async function deleteChain(c: Chain) {
     if (!confirm(`Delete chain "${c.name}"?`)) return;
     const a = await getApi();
@@ -233,8 +253,11 @@
                   {/if}
                 </div>
                 <div class="chain-tools">
-                  <button class="btn-icon" onclick={() => openRunner(c)} title="Run chain" aria-label="Run chain">
+                  <button class="btn-icon" onclick={() => openRunner(c)} title="Run chain (foreground)" aria-label="Run chain">
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+                  </button>
+                  <button class="btn-icon" onclick={() => enqueueTask(c)} title="Queue as task" aria-label="Queue as task">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg>
                   </button>
                   <button class="btn-icon" onclick={() => editChain(c)} title="Edit chain" aria-label="Edit chain">
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="m18.5 2.5 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>

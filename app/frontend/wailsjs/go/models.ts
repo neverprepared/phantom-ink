@@ -1408,6 +1408,32 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class EnqueueTaskRequest {
+	    chain_id: string;
+	    input: string;
+	    cwd: string;
+	    priority: number;
+	    max_attempts: number;
+	    trigger: string;
+	    parent_task_id: string;
+	    scheduled_for: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new EnqueueTaskRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.chain_id = source["chain_id"];
+	        this.input = source["input"];
+	        this.cwd = source["cwd"];
+	        this.priority = source["priority"];
+	        this.max_attempts = source["max_attempts"];
+	        this.trigger = source["trigger"];
+	        this.parent_task_id = source["parent_task_id"];
+	        this.scheduled_for = source["scheduled_for"];
+	    }
+	}
 	export class LocalProcess {
 	    pid: string;
 	    tty: string;
@@ -1629,6 +1655,48 @@ export namespace main {
 	        this.cpu_cores = source["cpu_cores"];
 	        this.mem_total_bytes = source["mem_total_bytes"];
 	        this.mem_total_gib = source["mem_total_gib"];
+	    }
+	}
+	export class TaskRow {
+	    id: string;
+	    chain_id: string;
+	    status: string;
+	    priority: number;
+	    input: string;
+	    cwd: string;
+	    trigger: string;
+	    parent_task_id: string;
+	    enqueued_at: string;
+	    scheduled_for: string;
+	    started_at: string;
+	    finished_at: string;
+	    attempts: number;
+	    max_attempts: number;
+	    last_error: string;
+	    result_run_id: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TaskRow(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.chain_id = source["chain_id"];
+	        this.status = source["status"];
+	        this.priority = source["priority"];
+	        this.input = source["input"];
+	        this.cwd = source["cwd"];
+	        this.trigger = source["trigger"];
+	        this.parent_task_id = source["parent_task_id"];
+	        this.enqueued_at = source["enqueued_at"];
+	        this.scheduled_for = source["scheduled_for"];
+	        this.started_at = source["started_at"];
+	        this.finished_at = source["finished_at"];
+	        this.attempts = source["attempts"];
+	        this.max_attempts = source["max_attempts"];
+	        this.last_error = source["last_error"];
+	        this.result_run_id = source["result_run_id"];
 	    }
 	}
 

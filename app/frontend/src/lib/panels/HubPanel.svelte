@@ -132,7 +132,7 @@
     const a = await getApi();
     if (!a) return;
     try {
-      await a.CancelTask(id);
+      await a.CancelHubTask(id);
       notifications.success('Task cancelled');
       refresh();
     } catch (err: any) {

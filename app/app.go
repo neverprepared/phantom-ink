@@ -17,12 +17,14 @@ import (
 
 // App is the Wails-bound struct. All exported methods become callable from JS.
 type App struct {
-	ctx    context.Context
-	mu     sync.RWMutex // protects config
-	config *Config
-	db     *DB
-	client *brainbox.Client
-	sse    *brainbox.SSEListener
+	ctx        context.Context
+	mu         sync.RWMutex // protects config
+	config     *Config
+	db         *DB
+	client     *brainbox.Client
+	sse        *brainbox.SSEListener
+	worker     *worker
+	workerStop context.CancelFunc
 }
 
 // NewApp creates a new App instance.
@@ -70,10 +72,26 @@ func (a *App) startup(ctx context.Context) {
 			fmt.Fprintf(os.Stderr, "warning: initial agent rescan failed: %v\n", err)
 		}
 	}()
+
+	// Start the task queue worker. Stopped during shutdown via workerStop.
+	if a.db != nil {
+		workerCtx, cancel := context.WithCancel(ctx)
+		a.workerStop = cancel
+		a.worker = newWorker(a)
+		a.worker.Start(workerCtx)
+	}
 }
 
 // shutdown is called by Wails when the app closes.
 func (a *App) shutdown(_ context.Context) {
+	// Stop the queue worker first so it doesn't grab a task while the DB is
+	// being closed. Wait for the goroutine to actually exit.
+	if a.workerStop != nil {
+		a.workerStop()
+	}
+	if a.worker != nil {
+		a.worker.Wait()
+	}
 	if a.sse != nil {
 		a.sse.Stop()
 	}

@@ -14,6 +14,10 @@ export function BrowseFolder() {
   return window['go']['main']['App']['BrowseFolder']();
 }
 
+export function CancelHubTask(arg1) {
+  return window['go']['main']['App']['CancelHubTask'](arg1);
+}
+
 export function CancelPlaybook(arg1) {
   return window['go']['main']['App']['CancelPlaybook'](arg1);
 }
@@ -100,6 +104,10 @@ export function DeleteWorktree(arg1) {
 
 export function DownloadArtifact(arg1) {
   return window['go']['main']['App']['DownloadArtifact'](arg1);
+}
+
+export function EnqueueTask(arg1) {
+  return window['go']['main']['App']['EnqueueTask'](arg1);
 }
 
 export function ExportSecretsTemplate(arg1) {
@@ -226,6 +234,10 @@ export function GetSystemInfo() {
   return window['go']['main']['App']['GetSystemInfo']();
 }
 
+export function GetTask(arg1) {
+  return window['go']['main']['App']['GetTask'](arg1);
+}
+
 export function GetTraceDetail(arg1) {
   return window['go']['main']['App']['GetTraceDetail'](arg1);
 }
@@ -266,6 +278,10 @@ export function ListChannels() {
   return window['go']['main']['App']['ListChannels']();
 }
 
+export function ListHubTasks(arg1) {
+  return window['go']['main']['App']['ListHubTasks'](arg1);
+}
+
 export function ListNFSExports() {
   return window['go']['main']['App']['ListNFSExports']();
 }
@@ -294,8 +310,8 @@ export function ListServices() {
   return window['go']['main']['App']['ListServices']();
 }
 
-export function ListTasks(arg1) {
-  return window['go']['main']['App']['ListTasks'](arg1);
+export function ListTasks(arg1, arg2) {
+  return window['go']['main']['App']['ListTasks'](arg1, arg2);
 }
 
 export function ListWorktrees(arg1) {
@@ -332,6 +348,10 @@ export function RestartBrainboxAPI() {
 
 export function RestoreProfile(arg1) {
   return window['go']['main']['App']['RestoreProfile'](arg1);
+}
+
+export function RetryTask(arg1) {
+  return window['go']['main']['App']['RetryTask'](arg1);
 }
 
 export function RunChain(arg1, arg2, arg3) {
