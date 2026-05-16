@@ -2179,6 +2179,35 @@ async def _bootstrap_session_in_channel(
         import io
         import tarfile
 
+        # Pre-flight: confirm tmux session 'main' is actually live in the
+        # container. If we skip this check and the session isn't there,
+        # `tmux send-keys` exits non-zero but `exec_run` reports it as
+        # a normal completion — leading to a false-positive bootstrap_sent
+        # log while the agent never actually receives anything.
+        check_res = await loop.run_in_executor(
+            None,
+            lambda c=container: c.exec_run(
+                ["tmux", "has-session", "-t", "main"],
+                user="developer",
+            ),
+        )
+        if check_res.exit_code != 0:
+            log.warning(
+                "channel.bootstrap_exec_failed",
+                metadata={
+                    "session": participant.session_name,
+                    "channel_id": channel.id,
+                    "reason": (
+                        "no tmux session 'main' in container — the agent "
+                        "isn't running yet. Open the session's terminal "
+                        "once to spawn it, or wait for the container to "
+                        "finish booting, then retry."
+                    ),
+                    "tmux_has_session_exit": check_res.exit_code,
+                },
+            )
+            return
+
         content_bytes = bootstrap.encode("utf-8")
         tarstream = io.BytesIO()
         with tarfile.open(fileobj=tarstream, mode="w") as tar:
@@ -2190,6 +2219,7 @@ async def _bootstrap_session_in_channel(
             None,
             lambda c=container, ts=tarstream: c.put_archive("/home/developer", ts),
         )
+
         tmux_prompt = (
             f"Read /home/developer/CHANNEL.md carefully. "
             f"You are now a participant in group channel '{channel.name}' (ID: {channel.id}). "
@@ -2199,12 +2229,25 @@ async def _bootstrap_session_in_channel(
             f"{note}"
             f"Start now by reading the channel and introducing yourself."
         )
-        await loop.run_in_executor(
+        send_res = await loop.run_in_executor(
             None,
             lambda c=container, prompt=tmux_prompt: c.exec_run(
-                ["tmux", "send-keys", "-t", "main", prompt, "Enter"]
+                ["tmux", "send-keys", "-t", "main", prompt, "Enter"],
+                user="developer",
             ),
         )
+        if send_res.exit_code != 0:
+            stderr = (send_res.output or b"").decode("utf-8", errors="replace").strip()
+            log.warning(
+                "channel.bootstrap_exec_failed",
+                metadata={
+                    "session": participant.session_name,
+                    "channel_id": channel.id,
+                    "reason": f"tmux send-keys failed (exit {send_res.exit_code}): {stderr or 'unknown'}",
+                },
+            )
+            return
+
         log.info(
             "channel.bootstrap_sent",
             metadata={"session": participant.session_name, "channel_id": channel.id},
