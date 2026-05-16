@@ -148,7 +148,7 @@ func TestCreateProfile_DirectoryStructure(t *testing.T) {
 	profileDir := filepath.Join(tmpDir, "test")
 	expectedDirs := []string{
 		".config/1Password",
-		".config/claude",
+		".claude",
 		".config/gemini",
 		".ssh",
 		".aws",

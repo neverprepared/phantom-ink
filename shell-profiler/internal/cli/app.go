@@ -111,7 +111,8 @@ func (a *App) handleInit(args []string) error {
 
 func (a *App) handleCreate(args []string) error {
 	opts := commands.CreateOptions{
-		Template: "basic",
+		Template:      "basic",
+		ObsidianVault: true,
 	}
 
 	// Track if any non-interactive flags are provided
@@ -163,6 +164,9 @@ func (a *App) handleCreate(args []string) error {
 				i++
 				hasNonInteractiveFlags = true
 			}
+		case "--no-obsidian-vault":
+			opts.ObsidianVault = false
+			hasNonInteractiveFlags = true
 		default:
 			if opts.ProfileName == "" && !strings.HasPrefix(arg, "-") {
 				opts.ProfileName = arg
@@ -690,6 +694,9 @@ Options:
     --dry-run          Show what would be created without creating it
     --init-git         Initialize git repository after creation
     --git-remote <url> Initialize git repository with remote URL
+    --no-obsidian-vault
+                       Skip creating obsidian/vaults/<profile>-memory directory
+                       (default: vault is scaffolded for reflex memory tooling)
 
 Examples:
     # Create a basic profile
@@ -859,7 +866,7 @@ Supported Dotfiles:
     .azure/clouds.config      - Azure CLI cloud configuration
     .gcloud/configurations   - Google Cloud SDK configurations
     .gcloud/credentials      - Google Cloud SDK credentials
-    .config/claude          - Claude Code configuration
+    .claude                 - Claude Code configuration
     .config/gemini          - Gemini CLI configuration
     .kube/config              - Kubernetes configuration
     .terraformrc              - Terraform CLI configuration

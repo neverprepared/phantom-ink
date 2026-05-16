@@ -13,15 +13,16 @@ import (
 )
 
 type CreateOptions struct {
-	ProfileName string
-	Template    string
-	GitName     string
-	GitEmail    string
-	Force       bool
-	Interactive bool
-	DryRun      bool
-	InitGit     bool
-	GitRemote   string
+	ProfileName   string
+	Template      string
+	GitName       string
+	GitEmail      string
+	Force         bool
+	Interactive   bool
+	DryRun        bool
+	InitGit       bool
+	GitRemote     string
+	ObsidianVault bool
 }
 
 func CreateProfile(profilesDir string, opts CreateOptions) error {
@@ -74,6 +75,9 @@ func CreateProfile(profilesDir string, opts CreateOptions) error {
 		if opts.GitEmail != "" {
 			fmt.Printf("  Git user.email: %s\n", opts.GitEmail)
 		}
+		if opts.ObsidianVault {
+			fmt.Printf("  Obsidian vault: obsidian/vaults/%s-memory\n", opts.ProfileName)
+		}
 		return nil
 	}
 
@@ -83,7 +87,7 @@ func CreateProfile(profilesDir string, opts CreateOptions) error {
 	// Create directories
 	dirs := []string{
 		".config/1Password",
-		".config/claude",
+		".claude",
 		".codex",
 		".config/gemini",
 		".ssh",
@@ -93,6 +97,10 @@ func CreateProfile(profilesDir string, opts CreateOptions) error {
 		".kube",
 		"bin",
 		"code",
+	}
+
+	if opts.ObsidianVault {
+		dirs = append(dirs, filepath.Join("obsidian", "vaults", opts.ProfileName+"-memory"))
 	}
 
 	for _, dir := range dirs {
@@ -232,6 +240,16 @@ func interactiveSetup(opts *CreateOptions) error {
 			opts.GitRemote = remote
 		}
 	}
+
+	// Ask about Obsidian vault scaffolding
+	obsidianVault, err := ui.Confirm(
+		fmt.Sprintf("Create profile-scoped Obsidian vault at obsidian/vaults/%s-memory?", opts.ProfileName),
+		true,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to get obsidian vault preference: %w", err)
+	}
+	opts.ObsidianVault = obsidianVault
 
 	return nil
 }
@@ -462,7 +480,7 @@ func createGitignore(profileDir string) error {
 .gcloud/logs/
 
 # Claude Code configuration (may contain API keys and sensitive data)
-.config/claude/
+.claude/
 
 # Codex CLI configuration (may contain API keys and sensitive data)
 .codex/
@@ -611,10 +629,10 @@ func createREADME(profileDir string, opts CreateOptions) error {
 		"   - gcloud CLI will automatically use profile-specific settings\n" +
 		"   - Use 'gcloud config list' to see current configuration\n" +
 		"   - Use 'gcloud config configurations list' to see available configurations\n\n" +
-		"8. Configure Claude Code in .config/claude/:\n" +
+		"8. Configure Claude Code in .claude/:\n" +
 		"   - Claude Code will automatically use profile-specific settings\n" +
 		"   - Settings, extensions, and preferences are isolated per profile\n" +
-		"   - Configuration files are stored in .config/claude/\n\n" +
+		"   - Configuration files are stored in .claude/\n\n" +
 		"9. Configure Codex CLI in .codex/:\n" +
 		"   - Codex CLI will automatically use profile-specific settings\n" +
 		"   - API keys and preferences are isolated per profile\n" +

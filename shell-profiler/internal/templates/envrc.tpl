@@ -6,6 +6,8 @@
 # Workspace identification
 export WORKSPACE_PROFILE="{{.ProfileName}}"
 export WORKSPACE_HOME="$PWD"
+export WORKSPACE_PATH="$PWD"
+export WORKSPACES_HOME="$(dirname "$PWD")"
 export STARSHIP_CONFIG="$WORKSPACE_HOME/.config/starship.toml"
 
 # Add custom bin directory to PATH (before system paths)

@@ -254,7 +254,7 @@ func TestUpdateGitignore_RemovesEnvSecretsTplNegation(t *testing.T) {
 	existing := `.env
 !.env.secrets.tpl
 .ssh/id_*
-.config/claude/
+.claude/
 .config/gemini/
 .azure/config
 .gcloud/configurations
@@ -305,8 +305,8 @@ func TestUpdateGitignore_AddsMissingPatterns(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(tmpDir, ".gitignore"))
 	content := string(data)
 
-	if !strings.Contains(content, ".config/claude/") {
-		t.Error("should add .config/claude/ pattern")
+	if !strings.Contains(content, ".claude/") {
+		t.Error("should add .claude/ pattern")
 	}
 }
 
@@ -496,7 +496,7 @@ func TestUpdateDirectories_CreatesMissing(t *testing.T) {
 	// Verify all required dirs exist now
 	requiredDirs := []string{
 		".config/1Password",
-		".config/claude",
+		".claude",
 		".config/gemini",
 		".ssh",
 		".aws",

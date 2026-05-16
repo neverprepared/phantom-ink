@@ -195,7 +195,7 @@ func createBackup(profileDir, _profileName string) error {
 func updateDirectories(profileDir string, dryRun bool) ([]string, error) {
 	requiredDirs := []string{
 		".config/1Password",
-		".config/claude",
+		".claude",
 		".codex",
 		".config/gemini",
 		".ssh",
@@ -408,7 +408,7 @@ func updateEnvFile(profileDir, profileName string, dryRun bool) (bool, error) {
 		"TF_CLI_CONFIG_FILE":          `"$WORKSPACE_HOME/.terraformrc"`,
 		"AZURE_CONFIG_DIR":            `"$WORKSPACE_HOME/.azure"`,
 		"CLOUDSDK_CONFIG":             `"$WORKSPACE_HOME/.gcloud"`,
-		"CLAUDE_CONFIG_DIR":           `"$WORKSPACE_HOME/.config/claude"`,
+		"CLAUDE_CONFIG_DIR":           `"$WORKSPACE_HOME/.claude"`,
 		"CODEX_HOME":                  `"$WORKSPACE_HOME/.codex"`,
 		"CODEX_PLUGIN_DIR":            `"${WORKSPACE_HOME:-$HOME}/.codex-plugins/reflex"`,
 		"GEMINI_CONFIG_DIR":           `"$WORKSPACE_HOME/.config/gemini"`,
@@ -483,7 +483,7 @@ func updateGitignore(profileDir string, dryRun, _force bool) (bool, error) {
 .gcloud/logs/
 
 # Claude Code configuration (may contain API keys and sensitive data)
-.config/claude/
+.claude/
 
 # Gemini CLI configuration (may contain API keys and sensitive data)
 .config/gemini/
@@ -547,7 +547,7 @@ build/
 		".gcloud/access_tokens.db":   "",
 		".gcloud/legacy_credentials": "",
 		".gcloud/logs":               "",
-		".config/claude/":            "# Claude Code configuration (may contain API keys and sensitive data)",
+		".claude/":                   "# Claude Code configuration (may contain API keys and sensitive data)",
 		".config/gemini/":            "# Gemini CLI configuration (may contain API keys and sensitive data)",
 	}
 

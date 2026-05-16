@@ -246,7 +246,7 @@ func findDotfiles(profileDir string) []DotfileInfo {
 		".azure/clouds.config":         "Azure CLI cloud configuration",
 		".gcloud/configurations":       "Google Cloud SDK configurations",
 		".gcloud/credentials":          "Google Cloud SDK credentials",
-		".config/claude":               "Claude Code configuration",
+		".claude":                      "Claude Code configuration",
 		".config/gemini":               "Gemini CLI configuration",
 		".kube/config":                 "Kubernetes configuration",
 		".terraformrc":                 "Terraform CLI configuration",

@@ -5,6 +5,13 @@
 # Add tool-specific paths and non-secret config here (not in .envrc)
 # Secrets belong in .env.secrets (1Password FIFO mount or plaintext)
 
+# Workspace shortcut
+H="$WORKSPACE_HOME"
+
+# Obsidian vault
+# Profile-scoped second-brain vault — used by reflex memory tooling and RAG
+OBSIDIAN_VAULT_PATH="$WORKSPACE_HOME/obsidian/vaults/{{.ProfileName}}-memory"
+
 # Git configuration
 GIT_CONFIG_GLOBAL="$WORKSPACE_HOME/.gitconfig"
 
@@ -35,6 +42,10 @@ TF_CLI_CONFIG_FILE="$WORKSPACE_HOME/.terraformrc"
 # Optionally set workspace-specific plugin cache
 # TF_PLUGIN_CACHE_DIR="$WORKSPACE_HOME/.terraform.d/plugin-cache"
 
+# Terragrunt configuration
+TERRAGRUNT_CONFIG="$WORKSPACE_HOME/.terragrunt-config.hcl"
+TERRAGRUNT_DOWNLOAD="$WORKSPACE_HOME/.terragrunt-cache"
+
 # Azure CLI configuration
 # Point Azure CLI to workspace-specific config directory
 AZURE_CONFIG_DIR="$WORKSPACE_HOME/.azure"
@@ -45,7 +56,9 @@ CLOUDSDK_CONFIG="$WORKSPACE_HOME/.gcloud"
 
 # Claude Code configuration
 # Point Claude Code to workspace-specific config directory
-CLAUDE_CONFIG_DIR="$WORKSPACE_HOME/.config/claude"
+# Claude Code stores settings.json, plugins, projects, and history here
+CLAUDE_CONFIG_DIR="$WORKSPACE_HOME/.claude"
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 
 # Gemini CLI configuration
 # Point Gemini CLI to workspace-specific config directory
