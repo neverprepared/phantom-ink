@@ -62,6 +62,14 @@ func (a *App) startup(ctx context.Context) {
 		runtime.EventsEmit(ctx, "brainbox:event", event)
 	})
 	a.sse.Start()
+
+	// Seed the agents catalog in the background — version probes can block
+	// briefly and we don't want to delay window paint.
+	go func() {
+		if _, err := a.RescanAgents(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: initial agent rescan failed: %v\n", err)
+		}
+	}()
 }
 
 // shutdown is called by Wails when the app closes.

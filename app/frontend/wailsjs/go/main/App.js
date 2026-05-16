@@ -62,6 +62,10 @@ export function DeleteArtifact(arg1) {
   return window['go']['main']['App']['DeleteArtifact'](arg1);
 }
 
+export function DeleteChain(arg1) {
+  return window['go']['main']['App']['DeleteChain'](arg1);
+}
+
 export function DeleteChannel(arg1) {
   return window['go']['main']['App']['DeleteChannel'](arg1);
 }
@@ -118,8 +122,12 @@ export function GetActiveProfile() {
   return window['go']['main']['App']['GetActiveProfile']();
 }
 
-export function GetAgent(arg1) {
-  return window['go']['main']['App']['GetAgent'](arg1);
+export function GetAgentRole(arg1) {
+  return window['go']['main']['App']['GetAgentRole'](arg1);
+}
+
+export function GetAuthorityStatus() {
+  return window['go']['main']['App']['GetAuthorityStatus']();
 }
 
 export function GetChannel(arg1) {
@@ -230,6 +238,10 @@ export function LaunchTeam(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['LaunchTeam'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
+export function ListAgentRoles() {
+  return window['go']['main']['App']['ListAgentRoles']();
+}
+
 export function ListAgents() {
   return window['go']['main']['App']['ListAgents']();
 }
@@ -240,6 +252,14 @@ export function ListArtifacts(arg1) {
 
 export function ListBackups() {
   return window['go']['main']['App']['ListBackups']();
+}
+
+export function ListChainRuns(arg1, arg2) {
+  return window['go']['main']['App']['ListChainRuns'](arg1, arg2);
+}
+
+export function ListChains() {
+  return window['go']['main']['App']['ListChains']();
 }
 
 export function ListChannels() {
@@ -286,6 +306,10 @@ export function PostChannelMessage(arg1, arg2) {
   return window['go']['main']['App']['PostChannelMessage'](arg1, arg2);
 }
 
+export function PreviewDispatch(arg1) {
+  return window['go']['main']['App']['PreviewDispatch'](arg1);
+}
+
 export function PullOllamaModel(arg1) {
   return window['go']['main']['App']['PullOllamaModel'](arg1);
 }
@@ -298,6 +322,10 @@ export function RemoveNFSExport(arg1) {
   return window['go']['main']['App']['RemoveNFSExport'](arg1);
 }
 
+export function RescanAgents() {
+  return window['go']['main']['App']['RescanAgents']();
+}
+
 export function RestartBrainboxAPI() {
   return window['go']['main']['App']['RestartBrainboxAPI']();
 }
@@ -306,12 +334,20 @@ export function RestoreProfile(arg1) {
   return window['go']['main']['App']['RestoreProfile'](arg1);
 }
 
+export function RunChain(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RunChain'](arg1, arg2, arg3);
+}
+
 export function RunPlaybook(arg1, arg2) {
   return window['go']['main']['App']['RunPlaybook'](arg1, arg2);
 }
 
 export function RunPreflightChecks() {
   return window['go']['main']['App']['RunPreflightChecks']();
+}
+
+export function SaveChain(arg1) {
+  return window['go']['main']['App']['SaveChain'](arg1);
 }
 
 export function ScanDiskUsage() {
@@ -324,6 +360,10 @@ export function ScanProfiles() {
 
 export function SetActiveProfile(arg1) {
   return window['go']['main']['App']['SetActiveProfile'](arg1);
+}
+
+export function SetAgentEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetAgentEnabled'](arg1, arg2);
 }
 
 export function SetConfig(arg1, arg2, arg3) {
@@ -372,4 +412,8 @@ export function UpdateAgent(arg1, arg2) {
 
 export function UpdateRepo(arg1, arg2) {
   return window['go']['main']['App']['UpdateRepo'](arg1, arg2);
+}
+
+export function UsableAgents() {
+  return window['go']['main']['App']['UsableAgents']();
 }

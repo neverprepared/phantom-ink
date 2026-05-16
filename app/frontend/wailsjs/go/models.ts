@@ -84,6 +84,82 @@ export namespace brainbox {
 	        this.content_type = source["content_type"];
 	    }
 	}
+	export class AuthorityInfo {
+	    name: string;
+	    version: string;
+	    tags: string[];
+	    online: boolean;
+	    last_seen: number;
+	    last_seen_age_ms: number;
+	    last_seal_at?: number;
+	    last_seal_age_ms?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AuthorityInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.version = source["version"];
+	        this.tags = source["tags"];
+	        this.online = source["online"];
+	        this.last_seen = source["last_seen"];
+	        this.last_seen_age_ms = source["last_seen_age_ms"];
+	        this.last_seal_at = source["last_seal_at"];
+	        this.last_seal_age_ms = source["last_seal_age_ms"];
+	    }
+	}
+	export class SealFailure {
+	    when: number;
+	    status: number;
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SealFailure(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.when = source["when"];
+	        this.status = source["status"];
+	        this.error = source["error"];
+	    }
+	}
+	export class AuthorityStatus {
+	    authorities: AuthorityInfo[];
+	    any_online: boolean;
+	    recent_failures: SealFailure[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AuthorityStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.authorities = this.convertValues(source["authorities"], AuthorityInfo);
+	        this.any_online = source["any_online"];
+	        this.recent_failures = this.convertValues(source["recent_failures"], SealFailure);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ChannelParticipant {
 	    name: string;
 	    type: string;
@@ -365,6 +441,82 @@ export namespace brainbox {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.repo_name = source["repo_name"];
 	        this.branch = source["branch"];
+	    }
+	}
+	export class DispatchCandidate {
+	    name: string;
+	    version: string;
+	    tags: string[];
+	    online: boolean;
+	    supports_backend: boolean;
+	    tag_score?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DispatchCandidate(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.version = source["version"];
+	        this.tags = source["tags"];
+	        this.online = source["online"];
+	        this.supports_backend = source["supports_backend"];
+	        this.tag_score = source["tag_score"];
+	    }
+	}
+	export class DispatchPreview {
+	    selected_runner?: string;
+	    in_process: boolean;
+	    reason: string;
+	    candidates: DispatchCandidate[];
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DispatchPreview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.selected_runner = source["selected_runner"];
+	        this.in_process = source["in_process"];
+	        this.reason = source["reason"];
+	        this.candidates = this.convertValues(source["candidates"], DispatchCandidate);
+	        this.error = source["error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class DispatchPreviewRequest {
+	    backend?: string;
+	    runner?: string;
+	    tags?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new DispatchPreviewRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.backend = source["backend"];
+	        this.runner = source["runner"];
+	        this.tags = source["tags"];
 	    }
 	}
 	export class HealthStatus {
@@ -669,6 +821,7 @@ export namespace brainbox {
 	        this.last_seen = source["last_seen"];
 	    }
 	}
+	
 	export class Session {
 	    name: string;
 	    session_name: string;
@@ -881,6 +1034,24 @@ export namespace brainbox {
 
 export namespace main {
 	
+	export class AgentInvocation {
+	    prompt_args: string[];
+	    prompt_mode: string;
+	    accepts_cwd: boolean;
+	    output_mode: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentInvocation(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.prompt_args = source["prompt_args"];
+	        this.prompt_mode = source["prompt_mode"];
+	        this.accepts_cwd = source["accepts_cwd"];
+	        this.output_mode = source["output_mode"];
+	    }
+	}
 	export class CIRun {
 	    name: string;
 	    status: string;
@@ -933,6 +1104,89 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class ChainStep {
+	    agent_id: string;
+	    prompt_template: string;
+	    cwd: string;
+	    executor: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChainStep(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.agent_id = source["agent_id"];
+	        this.prompt_template = source["prompt_template"];
+	        this.cwd = source["cwd"];
+	        this.executor = source["executor"];
+	    }
+	}
+	export class Chain {
+	    id: string;
+	    name: string;
+	    description: string;
+	    steps: ChainStep[];
+	    cwd: string;
+	    created_at: string;
+	    updated_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Chain(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.steps = this.convertValues(source["steps"], ChainStep);
+	        this.cwd = source["cwd"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ChainRunRow {
+	    id: string;
+	    chain_id: string;
+	    started_at: string;
+	    finished_at: string;
+	    status: string;
+	    log_json: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChainRunRow(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.chain_id = source["chain_id"];
+	        this.started_at = source["started_at"];
+	        this.finished_at = source["finished_at"];
+	        this.status = source["status"];
+	        this.log_json = source["log_json"];
+	    }
+	}
+	
 	export class Config {
 	    base_url: string;
 	    api_key: string;
@@ -996,6 +1250,52 @@ export namespace main {
 	        this.block_io = source["block_io"];
 	        this.pids = source["pids"];
 	    }
+	}
+	export class DetectedAgent {
+	    id: string;
+	    binary: string;
+	    label: string;
+	    path: string;
+	    version: string;
+	    enabled: boolean;
+	    detected: boolean;
+	    detected_at: string;
+	    invocation: AgentInvocation;
+	
+	    static createFrom(source: any = {}) {
+	        return new DetectedAgent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.binary = source["binary"];
+	        this.label = source["label"];
+	        this.path = source["path"];
+	        this.version = source["version"];
+	        this.enabled = source["enabled"];
+	        this.detected = source["detected"];
+	        this.detected_at = source["detected_at"];
+	        this.invocation = this.convertValues(source["invocation"], AgentInvocation);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class DiskCategory {
 	    name: string;

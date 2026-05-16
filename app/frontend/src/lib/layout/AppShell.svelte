@@ -6,6 +6,7 @@
 
   // Panels (lazy imports)
   import SessionsPanel from '../panels/SessionsPanel.svelte';
+  import AgentRolesPanel from '../panels/AgentRolesPanel.svelte';
   import AgentsPanel from '../panels/AgentsPanel.svelte';
   import HubPanel from '../panels/HubPanel.svelte';
   import ReposPanel from '../panels/ReposPanel.svelte';
@@ -25,6 +26,8 @@
     <main class="content">
       {#if currentPanel.value === 'sessions'}
         <SessionsPanel />
+      {:else if currentPanel.value === 'agent-roles'}
+        <AgentRolesPanel />
       {:else if currentPanel.value === 'agents'}
         <AgentsPanel />
       {:else if currentPanel.value === 'dashboard'}

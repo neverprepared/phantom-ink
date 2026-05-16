@@ -18,6 +18,13 @@ func (a *App) CreateSession(req brainbox.CreateSessionRequest) (brainbox.Session
 	return a.client.CreateSession(req)
 }
 
+// PreviewDispatch reports where a session with the given backend/runner/tags
+// would land. Used by the session-create modal to show "→ will run on X"
+// before the user clicks create.
+func (a *App) PreviewDispatch(req brainbox.DispatchPreviewRequest) (brainbox.DispatchPreview, error) {
+	return a.client.PreviewDispatch(req)
+}
+
 func (a *App) StartSession(name string) (brainbox.SessionActionResponse, error) {
 	return a.client.StartSession(name)
 }
@@ -50,11 +57,15 @@ func (a *App) CancelTask(taskID string) error {
 	return a.client.CancelTask(taskID)
 }
 
-func (a *App) ListAgents() ([]brainbox.AgentDefinition, error) {
+// ListAgentRoles returns brainbox's multi-agent role catalog (developer,
+// supervisor, worker, reviewer, …). Renamed from ListAgents to avoid
+// shadowing the new App.ListAgents which lists detected CLI tools.
+func (a *App) ListAgentRoles() ([]brainbox.AgentDefinition, error) {
 	return a.client.ListAgents()
 }
 
-func (a *App) GetAgent(name string) (brainbox.AgentDefinition, error) {
+// GetAgentRole returns a single brainbox agent role definition.
+func (a *App) GetAgentRole(name string) (brainbox.AgentDefinition, error) {
 	return a.client.GetAgent(name)
 }
 

@@ -112,6 +112,42 @@ var migrations = []migration{
 			scanned_at   TEXT NOT NULL DEFAULT ''
 		);
 	`},
+	// v4: discovered coding-agent CLIs (claude, codex, aider, gemini, …)
+	{version: 4, sql: `
+		CREATE TABLE IF NOT EXISTS agents (
+			id          TEXT PRIMARY KEY,
+			binary      TEXT NOT NULL,
+			label       TEXT NOT NULL,
+			path        TEXT NOT NULL DEFAULT '',
+			version     TEXT NOT NULL DEFAULT '',
+			enabled     INTEGER NOT NULL DEFAULT 0,
+			detected_at TEXT NOT NULL DEFAULT ''
+		);
+	`},
+	// v5: agent chains — ordered sequences of CLI agents wired so each step
+	// receives the previous step's output as input. steps_json is the full
+	// []ChainStep payload; chain_runs.log_json is the per-step event log.
+	{version: 5, sql: `
+		CREATE TABLE IF NOT EXISTS chains (
+			id          TEXT PRIMARY KEY,
+			name        TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			steps_json  TEXT NOT NULL DEFAULT '[]',
+			cwd         TEXT NOT NULL DEFAULT '',
+			created_at  TEXT NOT NULL DEFAULT '',
+			updated_at  TEXT NOT NULL DEFAULT ''
+		);
+
+		CREATE TABLE IF NOT EXISTS chain_runs (
+			id           TEXT PRIMARY KEY,
+			chain_id     TEXT NOT NULL,
+			started_at   TEXT NOT NULL DEFAULT '',
+			finished_at  TEXT NOT NULL DEFAULT '',
+			status       TEXT NOT NULL DEFAULT 'running',
+			log_json     TEXT NOT NULL DEFAULT '[]'
+		);
+		CREATE INDEX IF NOT EXISTS idx_chain_runs_chain_id ON chain_runs(chain_id);
+	`},
 }
 
 func (db *DB) migrate() error {
@@ -251,6 +287,190 @@ func (db *DB) GetSettingsWithPrefix(prefix string) (map[string]string, error) {
 		result[k[len(prefix):]] = v
 	}
 	return result, nil
+}
+
+// ---------------------------------------------------------------------------
+// Agents
+// ---------------------------------------------------------------------------
+
+// UpsertAgent inserts or updates an agent row. `enabled` is preserved across
+// rescans by reading the current value first and writing it back unless the
+// caller explicitly wants to overwrite it (use SetAgentEnabled for that).
+func (db *DB) UpsertAgent(a DetectedAgent) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO agents (id, binary, label, path, version, enabled, detected_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			binary      = excluded.binary,
+			label       = excluded.label,
+			path        = excluded.path,
+			version     = excluded.version,
+			detected_at = excluded.detected_at`,
+		a.ID, a.Binary, a.Label, a.Path, a.Version, boolToInt(a.Enabled), a.DetectedAt)
+	return err
+}
+
+// GetAgentEnabled returns the persisted enabled flag for an agent, defaulting
+// to false when no row exists yet.
+func (db *DB) GetAgentEnabled(id string) bool {
+	var enabled int
+	err := db.conn.QueryRow("SELECT enabled FROM agents WHERE id = ?", id).Scan(&enabled)
+	if err != nil {
+		return false
+	}
+	return enabled != 0
+}
+
+// ListAgents returns every agent row, newest detection first.
+func (db *DB) ListAgents() ([]DetectedAgent, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, binary, label, path, version, enabled, detected_at
+		FROM agents
+		ORDER BY label`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []DetectedAgent
+	for rows.Next() {
+		var r DetectedAgent
+		var enabled int
+		if err := rows.Scan(&r.ID, &r.Binary, &r.Label, &r.Path, &r.Version, &enabled, &r.DetectedAt); err != nil {
+			continue
+		}
+		r.Enabled = enabled != 0
+		r.Detected = r.Path != ""
+		result = append(result, r)
+	}
+	return result, nil
+}
+
+// SetAgentEnabled toggles the enabled flag for a single agent.
+func (db *DB) SetAgentEnabled(id string, enabled bool) error {
+	res, err := db.conn.Exec("UPDATE agents SET enabled = ? WHERE id = ?", boolToInt(enabled), id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("agent %q not found", id)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Chains
+// ---------------------------------------------------------------------------
+
+// ChainRow is the persisted form of a chain definition. The runtime Chain type
+// (with structured Steps) lives in chains.go and serializes Steps to/from
+// StepsJSON via encoding/json.
+type ChainRow struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	StepsJSON   string `json:"steps_json"`
+	Cwd         string `json:"cwd"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+func (db *DB) UpsertChain(c ChainRow) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO chains (id, name, description, steps_json, cwd, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name        = excluded.name,
+			description = excluded.description,
+			steps_json  = excluded.steps_json,
+			cwd         = excluded.cwd,
+			updated_at  = excluded.updated_at`,
+		c.ID, c.Name, c.Description, c.StepsJSON, c.Cwd, c.CreatedAt, c.UpdatedAt)
+	return err
+}
+
+func (db *DB) GetChain(id string) (ChainRow, bool) {
+	var r ChainRow
+	err := db.conn.QueryRow(`
+		SELECT id, name, description, steps_json, cwd, created_at, updated_at
+		FROM chains WHERE id = ?`, id).Scan(
+		&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.CreatedAt, &r.UpdatedAt)
+	if err != nil {
+		return r, false
+	}
+	return r, true
+}
+
+func (db *DB) ListChains() ([]ChainRow, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, name, description, steps_json, cwd, created_at, updated_at
+		FROM chains ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ChainRow
+	for rows.Next() {
+		var r ChainRow
+		if err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (db *DB) DeleteChain(id string) error {
+	_, err := db.conn.Exec("DELETE FROM chains WHERE id = ?", id)
+	return err
+}
+
+// ChainRunRow is the persisted form of a single chain execution.
+type ChainRunRow struct {
+	ID         string `json:"id"`
+	ChainID    string `json:"chain_id"`
+	StartedAt  string `json:"started_at"`
+	FinishedAt string `json:"finished_at"`
+	Status     string `json:"status"`
+	LogJSON    string `json:"log_json"`
+}
+
+func (db *DB) InsertChainRun(r ChainRunRow) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO chain_runs (id, chain_id, started_at, finished_at, status, log_json)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		r.ID, r.ChainID, r.StartedAt, r.FinishedAt, r.Status, r.LogJSON)
+	return err
+}
+
+func (db *DB) UpdateChainRun(id, finishedAt, status, logJSON string) error {
+	_, err := db.conn.Exec(`
+		UPDATE chain_runs SET finished_at = ?, status = ?, log_json = ? WHERE id = ?`,
+		finishedAt, status, logJSON, id)
+	return err
+}
+
+func (db *DB) ListChainRuns(chainID string, limit int) ([]ChainRunRow, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	rows, err := db.conn.Query(`
+		SELECT id, chain_id, started_at, finished_at, status, log_json
+		FROM chain_runs WHERE chain_id = ?
+		ORDER BY started_at DESC LIMIT ?`, chainID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ChainRunRow
+	for rows.Next() {
+		var r ChainRunRow
+		if err := rows.Scan(&r.ID, &r.ChainID, &r.StartedAt, &r.FinishedAt, &r.Status, &r.LogJSON); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
 }
 
 // ---------------------------------------------------------------------------

@@ -74,7 +74,7 @@
     const a = await getApi();
     if (!a) return;
     try {
-      const agentDefs = await a.ListAgents();
+      const agentDefs = await a.ListAgentRoles();
       availableRoles = (agentDefs ?? []).map((ag: any) => ag.name);
     } catch {
       availableRoles = ['assistant'];
