@@ -18,7 +18,12 @@ import (
 const stepRunTimeout = 5 * time.Minute
 
 // Chain is the runtime form of a saved chain. It mirrors ChainRow but with
-// Steps materialized as a slice instead of a JSON string.
+// Steps and Files materialized as slices.
+//
+// Files are stored as paths relative to the profile's workspace_home so the
+// same chain works across profiles — "code/api/main.go" resolves under
+// whatever profile is active at run time. At render time the {{files}}
+// template variable expands to the shell-quoted absolute paths.
 type Chain struct {
 	ID          string           `json:"id"`
 	Name        string           `json:"name"`
@@ -26,6 +31,7 @@ type Chain struct {
 	Steps       []ChainStep      `json:"steps"`
 	Cwd         string           `json:"cwd"`
 	OnSuccess   []ChainFollowup  `json:"on_success"`
+	Files       []string         `json:"files"`
 	CreatedAt   string           `json:"created_at"`
 	UpdatedAt   string           `json:"updated_at"`
 }
@@ -80,13 +86,28 @@ type ChainRunEvent struct {
 	At        string `json:"at"`      // RFC3339 timestamp
 }
 
-// renderPromptTemplate substitutes {{input}} and {{prev.output}} into a step's
+// renderPromptTemplate substitutes the supported placeholders into a step's
 // template. Unknown placeholders are left alone so the user can see them in
 // the prompt if they typo'd.
-func renderPromptTemplate(tpl, input, prev string) string {
+//
+// Supported:
+//   - {{input}}       initial chain input
+//   - {{prev.output}} previous step's stdout
+//   - {{files}}       space-separated, shell-quoted absolute paths of the
+//                     chain's attached files (resolved to absolute under the
+//                     active profile's workspace_home before being passed in)
+func renderPromptTemplate(tpl, input, prev, files string) string {
 	tpl = strings.ReplaceAll(tpl, "{{input}}", input)
 	tpl = strings.ReplaceAll(tpl, "{{prev.output}}", prev)
+	tpl = strings.ReplaceAll(tpl, "{{files}}", files)
 	return tpl
+}
+
+// shellQuote returns s wrapped so it's safe as a single shell-arg even when
+// it contains spaces, quotes, or other punctuation. Single-quote escape:
+// every internal ' becomes '\'' and the whole string is wrapped in '...'.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // newRunID is a short opaque identifier for a chain run.
@@ -183,6 +204,28 @@ func chainFollowupsToJSON(fs []ChainFollowup) (string, error) {
 	b, err := json.Marshal(fs)
 	if err != nil {
 		return "", fmt.Errorf("encode chain followups: %w", err)
+	}
+	return string(b), nil
+}
+
+func chainFilesFromJSON(s string) ([]string, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil, fmt.Errorf("decode chain files: %w", err)
+	}
+	return out, nil
+}
+
+func chainFilesToJSON(files []string) (string, error) {
+	if files == nil {
+		files = []string{}
+	}
+	b, err := json.Marshal(files)
+	if err != nil {
+		return "", fmt.Errorf("encode chain files: %w", err)
 	}
 	return string(b), nil
 }

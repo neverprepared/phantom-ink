@@ -31,6 +31,7 @@
     steps: ChainStep[];
     cwd: string;
     on_success: ChainFollowup[];
+    files: string[];
     created_at: string;
     updated_at: string;
   }
@@ -212,10 +213,30 @@
     editing = {
       id: '', name: '', description: '',
       steps: [{ agent_id: chainable[0]?.id ?? '', prompt_template: '{{input}}', cwd: '' }],
-      cwd: '', on_success: [],
+      cwd: '', on_success: [], files: [],
       created_at: '', updated_at: '',
     };
     editorOpen = true;
+  }
+
+  async function pickFiles() {
+    if (!editing) return;
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const picked = (await a.BrowseProfileFiles('')) ?? [];
+      if (picked.length === 0) return;
+      const existing = new Set(editing.files ?? []);
+      for (const p of picked) existing.add(p);
+      editing.files = Array.from(existing).sort();
+    } catch (err: any) {
+      notifications.error(`Browse failed: ${err?.message ?? err}`);
+    }
+  }
+
+  function removeFile(path: string) {
+    if (!editing) return;
+    editing.files = (editing.files ?? []).filter(p => p !== path);
   }
 
   function addFollowup() {
@@ -410,13 +431,21 @@
                   {#if c.description}
                     <span class="chain-desc">{c.description}</span>
                   {/if}
-                  {#if recent.length > 0}
-                    <div class="recent-runs" title="last {recent.length} runs (newest left)">
-                      {#each recent as r, i (i)}
-                        <span class="run-dot status-{r.status}"></span>
-                      {/each}
-                    </div>
-                  {/if}
+                  <div class="card-meta-row">
+                    {#if (c.files ?? []).length > 0}
+                      <span class="files-badge" title={c.files.join('\n')}>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        {c.files.length} file{c.files.length === 1 ? '' : 's'}
+                      </span>
+                    {/if}
+                    {#if recent.length > 0}
+                      <div class="recent-runs" title="last {recent.length} runs (newest left)">
+                        {#each recent as r, i (i)}
+                          <span class="run-dot status-{r.status}"></span>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
                 </div>
                 <div class="chain-tools">
                   <button class="btn-icon" onclick={() => openRunner(c)} title="Run chain (foreground)" aria-label="Run chain">
@@ -530,6 +559,26 @@
           <span class="field-label">working dir</span>
           <input type="text" bind:value={editing.cwd} placeholder="relative to profile root (e.g. code/api) — applies to all steps" />
         </label>
+
+        <div class="field">
+          <div class="files-head">
+            <span class="field-label">files</span>
+            <button class="btn-sm btn-secondary" onclick={pickFiles}>+ browse</button>
+          </div>
+          {#if (editing.files ?? []).length === 0}
+            <p class="hint">No files attached. Use <code>{'{{files}}'}</code> in any step prompt to embed the absolute paths at runtime.</p>
+          {:else}
+            <div class="file-chips">
+              {#each editing.files as f (f)}
+                <span class="file-chip">
+                  <code>{f}</code>
+                  <button class="chip-x" onclick={() => removeFile(f)} aria-label="Remove file">×</button>
+                </span>
+              {/each}
+            </div>
+            <p class="hint">Use <code>{'{{files}}'}</code> in any step prompt to embed these as absolute paths.</p>
+          {/if}
+        </div>
 
         <div class="steps-block">
           <div class="steps-head">
@@ -730,6 +779,44 @@
   .chain-card.highlight {
     box-shadow: 0 0 0 2px var(--color-accent);
     transition: box-shadow 0.4s ease-out;
+  }
+
+  /* Card meta row: file badge + recent-run dots */
+  .card-meta-row {
+    display: flex; align-items: center; gap: 8px; margin-top: 4px;
+  }
+  .files-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 10px; color: var(--color-text-tertiary);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 1px 6px; border-radius: var(--radius-sm);
+  }
+
+  /* Files block in chain editor modal */
+  .files-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .file-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+  .file-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-sm);
+    padding: 2px 4px 2px 8px;
+    font-size: 11px;
+  }
+  .file-chip code {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--color-text-secondary);
+  }
+  .chip-x {
+    background: none; border: none; cursor: pointer;
+    color: var(--color-text-tertiary); font-size: 14px; line-height: 1;
+    padding: 0 4px;
+  }
+  .chip-x:hover { color: var(--color-error); }
+  .hint code {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 1px 4px; border-radius: 2px;
+    font-family: var(--font-mono); font-size: 10px;
   }
   .hint { font-size: 12px; color: var(--color-text-tertiary); margin: 6px 0; }
   .warn { font-size: 12px; color: var(--color-warning, #d97706); margin: 6px 0; }

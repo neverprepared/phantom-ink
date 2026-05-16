@@ -1147,6 +1147,7 @@ export namespace main {
 	    steps: ChainStep[];
 	    cwd: string;
 	    on_success: ChainFollowup[];
+	    files: string[];
 	    created_at: string;
 	    updated_at: string;
 	
@@ -1162,6 +1163,7 @@ export namespace main {
 	        this.steps = this.convertValues(source["steps"], ChainStep);
 	        this.cwd = source["cwd"];
 	        this.on_success = this.convertValues(source["on_success"], ChainFollowup);
+	        this.files = source["files"];
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
 	    }

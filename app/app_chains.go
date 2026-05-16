@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ func (a *App) ListChains() ([]Chain, error) {
 	for _, r := range rawRows {
 		steps, _ := chainStepsFromJSON(r.StepsJSON)
 		followups, _ := chainFollowupsFromJSON(r.OnSuccessJSON)
+		files, _ := chainFilesFromJSON(r.FilesJSON)
 		out = append(out, Chain{
 			ID:          r.ID,
 			Name:        r.Name,
@@ -39,6 +41,7 @@ func (a *App) ListChains() ([]Chain, error) {
 			Steps:       steps,
 			Cwd:         r.Cwd,
 			OnSuccess:   followups,
+			Files:       files,
 			CreatedAt:   r.CreatedAt,
 			UpdatedAt:   r.UpdatedAt,
 		})
@@ -79,9 +82,32 @@ func (a *App) SaveChain(c Chain) (Chain, error) {
 			return Chain{}, fmt.Errorf("on_success[%d]: chain %q not found", i, f.ChainID)
 		}
 	}
+	// Normalize file paths: strip whitespace, drop leading slash so chains
+	// stay profile-portable, and reject anything that tries to escape via
+	// .. segments. The actual existence/profile check happens at run time
+	// (resolveProfileFile) when we know which profile is in play.
+	cleanFiles := make([]string, 0, len(c.Files))
+	for i, raw := range c.Files {
+		f := strings.TrimSpace(raw)
+		if f == "" {
+			continue
+		}
+		f = strings.TrimPrefix(f, "/")
+		clean := filepath.Clean(f)
+		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return Chain{}, fmt.Errorf("files[%d]: %q escapes profile root", i, raw)
+		}
+		cleanFiles = append(cleanFiles, clean)
+	}
+	c.Files = cleanFiles
+	filesJSON, err := chainFilesToJSON(cleanFiles)
+	if err != nil {
+		return Chain{}, err
+	}
 	if err := a.db.UpsertChain(ChainRow{
 		ID: c.ID, Name: c.Name, Description: c.Description,
 		StepsJSON: stepsJSON, Cwd: c.Cwd, OnSuccessJSON: followupsJSON,
+		FilesJSON: filesJSON,
 		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}); err != nil {
 		return Chain{}, err
@@ -181,7 +207,15 @@ func (a *App) RunChain(id, input, cwdOverride string) (string, error) {
 		baseCwd = row.Cwd
 	}
 
-	go func() { _ = a.executeChain(runID, id, input, baseCwd, steps, profileName) }()
+	// Resolve chain.files to absolute paths under the profile root. Any file
+	// that escapes is a hard error (consistent with cwd resolution).
+	chainFiles, _ := chainFilesFromJSON(row.FilesJSON)
+	filesArg, err := a.renderFilesArg(profileName, chainFiles)
+	if err != nil {
+		return "", err
+	}
+
+	go func() { _ = a.executeChain(runID, id, input, baseCwd, steps, profileName, filesArg) }()
 	return runID, nil
 }
 
@@ -195,7 +229,7 @@ func (a *App) RunChain(id, input, cwdOverride string) (string, error) {
 // against that profile's workspace_home, with traversal outside the root
 // rejected. On-success follow-ups inherit the same profile so autonomous
 // flows stay in their lane.
-func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps []ChainStep, profileName string) error {
+func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps []ChainStep, profileName, filesArg string) error {
 	ctx := a.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -234,7 +268,7 @@ func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps [
 			})
 			break
 		}
-		prompt := renderPromptTemplate(step.PromptTemplate, initialInput, prevOutput)
+		prompt := renderPromptTemplate(step.PromptTemplate, initialInput, prevOutput, filesArg)
 
 		emit(ChainRunEvent{Phase: "step:start", StepIndex: i, AgentID: step.AgentID, Status: "running"})
 
@@ -371,8 +405,32 @@ func (a *App) runChainForTask(ctx context.Context, task TaskRow) (string, error)
 	if cwd == "" {
 		cwd = row.Cwd
 	}
+	chainFiles, _ := chainFilesFromJSON(row.FilesJSON)
+	filesArg, err := a.renderFilesArg(task.WorkspaceProfile, chainFiles)
+	if err != nil {
+		return "", err
+	}
 	_ = ctx // executeChain reads ctx from a.ctx; we don't pass it through yet
-	return runID, a.executeChain(runID, task.ChainID, task.Input, cwd, steps, task.WorkspaceProfile)
+	return runID, a.executeChain(runID, task.ChainID, task.Input, cwd, steps, task.WorkspaceProfile, filesArg)
+}
+
+// renderFilesArg resolves each chain.files entry to an absolute path under
+// the profile root and joins them with spaces (shell-quoted). Empty when
+// the chain has no files. Errors if any file escapes the profile root,
+// matching the cwd isolation guarantees.
+func (a *App) renderFilesArg(profileName string, files []string) (string, error) {
+	if len(files) == 0 {
+		return "", nil
+	}
+	parts := make([]string, 0, len(files))
+	for _, rel := range files {
+		abs, err := a.resolveCwd(profileName, rel)
+		if err != nil {
+			return "", fmt.Errorf("file %q: %w", rel, err)
+		}
+		parts = append(parts, shellQuote(abs))
+	}
+	return strings.Join(parts, " "), nil
 }
 
 // emitTaskEvent pushes a state change to the frontend, mirroring the chain

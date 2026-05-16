@@ -9,6 +9,8 @@ export function AddRepo(arg1:brainbox.AddRepoRequest):Promise<brainbox.Repo>;
 
 export function BrowseFolder():Promise<string>;
 
+export function BrowseProfileFiles(arg1:string):Promise<Array<string>>;
+
 export function CancelHubTask(arg1:string):Promise<void>;
 
 export function CancelPlaybook(arg1:string):Promise<void>;

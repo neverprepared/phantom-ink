@@ -209,6 +209,13 @@ var migrations = []migration{
 		}
 		return addColumnIfMissing(conn, "schedules", "workspace_profile", "TEXT NOT NULL DEFAULT ''")
 	}},
+	// v10: file attachments on chains. Paths are stored relative to the
+	// profile's workspace_home so the same chain works across profiles —
+	// "code/api/main.go" means whatever's at that location in the active
+	// profile at run time. {{files}} expands to absolute paths in prompts.
+	{version: 10, fn: func(conn *sql.DB) error {
+		return addColumnIfMissing(conn, "chains", "files_json", "TEXT NOT NULL DEFAULT '[]'")
+	}},
 }
 
 func (db *DB) migrate() error {
@@ -434,6 +441,7 @@ type ChainRow struct {
 	StepsJSON     string `json:"steps_json"`
 	Cwd           string `json:"cwd"`
 	OnSuccessJSON string `json:"on_success_json"`
+	FilesJSON     string `json:"files_json"`
 	CreatedAt     string `json:"created_at"`
 	UpdatedAt     string `json:"updated_at"`
 }
@@ -442,26 +450,30 @@ func (db *DB) UpsertChain(c ChainRow) error {
 	if c.OnSuccessJSON == "" {
 		c.OnSuccessJSON = "[]"
 	}
+	if c.FilesJSON == "" {
+		c.FilesJSON = "[]"
+	}
 	_, err := db.conn.Exec(`
-		INSERT INTO chains (id, name, description, steps_json, cwd, on_success_json, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO chains (id, name, description, steps_json, cwd, on_success_json, files_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name            = excluded.name,
 			description     = excluded.description,
 			steps_json      = excluded.steps_json,
 			cwd             = excluded.cwd,
 			on_success_json = excluded.on_success_json,
+			files_json      = excluded.files_json,
 			updated_at      = excluded.updated_at`,
-		c.ID, c.Name, c.Description, c.StepsJSON, c.Cwd, c.OnSuccessJSON, c.CreatedAt, c.UpdatedAt)
+		c.ID, c.Name, c.Description, c.StepsJSON, c.Cwd, c.OnSuccessJSON, c.FilesJSON, c.CreatedAt, c.UpdatedAt)
 	return err
 }
 
 func (db *DB) GetChain(id string) (ChainRow, bool) {
 	var r ChainRow
 	err := db.conn.QueryRow(`
-		SELECT id, name, description, steps_json, cwd, on_success_json, created_at, updated_at
+		SELECT id, name, description, steps_json, cwd, on_success_json, files_json, created_at, updated_at
 		FROM chains WHERE id = ?`, id).Scan(
-		&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.CreatedAt, &r.UpdatedAt)
+		&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.FilesJSON, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return r, false
 	}
@@ -470,7 +482,7 @@ func (db *DB) GetChain(id string) (ChainRow, bool) {
 
 func (db *DB) ListChains() ([]ChainRow, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, name, description, steps_json, cwd, on_success_json, created_at, updated_at
+		SELECT id, name, description, steps_json, cwd, on_success_json, files_json, created_at, updated_at
 		FROM chains ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -479,7 +491,7 @@ func (db *DB) ListChains() ([]ChainRow, error) {
 	var out []ChainRow
 	for rows.Next() {
 		var r ChainRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.FilesJSON, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			continue
 		}
 		out = append(out, r)

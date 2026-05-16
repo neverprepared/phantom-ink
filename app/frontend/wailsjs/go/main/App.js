@@ -14,6 +14,10 @@ export function BrowseFolder() {
   return window['go']['main']['App']['BrowseFolder']();
 }
 
+export function BrowseProfileFiles(arg1) {
+  return window['go']['main']['App']['BrowseProfileFiles'](arg1);
+}
+
 export function CancelHubTask(arg1) {
   return window['go']['main']['App']['CancelHubTask'](arg1);
 }

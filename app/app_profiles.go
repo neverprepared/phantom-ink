@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // ---------------------------------------------------------------------------
@@ -37,6 +39,51 @@ func (a *App) activeProfileName() string {
 		return ""
 	}
 	return a.config.ActiveProfile
+}
+
+// BrowseProfileFiles opens a multi-select file picker rooted at the named
+// profile's workspace_home. Returns paths relative to that workspace_home so
+// chains stay profile-portable. Selections outside the profile root are
+// rejected with an error.
+//
+// Empty profileName uses the currently-active profile.
+func (a *App) BrowseProfileFiles(profileName string) ([]string, error) {
+	if strings.TrimSpace(profileName) == "" {
+		profileName = a.activeProfileName()
+	}
+	if profileName == "" {
+		return nil, fmt.Errorf("no profile selected")
+	}
+	prof, err := a.findProfile(profileName)
+	if err != nil {
+		return nil, err
+	}
+	home, err := filepath.Abs(prof.WorkspaceHome)
+	if err != nil {
+		return nil, fmt.Errorf("resolve profile home: %w", err)
+	}
+	if a.ctx == nil {
+		return nil, fmt.Errorf("no UI context — picker unavailable")
+	}
+	picked, err := runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            fmt.Sprintf("Select files in %s", profileName),
+		DefaultDirectory: home,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(picked) == 0 {
+		return []string{}, nil // user cancelled
+	}
+	rels := make([]string, 0, len(picked))
+	for _, abs := range picked {
+		rel, err := filepath.Rel(home, abs)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("file %q is outside profile %q workspace_home", abs, profileName)
+		}
+		rels = append(rels, rel)
+	}
+	return rels, nil
 }
 
 // resolveCwd produces the absolute working directory for a chain step given
