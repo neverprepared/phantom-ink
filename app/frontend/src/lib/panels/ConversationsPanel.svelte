@@ -89,7 +89,7 @@
     try {
       channels = (await a.ListChannels()) ?? [];
     } catch (err: any) {
-      notifications.error(`Failed to load channels: ${err?.message ?? err}`);
+      notifications.error(`Failed to load conversations: ${err?.message ?? err}`);
     } finally {
       loading = false;
     }
@@ -187,7 +187,7 @@
           system_prompt: p.system_prompt || undefined,
         })),
       });
-      notifications.success(`Channel "${newChannelName}" created`);
+      notifications.success(`Conversation "${newChannelName}" created`);
       showCreateModal = false;
       await loadChannels();
       await selectChannel(channel);
@@ -228,8 +228,8 @@
     const a = await getApi();
     if (!a) { isCompleting = false; return; }
     try {
-      await a.CompleteChannel(selected.id, { by: myName, reason: 'Channel ended by user' });
-      notifications.success('Channel ended');
+      await a.CompleteChannel(selected.id, { by: myName, reason: 'Conversation ended by user' });
+      notifications.success('Conversation ended');
       await loadChannels();
       // Refresh selected to show updated status
       const updated = channels.find(c => c.id === selected!.id);
@@ -258,7 +258,7 @@
     if (!a) return;
     try {
       await a.DeleteChannel(ch.id);
-      notifications.success(`Channel "${ch.name}" deleted`);
+      notifications.success(`Conversation "${ch.name}" deleted`);
       if (selected?.id === ch.id) { selected = null; messages = []; lastMessageId = null; }
       await loadChannels();
     } catch (err: any) {
@@ -322,8 +322,8 @@
           {isBatchDeleting ? 'Deleting…' : 'Delete'}
         </button>
       {:else}
-        <span class="list-title">Channels</span>
-        <button class="btn-icon" onclick={openCreateModal} title="New channel">
+        <span class="list-title">Conversations</span>
+        <button class="btn-icon" onclick={openCreateModal} title="New conversation">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
         </button>
       {/if}
@@ -332,7 +332,7 @@
     {#if loading}
       <div class="list-empty">Loading…</div>
     {:else if channels.length === 0}
-      <div class="list-empty">No channels yet</div>
+      <div class="list-empty">No conversations yet</div>
     {:else}
       <ul class="channel-items">
         {#each channels as ch (ch.id)}
@@ -359,7 +359,7 @@
                 <span class="channel-name">{ch.name}</span>
                 <span class="participant-count">{ch.participants.length}</span>
               </button>
-              <button class="btn-delete-channel" onclick={(e) => requestDelete(ch, e)} title="Delete channel">
+              <button class="btn-delete-channel" onclick={(e) => requestDelete(ch, e)} title="Delete conversation">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
               </button>
             {/if}
@@ -373,8 +373,8 @@
   <div class="channel-view">
     {#if !selected}
       <EmptyState
-        title="No channel selected"
-        message="Select a channel from the list or create a new one."
+        title="No conversation selected"
+        message="Select a conversation from the list or create a new one."
       />
     {:else}
       <div class="channel-header">
@@ -443,7 +443,7 @@
         </div>
       {:else}
         <div class="channel-ended">
-          Channel ended{selected.completed_by ? ` by ${selected.completed_by}` : ''}.
+          Conversation ended{selected.completed_by ? ` by ${selected.completed_by}` : ''}.
         </div>
       {/if}
     {/if}
@@ -454,7 +454,7 @@
 {#if showCreateModal}
   <Modal onClose={() => showCreateModal = false}>
     <div class="modal-body">
-      <label class="field-label" for="ch-name">Channel name</label>
+      <label class="field-label" for="ch-name">Conversation name</label>
       <input id="ch-name" class="field-input" bind:value={newChannelName} placeholder="e.g. architecture-debate" />
 
       <div class="participants-section">

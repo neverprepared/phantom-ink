@@ -9,6 +9,7 @@
   import AgentRolesPanel from '../panels/AgentRolesPanel.svelte';
   import AgentsPanel from '../panels/AgentsPanel.svelte';
   import ChainsPanel from '../panels/ChainsPanel.svelte';
+  import ConversationsPanel from '../panels/ConversationsPanel.svelte';
   import HubPanel from '../panels/HubPanel.svelte';
   import ReposPanel from '../panels/ReposPanel.svelte';
   import ServicesPanel from '../panels/ServicesPanel.svelte';
@@ -38,6 +39,8 @@
         <ServicesPanel />
       {:else if currentPanel.value === 'chains'}
         <ChainsPanel />
+      {:else if currentPanel.value === 'conversations'}
+        <ConversationsPanel />
       {:else if currentPanel.value === 'playbooks'}
         <PlaybooksPanel />
       {:else if currentPanel.value === 'events'}
