@@ -2129,6 +2129,93 @@ async def hub_remove_repo(name: str, _key=Depends(require_api_key)):
 # ---------------------------------------------------------------------------
 
 
+async def _bootstrap_session_in_channel(
+    participant: ChannelParticipant,
+    channel: Any,
+    *,
+    note: str = "",
+) -> None:
+    """Drop a CHANNEL.md into the session's container and nudge Claude (via
+    tmux) to start participating. Called both when a channel is first created
+    AND when a session is added to an already-live channel — without this
+    bootstrap, the session has no idea it's been included and won't respond.
+
+    `note` is appended to the tmux prompt so e.g. late joins can say
+    "you've been added to an in-progress conversation, catch up first."
+    Errors are logged but don't bubble — bootstrap failure shouldn't block
+    the channel mutation that triggered it.
+    """
+    if participant.type != "session" or not participant.session_name:
+        return
+
+    api_port = settings.api_port
+    api_key_val = get_api_key()
+    bootstrap = (
+        f"# Group Channel: {channel.name}\n\n"
+        f"You are **{participant.name}** in a group discussion.\n\n"
+        f"**Channel ID:** `{channel.id}`\n"
+        f"**API URL:** `http://host.docker.internal:{api_port}`\n"
+        f"**Your API key:** `{api_key_val}`\n\n"
+        "## How to participate\n\n"
+        "Use these MCP tools (already available in your session):\n"
+        f'- `channel_read(channel_id="{channel.id}", since_id=<last_id>)` — get new messages\n'
+        f'- `channel_send(channel_id="{channel.id}", content=<msg>, summary=<brief>)` — post a message\n'
+        f'- `channel_complete(channel_id="{channel.id}", reason=<why>)` — signal discussion is done\n\n'
+        "## Rules\n"
+        "1. Poll `channel_read` every few seconds to check for new messages\n"
+        "2. Respond to broadcast messages and messages addressed to @" + participant.name + "\n"
+        "3. When sending, always include `summary=` with a 1-2 sentence brief of your key point\n"
+        "4. Use `addressed_to=` to direct a response at a specific participant\n"
+        "5. Call `channel_complete` when you believe the discussion has concluded\n"
+    )
+    if participant.system_prompt:
+        bootstrap += f"6. Your role: {participant.system_prompt}\n"
+
+    try:
+        client = _docker()
+        container_name = _find_container_name(client, participant.session_name)
+        container = client.containers.get(container_name)
+        loop = asyncio.get_running_loop()
+        import io
+        import tarfile
+
+        content_bytes = bootstrap.encode("utf-8")
+        tarstream = io.BytesIO()
+        with tarfile.open(fileobj=tarstream, mode="w") as tar:
+            info = tarfile.TarInfo(name="CHANNEL.md")
+            info.size = len(content_bytes)
+            tar.addfile(info, io.BytesIO(content_bytes))
+        tarstream.seek(0)
+        await loop.run_in_executor(
+            None,
+            lambda c=container, ts=tarstream: c.put_archive("/home/developer", ts),
+        )
+        tmux_prompt = (
+            f"Read /home/developer/CHANNEL.md carefully. "
+            f"You are now a participant in group channel '{channel.name}' (ID: {channel.id}). "
+            f"Begin participating autonomously: use channel_read to poll for messages, "
+            f"respond using channel_send (always include a summary=), and call channel_complete "
+            f"when the discussion has concluded. "
+            f"{note}"
+            f"Start now by reading the channel and introducing yourself."
+        )
+        await loop.run_in_executor(
+            None,
+            lambda c=container, prompt=tmux_prompt: c.exec_run(
+                ["tmux", "send-keys", "-t", "main", prompt, "Enter"]
+            ),
+        )
+        log.info(
+            "channel.bootstrap_sent",
+            metadata={"session": participant.session_name, "channel_id": channel.id},
+        )
+    except Exception as exc:
+        log.warning(
+            "channel.bootstrap_exec_failed",
+            metadata={"session": participant.session_name, "reason": str(exc)},
+        )
+
+
 @app.post("/api/hub/channels")
 async def hub_create_channel(body: CreateChannelRequest, request: Request, _key=Depends(require_api_key)):
     """Create a group chat channel and bootstrap session participants."""
@@ -2144,76 +2231,8 @@ async def hub_create_channel(body: CreateChannelRequest, request: Request, _key=
     ]
     channel = create_channel(body.name, participants)
 
-    # Bootstrap session participants with channel instructions
-    api_port = settings.api_port
-    api_key_val = get_api_key()
     for p in participants:
-        if p.type != "session" or not p.session_name:
-            continue
-        bootstrap = (
-            f"# Group Channel: {channel.name}\n\n"
-            f"You are **{p.name}** in a group discussion.\n\n"
-            f"**Channel ID:** `{channel.id}`\n"
-            f"**API URL:** `http://host.docker.internal:{api_port}`\n"
-            f"**Your API key:** `{api_key_val}`\n\n"
-            "## How to participate\n\n"
-            "Use these MCP tools (already available in your session):\n"
-            f'- `channel_read(channel_id="{channel.id}", since_id=<last_id>)` — get new messages\n'
-            f'- `channel_send(channel_id="{channel.id}", content=<msg>, summary=<brief>)` — post a message\n'
-            f'- `channel_complete(channel_id="{channel.id}", reason=<why>)` — signal discussion is done\n\n'
-            "## Rules\n"
-            "1. Poll `channel_read` every few seconds to check for new messages\n"
-            "2. Respond to broadcast messages and messages addressed to @" + p.name + "\n"
-            "3. When sending, always include `summary=` with a 1-2 sentence brief of your key point\n"
-            "4. Use `addressed_to=` to direct a response at a specific participant\n"
-            "5. Call `channel_complete` when you believe the discussion has concluded\n"
-        )
-        if p.system_prompt:
-            bootstrap += f"6. Your role: {p.system_prompt}\n"
-
-        try:
-            client = _docker()
-            container_name = _find_container_name(client, p.session_name)
-            container = client.containers.get(container_name)
-            loop = asyncio.get_running_loop()
-            # Write CHANNEL.md into container using binary copy (no shell, no injection risk)
-            import io
-            import tarfile
-
-            content_bytes = bootstrap.encode("utf-8")
-            tarstream = io.BytesIO()
-            with tarfile.open(fileobj=tarstream, mode="w") as tar:
-                info = tarfile.TarInfo(name="CHANNEL.md")
-                info.size = len(content_bytes)
-                tar.addfile(info, io.BytesIO(content_bytes))
-            tarstream.seek(0)
-            await loop.run_in_executor(
-                None,
-                lambda c=container, ts=tarstream: c.put_archive("/home/developer", ts),
-            )
-            # Send bootstrap prompt to Claude via tmux so the agent starts participating
-            tmux_prompt = (
-                f"Read /home/developer/CHANNEL.md carefully. "
-                f"You are now a participant in group channel '{channel.name}' (ID: {channel.id}). "
-                f"Begin participating autonomously: use channel_read to poll for messages, "
-                f"respond using channel_send (always include a summary=), and call channel_complete "
-                f"when the discussion has concluded. Start now by reading the channel and introducing yourself."
-            )
-            await loop.run_in_executor(
-                None,
-                lambda c=container, prompt=tmux_prompt: c.exec_run(
-                    ["tmux", "send-keys", "-t", "main", prompt, "Enter"]
-                ),
-            )
-            log.info(
-                "channel.bootstrap_sent",
-                metadata={"session": p.session_name, "channel_id": channel.id},
-            )
-        except Exception as exc:
-            log.warning(
-                "channel.bootstrap_exec_failed",
-                metadata={"session": p.session_name, "reason": str(exc)},
-            )
+        await _bootstrap_session_in_channel(p, channel)
 
     return channel.model_dump()
 
@@ -2255,6 +2274,17 @@ async def hub_add_channel_participant(
     try:
         channel = channel_add_participant(channel_id, body)
         _broadcast_sse(json.dumps({"action": "channel.participant_added", "channel_id": channel_id}))
+        # Critical: bootstrap the session so it actually starts participating.
+        # Without this, the participant row exists but the container never
+        # learns about the channel and never polls / responds.
+        await _bootstrap_session_in_channel(
+            body,
+            channel,
+            note=(
+                "Note: you've been added to an in-progress conversation. "
+                "Use channel_read to catch up on prior messages before responding. "
+            ),
+        )
         return channel.model_dump()
     except ValueError as exc:
         msg = str(exc)
