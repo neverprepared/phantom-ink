@@ -2,10 +2,13 @@
   import { getApi } from '../utils/api';
   import { onMount } from 'svelte';
   import { brainboxEvents } from '../events.svelte';
+  import TasksSection from '../components/TasksSection.svelte';
 
   // --- Tab state ---
-  type Tab = 'logs' | 'events';
-  let activeTab = $state<Tab>('logs');
+  // Tasks defaults active because it's the most action-bearing surface;
+  // logs/events are read-only history.
+  type Tab = 'tasks' | 'logs' | 'events';
+  let activeTab = $state<Tab>('tasks');
 
   // --- Logs ---
   let logLines = $state<string[]>([]);
@@ -111,8 +114,12 @@
 
 <div class="panel">
   <header>
-    <h1><span class="accent">observability</span></h1>
+    <h1><span class="accent">activity</span></h1>
     <div class="tabs">
+      <button class="tab-btn" class:active={activeTab === 'tasks'} onclick={() => activeTab = 'tasks'}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        tasks
+      </button>
       <button class="tab-btn" class:active={activeTab === 'logs'} onclick={() => activeTab = 'logs'}>
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
         logs
@@ -125,7 +132,9 @@
     </div>
   </header>
 
-  {#if activeTab === 'logs'}
+  {#if activeTab === 'tasks'}
+    <TasksSection />
+  {:else if activeTab === 'logs'}
     <div class="logs-toolbar">
       <div class="log-filters">
         <button class="log-filter-btn" class:active={activeLogFilter === 'all'} onclick={() => activeLogFilter = 'all'}>

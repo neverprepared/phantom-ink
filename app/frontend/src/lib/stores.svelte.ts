@@ -58,7 +58,7 @@ if (typeof window !== 'undefined') {
 // ---------------------------------------------------------------------------
 // Panel focus — one-shot signal for cross-panel navigation. Setter sets the
 // target chain ID and switches the current panel; reader clears after use.
-// Used by TasksPanel (and later, others) to "open this chain" without
+// Used by TasksSection (and later, others) to "open this chain" without
 // reinventing routing.
 // ---------------------------------------------------------------------------
 

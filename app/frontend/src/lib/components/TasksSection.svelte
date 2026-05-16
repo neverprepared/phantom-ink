@@ -121,15 +121,13 @@
   }
 </script>
 
-<div class="panel" aria-busy={loading}>
-  <header class="panel-header">
-    <h1><span class="panel-accent">tasks</span></h1>
+<div class="tasks-section" aria-busy={loading}>
+  <div class="section-toolbar">
+    <p class="panel-hint">Queued chain runs. The worker drains pending tasks every couple of seconds.</p>
     <button class="btn-refresh" onclick={load} title="Refresh" aria-label="Refresh">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
     </button>
-  </header>
-
-  <p class="panel-hint">Queued chain runs. The worker drains pending tasks every couple of seconds.</p>
+  </div>
 
   <div class="filter-row">
     {#each ['all', 'pending', 'running', 'succeeded', 'failed', 'cancelled'] as opt}
@@ -215,11 +213,16 @@
 </div>
 
 <style>
-  .panel { padding: var(--panel-padding); }
+  .tasks-section { /* hosted inside Activity panel — no padding of its own */ }
+  .section-toolbar {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 10px; margin-bottom: 6px;
+  }
   .panel-hint {
     font-size: 12px;
     color: var(--color-text-tertiary);
-    margin: 0 0 14px;
+    margin: 0;
+    flex: 1;
   }
 
   .filter-row {
