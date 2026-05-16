@@ -279,6 +279,18 @@ func (a *App) DeleteChannel(id string) error {
 	return a.client.DeleteChannel(id)
 }
 
+// AddChannelParticipant attaches a session (or other participant) to an
+// existing conversation. The UI uses this to drop agents into live channels.
+func (a *App) AddChannelParticipant(id string, req brainbox.ChannelParticipantRequest) (brainbox.Channel, error) {
+	return a.client.AddChannelParticipant(id, req)
+}
+
+// RemoveChannelParticipant detaches a participant by name. Their past
+// messages stay in the log.
+func (a *App) RemoveChannelParticipant(id, name string) (brainbox.Channel, error) {
+	return a.client.RemoveChannelParticipant(id, name)
+}
+
 // ListPlaybooks returns playbooks, optionally filtered by profile.
 func (a *App) ListPlaybooks(profile string) ([]brainbox.Playbook, error) {
 	return a.client.ListPlaybooks(profile)

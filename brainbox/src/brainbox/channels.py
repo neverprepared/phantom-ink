@@ -133,6 +133,43 @@ def delete_channel(channel_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Participant management — add/remove sessions to an already-created channel.
+# Needed so the UI can drop agents into a live conversation, not just at
+# creation time.
+# ---------------------------------------------------------------------------
+
+
+def add_participant(channel_id: str, participant: ChannelParticipant) -> Channel:
+    channel = _channels.get(channel_id)
+    if not channel:
+        raise ValueError(f"Channel '{channel_id}' not found")
+    if channel.status == "completed":
+        raise ValueError(f"Channel '{channel_id}' is already completed")
+    if any(p.name == participant.name for p in channel.participants):
+        raise ValueError(f"Participant '{participant.name}' is already in channel '{channel_id}'")
+    channel.participants.append(participant)
+    _emit("channel.participant_added", {"channel_id": channel_id, "participant": participant})
+    log.info("channel.participant_added", metadata={"channel_id": channel_id, "name": participant.name})
+    return channel
+
+
+def remove_participant(channel_id: str, name: str) -> Channel:
+    channel = _channels.get(channel_id)
+    if not channel:
+        raise ValueError(f"Channel '{channel_id}' not found")
+    before = len(channel.participants)
+    channel.participants = [p for p in channel.participants if p.name != name]
+    if len(channel.participants) == before:
+        raise ValueError(f"Participant '{name}' is not in channel '{channel_id}'")
+    # Forget any per-participant Ollama read cursor.
+    if channel_id in _ollama_last_read:
+        _ollama_last_read[channel_id].pop(name, None)
+    _emit("channel.participant_removed", {"channel_id": channel_id, "name": name})
+    log.info("channel.participant_removed", metadata={"channel_id": channel_id, "name": name})
+    return channel
+
+
+# ---------------------------------------------------------------------------
 # Hub state persistence
 # ---------------------------------------------------------------------------
 

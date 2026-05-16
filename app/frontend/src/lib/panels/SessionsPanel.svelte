@@ -4,7 +4,7 @@
   import { brainboxEvents } from '../events.svelte';
   import { notifications } from '../notifications.svelte';
   import { combinedHistory as combinedHistoryStore, localHistory as localHistoryStore, diskHistory as diskHistoryStore } from '../metricsHistory.svelte';
-  import { profileState, profileColorStore, featureFlags } from '../stores.svelte';
+  import { profileState, profileColorStore, featureFlags, panelFocus } from '../stores.svelte';
   import { getProfileColor, profileColorStyle } from '../utils/profileColors';
   import EmptyState from '../components/EmptyState.svelte';
   import Badge from '../components/Badge.svelte';
@@ -644,6 +644,7 @@
               {#if session.url}
                 <button class="btn-terminal" onclick={() => terminalSession = session}>terminal</button>
               {/if}
+              <button class="btn-converse" onclick={() => panelFocus.startConversationWith([session.name])} title="Start a conversation with this session">talk</button>
               {#if task && (task.status === 'running' || task.status === 'pending')}
                 <button class="btn-cancel" onclick={() => handleCancelTask(task.id)}>cancel</button>
               {:else}
@@ -1264,6 +1265,17 @@
     background: rgba(239, 68, 68, 0.2);
     border-color: var(--color-error);
   }
+
+  .btn-converse {
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    color: var(--color-accent);
+    padding: 4px 12px;
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    transition: all 0.15s;
+  }
+  .btn-converse:hover { background: rgba(59, 130, 246, 0.16); }
 
   .btn-terminal {
     background: rgba(245, 158, 11, 0.1);

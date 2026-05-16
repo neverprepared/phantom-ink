@@ -126,3 +126,24 @@ func (c *Client) CompleteChannel(id string, req CompleteChannelRequest) (Channel
 func (c *Client) DeleteChannel(id string) error {
 	return c.delete(fmt.Sprintf("/api/hub/channels/%s", id), nil)
 }
+
+// AddChannelParticipant attaches a session (or other participant) to an
+// already-created channel. Lets the UI drop agents into a live conversation
+// instead of fixing the roster at creation time.
+func (c *Client) AddChannelParticipant(id string, req ChannelParticipantRequest) (Channel, error) {
+	var channel Channel
+	if err := c.post(fmt.Sprintf("/api/hub/channels/%s/participants", id), req, &channel); err != nil {
+		return channel, err
+	}
+	return channel, nil
+}
+
+// RemoveChannelParticipant detaches a participant by name. Historical messages
+// they posted remain in the channel log.
+func (c *Client) RemoveChannelParticipant(id, name string) (Channel, error) {
+	var channel Channel
+	if err := c.delete(fmt.Sprintf("/api/hub/channels/%s/participants/%s", id, name), &channel); err != nil {
+		return channel, err
+	}
+	return channel, nil
+}

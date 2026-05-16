@@ -100,6 +100,7 @@ from .langfuse_client import (
 )
 from .messages import get_message_log, get_messages, route as route_message
 from .channels import (
+    add_participant as channel_add_participant,
     complete_channel,
     create_channel,
     delete_channel,
@@ -108,6 +109,7 @@ from .channels import (
     list_channels,
     on_event as channel_on_event,
     post_message as channel_post_message,
+    remove_participant as channel_remove_participant,
 )
 from .playbooks import (
     cancel_playbook,
@@ -2235,6 +2237,44 @@ async def hub_delete_channel(channel_id: str, _key=Depends(require_api_key)):
         delete_channel(channel_id)
         _broadcast_sse(json.dumps({"action": "channel.deleted", "channel_id": channel_id}))
         return {"ok": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/hub/channels/{channel_id}/participants")
+async def hub_add_channel_participant(
+    channel_id: str,
+    body: ChannelParticipant,
+    _key=Depends(require_api_key),
+):
+    """Add a session as a participant in an already-created channel.
+
+    Returns the updated channel. 404 if the channel doesn't exist; 400 if
+    the participant is already in the channel or the channel is completed.
+    """
+    try:
+        channel = channel_add_participant(channel_id, body)
+        _broadcast_sse(json.dumps({"action": "channel.participant_added", "channel_id": channel_id}))
+        return channel.model_dump()
+    except ValueError as exc:
+        msg = str(exc)
+        status = 404 if "not found" in msg else 400
+        raise HTTPException(status_code=status, detail=msg)
+
+
+@app.delete("/api/hub/channels/{channel_id}/participants/{name}")
+async def hub_remove_channel_participant(
+    channel_id: str,
+    name: str,
+    _key=Depends(require_api_key),
+):
+    """Remove a participant from a channel by name. The participant stops
+    receiving messages but historical messages they posted stay in the log.
+    """
+    try:
+        channel = channel_remove_participant(channel_id, name)
+        _broadcast_sse(json.dumps({"action": "channel.participant_removed", "channel_id": channel_id, "name": name}))
+        return channel.model_dump()
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 

@@ -3,6 +3,8 @@
 import {brainbox} from '../models';
 import {main} from '../models';
 
+export function AddChannelParticipant(arg1:string,arg2:brainbox.ChannelParticipantRequest):Promise<brainbox.Channel>;
+
 export function AddNFSExport(arg1:string):Promise<void>;
 
 export function AddRepo(arg1:brainbox.AddRepoRequest):Promise<brainbox.Repo>;
@@ -178,6 +180,8 @@ export function PreviewDispatch(arg1:brainbox.DispatchPreviewRequest):Promise<br
 export function PullOllamaModel(arg1:string):Promise<string>;
 
 export function PurgeBackup(arg1:string):Promise<void>;
+
+export function RemoveChannelParticipant(arg1:string,arg2:string):Promise<brainbox.Channel>;
 
 export function RemoveNFSExport(arg1:string):Promise<void>;
 

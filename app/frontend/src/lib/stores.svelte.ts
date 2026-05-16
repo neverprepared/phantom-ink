@@ -63,6 +63,7 @@ if (typeof window !== 'undefined') {
 // ---------------------------------------------------------------------------
 
 let _chainFocus = $state<string>('');
+let _conversationSeed = $state<string[]>([]);
 
 export const panelFocus = {
   get chainID() { return _chainFocus; },
@@ -74,6 +75,16 @@ export const panelFocus = {
     const id = _chainFocus;
     _chainFocus = '';
     return id;
+  },
+  /** Start a new conversation with the named sessions pre-selected. */
+  startConversationWith(sessionNames: string[]) {
+    _conversationSeed = [...sessionNames];
+    currentPanel.value = 'conversations';
+  },
+  consumeConversationSeed(): string[] {
+    const out = _conversationSeed;
+    _conversationSeed = [];
+    return out;
   },
 };
 
