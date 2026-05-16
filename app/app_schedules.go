@@ -32,6 +32,17 @@ func (a *App) SaveSchedule(s Schedule) (Schedule, error) {
 	if err := validateCronExpr(s.CronExpr); err != nil {
 		return Schedule{}, fmt.Errorf("invalid cron expression %q: %w", s.CronExpr, err)
 	}
+	// Snapshot the active profile on first save so cron firings stay under
+	// the right workspace regardless of who's at the keyboard at fire time.
+	if strings.TrimSpace(s.WorkspaceProfile) == "" {
+		s.WorkspaceProfile = a.activeProfileName()
+	}
+	if s.WorkspaceProfile == "" {
+		return Schedule{}, fmt.Errorf("no active profile — set one before saving schedules")
+	}
+	if _, err := a.findProfile(s.WorkspaceProfile); err != nil {
+		return Schedule{}, fmt.Errorf("workspace_profile: %w", err)
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if s.ID == "" {
 		s.ID = newScheduleID()

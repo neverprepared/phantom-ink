@@ -1437,6 +1437,7 @@ export namespace main {
 	    max_attempts: number;
 	    trigger: string;
 	    parent_task_id: string;
+	    workspace_profile: string;
 	    scheduled_for: string;
 	
 	    static createFrom(source: any = {}) {
@@ -1452,6 +1453,7 @@ export namespace main {
 	        this.max_attempts = source["max_attempts"];
 	        this.trigger = source["trigger"];
 	        this.parent_task_id = source["parent_task_id"];
+	        this.workspace_profile = source["workspace_profile"];
 	        this.scheduled_for = source["scheduled_for"];
 	    }
 	}
@@ -1619,6 +1621,7 @@ export namespace main {
 	    input: string;
 	    cwd: string;
 	    enabled: boolean;
+	    workspace_profile: string;
 	    created_at: string;
 	    updated_at: string;
 	    last_fired_at: string;
@@ -1636,6 +1639,7 @@ export namespace main {
 	        this.input = source["input"];
 	        this.cwd = source["cwd"];
 	        this.enabled = source["enabled"];
+	        this.workspace_profile = source["workspace_profile"];
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
 	        this.last_fired_at = source["last_fired_at"];
@@ -1717,6 +1721,7 @@ export namespace main {
 	    cwd: string;
 	    trigger: string;
 	    parent_task_id: string;
+	    workspace_profile: string;
 	    enqueued_at: string;
 	    scheduled_for: string;
 	    started_at: string;
@@ -1740,6 +1745,7 @@ export namespace main {
 	        this.cwd = source["cwd"];
 	        this.trigger = source["trigger"];
 	        this.parent_task_id = source["parent_task_id"];
+	        this.workspace_profile = source["workspace_profile"];
 	        this.enqueued_at = source["enqueued_at"];
 	        this.scheduled_for = source["scheduled_for"];
 	        this.started_at = source["started_at"];

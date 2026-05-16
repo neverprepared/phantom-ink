@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
-  import { panelFocus } from '../stores.svelte';
+  import { panelFocus, profileState } from '../stores.svelte';
 
   interface UsableAgent {
     id: string;
@@ -126,6 +126,7 @@
     input: string;
     cwd: string;
     enabled: boolean;
+    workspace_profile: string;
     created_at: string;
     updated_at: string;
     last_fired_at: string;
@@ -163,6 +164,7 @@
       await a.SaveSchedule({
         id: '', chain_id: chainID, cron_expr: newCron.trim(),
         input: newSchedInput, cwd: '', enabled: true,
+        workspace_profile: '', // backend snapshots active profile
         created_at: '', updated_at: '', last_fired_at: '', next_fire_at: '',
       });
       notifications.success('Schedule added');
@@ -369,6 +371,16 @@
 
   <section class="chains-section">
     <div class="section-body">
+      <div class="profile-banner">
+        {#if profileState.active}
+          <span class="profile-label">workspace:</span>
+          <span class="profile-name">{profileState.active.name}</span>
+          <code class="profile-home">{profileState.active.workspace_home}</code>
+          <span class="profile-note">all cwd values resolve inside this directory</span>
+        {:else}
+          <span class="profile-warn">no active profile — chains can't run until you select one</span>
+        {/if}
+      </div>
       <p class="hint">
         Pipe one agent's output into the next. Only enabled, detected agents with a wired invocation are pickable as steps.
       </p>
@@ -465,6 +477,9 @@
                         <span class="sched-input" title={s.input}>{s.input.slice(0, 40)}{s.input.length > 40 ? '…' : ''}</span>
                       {/if}
                       <span class="sched-meta">
+                        {#if s.workspace_profile}
+                          <span class="profile-badge" title="workspace profile">{s.workspace_profile}</span>
+                        {/if}
                         {#if s.next_fire_at}
                           next: {new Date(s.next_fire_at).toLocaleString()}
                         {:else if !s.enabled}
@@ -513,7 +528,7 @@
         </label>
         <label class="field">
           <span class="field-label">working dir</span>
-          <input type="text" bind:value={editing.cwd} placeholder="optional, applies to all steps unless overridden" />
+          <input type="text" bind:value={editing.cwd} placeholder="relative to profile root (e.g. code/api) — applies to all steps" />
         </label>
 
         <div class="steps-block">
@@ -539,7 +554,7 @@
                 rows="3"
                 placeholder="Prompt. Use {'{{input}}'} for initial input or {'{{prev.output}}'} for previous step output."
               ></textarea>
-              <input class="step-cwd" type="text" bind:value={step.cwd} placeholder="step-specific cwd (optional)" />
+              <input class="step-cwd" type="text" bind:value={step.cwd} placeholder="step-specific cwd relative to profile (optional)" />
             </div>
           {/each}
         </div>
@@ -596,17 +611,26 @@
         <button class="btn-icon" onclick={() => { if (!runActive) runnerOpen = false; }} aria-label="Close" disabled={runActive}>×</button>
       </header>
       <div class="modal-body">
+        <div class="run-context">
+          {#if profileState.active}
+            <span class="profile-label">running under:</span>
+            <span class="profile-badge">{profileState.active.name}</span>
+            <code class="profile-home">{profileState.active.workspace_home}</code>
+          {:else}
+            <span class="profile-warn">no active profile selected — run will fail</span>
+          {/if}
+        </div>
         <label class="field">
           <span class="field-label">initial input</span>
           <textarea bind:value={runInput} rows="3" placeholder="{'{{input}}'} substitution for the first step"></textarea>
         </label>
         <label class="field">
           <span class="field-label">working dir</span>
-          <input type="text" bind:value={runCwd} placeholder="defaults to chain cwd" />
+          <input type="text" bind:value={runCwd} placeholder="relative to profile root (e.g. code/api)" />
         </label>
 
         <div class="run-actions">
-          <button class="btn-primary btn-sm" onclick={runChain} disabled={runActive}>
+          <button class="btn-primary btn-sm" onclick={runChain} disabled={runActive || !profileState.active}>
             {runActive ? 'running...' : 'start'}
           </button>
         </div>
@@ -653,6 +677,33 @@
   .panel { padding: var(--panel-padding); }
   .chains-section { /* legacy class kept so nested rules below match */ }
   .section-body { padding-top: 0; }
+
+  /* Profile banner — reminds the user which workspace chains run under */
+  .profile-banner {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 8px 12px; margin-bottom: 12px;
+    background: rgba(59, 130, 246, 0.06);
+    border: 1px solid rgba(59, 130, 246, 0.18);
+    border-radius: var(--radius-md);
+    font-size: 11px;
+  }
+  .profile-label {
+    font-size: 9px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--color-text-tertiary);
+  }
+  .profile-name { font-weight: 500; color: var(--color-accent); }
+  .profile-home {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--color-text-secondary);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 1px 6px; border-radius: var(--radius-sm);
+  }
+  .profile-note { color: var(--color-text-tertiary); font-size: 10px; }
+  .profile-warn {
+    color: var(--color-warning, #d97706);
+    font-weight: 500;
+  }
 
   /* Recent-runs dots — quick health glance on each chain card */
   .recent-runs {
@@ -856,6 +907,14 @@
   .sched-meta {
     font-size: 10px; color: var(--color-text-tertiary);
     margin-left: auto;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .profile-badge {
+    font-size: 9px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--color-accent);
+    background: rgba(59, 130, 246, 0.08);
+    padding: 1px 5px; border-radius: var(--radius-sm);
   }
   .schedule-add {
     display: flex; gap: 6px; margin-top: 6px;
@@ -871,6 +930,14 @@
   .sched-input-field:last-of-type { flex: 1; }
 
   /* Runner */
+  .run-context {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 8px 12px; margin-bottom: 12px;
+    background: rgba(59, 130, 246, 0.06);
+    border: 1px solid rgba(59, 130, 246, 0.18);
+    border-radius: var(--radius-md);
+    font-size: 11px;
+  }
   .run-actions { display: flex; justify-content: flex-end; margin: 8px 0 12px; }
   .run-log {
     background: var(--color-bg-tertiary);

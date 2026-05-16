@@ -84,12 +84,15 @@ func (s *scheduler) tick() {
 			continue
 		}
 		// Due — enqueue and stamp the fire so we don't re-trigger next tick.
+		// The schedule's snapshotted profile is propagated to the task so the
+		// run executes in the right workspace, not whichever is active now.
 		if _, err := s.app.EnqueueTask(EnqueueTaskRequest{
-			ChainID:  sch.ChainID,
-			Input:    sch.Input,
-			Cwd:      sch.Cwd,
-			Trigger:  TriggerSchedule,
-			Priority: 0,
+			ChainID:          sch.ChainID,
+			Input:            sch.Input,
+			Cwd:              sch.Cwd,
+			Trigger:          TriggerSchedule,
+			WorkspaceProfile: sch.WorkspaceProfile,
+			Priority:         0,
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: schedule %s enqueue: %v\n", sch.ID, err)
 			continue

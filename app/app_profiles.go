@@ -28,6 +28,57 @@ func (a *App) findProfile(name string) (*Profile, error) {
 	return nil, fmt.Errorf("profile %q not found", name)
 }
 
+// activeProfileName returns the currently-selected profile name without
+// touching disk. Empty when no profile is set.
+func (a *App) activeProfileName() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.config == nil {
+		return ""
+	}
+	return a.config.ActiveProfile
+}
+
+// resolveCwd produces the absolute working directory for a chain step given
+// the owning profile and a user-supplied cwd. Rules:
+//
+//   - profile is required for chain execution (foundational)
+//   - empty cwd  → profile.WorkspaceHome
+//   - relative   → filepath.Join(WorkspaceHome, cwd), must stay inside
+//   - absolute   → must have WorkspaceHome as prefix
+//
+// Anything that would escape the profile root is a hard error — this is
+// how "isolated to the active profile" is enforced at execution time.
+func (a *App) resolveCwd(profileName, rawCwd string) (string, error) {
+	if profileName == "" {
+		return "", fmt.Errorf("no profile in context — chain steps must run under a profile")
+	}
+	prof, err := a.findProfile(profileName)
+	if err != nil {
+		return "", err
+	}
+	home, err := filepath.Abs(prof.WorkspaceHome)
+	if err != nil {
+		return "", fmt.Errorf("resolve profile home: %w", err)
+	}
+	clean := strings.TrimSpace(rawCwd)
+	if clean == "" {
+		return home, nil
+	}
+	var candidate string
+	if filepath.IsAbs(clean) {
+		candidate = filepath.Clean(clean)
+	} else {
+		candidate = filepath.Clean(filepath.Join(home, clean))
+	}
+	// pathInside reports whether candidate is at or under home (no traversal).
+	rel, err := filepath.Rel(home, candidate)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("cwd %q escapes profile %q workspace_home", rawCwd, profileName)
+	}
+	return candidate, nil
+}
+
 // ---------------------------------------------------------------------------
 // Profiles
 // ---------------------------------------------------------------------------

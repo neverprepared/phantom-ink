@@ -199,6 +199,16 @@ var migrations = []migration{
 	{version: 8, fn: func(conn *sql.DB) error {
 		return addColumnIfMissing(conn, "chains", "on_success_json", "TEXT NOT NULL DEFAULT '[]'")
 	}},
+	// v9: profile snapshotting on tasks and schedules. Every queued task and
+	// every saved schedule remembers the active profile at create time, so
+	// runs and cron firings always execute in the right workspace context
+	// regardless of who's at the keyboard later. Profiles are foundational.
+	{version: 9, fn: func(conn *sql.DB) error {
+		if err := addColumnIfMissing(conn, "tasks", "workspace_profile", "TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+		return addColumnIfMissing(conn, "schedules", "workspace_profile", "TEXT NOT NULL DEFAULT ''")
+	}},
 }
 
 func (db *DB) migrate() error {
@@ -535,33 +545,36 @@ func (db *DB) ListChainRuns(chainID string, limit int) ([]ChainRunRow, error) {
 // ---------------------------------------------------------------------------
 
 // TaskRow mirrors the tasks table. The runtime Task type lives in queue.go.
+// WorkspaceProfile is snapshotted at enqueue time so the task always runs
+// under the right profile context — see feedback_profiles_foundational.md.
 type TaskRow struct {
-	ID            string `json:"id"`
-	ChainID       string `json:"chain_id"`
-	Status        string `json:"status"`
-	Priority      int    `json:"priority"`
-	Input         string `json:"input"`
-	Cwd           string `json:"cwd"`
-	Trigger       string `json:"trigger"`
-	ParentTaskID  string `json:"parent_task_id"`
-	EnqueuedAt    string `json:"enqueued_at"`
-	ScheduledFor  string `json:"scheduled_for"`
-	StartedAt     string `json:"started_at"`
-	FinishedAt    string `json:"finished_at"`
-	Attempts      int    `json:"attempts"`
-	MaxAttempts   int    `json:"max_attempts"`
-	LastError     string `json:"last_error"`
-	ResultRunID   string `json:"result_run_id"`
+	ID               string `json:"id"`
+	ChainID          string `json:"chain_id"`
+	Status           string `json:"status"`
+	Priority         int    `json:"priority"`
+	Input            string `json:"input"`
+	Cwd              string `json:"cwd"`
+	Trigger          string `json:"trigger"`
+	ParentTaskID     string `json:"parent_task_id"`
+	WorkspaceProfile string `json:"workspace_profile"`
+	EnqueuedAt       string `json:"enqueued_at"`
+	ScheduledFor     string `json:"scheduled_for"`
+	StartedAt        string `json:"started_at"`
+	FinishedAt       string `json:"finished_at"`
+	Attempts         int    `json:"attempts"`
+	MaxAttempts      int    `json:"max_attempts"`
+	LastError        string `json:"last_error"`
+	ResultRunID      string `json:"result_run_id"`
 }
 
 func (db *DB) InsertTask(t TaskRow) error {
 	_, err := db.conn.Exec(`
 		INSERT INTO tasks (
-			id, chain_id, status, priority, input, cwd, trigger, parent_task_id,
+			id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
 			enqueued_at, scheduled_for, started_at, finished_at,
 			attempts, max_attempts, last_error, result_run_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.ChainID, t.Status, t.Priority, t.Input, t.Cwd, t.Trigger, t.ParentTaskID,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.ChainID, t.Status, t.Priority, t.Input, t.Cwd, t.Trigger, t.ParentTaskID, t.WorkspaceProfile,
 		t.EnqueuedAt, t.ScheduledFor, t.StartedAt, t.FinishedAt,
 		t.Attempts, t.MaxAttempts, t.LastError, t.ResultRunID)
 	return err
@@ -580,7 +593,7 @@ func (db *DB) ClaimNextTask(nowRFC3339 string) (TaskRow, bool) {
 
 	var t TaskRow
 	err = tx.QueryRow(`
-		SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id,
+		SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
 		       enqueued_at, scheduled_for, started_at, finished_at,
 		       attempts, max_attempts, last_error, result_run_id
 		FROM tasks
@@ -588,7 +601,7 @@ func (db *DB) ClaimNextTask(nowRFC3339 string) (TaskRow, bool) {
 		  AND (scheduled_for = '' OR scheduled_for <= ?)
 		ORDER BY priority DESC, enqueued_at ASC
 		LIMIT 1`, nowRFC3339).Scan(
-		&t.ID, &t.ChainID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID,
+		&t.ID, &t.ChainID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
 		&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
 		&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID)
 	if err != nil {
@@ -669,11 +682,11 @@ func (db *DB) RetryTask(id string) error {
 func (db *DB) GetTask(id string) (TaskRow, bool) {
 	var t TaskRow
 	err := db.conn.QueryRow(`
-		SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id,
+		SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
 		       enqueued_at, scheduled_for, started_at, finished_at,
 		       attempts, max_attempts, last_error, result_run_id
 		FROM tasks WHERE id = ?`, id).Scan(
-		&t.ID, &t.ChainID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID,
+		&t.ID, &t.ChainID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
 		&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
 		&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID)
 	if err != nil {
@@ -692,13 +705,13 @@ func (db *DB) ListTasks(status string, limit int) ([]TaskRow, error) {
 	var err error
 	if status == "" {
 		rows, err = db.conn.Query(`
-			SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id,
+			SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
 			       enqueued_at, scheduled_for, started_at, finished_at,
 			       attempts, max_attempts, last_error, result_run_id
 			FROM tasks ORDER BY enqueued_at DESC LIMIT ?`, limit)
 	} else {
 		rows, err = db.conn.Query(`
-			SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id,
+			SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
 			       enqueued_at, scheduled_for, started_at, finished_at,
 			       attempts, max_attempts, last_error, result_run_id
 			FROM tasks WHERE status = ? ORDER BY enqueued_at DESC LIMIT ?`, status, limit)
@@ -711,7 +724,7 @@ func (db *DB) ListTasks(status string, limit int) ([]TaskRow, error) {
 	for rows.Next() {
 		var t TaskRow
 		if err := rows.Scan(
-			&t.ID, &t.ChainID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID,
+			&t.ID, &t.ChainID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
 			&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
 			&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID,
 		); err != nil {
@@ -727,15 +740,16 @@ func (db *DB) ListTasks(status string, limit int) ([]TaskRow, error) {
 // ---------------------------------------------------------------------------
 
 type ScheduleRow struct {
-	ID           string `json:"id"`
-	ChainID      string `json:"chain_id"`
-	CronExpr     string `json:"cron_expr"`
-	Input        string `json:"input"`
-	Cwd          string `json:"cwd"`
-	Enabled      bool   `json:"enabled"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
-	LastFiredAt  string `json:"last_fired_at"`
+	ID               string `json:"id"`
+	ChainID          string `json:"chain_id"`
+	CronExpr         string `json:"cron_expr"`
+	Input            string `json:"input"`
+	Cwd              string `json:"cwd"`
+	Enabled          bool   `json:"enabled"`
+	WorkspaceProfile string `json:"workspace_profile"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
+	LastFiredAt      string `json:"last_fired_at"`
 	// NextFireAt is a computed convenience populated by the bindings (not the
 	// table). RFC3339 UTC. Empty when the cron expression is invalid or the
 	// schedule is disabled.
@@ -744,16 +758,17 @@ type ScheduleRow struct {
 
 func (db *DB) UpsertSchedule(s ScheduleRow) error {
 	_, err := db.conn.Exec(`
-		INSERT INTO schedules (id, chain_id, cron_expr, input, cwd, enabled, created_at, updated_at, last_fired_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO schedules (id, chain_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			chain_id      = excluded.chain_id,
-			cron_expr     = excluded.cron_expr,
-			input         = excluded.input,
-			cwd           = excluded.cwd,
-			enabled       = excluded.enabled,
-			updated_at    = excluded.updated_at`,
-		s.ID, s.ChainID, s.CronExpr, s.Input, s.Cwd, boolToInt(s.Enabled),
+			chain_id          = excluded.chain_id,
+			cron_expr         = excluded.cron_expr,
+			input             = excluded.input,
+			cwd               = excluded.cwd,
+			enabled           = excluded.enabled,
+			workspace_profile = excluded.workspace_profile,
+			updated_at        = excluded.updated_at`,
+		s.ID, s.ChainID, s.CronExpr, s.Input, s.Cwd, boolToInt(s.Enabled), s.WorkspaceProfile,
 		s.CreatedAt, s.UpdatedAt, s.LastFiredAt)
 	return err
 }
@@ -762,9 +777,9 @@ func (db *DB) GetSchedule(id string) (ScheduleRow, bool) {
 	var r ScheduleRow
 	var enabled int
 	err := db.conn.QueryRow(`
-		SELECT id, chain_id, cron_expr, input, cwd, enabled, created_at, updated_at, last_fired_at
+		SELECT id, chain_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
 		FROM schedules WHERE id = ?`, id).Scan(
-		&r.ID, &r.ChainID, &r.CronExpr, &r.Input, &r.Cwd, &enabled,
+		&r.ID, &r.ChainID, &r.CronExpr, &r.Input, &r.Cwd, &enabled, &r.WorkspaceProfile,
 		&r.CreatedAt, &r.UpdatedAt, &r.LastFiredAt)
 	if err != nil {
 		return r, false
@@ -778,11 +793,11 @@ func (db *DB) ListSchedules(chainID string) ([]ScheduleRow, error) {
 	var err error
 	if chainID == "" {
 		rows, err = db.conn.Query(`
-			SELECT id, chain_id, cron_expr, input, cwd, enabled, created_at, updated_at, last_fired_at
+			SELECT id, chain_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
 			FROM schedules ORDER BY created_at`)
 	} else {
 		rows, err = db.conn.Query(`
-			SELECT id, chain_id, cron_expr, input, cwd, enabled, created_at, updated_at, last_fired_at
+			SELECT id, chain_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
 			FROM schedules WHERE chain_id = ? ORDER BY created_at`, chainID)
 	}
 	if err != nil {
@@ -793,7 +808,7 @@ func (db *DB) ListSchedules(chainID string) ([]ScheduleRow, error) {
 	for rows.Next() {
 		var r ScheduleRow
 		var enabled int
-		if err := rows.Scan(&r.ID, &r.ChainID, &r.CronExpr, &r.Input, &r.Cwd, &enabled,
+		if err := rows.Scan(&r.ID, &r.ChainID, &r.CronExpr, &r.Input, &r.Cwd, &enabled, &r.WorkspaceProfile,
 			&r.CreatedAt, &r.UpdatedAt, &r.LastFiredAt); err != nil {
 			continue
 		}

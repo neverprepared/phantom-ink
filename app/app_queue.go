@@ -12,15 +12,19 @@ import (
 
 // EnqueueTaskRequest is the JS-facing payload for enqueuing a chain run as
 // a durable task. Most fields are optional; chain_id is required.
+// WorkspaceProfile defaults to the currently-active profile — it's snapshotted
+// here so the task always runs in the right context regardless of who's at
+// the keyboard when the worker picks it up.
 type EnqueueTaskRequest struct {
-	ChainID       string `json:"chain_id"`
-	Input         string `json:"input"`
-	Cwd           string `json:"cwd"`
-	Priority      int    `json:"priority"`
-	MaxAttempts   int    `json:"max_attempts"`
-	Trigger       string `json:"trigger"`
-	ParentTaskID  string `json:"parent_task_id"`
-	ScheduledFor  string `json:"scheduled_for"`
+	ChainID          string `json:"chain_id"`
+	Input            string `json:"input"`
+	Cwd              string `json:"cwd"`
+	Priority         int    `json:"priority"`
+	MaxAttempts      int    `json:"max_attempts"`
+	Trigger          string `json:"trigger"`
+	ParentTaskID     string `json:"parent_task_id"`
+	WorkspaceProfile string `json:"workspace_profile"`
+	ScheduledFor     string `json:"scheduled_for"`
 }
 
 // EnqueueTask validates the request, persists a pending task, and returns the
@@ -44,18 +48,33 @@ func (a *App) EnqueueTask(req EnqueueTaskRequest) (string, error) {
 		maxAttempts = 1
 	}
 
+	// Snapshot the active profile if the caller didn't pin one explicitly.
+	// An empty workspace_profile at run time would be rejected by resolveCwd,
+	// so surface the error here rather than later.
+	profileName := strings.TrimSpace(req.WorkspaceProfile)
+	if profileName == "" {
+		profileName = a.activeProfileName()
+	}
+	if profileName == "" {
+		return "", fmt.Errorf("no active profile — set one before enqueuing tasks")
+	}
+	if _, err := a.findProfile(profileName); err != nil {
+		return "", fmt.Errorf("workspace_profile: %w", err)
+	}
+
 	t := TaskRow{
-		ID:           newTaskID(),
-		ChainID:      req.ChainID,
-		Status:       TaskPending,
-		Priority:     req.Priority,
-		Input:        req.Input,
-		Cwd:          req.Cwd,
-		Trigger:      trigger,
-		ParentTaskID: req.ParentTaskID,
-		EnqueuedAt:   time.Now().UTC().Format(time.RFC3339),
-		ScheduledFor: req.ScheduledFor,
-		MaxAttempts:  maxAttempts,
+		ID:               newTaskID(),
+		ChainID:          req.ChainID,
+		Status:           TaskPending,
+		Priority:         req.Priority,
+		Input:            req.Input,
+		Cwd:              req.Cwd,
+		Trigger:          trigger,
+		ParentTaskID:     req.ParentTaskID,
+		WorkspaceProfile: profileName,
+		EnqueuedAt:       time.Now().UTC().Format(time.RFC3339),
+		ScheduledFor:     req.ScheduledFor,
+		MaxAttempts:      maxAttempts,
 	}
 	if err := a.db.InsertTask(t); err != nil {
 		return "", err

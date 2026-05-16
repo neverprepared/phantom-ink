@@ -13,6 +13,7 @@
     cwd: string;
     trigger: string;
     parent_task_id: string;
+    workspace_profile: string;
     enqueued_at: string;
     scheduled_for: string;
     started_at: string;
@@ -159,6 +160,9 @@
               >{chainName(t.chain_id)}</span>
             </span>
             <span class="task-meta">
+              {#if t.workspace_profile}
+                <span class="profile-badge" title="workspace profile">{t.workspace_profile}</span>
+              {/if}
               {t.trigger}
               {#if t.attempts > 1}· try {t.attempts}/{t.max_attempts}{/if}
               {#if t.started_at}· {duration(t)}{/if}
@@ -291,7 +295,17 @@
     border-bottom: 1px dotted transparent;
   }
   .chain-link:hover { border-bottom-color: var(--color-accent); }
-  .task-meta { font-size: 11px; color: var(--color-text-tertiary); }
+  .task-meta {
+    font-size: 11px; color: var(--color-text-tertiary);
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .profile-badge {
+    font-size: 9px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--color-accent);
+    background: rgba(59, 130, 246, 0.08);
+    padding: 1px 5px; border-radius: var(--radius-sm);
+  }
   .task-time {
     font-size: 11px; color: var(--color-text-tertiary);
     font-family: var(--font-mono);

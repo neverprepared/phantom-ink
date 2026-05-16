@@ -111,6 +111,9 @@ func (a *App) ListChainRuns(chainID string, limit int) ([]ChainRunRow, error) {
 // is fed to the next step's {{prev.output}} template slot. The initial
 // {{input}} slot is filled with the `input` argument.
 //
+// The active profile is used for cwd resolution — chains never run
+// "globally" outside a profile. See feedback_profiles_foundational.md.
+//
 // Steps are rejected pre-run if any agent is missing from the catalog, not
 // detected on PATH, or disabled. The visibility rule (detected && enabled)
 // is enforced here so a chain saved when an agent was available can't be
@@ -154,6 +157,17 @@ func (a *App) RunChain(id, input, cwdOverride string) (string, error) {
 		}
 	}
 
+	// Foreground runs always execute under the currently-active profile —
+	// the user is at the keyboard, and we want the immediate run to operate
+	// on whatever they're looking at. (Background tasks snapshot at enqueue.)
+	profileName := a.activeProfileName()
+	if profileName == "" {
+		return "", fmt.Errorf("no active profile — set one before running chains")
+	}
+	if _, err := a.findProfile(profileName); err != nil {
+		return "", fmt.Errorf("active profile lookup: %w", err)
+	}
+
 	runID := newRunID()
 	startedAt := time.Now().UTC().Format(time.RFC3339)
 	if err := a.db.InsertChainRun(ChainRunRow{
@@ -167,7 +181,7 @@ func (a *App) RunChain(id, input, cwdOverride string) (string, error) {
 		baseCwd = row.Cwd
 	}
 
-	go func() { _ = a.executeChain(runID, id, input, baseCwd, steps) }()
+	go func() { _ = a.executeChain(runID, id, input, baseCwd, steps, profileName) }()
 	return runID, nil
 }
 
@@ -176,7 +190,12 @@ func (a *App) RunChain(id, input, cwdOverride string) (string, error) {
 // nil on success or a wrapped error describing which step failed. Callers
 // that want fire-and-forget behavior (the RunChain binding) discard the error;
 // the queue worker uses it to decide retry vs. final-failure.
-func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps []ChainStep) error {
+//
+// profileName is required: every cwd (chain-level, step-level) is resolved
+// against that profile's workspace_home, with traversal outside the root
+// rejected. On-success follow-ups inherit the same profile so autonomous
+// flows stay in their lane.
+func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps []ChainStep, profileName string) error {
 	ctx := a.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -201,15 +220,25 @@ func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps [
 
 	for i, step := range steps {
 		desc, _ := agentDescriptor(step.AgentID)
-		stepCwd := step.Cwd
-		if stepCwd == "" {
-			stepCwd = baseCwd
+		rawCwd := step.Cwd
+		if rawCwd == "" {
+			rawCwd = baseCwd
+		}
+		resolvedCwd, err := a.resolveCwd(profileName, rawCwd)
+		if err != nil {
+			status = "failed"
+			failure = fmt.Sprintf("step %d (%s): %v", i+1, step.AgentID, err)
+			emit(ChainRunEvent{
+				Phase: "step:done", StepIndex: i, AgentID: step.AgentID,
+				Error: err.Error(), Status: "failed",
+			})
+			break
 		}
 		prompt := renderPromptTemplate(step.PromptTemplate, initialInput, prevOutput)
 
 		emit(ChainRunEvent{Phase: "step:start", StepIndex: i, AgentID: step.AgentID, Status: "running"})
 
-		stdout, stderr, exitCode, err := runChainStep(ctx, desc, prompt, stepCwd)
+		stdout, stderr, exitCode, err := runChainStep(ctx, desc, prompt, resolvedCwd)
 		if err != nil {
 			status = "failed"
 			failure = fmt.Sprintf("step %d (%s): %v", i+1, step.AgentID, err)
@@ -241,13 +270,15 @@ func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps [
 	// Declarative follow-ups: enqueue any chains listed in chain.on_success.
 	// Failures here are logged but don't bubble up — the primary chain
 	// succeeded; a downstream enqueue error shouldn't retroactively fail it.
-	a.enqueueFollowups(chainID, prevOutput)
+	// Profile is inherited so autonomous flows stay in their lane.
+	a.enqueueFollowups(chainID, prevOutput, profileName)
 	return nil
 }
 
 // enqueueFollowups looks up the parent chain's on_success entries and submits
-// a task for each. Called only after a successful run.
-func (a *App) enqueueFollowups(parentChainID, lastOutput string) {
+// a task for each, inheriting the parent's workspace profile so the whole
+// flow stays under one workspace context.
+func (a *App) enqueueFollowups(parentChainID, lastOutput, parentProfile string) {
 	if a.db == nil {
 		return
 	}
@@ -270,10 +301,11 @@ func (a *App) enqueueFollowups(parentChainID, lastOutput string) {
 			fmt.Fprintf(os.Stderr, "warning: on_success[%d]: unknown input_from %q, defaulting to stdout\n", i, f.InputFrom)
 		}
 		if _, err := a.EnqueueTask(EnqueueTaskRequest{
-			ChainID: f.ChainID,
-			Input:   input,
-			Cwd:     f.Cwd,
-			Trigger: TriggerFollowup,
+			ChainID:          f.ChainID,
+			Input:            input,
+			Cwd:              f.Cwd,
+			Trigger:          TriggerFollowup,
+			WorkspaceProfile: parentProfile,
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: enqueue followup %d (%s): %v\n", i, f.ChainID, err)
 		}
@@ -285,6 +317,10 @@ func (a *App) enqueueFollowups(parentChainID, lastOutput string) {
 // runID plus any error. Unlike RunChain (which kicks off a goroutine and
 // returns immediately), this blocks until the chain completes so the worker
 // can mark the task succeeded/failed accordingly.
+//
+// The task's WorkspaceProfile is the execution context: all cwd values are
+// resolved against that profile's workspace_home via resolveCwd. Empty
+// profile is a hard error — chains never run "globally."
 func (a *App) runChainForTask(ctx context.Context, task TaskRow) (string, error) {
 	if a.db == nil {
 		return "", fmt.Errorf("database not initialized")
@@ -292,6 +328,9 @@ func (a *App) runChainForTask(ctx context.Context, task TaskRow) (string, error)
 	row, ok := a.db.GetChain(task.ChainID)
 	if !ok {
 		return "", fmt.Errorf("chain %q not found", task.ChainID)
+	}
+	if task.WorkspaceProfile == "" {
+		return "", fmt.Errorf("task %s has no workspace_profile (legacy row?)", task.ID)
 	}
 	steps, err := chainStepsFromJSON(row.StepsJSON)
 	if err != nil {
@@ -333,7 +372,7 @@ func (a *App) runChainForTask(ctx context.Context, task TaskRow) (string, error)
 		cwd = row.Cwd
 	}
 	_ = ctx // executeChain reads ctx from a.ctx; we don't pass it through yet
-	return runID, a.executeChain(runID, task.ChainID, task.Input, cwd, steps)
+	return runID, a.executeChain(runID, task.ChainID, task.Input, cwd, steps, task.WorkspaceProfile)
 }
 
 // emitTaskEvent pushes a state change to the frontend, mirroring the chain
