@@ -23,8 +23,10 @@ type App struct {
 	db         *DB
 	client     *brainbox.Client
 	sse        *brainbox.SSEListener
-	worker     *worker
-	workerStop context.CancelFunc
+	worker        *worker
+	workerStop    context.CancelFunc
+	scheduler     *scheduler
+	schedulerStop context.CancelFunc
 }
 
 // NewApp creates a new App instance.
@@ -79,18 +81,30 @@ func (a *App) startup(ctx context.Context) {
 		a.workerStop = cancel
 		a.worker = newWorker(a)
 		a.worker.Start(workerCtx)
+
+		// Cron scheduler — enqueues tasks for due schedules.
+		schedCtx, schedCancel := context.WithCancel(ctx)
+		a.schedulerStop = schedCancel
+		a.scheduler = newScheduler(a)
+		a.scheduler.Start(schedCtx)
 	}
 }
 
 // shutdown is called by Wails when the app closes.
 func (a *App) shutdown(_ context.Context) {
-	// Stop the queue worker first so it doesn't grab a task while the DB is
-	// being closed. Wait for the goroutine to actually exit.
+	// Stop the queue worker and scheduler first so they don't grab work
+	// while the DB is being closed. Wait for both goroutines to exit.
 	if a.workerStop != nil {
 		a.workerStop()
 	}
+	if a.schedulerStop != nil {
+		a.schedulerStop()
+	}
 	if a.worker != nil {
 		a.worker.Wait()
+	}
+	if a.scheduler != nil {
+		a.scheduler.Wait()
 	}
 	if a.sse != nil {
 		a.sse.Stop()

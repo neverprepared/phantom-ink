@@ -16,12 +16,20 @@
     cwd: string;
   }
 
+  interface ChainFollowup {
+    chain_id: string;
+    input_from: 'stdout' | 'literal' | '';
+    input_literal: string;
+    cwd: string;
+  }
+
   interface Chain {
     id: string;
     name: string;
     description: string;
     steps: ChainStep[];
     cwd: string;
+    on_success: ChainFollowup[];
     created_at: string;
     updated_at: string;
   }
@@ -76,13 +84,115 @@
   onMount(load);
   onDestroy(() => unsubscribe?.());
 
+  // ---------- Schedules ----------
+  interface Schedule {
+    id: string;
+    chain_id: string;
+    cron_expr: string;
+    input: string;
+    cwd: string;
+    enabled: boolean;
+    created_at: string;
+    updated_at: string;
+    last_fired_at: string;
+  }
+
+  let openSchedulesFor = $state<string | null>(null);
+  let schedulesByChain = $state<Map<string, Schedule[]>>(new Map());
+  let newCron = $state('*/15 * * * *');
+  let newSchedInput = $state('');
+
+  async function toggleSchedules(chainID: string) {
+    if (openSchedulesFor === chainID) {
+      openSchedulesFor = null;
+      return;
+    }
+    openSchedulesFor = chainID;
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const list = (await a.ListSchedules(chainID)) ?? [];
+      const next = new Map(schedulesByChain);
+      next.set(chainID, list);
+      schedulesByChain = next;
+    } catch (err: any) {
+      notifications.error(`Load schedules failed: ${err?.message ?? err}`);
+    }
+  }
+
+  async function addSchedule(chainID: string) {
+    if (!newCron.trim()) return;
+    const a = await getApi();
+    if (!a) return;
+    try {
+      await a.SaveSchedule({
+        id: '', chain_id: chainID, cron_expr: newCron.trim(),
+        input: newSchedInput, cwd: '', enabled: true,
+        created_at: '', updated_at: '', last_fired_at: '',
+      });
+      notifications.success('Schedule added');
+      newCron = '*/15 * * * *';
+      newSchedInput = '';
+      const list = (await a.ListSchedules(chainID)) ?? [];
+      const next = new Map(schedulesByChain);
+      next.set(chainID, list);
+      schedulesByChain = next;
+    } catch (err: any) {
+      notifications.error(`Save failed: ${err?.message ?? err}`);
+    }
+  }
+
+  async function toggleScheduleEnabled(chainID: string, s: Schedule) {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      await a.SaveSchedule({ ...s, enabled: !s.enabled });
+      const list = (await a.ListSchedules(chainID)) ?? [];
+      const next = new Map(schedulesByChain);
+      next.set(chainID, list);
+      schedulesByChain = next;
+    } catch (err: any) {
+      notifications.error(`Toggle failed: ${err?.message ?? err}`);
+    }
+  }
+
+  async function removeSchedule(chainID: string, s: Schedule) {
+    if (!confirm(`Delete schedule "${s.cron_expr}"?`)) return;
+    const a = await getApi();
+    if (!a) return;
+    try {
+      await a.DeleteSchedule(s.id);
+      const list = (await a.ListSchedules(chainID)) ?? [];
+      const next = new Map(schedulesByChain);
+      next.set(chainID, list);
+      schedulesByChain = next;
+    } catch (err: any) {
+      notifications.error(`Delete failed: ${err?.message ?? err}`);
+    }
+  }
+
   function newChain() {
     editing = {
       id: '', name: '', description: '',
       steps: [{ agent_id: chainable[0]?.id ?? '', prompt_template: '{{input}}', cwd: '' }],
-      cwd: '', created_at: '', updated_at: '',
+      cwd: '', on_success: [],
+      created_at: '', updated_at: '',
     };
     editorOpen = true;
+  }
+
+  function addFollowup() {
+    if (!editing) return;
+    const firstOther = chains.find(c => c.id !== editing!.id);
+    editing.on_success = [
+      ...(editing.on_success ?? []),
+      { chain_id: firstOther?.id ?? '', input_from: 'stdout', input_literal: '', cwd: '' },
+    ];
+  }
+
+  function removeFollowup(i: number) {
+    if (!editing) return;
+    editing.on_success = (editing.on_success ?? []).filter((_, idx) => idx !== i);
   }
 
   function editChain(c: Chain) {
@@ -259,6 +369,9 @@
                   <button class="btn-icon" onclick={() => enqueueTask(c)} title="Queue as task" aria-label="Queue as task">
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg>
                   </button>
+                  <button class="btn-icon" onclick={() => toggleSchedules(c.id)} title="Schedules" aria-label="Schedules">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  </button>
                   <button class="btn-icon" onclick={() => editChain(c)} title="Edit chain" aria-label="Edit chain">
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="m18.5 2.5 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                   </button>
@@ -278,6 +391,50 @@
                   {/if}
                 {/each}
               </div>
+
+              {#if c.on_success && c.on_success.length > 0}
+                <div class="chain-followups">
+                  <span class="followup-arrow">↳ on success:</span>
+                  {#each c.on_success as fu (fu.chain_id + fu.input_from)}
+                    <span class="step-pill">
+                      <span class="step-agent">{chains.find(x => x.id === fu.chain_id)?.name ?? fu.chain_id}</span>
+                      <span class="followup-source">{fu.input_from || 'stdout'}</span>
+                    </span>
+                  {/each}
+                </div>
+              {/if}
+
+              {#if openSchedulesFor === c.id}
+                {@const schedules = schedulesByChain.get(c.id) ?? []}
+                <div class="schedules-block">
+                  <div class="schedules-head">
+                    <span class="field-label">schedules</span>
+                    <span class="hint-inline">cron expressions are 5-field (min hr dom mon dow) or @hourly/@daily/@weekly</span>
+                  </div>
+                  {#each schedules as s (s.id)}
+                    <div class="schedule-row">
+                      <button class="sched-toggle" onclick={() => toggleScheduleEnabled(c.id, s)} title={s.enabled ? 'Disable' : 'Enable'}>
+                        <span class="status-dot" class:on={s.enabled}></span>
+                      </button>
+                      <code class="sched-expr">{s.cron_expr}</code>
+                      {#if s.input}
+                        <span class="sched-input" title={s.input}>{s.input.slice(0, 40)}{s.input.length > 40 ? '…' : ''}</span>
+                      {/if}
+                      {#if s.last_fired_at}
+                        <span class="sched-meta">last: {new Date(s.last_fired_at).toLocaleString()}</span>
+                      {:else}
+                        <span class="sched-meta">never fired</span>
+                      {/if}
+                      <button class="btn-icon danger" onclick={() => removeSchedule(c.id, s)} title="Delete schedule" aria-label="Delete schedule">×</button>
+                    </div>
+                  {/each}
+                  <div class="schedule-add">
+                    <input class="sched-input-field" type="text" bind:value={newCron} placeholder="*/15 * * * *" />
+                    <input class="sched-input-field" type="text" bind:value={newSchedInput} placeholder="optional input" />
+                    <button class="btn-sm btn-primary" onclick={() => addSchedule(c.id)}>add</button>
+                  </div>
+                </div>
+              {/if}
             </div>
           {/each}
         </div>
@@ -332,6 +489,41 @@
                 placeholder="Prompt. Use {'{{input}}'} for initial input or {'{{prev.output}}'} for previous step output."
               ></textarea>
               <input class="step-cwd" type="text" bind:value={step.cwd} placeholder="step-specific cwd (optional)" />
+            </div>
+          {/each}
+        </div>
+
+        <div class="steps-block">
+          <div class="steps-head">
+            <span class="field-label">on success — follow-up tasks</span>
+            <button class="btn-sm btn-secondary" onclick={addFollowup} disabled={chains.filter(c => c.id !== editing.id).length === 0}>+ add follow-up</button>
+          </div>
+          {#if !editing.on_success || editing.on_success.length === 0}
+            <p class="hint">No follow-ups. When this chain succeeds, downstream chains can be queued here.</p>
+          {/if}
+          {#each editing.on_success ?? [] as fu, i}
+            <div class="step-editor">
+              <div class="step-editor-head">
+                <span class="step-idx">↳</span>
+                <select bind:value={fu.chain_id}>
+                  {#each chains.filter(c => c.id !== editing.id) as c (c.id)}
+                    <option value={c.id}>{c.name}</option>
+                  {/each}
+                </select>
+                <select bind:value={fu.input_from}>
+                  <option value="stdout">from stdout</option>
+                  <option value="literal">literal input</option>
+                </select>
+                <button class="btn-icon danger" onclick={() => removeFollowup(i)} aria-label="Remove follow-up" title="Remove">×</button>
+              </div>
+              {#if fu.input_from === 'literal'}
+                <textarea
+                  bind:value={fu.input_literal}
+                  rows="2"
+                  placeholder="literal input passed to the follow-up chain"
+                ></textarea>
+              {/if}
+              <input class="step-cwd" type="text" bind:value={fu.cwd} placeholder="follow-up cwd (optional)" />
             </div>
           {/each}
         </div>
@@ -557,6 +749,70 @@
     color: var(--color-text-primary);
     padding: 4px 8px; font-size: 11px; font-family: var(--font-mono);
   }
+
+  /* Follow-ups row under the steps row */
+  .chain-followups {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    margin-top: 6px; font-size: 11px;
+  }
+  .followup-arrow { color: var(--color-text-tertiary); font-size: 10px; }
+  .followup-source {
+    color: var(--color-text-tertiary); font-size: 9px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+
+  /* Schedules block (inline under chain card) */
+  .schedules-block {
+    margin-top: 10px; padding-top: 8px;
+    border-top: 1px solid var(--color-border-primary);
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .schedules-head { display: flex; align-items: baseline; gap: 8px; }
+  .hint-inline { font-size: 10px; color: var(--color-text-tertiary); }
+  .schedule-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 3px 4px; border-radius: var(--radius-sm);
+    font-size: 11px;
+  }
+  .schedule-row:hover { background: rgba(255, 255, 255, 0.02); }
+  .sched-toggle {
+    background: none; border: none; padding: 2px; cursor: pointer;
+  }
+  .sched-toggle .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--color-text-tertiary);
+  }
+  .sched-toggle .status-dot.on {
+    background: var(--color-success);
+    box-shadow: 0 0 4px rgba(16, 185, 129, 0.4);
+  }
+  .sched-expr {
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--color-text-primary);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 1px 6px; border-radius: var(--radius-sm);
+  }
+  .sched-input {
+    flex: 1; min-width: 0;
+    font-size: 10px; color: var(--color-text-secondary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sched-meta {
+    font-size: 10px; color: var(--color-text-tertiary);
+    margin-left: auto;
+  }
+  .schedule-add {
+    display: flex; gap: 6px; margin-top: 6px;
+  }
+  .sched-input-field {
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-primary);
+    padding: 3px 8px; font-size: 11px; font-family: var(--font-mono);
+  }
+  .sched-input-field:first-of-type { flex: 0 0 130px; }
+  .sched-input-field:last-of-type { flex: 1; }
 
   /* Runner */
   .run-actions { display: flex; justify-content: flex-end; margin: 8px 0 12px; }

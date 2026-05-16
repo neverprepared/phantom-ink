@@ -20,13 +20,30 @@ const stepRunTimeout = 5 * time.Minute
 // Chain is the runtime form of a saved chain. It mirrors ChainRow but with
 // Steps materialized as a slice instead of a JSON string.
 type Chain struct {
-	ID          string      `json:"id"`
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Steps       []ChainStep `json:"steps"`
-	Cwd         string      `json:"cwd"`
-	CreatedAt   string      `json:"created_at"`
-	UpdatedAt   string      `json:"updated_at"`
+	ID          string           `json:"id"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	Steps       []ChainStep      `json:"steps"`
+	Cwd         string           `json:"cwd"`
+	OnSuccess   []ChainFollowup  `json:"on_success"`
+	CreatedAt   string           `json:"created_at"`
+	UpdatedAt   string           `json:"updated_at"`
+}
+
+// ChainFollowup is a declarative spec for enqueueing a follow-up task when a
+// chain run completes successfully. InputFrom controls what fills the next
+// chain's {{input}} slot:
+//
+//   - "stdout":  the last step's stdout
+//   - "literal": the InputLiteral field, verbatim
+//   - "":        defaults to "stdout"
+//
+// Future extensions (template rendering, conditional branching) go here.
+type ChainFollowup struct {
+	ChainID      string `json:"chain_id"`
+	InputFrom    string `json:"input_from"`
+	InputLiteral string `json:"input_literal"`
+	Cwd          string `json:"cwd"`
 }
 
 // ChainStep is one node in a chain. PromptTemplate may reference {{input}}
@@ -144,6 +161,28 @@ func chainStepsToJSON(steps []ChainStep) (string, error) {
 	b, err := json.Marshal(steps)
 	if err != nil {
 		return "", fmt.Errorf("encode chain steps: %w", err)
+	}
+	return string(b), nil
+}
+
+func chainFollowupsFromJSON(s string) ([]ChainFollowup, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var out []ChainFollowup
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil, fmt.Errorf("decode chain followups: %w", err)
+	}
+	return out, nil
+}
+
+func chainFollowupsToJSON(fs []ChainFollowup) (string, error) {
+	if fs == nil {
+		fs = []ChainFollowup{}
+	}
+	b, err := json.Marshal(fs)
+	if err != nil {
+		return "", fmt.Errorf("encode chain followups: %w", err)
 	}
 	return string(b), nil
 }

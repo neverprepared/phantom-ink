@@ -175,6 +175,30 @@ var migrations = []migration{
 		CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, priority DESC, enqueued_at);
 		CREATE INDEX IF NOT EXISTS idx_tasks_chain_id ON tasks(chain_id);
 	`},
+	// v7: cron schedules — fire chain runs on a recurring expression. The
+	// scheduler goroutine reads the table on tick and enqueues a task per
+	// due schedule, recording last_fired_at to suppress double-firing.
+	{version: 7, sql: `
+		CREATE TABLE IF NOT EXISTS schedules (
+			id             TEXT PRIMARY KEY,
+			chain_id       TEXT NOT NULL,
+			cron_expr      TEXT NOT NULL,
+			input          TEXT NOT NULL DEFAULT '',
+			cwd            TEXT NOT NULL DEFAULT '',
+			enabled        INTEGER NOT NULL DEFAULT 1,
+			created_at     TEXT NOT NULL DEFAULT '',
+			updated_at     TEXT NOT NULL DEFAULT '',
+			last_fired_at  TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_schedules_chain_id ON schedules(chain_id);
+		CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled);
+	`},
+	// v8: declarative on_success follow-ups for chains. Stored as a JSON
+	// array of ChainFollowup on the chains row so we don't need a join
+	// table; followups are read+written wholesale with the chain.
+	{version: 8, fn: func(conn *sql.DB) error {
+		return addColumnIfMissing(conn, "chains", "on_success_json", "TEXT NOT NULL DEFAULT '[]'")
+	}},
 }
 
 func (db *DB) migrate() error {
@@ -391,37 +415,43 @@ func (db *DB) SetAgentEnabled(id string, enabled bool) error {
 
 // ChainRow is the persisted form of a chain definition. The runtime Chain type
 // (with structured Steps) lives in chains.go and serializes Steps to/from
-// StepsJSON via encoding/json.
+// StepsJSON via encoding/json. OnSuccessJSON is the same idea for the
+// declarative followups list — read+written wholesale with the chain.
 type ChainRow struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	StepsJSON   string `json:"steps_json"`
-	Cwd         string `json:"cwd"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	StepsJSON     string `json:"steps_json"`
+	Cwd           string `json:"cwd"`
+	OnSuccessJSON string `json:"on_success_json"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
 }
 
 func (db *DB) UpsertChain(c ChainRow) error {
+	if c.OnSuccessJSON == "" {
+		c.OnSuccessJSON = "[]"
+	}
 	_, err := db.conn.Exec(`
-		INSERT INTO chains (id, name, description, steps_json, cwd, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO chains (id, name, description, steps_json, cwd, on_success_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			name        = excluded.name,
-			description = excluded.description,
-			steps_json  = excluded.steps_json,
-			cwd         = excluded.cwd,
-			updated_at  = excluded.updated_at`,
-		c.ID, c.Name, c.Description, c.StepsJSON, c.Cwd, c.CreatedAt, c.UpdatedAt)
+			name            = excluded.name,
+			description     = excluded.description,
+			steps_json      = excluded.steps_json,
+			cwd             = excluded.cwd,
+			on_success_json = excluded.on_success_json,
+			updated_at      = excluded.updated_at`,
+		c.ID, c.Name, c.Description, c.StepsJSON, c.Cwd, c.OnSuccessJSON, c.CreatedAt, c.UpdatedAt)
 	return err
 }
 
 func (db *DB) GetChain(id string) (ChainRow, bool) {
 	var r ChainRow
 	err := db.conn.QueryRow(`
-		SELECT id, name, description, steps_json, cwd, created_at, updated_at
+		SELECT id, name, description, steps_json, cwd, on_success_json, created_at, updated_at
 		FROM chains WHERE id = ?`, id).Scan(
-		&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.CreatedAt, &r.UpdatedAt)
+		&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return r, false
 	}
@@ -430,7 +460,7 @@ func (db *DB) GetChain(id string) (ChainRow, bool) {
 
 func (db *DB) ListChains() ([]ChainRow, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, name, description, steps_json, cwd, created_at, updated_at
+		SELECT id, name, description, steps_json, cwd, on_success_json, created_at, updated_at
 		FROM chains ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -439,7 +469,7 @@ func (db *DB) ListChains() ([]ChainRow, error) {
 	var out []ChainRow
 	for rows.Next() {
 		var r ChainRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			continue
 		}
 		out = append(out, r)
@@ -690,6 +720,93 @@ func (db *DB) ListTasks(status string, limit int) ([]TaskRow, error) {
 		out = append(out, t)
 	}
 	return out, nil
+}
+
+// ---------------------------------------------------------------------------
+// Schedules (cron)
+// ---------------------------------------------------------------------------
+
+type ScheduleRow struct {
+	ID           string `json:"id"`
+	ChainID      string `json:"chain_id"`
+	CronExpr     string `json:"cron_expr"`
+	Input        string `json:"input"`
+	Cwd          string `json:"cwd"`
+	Enabled      bool   `json:"enabled"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+	LastFiredAt  string `json:"last_fired_at"`
+}
+
+func (db *DB) UpsertSchedule(s ScheduleRow) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO schedules (id, chain_id, cron_expr, input, cwd, enabled, created_at, updated_at, last_fired_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			chain_id      = excluded.chain_id,
+			cron_expr     = excluded.cron_expr,
+			input         = excluded.input,
+			cwd           = excluded.cwd,
+			enabled       = excluded.enabled,
+			updated_at    = excluded.updated_at`,
+		s.ID, s.ChainID, s.CronExpr, s.Input, s.Cwd, boolToInt(s.Enabled),
+		s.CreatedAt, s.UpdatedAt, s.LastFiredAt)
+	return err
+}
+
+func (db *DB) GetSchedule(id string) (ScheduleRow, bool) {
+	var r ScheduleRow
+	var enabled int
+	err := db.conn.QueryRow(`
+		SELECT id, chain_id, cron_expr, input, cwd, enabled, created_at, updated_at, last_fired_at
+		FROM schedules WHERE id = ?`, id).Scan(
+		&r.ID, &r.ChainID, &r.CronExpr, &r.Input, &r.Cwd, &enabled,
+		&r.CreatedAt, &r.UpdatedAt, &r.LastFiredAt)
+	if err != nil {
+		return r, false
+	}
+	r.Enabled = enabled != 0
+	return r, true
+}
+
+func (db *DB) ListSchedules(chainID string) ([]ScheduleRow, error) {
+	var rows *sql.Rows
+	var err error
+	if chainID == "" {
+		rows, err = db.conn.Query(`
+			SELECT id, chain_id, cron_expr, input, cwd, enabled, created_at, updated_at, last_fired_at
+			FROM schedules ORDER BY created_at`)
+	} else {
+		rows, err = db.conn.Query(`
+			SELECT id, chain_id, cron_expr, input, cwd, enabled, created_at, updated_at, last_fired_at
+			FROM schedules WHERE chain_id = ? ORDER BY created_at`, chainID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ScheduleRow
+	for rows.Next() {
+		var r ScheduleRow
+		var enabled int
+		if err := rows.Scan(&r.ID, &r.ChainID, &r.CronExpr, &r.Input, &r.Cwd, &enabled,
+			&r.CreatedAt, &r.UpdatedAt, &r.LastFiredAt); err != nil {
+			continue
+		}
+		r.Enabled = enabled != 0
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (db *DB) DeleteSchedule(id string) error {
+	_, err := db.conn.Exec("DELETE FROM schedules WHERE id = ?", id)
+	return err
+}
+
+func (db *DB) MarkScheduleFired(id, firedAt string) error {
+	_, err := db.conn.Exec("UPDATE schedules SET last_fired_at = ? WHERE id = ?", firedAt, id)
+	return err
 }
 
 // ---------------------------------------------------------------------------

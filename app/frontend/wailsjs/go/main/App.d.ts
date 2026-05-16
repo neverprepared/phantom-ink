@@ -49,6 +49,8 @@ export function DeleteRepo(arg1:string):Promise<void>;
 
 export function DeleteRunner(arg1:string):Promise<void>;
 
+export function DeleteSchedule(arg1:string):Promise<void>;
+
 export function DeleteSession(arg1:string):Promise<brainbox.SessionActionResponse>;
 
 export function DeleteWorktree(arg1:string):Promise<void>;
@@ -155,6 +157,8 @@ export function ListRepos():Promise<Array<brainbox.Repo>>;
 
 export function ListRunners():Promise<Array<brainbox.Runner>>;
 
+export function ListSchedules(arg1:string):Promise<Array<main.ScheduleRow>>;
+
 export function ListServices():Promise<Array<main.ServiceStatus>>;
 
 export function ListTasks(arg1:string,arg2:number):Promise<Array<main.TaskRow>>;
@@ -186,6 +190,8 @@ export function RunPlaybook(arg1:string,arg2:string):Promise<brainbox.Playbook>;
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
 
 export function SaveChain(arg1:main.Chain):Promise<main.Chain>;
+
+export function SaveSchedule(arg1:main.ScheduleRow):Promise<main.ScheduleRow>;
 
 export function ScanDiskUsage():Promise<main.DiskOverview>;
 

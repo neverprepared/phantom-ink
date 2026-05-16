@@ -1104,6 +1104,24 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class ChainFollowup {
+	    chain_id: string;
+	    input_from: string;
+	    input_literal: string;
+	    cwd: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChainFollowup(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.chain_id = source["chain_id"];
+	        this.input_from = source["input_from"];
+	        this.input_literal = source["input_literal"];
+	        this.cwd = source["cwd"];
+	    }
+	}
 	export class ChainStep {
 	    agent_id: string;
 	    prompt_template: string;
@@ -1128,6 +1146,7 @@ export namespace main {
 	    description: string;
 	    steps: ChainStep[];
 	    cwd: string;
+	    on_success: ChainFollowup[];
 	    created_at: string;
 	    updated_at: string;
 	
@@ -1142,6 +1161,7 @@ export namespace main {
 	        this.description = source["description"];
 	        this.steps = this.convertValues(source["steps"], ChainStep);
 	        this.cwd = source["cwd"];
+	        this.on_success = this.convertValues(source["on_success"], ChainFollowup);
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
 	    }
@@ -1164,6 +1184,7 @@ export namespace main {
 		    return a;
 		}
 	}
+	
 	export class ChainRunRow {
 	    id: string;
 	    chain_id: string;
@@ -1589,6 +1610,34 @@ export namespace main {
 	        this.created_at = source["created_at"];
 	        this.ci_status = source["ci_status"];
 	        this.labels = source["labels"];
+	    }
+	}
+	export class ScheduleRow {
+	    id: string;
+	    chain_id: string;
+	    cron_expr: string;
+	    input: string;
+	    cwd: string;
+	    enabled: boolean;
+	    created_at: string;
+	    updated_at: string;
+	    last_fired_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ScheduleRow(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.chain_id = source["chain_id"];
+	        this.cron_expr = source["cron_expr"];
+	        this.input = source["input"];
+	        this.cwd = source["cwd"];
+	        this.enabled = source["enabled"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	        this.last_fired_at = source["last_fired_at"];
 	    }
 	}
 	export class SecretKeyStatus {

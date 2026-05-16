@@ -94,6 +94,10 @@ export function DeleteRunner(arg1) {
   return window['go']['main']['App']['DeleteRunner'](arg1);
 }
 
+export function DeleteSchedule(arg1) {
+  return window['go']['main']['App']['DeleteSchedule'](arg1);
+}
+
 export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
 }
@@ -306,6 +310,10 @@ export function ListRunners() {
   return window['go']['main']['App']['ListRunners']();
 }
 
+export function ListSchedules(arg1) {
+  return window['go']['main']['App']['ListSchedules'](arg1);
+}
+
 export function ListServices() {
   return window['go']['main']['App']['ListServices']();
 }
@@ -368,6 +376,10 @@ export function RunPreflightChecks() {
 
 export function SaveChain(arg1) {
   return window['go']['main']['App']['SaveChain'](arg1);
+}
+
+export function SaveSchedule(arg1) {
+  return window['go']['main']['App']['SaveSchedule'](arg1);
 }
 
 export function ScanDiskUsage() {

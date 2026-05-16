@@ -31,12 +31,14 @@ func (a *App) ListChains() ([]Chain, error) {
 	out := make([]Chain, 0, len(rawRows))
 	for _, r := range rawRows {
 		steps, _ := chainStepsFromJSON(r.StepsJSON)
+		followups, _ := chainFollowupsFromJSON(r.OnSuccessJSON)
 		out = append(out, Chain{
 			ID:          r.ID,
 			Name:        r.Name,
 			Description: r.Description,
 			Steps:       steps,
 			Cwd:         r.Cwd,
+			OnSuccess:   followups,
 			CreatedAt:   r.CreatedAt,
 			UpdatedAt:   r.UpdatedAt,
 		})
@@ -63,9 +65,23 @@ func (a *App) SaveChain(c Chain) (Chain, error) {
 	if err != nil {
 		return Chain{}, err
 	}
+	followupsJSON, err := chainFollowupsToJSON(c.OnSuccess)
+	if err != nil {
+		return Chain{}, err
+	}
+	// Validate follow-up chain references exist so the user gets feedback at
+	// save time rather than mid-run.
+	for i, f := range c.OnSuccess {
+		if f.ChainID == "" {
+			return Chain{}, fmt.Errorf("on_success[%d]: chain_id is required", i)
+		}
+		if _, ok := a.db.GetChain(f.ChainID); !ok {
+			return Chain{}, fmt.Errorf("on_success[%d]: chain %q not found", i, f.ChainID)
+		}
+	}
 	if err := a.db.UpsertChain(ChainRow{
 		ID: c.ID, Name: c.Name, Description: c.Description,
-		StepsJSON: stepsJSON, Cwd: c.Cwd,
+		StepsJSON: stepsJSON, Cwd: c.Cwd, OnSuccessJSON: followupsJSON,
 		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}); err != nil {
 		return Chain{}, err
@@ -221,7 +237,47 @@ func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps [
 	if status != "success" {
 		return fmt.Errorf("%s", failure)
 	}
+
+	// Declarative follow-ups: enqueue any chains listed in chain.on_success.
+	// Failures here are logged but don't bubble up — the primary chain
+	// succeeded; a downstream enqueue error shouldn't retroactively fail it.
+	a.enqueueFollowups(chainID, prevOutput)
 	return nil
+}
+
+// enqueueFollowups looks up the parent chain's on_success entries and submits
+// a task for each. Called only after a successful run.
+func (a *App) enqueueFollowups(parentChainID, lastOutput string) {
+	if a.db == nil {
+		return
+	}
+	row, ok := a.db.GetChain(parentChainID)
+	if !ok {
+		return
+	}
+	followups, err := chainFollowupsFromJSON(row.OnSuccessJSON)
+	if err != nil || len(followups) == 0 {
+		return
+	}
+	for i, f := range followups {
+		input := lastOutput
+		switch f.InputFrom {
+		case "", "stdout":
+			input = lastOutput
+		case "literal":
+			input = f.InputLiteral
+		default:
+			fmt.Fprintf(os.Stderr, "warning: on_success[%d]: unknown input_from %q, defaulting to stdout\n", i, f.InputFrom)
+		}
+		if _, err := a.EnqueueTask(EnqueueTaskRequest{
+			ChainID: f.ChainID,
+			Input:   input,
+			Cwd:     f.Cwd,
+			Trigger: TriggerFollowup,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: enqueue followup %d (%s): %v\n", i, f.ChainID, err)
+		}
+	}
 }
 
 // runChainForTask is the queue worker's synchronous entry point. It validates
