@@ -102,6 +102,39 @@ def _request(method: str, path: str, body: dict[str, Any] | None = None, timeout
         return {"error": f"Cannot reach API at {url}: {exc.reason}"}
 
 
+def _request_as_session(
+    method: str, path: str, body: dict[str, Any] | None = None, timeout: int = 30
+) -> Any:
+    """Make an HTTP request authenticated with the session bearer token.
+
+    Uses BRAINBOX_TOKEN_ID (injected at container boot) as Authorization: Bearer.
+    Falls back to API key if no token is available.
+    """
+    token_id = os.environ.get("BRAINBOX_TOKEN_ID", "")
+    if not token_id:
+        return _request(method, path, body, timeout)
+
+    url = f"{_api_url()}{path}"
+    data = json.dumps(body).encode() if body is not None else b"{}"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token_id}",
+    }
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode() if exc.fp else str(exc)
+        try:
+            detail = json.loads(detail).get("detail", detail)
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        return {"error": detail, "status": exc.code}
+    except urllib.error.URLError as exc:
+        return {"error": f"Cannot reach API at {url}: {exc.reason}"}
+
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
@@ -777,6 +810,20 @@ def channel_complete(channel_id: str, by: str, reason: str | None = None) -> dic
     if reason:
         body["reason"] = reason
     return _request("POST", f"/api/hub/channels/{channel_id}/complete", body)
+
+
+@mcp.tool()
+def channel_join(channel_id: str) -> dict[str, Any]:
+    """Join a group channel as a participant using this session's identity.
+
+    Idempotent — safe to call if already a member. Your identity is derived
+    automatically from BRAINBOX_TOKEN_ID; no participant name is needed.
+    Requires the session to have the 'hub_messaging' capability.
+
+    Args:
+        channel_id: The channel ID to join
+    """
+    return _request_as_session("POST", f"/api/hub/channels/{channel_id}/join")
 
 
 # ---------------------------------------------------------------------------
