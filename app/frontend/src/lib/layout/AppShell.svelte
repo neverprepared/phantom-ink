@@ -18,6 +18,7 @@
   import ProfilesPanel from '../panels/ProfilesPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
   import RunnersPanel from '../panels/RunnersPanel.svelte';
+  import DashboardPanel from '../panels/DashboardPanel.svelte';
 </script>
 
 <div class="shell">
@@ -32,7 +33,7 @@
       {:else if currentPanel.value === 'agents'}
         <AgentsPanel />
       {:else if currentPanel.value === 'dashboard'}
-        <HubPanel />
+        <DashboardPanel />
       {:else if currentPanel.value === 'repos'}
         <ReposPanel />
       {:else if currentPanel.value === 'integrations'}
