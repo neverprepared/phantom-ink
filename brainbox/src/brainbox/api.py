@@ -25,7 +25,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from datetime import datetime, timezone
 
-from .auth import get_api_key, load_or_create_key, require_api_key
+from .auth import get_api_key, load_or_create_key, require_api_key, require_capability
 from .config import settings
 from .rate_limit import limiter, rate_limit_exceeded_handler
 from .hub import init as hub_init, shutdown as hub_shutdown
@@ -2114,7 +2114,10 @@ async def hub_delete_agent(name: str, _key=Depends(require_api_key)):
 
 
 @app.post("/api/hub/tasks", status_code=201)
-async def hub_submit_task(body: TaskCreate, _key=Depends(require_api_key)):
+async def hub_submit_task(
+    body: TaskCreate,
+    token: Token | None = Depends(require_capability("hub_messaging")),
+):
     try:
         task = await submit_task(
             body.description,
@@ -2621,15 +2624,35 @@ async def hub_get_channel_messages(
 async def hub_post_channel_message(
     channel_id: str,
     body: PostChannelMessageRequest,
-    _key=Depends(require_api_key),
+    token: Token | None = Depends(require_capability("hub_messaging")),
 ):
     channel = get_channel(channel_id)
     if not channel:
         raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' not found")
+
+    # Session-token path: override from_participant with token identity and enforce membership.
+    from_participant = body.from_participant
+    if token is not None:
+        # Derive participant name from session_name (the token's task maps to a session)
+        from .router import get_task as _get_task
+        task = _get_task(token.task_id) if token.task_id else None
+        session_name = task.session_name if task else None
+        member_names = {p.name for p in channel.participants}
+        member_sessions = {p.session_name for p in channel.participants if p.session_name}
+        # Accept if the token's agent name or session name matches a participant
+        identity = session_name or token.agent_name
+        if identity not in member_names and (not session_name or session_name not in member_sessions):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Session '{identity}' is not a member of channel '{channel_id}'",
+            )
+        # Override the claimed from_participant with the token's verified identity
+        from_participant = identity
+
     try:
         msg = channel_post_message(
             channel_id,
-            from_participant=body.from_participant,
+            from_participant=from_participant,
             content=body.content,
             summary=body.summary,
             addressed_to=body.addressed_to,
