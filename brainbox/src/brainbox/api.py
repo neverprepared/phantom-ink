@@ -760,6 +760,7 @@ async def sessions_preview(request: Request, _key=Depends(require_api_key)):
 
     def runner_to_dict(r, score: int | None = None) -> dict[str, Any]:
         online = (now_ms - r.last_seen) < 90_000
+        headroom = max(0, r.max_concurrent - r.in_flight)
         return {
             "name": r.name,
             "version": r.version,
@@ -767,6 +768,10 @@ async def sessions_preview(request: Request, _key=Depends(require_api_key)):
             "online": online,
             "supports_backend": bool(r.capabilities.get(backend)),
             "tag_score": score,
+            "queue_depth": r.queue_depth,
+            "in_flight": r.in_flight,
+            "max_concurrent": r.max_concurrent,
+            "headroom": headroom,
         }
 
     eligible = [r for r in all_runners if r.capabilities.get(backend)]
@@ -776,9 +781,16 @@ async def sessions_preview(request: Request, _key=Depends(require_api_key)):
             return 0
         return sum(1 for t in preferred_tags if t in r.tags)
 
+    # Sort: online first, then most headroom, then shortest queue, then tag score, then name
     candidates = sorted(
         (runner_to_dict(r, score=score(r)) for r in eligible),
-        key=lambda d: (-1 if d["online"] else 0, -(d["tag_score"] or 0), d["name"]),
+        key=lambda d: (
+            0 if d["online"] else 1,
+            -(d["headroom"]),
+            d["queue_depth"],
+            -(d["tag_score"] or 0),
+            d["name"],
+        ),
     )
 
     if requested and requested != "local":
@@ -848,11 +860,15 @@ async def runners_register(request: Request, _key=Depends(require_api_key)):
     if not isinstance(caps, dict):
         raise HTTPException(status_code=400, detail="capabilities must be an object")
     reg = get_registry()
+    in_flight = int(body.get("in_flight") or 0)
+    max_concurrent = int(body.get("max_concurrent") or 4)
     info = await reg.register(
         name=name,
         capabilities={k: bool(v) for k, v in caps.items()},
         tags=body.get("tags") or [],
         version=body.get("version") or "",
+        in_flight=in_flight,
+        max_concurrent=max_concurrent,
     )
     return {
         "ok": True,
@@ -879,9 +895,36 @@ async def runners_list(_key=Depends(require_api_key)):
             "version": r.version,
             "registered_at": r.registered_at,
             "last_seen": r.last_seen,
+            "queue_depth": r.queue_depth,
+            "in_flight": r.in_flight,
+            "max_concurrent": r.max_concurrent,
         }
         for r in runners
     ]
+
+
+@app.post("/api/runners/{name}/heartbeat")
+async def runners_heartbeat(name: str, request: Request, _key=Depends(require_api_key)):
+    """Runner heartbeat — updates liveness and optionally reports load metrics.
+
+    Body fields (all optional):
+        in_flight: int — sessions currently provisioning
+        max_concurrent: int — runner's concurrency limit
+    """
+    from .runners import get_registry
+
+    reg = get_registry()
+    body = await request.json() if await request.body() else {}
+    in_flight = body.get("in_flight")
+    max_concurrent = body.get("max_concurrent")
+    found = await reg.update_load(
+        name,
+        in_flight=int(in_flight) if in_flight is not None else None,
+        max_concurrent=int(max_concurrent) if max_concurrent is not None else None,
+    )
+    if not found:
+        raise HTTPException(status_code=404, detail="runner not registered")
+    return {"ok": True}
 
 
 @app.get("/api/runners/{name}/pending")
@@ -1367,6 +1410,18 @@ async def api_create_session(
                 "backend": "docker",
                 "url": f"http://localhost:{ctx.port}",
             }
+    except RuntimeError as exc:
+        _audit_log(request, "session.create", session_name=body.name, success=False, error=str(exc))
+        msg = str(exc)
+        if "saturated" in msg:
+            log.warning("session.create.saturated", metadata={"runner": body.runner, "error": msg})
+            raise HTTPException(
+                status_code=429,
+                detail={"error": "runner_saturated", "message": msg},
+                headers={"Retry-After": "10"},
+            )
+        log.error("session.create.failed", metadata={"error": msg})
+        raise HTTPException(status_code=500, detail=msg)
     except Exception as exc:
         _audit_log(request, "session.create", session_name=body.name, success=False, error=str(exc))
         log.error("session.create.failed", metadata={"error": str(exc)})

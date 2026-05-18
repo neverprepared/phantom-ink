@@ -810,6 +810,9 @@ export namespace brainbox {
 	    version: string;
 	    registered_at: number;
 	    last_seen: number;
+	    queue_depth: number;
+	    in_flight: number;
+	    max_concurrent: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Runner(source);
@@ -823,6 +826,9 @@ export namespace brainbox {
 	        this.version = source["version"];
 	        this.registered_at = source["registered_at"];
 	        this.last_seen = source["last_seen"];
+	        this.queue_depth = source["queue_depth"];
+	        this.in_flight = source["in_flight"];
+	        this.max_concurrent = source["max_concurrent"];
 	    }
 	}
 	
