@@ -18,3 +18,10 @@ func (a *App) DeleteRunner(name string) error {
 func (a *App) StartRunnerPairing(runnerNameSuggestion string, ttlSeconds int) (brainbox.PairingTicket, error) {
 	return a.client.StartRunnerPairing(runnerNameSuggestion, ttlSeconds)
 }
+
+// GetAuthorityStatus returns the credential-authority health snapshot used by
+// the status-bar dot and the Credentials modal. Returns the zero value with
+// an error if the API is unreachable so the frontend can render "unknown".
+func (a *App) GetAuthorityStatus() (brainbox.AuthorityStatus, error) {
+	return a.client.GetAuthorityStatus()
+}

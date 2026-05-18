@@ -566,6 +566,21 @@ async def sse_events(
 # ---------------------------------------------------------------------------
 
 
+# Ring buffer of recent seal failures surfaced by /api/credentials/authority/status.
+# Bounded so it can't grow unbounded; large enough to cover a busy day.
+_recent_seal_failures: _collections.deque[dict[str, Any]] = _collections.deque(maxlen=50)
+
+
+def _record_seal_failure(error: str, *, status: int) -> None:
+    _recent_seal_failures.append(
+        {
+            "when": int(time.time() * 1000),
+            "status": status,
+            "error": error[:300],
+        }
+    )
+
+
 @app.get("/api/credentials/pending")
 async def credentials_pending(
     as_: str | None = Query(None, alias="as"),
@@ -598,10 +613,19 @@ async def credentials_pending(
 
 @app.post("/api/credentials/{request_id}/sealed")
 async def credentials_sealed(
-    request_id: str, request: Request, _key=Depends(require_api_key)
+    request_id: str,
+    request: Request,
+    as_: str | None = Query(None, alias="as"),
+    _key=Depends(require_api_key),
 ):
-    """Daemon uploads sealed ciphertext. Resolves the awaiting producer."""
+    """Daemon uploads sealed ciphertext. Resolves the awaiting producer.
+
+    When ?as=<runner_name> is passed and that runner is registered, we record
+    last_seal_at on it so the Authority Health UI can show "last successful
+    seal: 3s ago" instead of just "registered".
+    """
     from .credentials.queue import get_queue
+    from .runners import get_registry
 
     body = await request.body()
     if not body:
@@ -609,6 +633,8 @@ async def credentials_sealed(
     queue = get_queue()
     if not await queue.fulfill(request_id, body):
         raise HTTPException(status_code=404, detail="request not found or already fulfilled")
+    if as_:
+        await get_registry().mark_seal(as_)
     return {"ok": True, "bytes": len(body)}
 
 
@@ -647,10 +673,9 @@ async def credentials_seal_request(
         live = [r for r in authorities if now_ms - r.last_seen < 90_000]
         if not live:
             names = ", ".join(r.name for r in authorities)
-            raise HTTPException(
-                status_code=503,
-                detail=f"all secret authorities offline (registered but stale: {names})",
-            )
+            msg = f"all secret authorities offline (registered but stale: {names})"
+            _record_seal_failure(msg, status=503)
+            raise HTTPException(status_code=503, detail=msg)
 
     queue = get_queue()
     req = await queue.enqueue(
@@ -662,8 +687,148 @@ async def credentials_seal_request(
         sealed = await asyncio.wait_for(req.fut, timeout=float(body.get("timeout", 60)))
     except asyncio.TimeoutError as exc:
         await queue.cancel(req.id, "seal-request timed out")
-        raise HTTPException(status_code=504, detail="no secret authority responded in time") from exc
+        msg = "no secret authority responded in time"
+        _record_seal_failure(msg, status=504)
+        raise HTTPException(status_code=504, detail=msg) from exc
     return Response(content=sealed, media_type="application/octet-stream")
+
+
+@app.get("/api/credentials/authority/status")
+async def credentials_authority_status(_key=Depends(require_api_key)):
+    """Health snapshot for the Wails command center.
+
+    Returns every runner that advertises secret_authority, whether it's
+    online (last_seen < 90s), and when it last successfully sealed a
+    bundle — plus the ring buffer of recent seal failures.
+    """
+    from .runners import get_registry
+
+    now_ms = int(time.time() * 1000)
+    reg = get_registry()
+    all_runners = await reg.list_runners()
+    authorities = []
+    for r in all_runners:
+        if not r.capabilities.get("secret_authority"):
+            continue
+        online = (now_ms - r.last_seen) < 90_000
+        authorities.append(
+            {
+                "name": r.name,
+                "version": r.version,
+                "tags": r.tags,
+                "online": online,
+                "last_seen": r.last_seen,
+                "last_seen_age_ms": now_ms - r.last_seen,
+                "last_seal_at": r.last_seal_at,
+                "last_seal_age_ms": (
+                    None if r.last_seal_at is None else now_ms - r.last_seal_at
+                ),
+            }
+        )
+    return {
+        "authorities": authorities,
+        "any_online": any(a["online"] for a in authorities),
+        "recent_failures": list(_recent_seal_failures),
+    }
+
+
+@app.post("/api/sessions/preview")
+async def sessions_preview(request: Request, _key=Depends(require_api_key)):
+    """Dispatch preview: where will a session with these parameters land?
+
+    Body fields (all optional):
+        backend: "docker" (default) or "utm"
+        runner: explicit runner name. "" or null means in-process.
+        tags: list[str] — preferred runner tags
+
+    Returns:
+        selected_runner: name of the runner that will execute, or null
+        in_process: True if no runner was chosen and the API will run locally
+        reason: human-readable explanation
+        candidates: list of registered runners matching the backend capability
+    """
+    from .runners import get_registry
+
+    body = await request.json() if (await request.body()) else {}
+    backend = (body.get("backend") or "docker").lower()
+    requested = body.get("runner") or None
+    preferred_tags = [t for t in (body.get("tags") or []) if isinstance(t, str)]
+
+    reg = get_registry()
+    all_runners = await reg.list_runners()
+    now_ms = int(time.time() * 1000)
+
+    def runner_to_dict(r, score: int | None = None) -> dict[str, Any]:
+        online = (now_ms - r.last_seen) < 90_000
+        return {
+            "name": r.name,
+            "version": r.version,
+            "tags": r.tags,
+            "online": online,
+            "supports_backend": bool(r.capabilities.get(backend)),
+            "tag_score": score,
+        }
+
+    eligible = [r for r in all_runners if r.capabilities.get(backend)]
+
+    def score(r) -> int:
+        if not preferred_tags:
+            return 0
+        return sum(1 for t in preferred_tags if t in r.tags)
+
+    candidates = sorted(
+        (runner_to_dict(r, score=score(r)) for r in eligible),
+        key=lambda d: (-1 if d["online"] else 0, -(d["tag_score"] or 0), d["name"]),
+    )
+
+    if requested and requested != "local":
+        match = next((r for r in all_runners if r.name == requested), None)
+        if match is None:
+            return {
+                "selected_runner": None,
+                "in_process": False,
+                "reason": f"runner {requested!r} is not registered",
+                "candidates": candidates,
+                "error": "not_registered",
+            }
+        if not match.capabilities.get(backend):
+            return {
+                "selected_runner": None,
+                "in_process": False,
+                "reason": f"runner {requested!r} does not advertise capability {backend!r}",
+                "candidates": candidates,
+                "error": "missing_capability",
+            }
+        online = (now_ms - match.last_seen) < 90_000
+        if not online:
+            return {
+                "selected_runner": requested,
+                "in_process": False,
+                "reason": f"runner {requested!r} matches but is stale (last_seen {(now_ms - match.last_seen) // 1000}s ago)",
+                "candidates": candidates,
+                "error": "stale",
+            }
+        return {
+            "selected_runner": requested,
+            "in_process": False,
+            "reason": f"explicit runner {requested!r} ({backend} capable, online)",
+            "candidates": candidates,
+        }
+
+    # No explicit runner requested — the API will execute in-process.
+    if not candidates:
+        return {
+            "selected_runner": None,
+            "in_process": True,
+            "reason": f"no runner requested; no registered runner advertises {backend!r} either",
+            "candidates": [],
+        }
+    return {
+        "selected_runner": None,
+        "in_process": True,
+        "reason": f"no runner requested; falls back to in-process {backend} backend. {len(candidates)} eligible runner(s) available if you want remote dispatch",
+        "candidates": candidates,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2229,10 +2394,37 @@ async def _bootstrap_session_in_channel(
             f"{note}"
             f"Start now by reading the channel and introducing yourself."
         )
-        send_res = await loop.run_in_executor(
+        # Type the prompt as literal text, then press Enter as a separate
+        # tmux call with a brief pause between. Claude Code v2.x's TUI
+        # treats a single send-keys batch like a bracketed paste and
+        # consumes the trailing Enter as part of the paste rather than as
+        # a submit keystroke. Splitting the send into two operations gives
+        # the TUI a chance to leave paste mode before the Enter arrives.
+        type_res = await loop.run_in_executor(
             None,
             lambda c=container, prompt=tmux_prompt: c.exec_run(
-                ["tmux", "send-keys", "-t", "main", prompt, "Enter"],
+                ["tmux", "send-keys", "-t", "main", "-l", prompt],
+                user="developer",
+            ),
+        )
+        if type_res.exit_code != 0:
+            stderr = (type_res.output or b"").decode("utf-8", errors="replace").strip()
+            log.warning(
+                "channel.bootstrap_exec_failed",
+                metadata={
+                    "session": participant.session_name,
+                    "channel_id": channel.id,
+                    "reason": f"tmux send-keys (text) failed (exit {type_res.exit_code}): {stderr or 'unknown'}",
+                },
+            )
+            return
+
+        await asyncio.sleep(0.3)
+
+        send_res = await loop.run_in_executor(
+            None,
+            lambda c=container: c.exec_run(
+                ["tmux", "send-keys", "-t", "main", "Enter"],
                 user="developer",
             ),
         )
@@ -2243,7 +2435,7 @@ async def _bootstrap_session_in_channel(
                 metadata={
                     "session": participant.session_name,
                     "channel_id": channel.id,
-                    "reason": f"tmux send-keys failed (exit {send_res.exit_code}): {stderr or 'unknown'}",
+                    "reason": f"tmux send-keys (Enter) failed (exit {send_res.exit_code}): {stderr or 'unknown'}",
                 },
             )
             return

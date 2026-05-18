@@ -108,6 +108,7 @@
   let newVMTemplate = $state('');
   let newGuestOS = $state('linux');
   let newProfile = $state('');
+  let newRunner = $state(''); // '' = in-process; otherwise a runner name
   let isCreating = $state(false);
 
   // Volume mounts (browse-based)
@@ -115,6 +116,47 @@
 
   // Task (optional — runs after session starts)
   let newTask = $state('');
+
+  // Dispatch preview — reactively asks the API where this session will land.
+  interface DispatchCandidate {
+    name: string;
+    online: boolean;
+    tags: string[];
+    version: string;
+    supports_backend: boolean;
+  }
+  interface DispatchPreview {
+    selected_runner: string | null;
+    in_process: boolean;
+    reason: string;
+    candidates: DispatchCandidate[];
+    error?: string;
+  }
+  let preview = $state<DispatchPreview | null>(null);
+  let previewError = $state<string | null>(null);
+
+  async function refreshPreview() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      preview = (await a.PreviewDispatch({
+        backend: newBackend,
+        runner: newRunner,
+      })) as DispatchPreview;
+      previewError = null;
+    } catch (err: any) {
+      previewError = `${err?.message ?? err}`;
+      preview = null;
+    }
+  }
+
+  // Re-preview whenever the user changes backend or runner inside the modal.
+  // Skip when the modal is closed — no point hitting the API.
+  $effect(() => {
+    if (!showNewModal) return;
+    void newBackend; void newRunner;
+    void refreshPreview();
+  });
 
   let activeProfile = $derived(profileState.active);
   let profiles = $derived(profileState.profiles);
@@ -414,6 +456,7 @@
         workspace_profile: newProfile,
         workspace_home: wsHome,
         task: newTask.trim() || undefined,
+        runner: newRunner || undefined,
       };
       if (newBackend === 'utm') {
         req.vm_template = newVMTemplate;
@@ -757,6 +800,32 @@
             <span class="toggle-icon">&#x1f5a5;</span> vm
           </button>
         </div>
+      </div>
+
+      <!-- Dispatch (runner picker + preview) -->
+      <div class="field">
+        <label for="srunner">dispatch to</label>
+        <select id="srunner" bind:value={newRunner}>
+          <option value="">in-process (API host)</option>
+          {#if preview}
+            {#each preview.candidates as c (c.name)}
+              <option value={c.name} disabled={!c.online}>
+                {c.name}{c.online ? '' : ' (offline)'}{c.tags.length ? ` · ${c.tags.join(',')}` : ''}
+              </option>
+            {/each}
+          {/if}
+        </select>
+        {#if preview}
+          <p
+            class="preview"
+            class:warn={preview.error === 'stale' || preview.error === 'missing_capability'}
+            class:err={preview.error === 'not_registered'}
+          >
+            → {preview.reason}
+          </p>
+        {:else if previewError}
+          <p class="preview err">→ preview failed: {previewError}</p>
+        {/if}
       </div>
 
       {#if newBackend === 'utm'}
@@ -1310,6 +1379,15 @@
     color: var(--color-text-tertiary);
     margin-top: 4px;
   }
+
+  .preview {
+    font-size: 11px;
+    color: var(--color-text-secondary);
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+  .preview.warn { color: var(--color-warning, #e0a64a); }
+  .preview.err  { color: var(--color-danger, #e54); }
 
   /* Backend toggle */
   .toggle-group {
