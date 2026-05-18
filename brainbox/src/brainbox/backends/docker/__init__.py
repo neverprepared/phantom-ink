@@ -541,32 +541,35 @@ class DockerBackend:
         if container.status != "running":
             await _run(container.start)
 
-        # Launch tmux + claude, then ttyd for web terminal access.
-        # For task containers: run the wrapper first to create the tmux session
-        # with the task injected, THEN start ttyd which attaches to it.
-        # For interactive: ttyd starts the wrapper on first browser connection.
+        # Launch tmux + agent eagerly so the session is ready for channel
+        # participation and tmux-driven nudges from the moment the container
+        # is up — not gated on someone opening a browser terminal. ttyd then
+        # attaches to the already-running tmux session on connect.
+        #
+        # Previously only task-bearing sessions got this eager start;
+        # interactive sessions waited for ttyd attach, which left them with
+        # no tmux server and broke conversation bootstrap (the
+        # `tmux send-keys` no-op'd silently against a missing server).
         if not ctx.hardened:
             title = f"{ctx.role.capitalize()} - {ctx.session_name}"
 
-            if ctx.task_description:
-                # Start wrapper first — creates tmux session + launches claude with task
-                try:
-                    await _run(
-                        container.exec_run,
-                        ["/home/developer/ttyd-wrapper.sh"],
-                        detach=True,
-                        user="developer",
-                    )
-                    slog.info("container.wrapper_autostarted")
-                except Exception as exc:
-                    slog.warning(
-                        "container.wrapper_autostart_failed", metadata={"reason": str(exc)}
-                    )
+            try:
+                await _run(
+                    container.exec_run,
+                    ["/home/developer/ttyd-wrapper.sh"],
+                    detach=True,
+                    user="developer",
+                )
+                slog.info("container.wrapper_autostarted")
+            except Exception as exc:
+                slog.warning(
+                    "container.wrapper_autostart_failed", metadata={"reason": str(exc)}
+                )
 
-                # Brief pause to let tmux session establish before ttyd attaches
-                await asyncio.sleep(1)
+            # Brief pause to let tmux session establish before ttyd attaches
+            await asyncio.sleep(1)
 
-            # Start ttyd — attaches to existing tmux session (task) or starts new one (interactive)
+            # Start ttyd — attaches to existing tmux session
             try:
                 await _run(
                     container.exec_run,

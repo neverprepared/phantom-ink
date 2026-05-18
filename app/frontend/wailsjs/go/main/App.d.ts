@@ -3,11 +3,17 @@
 import {brainbox} from '../models';
 import {main} from '../models';
 
+export function AddChannelParticipant(arg1:string,arg2:brainbox.ChannelParticipantRequest):Promise<brainbox.Channel>;
+
 export function AddNFSExport(arg1:string):Promise<void>;
 
 export function AddRepo(arg1:brainbox.AddRepoRequest):Promise<brainbox.Repo>;
 
 export function BrowseFolder():Promise<string>;
+
+export function BrowseProfileFiles(arg1:string):Promise<Array<string>>;
+
+export function CancelHubTask(arg1:string):Promise<void>;
 
 export function CancelPlaybook(arg1:string):Promise<void>;
 
@@ -33,6 +39,8 @@ export function DeleteAgent(arg1:string):Promise<void>;
 
 export function DeleteArtifact(arg1:string):Promise<void>;
 
+export function DeleteChain(arg1:string):Promise<void>;
+
 export function DeleteChannel(arg1:string):Promise<void>;
 
 export function DeleteOllamaModel(arg1:string):Promise<void>;
@@ -45,11 +53,15 @@ export function DeleteRepo(arg1:string):Promise<void>;
 
 export function DeleteRunner(arg1:string):Promise<void>;
 
+export function DeleteSchedule(arg1:string):Promise<void>;
+
 export function DeleteSession(arg1:string):Promise<brainbox.SessionActionResponse>;
 
 export function DeleteWorktree(arg1:string):Promise<void>;
 
 export function DownloadArtifact(arg1:string):Promise<Array<number>>;
+
+export function EnqueueTask(arg1:main.EnqueueTaskRequest):Promise<string>;
 
 export function ExportSecretsTemplate(arg1:string):Promise<string>;
 
@@ -61,7 +73,9 @@ export function GetAPILogs(arg1:number):Promise<Array<main.LogEntry>>;
 
 export function GetActiveProfile():Promise<main.Profile>;
 
-export function GetAgent(arg1:string):Promise<brainbox.AgentDefinition>;
+export function GetAgentRole(arg1:string):Promise<brainbox.AgentDefinition>;
+
+export function GetAuthorityStatus():Promise<brainbox.AuthorityStatus>;
 
 export function GetChannel(arg1:string):Promise<brainbox.Channel>;
 
@@ -111,19 +125,31 @@ export function GetSessionsMetricsHistory():Promise<Record<string, Array<brainbo
 
 export function GetSystemInfo():Promise<main.SystemInfo>;
 
+export function GetTask(arg1:string):Promise<main.TaskRow>;
+
+export function GetTaskStats(arg1:number):Promise<main.TaskStats>;
+
 export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;
 
 export function GetWorktree(arg1:string):Promise<brainbox.Worktree>;
 
 export function LaunchTeam(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<brainbox.SessionActionResponse>;
 
-export function ListAgents():Promise<Array<brainbox.AgentDefinition>>;
+export function ListAgentRoles():Promise<Array<brainbox.AgentDefinition>>;
+
+export function ListAgents():Promise<Array<main.DetectedAgent>>;
 
 export function ListArtifacts(arg1:string):Promise<Array<brainbox.Artifact>>;
 
 export function ListBackups():Promise<Array<string>>;
 
+export function ListChainRuns(arg1:string,arg2:number):Promise<Array<main.ChainRunRow>>;
+
+export function ListChains():Promise<Array<main.Chain>>;
+
 export function ListChannels():Promise<Array<brainbox.Channel>>;
+
+export function ListHubTasks(arg1:string):Promise<Array<brainbox.Task>>;
 
 export function ListNFSExports():Promise<Array<main.NFSExport>>;
 
@@ -137,33 +163,53 @@ export function ListRepos():Promise<Array<brainbox.Repo>>;
 
 export function ListRunners():Promise<Array<brainbox.Runner>>;
 
+export function ListSchedules(arg1:string):Promise<Array<main.ScheduleRow>>;
+
 export function ListServices():Promise<Array<main.ServiceStatus>>;
 
-export function ListTasks(arg1:string):Promise<Array<brainbox.Task>>;
+export function ListTasks(arg1:string,arg2:number):Promise<Array<main.TaskRow>>;
+
+export function ListUpcomingFires(arg1:number):Promise<Array<main.UpcomingFire>>;
 
 export function ListWorktrees(arg1:string):Promise<Array<brainbox.Worktree>>;
 
 export function PostChannelMessage(arg1:string,arg2:brainbox.PostChannelMessageRequest):Promise<brainbox.ChannelMessage>;
 
+export function PreviewDispatch(arg1:brainbox.DispatchPreviewRequest):Promise<brainbox.DispatchPreview>;
+
 export function PullOllamaModel(arg1:string):Promise<string>;
 
 export function PurgeBackup(arg1:string):Promise<void>;
 
+export function RemoveChannelParticipant(arg1:string,arg2:string):Promise<brainbox.Channel>;
+
 export function RemoveNFSExport(arg1:string):Promise<void>;
+
+export function RescanAgents():Promise<Array<main.DetectedAgent>>;
 
 export function RestartBrainboxAPI():Promise<void>;
 
 export function RestoreProfile(arg1:string):Promise<void>;
 
+export function RetryTask(arg1:string):Promise<void>;
+
+export function RunChain(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function RunPlaybook(arg1:string,arg2:string):Promise<brainbox.Playbook>;
 
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
+
+export function SaveChain(arg1:main.Chain):Promise<main.Chain>;
+
+export function SaveSchedule(arg1:main.ScheduleRow):Promise<main.ScheduleRow>;
 
 export function ScanDiskUsage():Promise<main.DiskOverview>;
 
 export function ScanProfiles():Promise<Array<main.Profile>>;
 
 export function SetActiveProfile(arg1:string):Promise<void>;
+
+export function SetAgentEnabled(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetConfig(arg1:string,arg2:string,arg3:string):Promise<void>;
 
@@ -188,3 +234,5 @@ export function SubmitTask(arg1:brainbox.SubmitTaskRequest):Promise<brainbox.Tas
 export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promise<brainbox.AgentDefinition>;
 
 export function UpdateRepo(arg1:string,arg2:brainbox.UpdateRepoRequest):Promise<brainbox.Repo>;
+
+export function UsableAgents():Promise<Array<main.DetectedAgent>>;

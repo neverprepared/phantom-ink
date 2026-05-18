@@ -6,11 +6,13 @@
 
   // Panels (lazy imports)
   import SessionsPanel from '../panels/SessionsPanel.svelte';
+  import AgentRolesPanel from '../panels/AgentRolesPanel.svelte';
   import AgentsPanel from '../panels/AgentsPanel.svelte';
+  import ChainsPanel from '../panels/ChainsPanel.svelte';
+  import ConversationsPanel from '../panels/ConversationsPanel.svelte';
   import HubPanel from '../panels/HubPanel.svelte';
   import ReposPanel from '../panels/ReposPanel.svelte';
   import ServicesPanel from '../panels/ServicesPanel.svelte';
-  import ChannelsPanel from '../panels/ChannelsPanel.svelte';
   import PlaybooksPanel from '../panels/PlaybooksPanel.svelte';
   import EventFeedPanel from '../panels/EventFeedPanel.svelte';
   import ProfilesPanel from '../panels/ProfilesPanel.svelte';
@@ -25,6 +27,8 @@
     <main class="content">
       {#if currentPanel.value === 'sessions'}
         <SessionsPanel />
+      {:else if currentPanel.value === 'agent-roles'}
+        <AgentRolesPanel />
       {:else if currentPanel.value === 'agents'}
         <AgentsPanel />
       {:else if currentPanel.value === 'dashboard'}
@@ -33,8 +37,10 @@
         <ReposPanel />
       {:else if currentPanel.value === 'integrations'}
         <ServicesPanel />
-      {:else if currentPanel.value === 'channels'}
-        <ChannelsPanel />
+      {:else if currentPanel.value === 'chains'}
+        <ChainsPanel />
+      {:else if currentPanel.value === 'conversations'}
+        <ConversationsPanel />
       {:else if currentPanel.value === 'playbooks'}
         <PlaybooksPanel />
       {:else if currentPanel.value === 'events'}

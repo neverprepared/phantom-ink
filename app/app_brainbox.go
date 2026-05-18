@@ -18,6 +18,13 @@ func (a *App) CreateSession(req brainbox.CreateSessionRequest) (brainbox.Session
 	return a.client.CreateSession(req)
 }
 
+// PreviewDispatch reports where a session with the given backend/runner/tags
+// would land. Used by the session-create modal to show "→ will run on X"
+// before the user clicks create.
+func (a *App) PreviewDispatch(req brainbox.DispatchPreviewRequest) (brainbox.DispatchPreview, error) {
+	return a.client.PreviewDispatch(req)
+}
+
 func (a *App) StartSession(name string) (brainbox.SessionActionResponse, error) {
 	return a.client.StartSession(name)
 }
@@ -38,7 +45,9 @@ func (a *App) GetHubState() (brainbox.HubState, error) {
 	return a.client.GetHubState()
 }
 
-func (a *App) ListTasks(status string) ([]brainbox.Task, error) {
+// ListHubTasks returns brainbox hub tasks. Renamed from ListTasks to avoid
+// shadowing the new App.ListTasks which reads the local task queue.
+func (a *App) ListHubTasks(status string) ([]brainbox.Task, error) {
 	return a.client.ListTasks(status)
 }
 
@@ -46,15 +55,21 @@ func (a *App) SubmitTask(req brainbox.SubmitTaskRequest) (brainbox.Task, error) 
 	return a.client.SubmitTask(req)
 }
 
-func (a *App) CancelTask(taskID string) error {
+// CancelHubTask cancels a brainbox hub task. Renamed from CancelTask to
+// avoid shadowing the local-queue CancelTask binding.
+func (a *App) CancelHubTask(taskID string) error {
 	return a.client.CancelTask(taskID)
 }
 
-func (a *App) ListAgents() ([]brainbox.AgentDefinition, error) {
+// ListAgentRoles returns brainbox's multi-agent role catalog (developer,
+// supervisor, worker, reviewer, …). Renamed from ListAgents to avoid
+// shadowing the new App.ListAgents which lists detected CLI tools.
+func (a *App) ListAgentRoles() ([]brainbox.AgentDefinition, error) {
 	return a.client.ListAgents()
 }
 
-func (a *App) GetAgent(name string) (brainbox.AgentDefinition, error) {
+// GetAgentRole returns a single brainbox agent role definition.
+func (a *App) GetAgentRole(name string) (brainbox.AgentDefinition, error) {
 	return a.client.GetAgent(name)
 }
 
@@ -262,6 +277,18 @@ func (a *App) CompleteChannel(id string, req brainbox.CompleteChannelRequest) (b
 // DeleteChannel deletes a channel and all its messages.
 func (a *App) DeleteChannel(id string) error {
 	return a.client.DeleteChannel(id)
+}
+
+// AddChannelParticipant attaches a session (or other participant) to an
+// existing conversation. The UI uses this to drop agents into live channels.
+func (a *App) AddChannelParticipant(id string, req brainbox.ChannelParticipantRequest) (brainbox.Channel, error) {
+	return a.client.AddChannelParticipant(id, req)
+}
+
+// RemoveChannelParticipant detaches a participant by name. Their past
+// messages stay in the log.
+func (a *App) RemoveChannelParticipant(id, name string) (brainbox.Channel, error) {
+	return a.client.RemoveChannelParticipant(id, name)
 }
 
 // ListPlaybooks returns playbooks, optionally filtered by profile.

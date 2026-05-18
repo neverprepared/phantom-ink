@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -112,6 +113,109 @@ var migrations = []migration{
 			scanned_at   TEXT NOT NULL DEFAULT ''
 		);
 	`},
+	// v4: discovered coding-agent CLIs (claude, codex, aider, gemini, …)
+	{version: 4, sql: `
+		CREATE TABLE IF NOT EXISTS agents (
+			id          TEXT PRIMARY KEY,
+			binary      TEXT NOT NULL,
+			label       TEXT NOT NULL,
+			path        TEXT NOT NULL DEFAULT '',
+			version     TEXT NOT NULL DEFAULT '',
+			enabled     INTEGER NOT NULL DEFAULT 0,
+			detected_at TEXT NOT NULL DEFAULT ''
+		);
+	`},
+	// v5: agent chains — ordered sequences of CLI agents wired so each step
+	// receives the previous step's output as input. steps_json is the full
+	// []ChainStep payload; chain_runs.log_json is the per-step event log.
+	{version: 5, sql: `
+		CREATE TABLE IF NOT EXISTS chains (
+			id          TEXT PRIMARY KEY,
+			name        TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			steps_json  TEXT NOT NULL DEFAULT '[]',
+			cwd         TEXT NOT NULL DEFAULT '',
+			created_at  TEXT NOT NULL DEFAULT '',
+			updated_at  TEXT NOT NULL DEFAULT ''
+		);
+
+		CREATE TABLE IF NOT EXISTS chain_runs (
+			id           TEXT PRIMARY KEY,
+			chain_id     TEXT NOT NULL,
+			started_at   TEXT NOT NULL DEFAULT '',
+			finished_at  TEXT NOT NULL DEFAULT '',
+			status       TEXT NOT NULL DEFAULT 'running',
+			log_json     TEXT NOT NULL DEFAULT '[]'
+		);
+		CREATE INDEX IF NOT EXISTS idx_chain_runs_chain_id ON chain_runs(chain_id);
+	`},
+	// v6: task queue — durable work items that the in-app worker drains. A
+	// task targets a chain and, on dispatch, becomes a chain_runs row. status
+	// is one of: pending | running | succeeded | failed | cancelled. trigger
+	// is one of: manual | schedule | webhook | followup.
+	{version: 6, sql: `
+		CREATE TABLE IF NOT EXISTS tasks (
+			id              TEXT PRIMARY KEY,
+			chain_id        TEXT NOT NULL,
+			status          TEXT NOT NULL DEFAULT 'pending',
+			priority        INTEGER NOT NULL DEFAULT 0,
+			input           TEXT NOT NULL DEFAULT '',
+			cwd             TEXT NOT NULL DEFAULT '',
+			trigger         TEXT NOT NULL DEFAULT 'manual',
+			parent_task_id  TEXT NOT NULL DEFAULT '',
+			enqueued_at     TEXT NOT NULL DEFAULT '',
+			scheduled_for   TEXT NOT NULL DEFAULT '',
+			started_at      TEXT NOT NULL DEFAULT '',
+			finished_at     TEXT NOT NULL DEFAULT '',
+			attempts        INTEGER NOT NULL DEFAULT 0,
+			max_attempts    INTEGER NOT NULL DEFAULT 1,
+			last_error      TEXT NOT NULL DEFAULT '',
+			result_run_id   TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, priority DESC, enqueued_at);
+		CREATE INDEX IF NOT EXISTS idx_tasks_chain_id ON tasks(chain_id);
+	`},
+	// v7: cron schedules — fire chain runs on a recurring expression. The
+	// scheduler goroutine reads the table on tick and enqueues a task per
+	// due schedule, recording last_fired_at to suppress double-firing.
+	{version: 7, sql: `
+		CREATE TABLE IF NOT EXISTS schedules (
+			id             TEXT PRIMARY KEY,
+			chain_id       TEXT NOT NULL,
+			cron_expr      TEXT NOT NULL,
+			input          TEXT NOT NULL DEFAULT '',
+			cwd            TEXT NOT NULL DEFAULT '',
+			enabled        INTEGER NOT NULL DEFAULT 1,
+			created_at     TEXT NOT NULL DEFAULT '',
+			updated_at     TEXT NOT NULL DEFAULT '',
+			last_fired_at  TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_schedules_chain_id ON schedules(chain_id);
+		CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled);
+	`},
+	// v8: declarative on_success follow-ups for chains. Stored as a JSON
+	// array of ChainFollowup on the chains row so we don't need a join
+	// table; followups are read+written wholesale with the chain.
+	{version: 8, fn: func(conn *sql.DB) error {
+		return addColumnIfMissing(conn, "chains", "on_success_json", "TEXT NOT NULL DEFAULT '[]'")
+	}},
+	// v9: profile snapshotting on tasks and schedules. Every queued task and
+	// every saved schedule remembers the active profile at create time, so
+	// runs and cron firings always execute in the right workspace context
+	// regardless of who's at the keyboard later. Profiles are foundational.
+	{version: 9, fn: func(conn *sql.DB) error {
+		if err := addColumnIfMissing(conn, "tasks", "workspace_profile", "TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+		return addColumnIfMissing(conn, "schedules", "workspace_profile", "TEXT NOT NULL DEFAULT ''")
+	}},
+	// v10: file attachments on chains. Paths are stored relative to the
+	// profile's workspace_home so the same chain works across profiles —
+	// "code/api/main.go" means whatever's at that location in the active
+	// profile at run time. {{files}} expands to absolute paths in prompts.
+	{version: 10, fn: func(conn *sql.DB) error {
+		return addColumnIfMissing(conn, "chains", "files_json", "TEXT NOT NULL DEFAULT '[]'")
+	}},
 }
 
 func (db *DB) migrate() error {
@@ -251,6 +355,489 @@ func (db *DB) GetSettingsWithPrefix(prefix string) (map[string]string, error) {
 		result[k[len(prefix):]] = v
 	}
 	return result, nil
+}
+
+// ---------------------------------------------------------------------------
+// Agents
+// ---------------------------------------------------------------------------
+
+// UpsertAgent inserts or updates an agent row. `enabled` is preserved across
+// rescans by reading the current value first and writing it back unless the
+// caller explicitly wants to overwrite it (use SetAgentEnabled for that).
+func (db *DB) UpsertAgent(a DetectedAgent) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO agents (id, binary, label, path, version, enabled, detected_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			binary      = excluded.binary,
+			label       = excluded.label,
+			path        = excluded.path,
+			version     = excluded.version,
+			detected_at = excluded.detected_at`,
+		a.ID, a.Binary, a.Label, a.Path, a.Version, boolToInt(a.Enabled), a.DetectedAt)
+	return err
+}
+
+// GetAgentEnabled returns the persisted enabled flag for an agent, defaulting
+// to false when no row exists yet.
+func (db *DB) GetAgentEnabled(id string) bool {
+	var enabled int
+	err := db.conn.QueryRow("SELECT enabled FROM agents WHERE id = ?", id).Scan(&enabled)
+	if err != nil {
+		return false
+	}
+	return enabled != 0
+}
+
+// ListAgents returns every agent row, newest detection first.
+func (db *DB) ListAgents() ([]DetectedAgent, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, binary, label, path, version, enabled, detected_at
+		FROM agents
+		ORDER BY label`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []DetectedAgent
+	for rows.Next() {
+		var r DetectedAgent
+		var enabled int
+		if err := rows.Scan(&r.ID, &r.Binary, &r.Label, &r.Path, &r.Version, &enabled, &r.DetectedAt); err != nil {
+			continue
+		}
+		r.Enabled = enabled != 0
+		r.Detected = r.Path != ""
+		result = append(result, r)
+	}
+	return result, nil
+}
+
+// SetAgentEnabled toggles the enabled flag for a single agent.
+func (db *DB) SetAgentEnabled(id string, enabled bool) error {
+	res, err := db.conn.Exec("UPDATE agents SET enabled = ? WHERE id = ?", boolToInt(enabled), id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("agent %q not found", id)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Chains
+// ---------------------------------------------------------------------------
+
+// ChainRow is the persisted form of a chain definition. The runtime Chain type
+// (with structured Steps) lives in chains.go and serializes Steps to/from
+// StepsJSON via encoding/json. OnSuccessJSON is the same idea for the
+// declarative followups list — read+written wholesale with the chain.
+type ChainRow struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	StepsJSON     string `json:"steps_json"`
+	Cwd           string `json:"cwd"`
+	OnSuccessJSON string `json:"on_success_json"`
+	FilesJSON     string `json:"files_json"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
+}
+
+func (db *DB) UpsertChain(c ChainRow) error {
+	if c.OnSuccessJSON == "" {
+		c.OnSuccessJSON = "[]"
+	}
+	if c.FilesJSON == "" {
+		c.FilesJSON = "[]"
+	}
+	_, err := db.conn.Exec(`
+		INSERT INTO chains (id, name, description, steps_json, cwd, on_success_json, files_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name            = excluded.name,
+			description     = excluded.description,
+			steps_json      = excluded.steps_json,
+			cwd             = excluded.cwd,
+			on_success_json = excluded.on_success_json,
+			files_json      = excluded.files_json,
+			updated_at      = excluded.updated_at`,
+		c.ID, c.Name, c.Description, c.StepsJSON, c.Cwd, c.OnSuccessJSON, c.FilesJSON, c.CreatedAt, c.UpdatedAt)
+	return err
+}
+
+func (db *DB) GetChain(id string) (ChainRow, bool) {
+	var r ChainRow
+	err := db.conn.QueryRow(`
+		SELECT id, name, description, steps_json, cwd, on_success_json, files_json, created_at, updated_at
+		FROM chains WHERE id = ?`, id).Scan(
+		&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.FilesJSON, &r.CreatedAt, &r.UpdatedAt)
+	if err != nil {
+		return r, false
+	}
+	return r, true
+}
+
+func (db *DB) ListChains() ([]ChainRow, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, name, description, steps_json, cwd, on_success_json, files_json, created_at, updated_at
+		FROM chains ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ChainRow
+	for rows.Next() {
+		var r ChainRow
+		if err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.FilesJSON, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (db *DB) DeleteChain(id string) error {
+	_, err := db.conn.Exec("DELETE FROM chains WHERE id = ?", id)
+	return err
+}
+
+// ChainRunRow is the persisted form of a single chain execution.
+type ChainRunRow struct {
+	ID         string `json:"id"`
+	ChainID    string `json:"chain_id"`
+	StartedAt  string `json:"started_at"`
+	FinishedAt string `json:"finished_at"`
+	Status     string `json:"status"`
+	LogJSON    string `json:"log_json"`
+}
+
+func (db *DB) InsertChainRun(r ChainRunRow) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO chain_runs (id, chain_id, started_at, finished_at, status, log_json)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		r.ID, r.ChainID, r.StartedAt, r.FinishedAt, r.Status, r.LogJSON)
+	return err
+}
+
+func (db *DB) UpdateChainRun(id, finishedAt, status, logJSON string) error {
+	_, err := db.conn.Exec(`
+		UPDATE chain_runs SET finished_at = ?, status = ?, log_json = ? WHERE id = ?`,
+		finishedAt, status, logJSON, id)
+	return err
+}
+
+func (db *DB) ListChainRuns(chainID string, limit int) ([]ChainRunRow, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	rows, err := db.conn.Query(`
+		SELECT id, chain_id, started_at, finished_at, status, log_json
+		FROM chain_runs WHERE chain_id = ?
+		ORDER BY started_at DESC LIMIT ?`, chainID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ChainRunRow
+	for rows.Next() {
+		var r ChainRunRow
+		if err := rows.Scan(&r.ID, &r.ChainID, &r.StartedAt, &r.FinishedAt, &r.Status, &r.LogJSON); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// ---------------------------------------------------------------------------
+// Tasks (queue)
+// ---------------------------------------------------------------------------
+
+// TaskRow mirrors the tasks table. The runtime Task type lives in queue.go.
+// WorkspaceProfile is snapshotted at enqueue time so the task always runs
+// under the right profile context — see feedback_profiles_foundational.md.
+type TaskRow struct {
+	ID               string `json:"id"`
+	ChainID          string `json:"chain_id"`
+	Status           string `json:"status"`
+	Priority         int    `json:"priority"`
+	Input            string `json:"input"`
+	Cwd              string `json:"cwd"`
+	Trigger          string `json:"trigger"`
+	ParentTaskID     string `json:"parent_task_id"`
+	WorkspaceProfile string `json:"workspace_profile"`
+	EnqueuedAt       string `json:"enqueued_at"`
+	ScheduledFor     string `json:"scheduled_for"`
+	StartedAt        string `json:"started_at"`
+	FinishedAt       string `json:"finished_at"`
+	Attempts         int    `json:"attempts"`
+	MaxAttempts      int    `json:"max_attempts"`
+	LastError        string `json:"last_error"`
+	ResultRunID      string `json:"result_run_id"`
+}
+
+func (db *DB) InsertTask(t TaskRow) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO tasks (
+			id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
+			enqueued_at, scheduled_for, started_at, finished_at,
+			attempts, max_attempts, last_error, result_run_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.ChainID, t.Status, t.Priority, t.Input, t.Cwd, t.Trigger, t.ParentTaskID, t.WorkspaceProfile,
+		t.EnqueuedAt, t.ScheduledFor, t.StartedAt, t.FinishedAt,
+		t.Attempts, t.MaxAttempts, t.LastError, t.ResultRunID)
+	return err
+}
+
+// ClaimNextTask atomically transitions the highest-priority eligible pending
+// task to "running" and returns it. Returns (TaskRow{}, false) when nothing
+// is ready. "Eligible" means status='pending' AND (scheduled_for='' OR
+// scheduled_for <= nowRFC3339).
+func (db *DB) ClaimNextTask(nowRFC3339 string) (TaskRow, bool) {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return TaskRow{}, false
+	}
+	defer tx.Rollback()
+
+	var t TaskRow
+	err = tx.QueryRow(`
+		SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
+		       enqueued_at, scheduled_for, started_at, finished_at,
+		       attempts, max_attempts, last_error, result_run_id
+		FROM tasks
+		WHERE status = 'pending'
+		  AND (scheduled_for = '' OR scheduled_for <= ?)
+		ORDER BY priority DESC, enqueued_at ASC
+		LIMIT 1`, nowRFC3339).Scan(
+		&t.ID, &t.ChainID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
+		&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
+		&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID)
+	if err != nil {
+		return TaskRow{}, false
+	}
+
+	if _, err := tx.Exec(
+		`UPDATE tasks SET status = 'running', started_at = ?, attempts = attempts + 1 WHERE id = ?`,
+		nowRFC3339, t.ID); err != nil {
+		return TaskRow{}, false
+	}
+	if err := tx.Commit(); err != nil {
+		return TaskRow{}, false
+	}
+	t.Status = "running"
+	t.StartedAt = nowRFC3339
+	t.Attempts++
+	return t, true
+}
+
+func (db *DB) MarkTaskSucceeded(id, finishedAt, runID string) error {
+	_, err := db.conn.Exec(
+		`UPDATE tasks SET status = 'succeeded', finished_at = ?, result_run_id = ?, last_error = '' WHERE id = ?`,
+		finishedAt, runID, id)
+	return err
+}
+
+// MarkTaskFailed records a failure. If attempts < max_attempts the task is
+// requeued (status reset to pending) with scheduled_for set for backoff.
+// Returns true when the task is requeued.
+func (db *DB) MarkTaskFailed(id, finishedAt, runID, errMsg, retryAt string) (requeued bool, err error) {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var attempts, maxAttempts int
+	if err := tx.QueryRow(`SELECT attempts, max_attempts FROM tasks WHERE id = ?`, id).Scan(&attempts, &maxAttempts); err != nil {
+		return false, err
+	}
+	if attempts < maxAttempts && retryAt != "" {
+		if _, err := tx.Exec(
+			`UPDATE tasks SET status = 'pending', scheduled_for = ?, last_error = ?, started_at = '' WHERE id = ?`,
+			retryAt, errMsg, id); err != nil {
+			return false, err
+		}
+		requeued = true
+	} else {
+		if _, err := tx.Exec(
+			`UPDATE tasks SET status = 'failed', finished_at = ?, result_run_id = ?, last_error = ? WHERE id = ?`,
+			finishedAt, runID, errMsg, id); err != nil {
+			return false, err
+		}
+	}
+	return requeued, tx.Commit()
+}
+
+func (db *DB) CancelTask(id string) error {
+	res, err := db.conn.Exec(
+		`UPDATE tasks SET status = 'cancelled', finished_at = ? WHERE id = ? AND status IN ('pending', 'running')`,
+		time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("task %q not pending or running", id)
+	}
+	return nil
+}
+
+func (db *DB) RetryTask(id string) error {
+	_, err := db.conn.Exec(
+		`UPDATE tasks SET status = 'pending', started_at = '', finished_at = '', last_error = '', scheduled_for = '', attempts = 0 WHERE id = ? AND status IN ('failed', 'cancelled')`,
+		id)
+	return err
+}
+
+func (db *DB) GetTask(id string) (TaskRow, bool) {
+	var t TaskRow
+	err := db.conn.QueryRow(`
+		SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
+		       enqueued_at, scheduled_for, started_at, finished_at,
+		       attempts, max_attempts, last_error, result_run_id
+		FROM tasks WHERE id = ?`, id).Scan(
+		&t.ID, &t.ChainID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
+		&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
+		&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID)
+	if err != nil {
+		return t, false
+	}
+	return t, true
+}
+
+// ListTasks returns tasks filtered by status (empty string = all). Limit is
+// capped at 200 to keep the UI snappy.
+func (db *DB) ListTasks(status string, limit int) ([]TaskRow, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 200
+	}
+	var rows *sql.Rows
+	var err error
+	if status == "" {
+		rows, err = db.conn.Query(`
+			SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
+			       enqueued_at, scheduled_for, started_at, finished_at,
+			       attempts, max_attempts, last_error, result_run_id
+			FROM tasks ORDER BY enqueued_at DESC LIMIT ?`, limit)
+	} else {
+		rows, err = db.conn.Query(`
+			SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
+			       enqueued_at, scheduled_for, started_at, finished_at,
+			       attempts, max_attempts, last_error, result_run_id
+			FROM tasks WHERE status = ? ORDER BY enqueued_at DESC LIMIT ?`, status, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TaskRow
+	for rows.Next() {
+		var t TaskRow
+		if err := rows.Scan(
+			&t.ID, &t.ChainID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
+			&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
+			&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID,
+		); err != nil {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+// ---------------------------------------------------------------------------
+// Schedules (cron)
+// ---------------------------------------------------------------------------
+
+type ScheduleRow struct {
+	ID               string `json:"id"`
+	ChainID          string `json:"chain_id"`
+	CronExpr         string `json:"cron_expr"`
+	Input            string `json:"input"`
+	Cwd              string `json:"cwd"`
+	Enabled          bool   `json:"enabled"`
+	WorkspaceProfile string `json:"workspace_profile"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
+	LastFiredAt      string `json:"last_fired_at"`
+	// NextFireAt is a computed convenience populated by the bindings (not the
+	// table). RFC3339 UTC. Empty when the cron expression is invalid or the
+	// schedule is disabled.
+	NextFireAt string `json:"next_fire_at"`
+}
+
+func (db *DB) UpsertSchedule(s ScheduleRow) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO schedules (id, chain_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			chain_id          = excluded.chain_id,
+			cron_expr         = excluded.cron_expr,
+			input             = excluded.input,
+			cwd               = excluded.cwd,
+			enabled           = excluded.enabled,
+			workspace_profile = excluded.workspace_profile,
+			updated_at        = excluded.updated_at`,
+		s.ID, s.ChainID, s.CronExpr, s.Input, s.Cwd, boolToInt(s.Enabled), s.WorkspaceProfile,
+		s.CreatedAt, s.UpdatedAt, s.LastFiredAt)
+	return err
+}
+
+func (db *DB) GetSchedule(id string) (ScheduleRow, bool) {
+	var r ScheduleRow
+	var enabled int
+	err := db.conn.QueryRow(`
+		SELECT id, chain_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
+		FROM schedules WHERE id = ?`, id).Scan(
+		&r.ID, &r.ChainID, &r.CronExpr, &r.Input, &r.Cwd, &enabled, &r.WorkspaceProfile,
+		&r.CreatedAt, &r.UpdatedAt, &r.LastFiredAt)
+	if err != nil {
+		return r, false
+	}
+	r.Enabled = enabled != 0
+	return r, true
+}
+
+func (db *DB) ListSchedules(chainID string) ([]ScheduleRow, error) {
+	var rows *sql.Rows
+	var err error
+	if chainID == "" {
+		rows, err = db.conn.Query(`
+			SELECT id, chain_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
+			FROM schedules ORDER BY created_at`)
+	} else {
+		rows, err = db.conn.Query(`
+			SELECT id, chain_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
+			FROM schedules WHERE chain_id = ? ORDER BY created_at`, chainID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ScheduleRow
+	for rows.Next() {
+		var r ScheduleRow
+		var enabled int
+		if err := rows.Scan(&r.ID, &r.ChainID, &r.CronExpr, &r.Input, &r.Cwd, &enabled, &r.WorkspaceProfile,
+			&r.CreatedAt, &r.UpdatedAt, &r.LastFiredAt); err != nil {
+			continue
+		}
+		r.Enabled = enabled != 0
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (db *DB) DeleteSchedule(id string) error {
+	_, err := db.conn.Exec("DELETE FROM schedules WHERE id = ?", id)
+	return err
+}
+
+func (db *DB) MarkScheduleFired(id, firedAt string) error {
+	_, err := db.conn.Exec("UPDATE schedules SET last_fired_at = ? WHERE id = ?", firedAt, id)
+	return err
 }
 
 // ---------------------------------------------------------------------------

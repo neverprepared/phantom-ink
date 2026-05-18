@@ -4,7 +4,7 @@
   import { brainboxEvents } from '../events.svelte';
   import { notifications } from '../notifications.svelte';
   import { combinedHistory as combinedHistoryStore, localHistory as localHistoryStore, diskHistory as diskHistoryStore } from '../metricsHistory.svelte';
-  import { profileState, profileColorStore, featureFlags } from '../stores.svelte';
+  import { profileState, profileColorStore, featureFlags, panelFocus } from '../stores.svelte';
   import { getProfileColor, profileColorStyle } from '../utils/profileColors';
   import EmptyState from '../components/EmptyState.svelte';
   import Badge from '../components/Badge.svelte';
@@ -74,7 +74,7 @@
     const a = await getApi();
     if (!a) return;
     try {
-      const agentDefs = await a.ListAgents();
+      const agentDefs = await a.ListAgentRoles();
       availableRoles = (agentDefs ?? []).map((ag: any) => ag.name);
     } catch {
       availableRoles = ['assistant'];
@@ -108,6 +108,7 @@
   let newVMTemplate = $state('');
   let newGuestOS = $state('linux');
   let newProfile = $state('');
+  let newRunner = $state(''); // '' = in-process; otherwise a runner name
   let isCreating = $state(false);
 
   // Volume mounts (browse-based)
@@ -115,6 +116,47 @@
 
   // Task (optional — runs after session starts)
   let newTask = $state('');
+
+  // Dispatch preview — reactively asks the API where this session will land.
+  interface DispatchCandidate {
+    name: string;
+    online: boolean;
+    tags: string[];
+    version: string;
+    supports_backend: boolean;
+  }
+  interface DispatchPreview {
+    selected_runner: string | null;
+    in_process: boolean;
+    reason: string;
+    candidates: DispatchCandidate[];
+    error?: string;
+  }
+  let preview = $state<DispatchPreview | null>(null);
+  let previewError = $state<string | null>(null);
+
+  async function refreshPreview() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      preview = (await a.PreviewDispatch({
+        backend: newBackend,
+        runner: newRunner,
+      })) as DispatchPreview;
+      previewError = null;
+    } catch (err: any) {
+      previewError = `${err?.message ?? err}`;
+      preview = null;
+    }
+  }
+
+  // Re-preview whenever the user changes backend or runner inside the modal.
+  // Skip when the modal is closed — no point hitting the API.
+  $effect(() => {
+    if (!showNewModal) return;
+    void newBackend; void newRunner;
+    void refreshPreview();
+  });
 
   let activeProfile = $derived(profileState.active);
   let profiles = $derived(profileState.profiles);
@@ -350,7 +392,7 @@
     const a = await getApi();
     if (!a) return;
     try {
-      await a.CancelTask(taskId);
+      await a.CancelHubTask(taskId);
       notifications.success('Task cancelled');
       refresh();
     } catch (err: any) {
@@ -414,6 +456,7 @@
         workspace_profile: newProfile,
         workspace_home: wsHome,
         task: newTask.trim() || undefined,
+        runner: newRunner || undefined,
       };
       if (newBackend === 'utm') {
         req.vm_template = newVMTemplate;
@@ -644,6 +687,7 @@
               {#if session.url}
                 <button class="btn-terminal" onclick={() => terminalSession = session}>terminal</button>
               {/if}
+              <button class="btn-converse" onclick={() => panelFocus.startConversationWith([session.name])} title="Start a conversation with this session">talk</button>
               {#if task && (task.status === 'running' || task.status === 'pending')}
                 <button class="btn-cancel" onclick={() => handleCancelTask(task.id)}>cancel</button>
               {:else}
@@ -756,6 +800,32 @@
             <span class="toggle-icon">&#x1f5a5;</span> vm
           </button>
         </div>
+      </div>
+
+      <!-- Dispatch (runner picker + preview) -->
+      <div class="field">
+        <label for="srunner">dispatch to</label>
+        <select id="srunner" bind:value={newRunner}>
+          <option value="">in-process (API host)</option>
+          {#if preview}
+            {#each preview.candidates as c (c.name)}
+              <option value={c.name} disabled={!c.online}>
+                {c.name}{c.online ? '' : ' (offline)'}{c.tags.length ? ` · ${c.tags.join(',')}` : ''}
+              </option>
+            {/each}
+          {/if}
+        </select>
+        {#if preview}
+          <p
+            class="preview"
+            class:warn={preview.error === 'stale' || preview.error === 'missing_capability'}
+            class:err={preview.error === 'not_registered'}
+          >
+            → {preview.reason}
+          </p>
+        {:else if previewError}
+          <p class="preview err">→ preview failed: {previewError}</p>
+        {/if}
       </div>
 
       {#if newBackend === 'utm'}
@@ -1265,6 +1335,17 @@
     border-color: var(--color-error);
   }
 
+  .btn-converse {
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    color: var(--color-accent);
+    padding: 4px 12px;
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    transition: all 0.15s;
+  }
+  .btn-converse:hover { background: rgba(59, 130, 246, 0.16); }
+
   .btn-terminal {
     background: rgba(245, 158, 11, 0.1);
     border: 1px solid rgba(245, 158, 11, 0.3);
@@ -1298,6 +1379,15 @@
     color: var(--color-text-tertiary);
     margin-top: 4px;
   }
+
+  .preview {
+    font-size: 11px;
+    color: var(--color-text-secondary);
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+  .preview.warn { color: var(--color-warning, #e0a64a); }
+  .preview.err  { color: var(--color-danger, #e54); }
 
   /* Backend toggle */
   .toggle-group {

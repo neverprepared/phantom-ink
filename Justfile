@@ -48,7 +48,7 @@ bb-daemon-restart:
     cd brainbox && uv run python -m brainbox restart
 
 bb-daemon-logs:
-    tail -f ~/.config/developer/logs/brainbox.log
+    cd brainbox && tail -f "$(uv run python -c 'from brainbox.config import settings; print(settings.config_dir / "logs" / "brainbox.log")')"
 
 bb-docker-build:
     cd brainbox && ./scripts/build.sh

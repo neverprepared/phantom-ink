@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { brainboxEvents } from '../events.svelte';
   import { notifications } from '../notifications.svelte';
+  import { profileState, panelFocus } from '../stores.svelte';
   import Modal from '../components/Modal.svelte';
   import EmptyState from '../components/EmptyState.svelte';
 
@@ -56,6 +57,11 @@
 
   // Create channel modal
   let showCreateModal = $state(false);
+  // Add-participant modal — opened from a live conversation's header to
+  // attach another running session post-creation.
+  let showAddParticipantModal = $state(false);
+  let addParticipantCandidates = $state<any[]>([]);
+  let addParticipantSelection = $state<string>(''); // session name to add
   let newChannelName = $state('');
   let availableSessions = $state<any[]>([]);
   let participantRows = $state<Array<{
@@ -89,7 +95,7 @@
     try {
       channels = (await a.ListChannels()) ?? [];
     } catch (err: any) {
-      notifications.error(`Failed to load channels: ${err?.message ?? err}`);
+      notifications.error(`Failed to load conversations: ${err?.message ?? err}`);
     } finally {
       loading = false;
     }
@@ -139,21 +145,51 @@
 
   onMount(() => {
     loadChannels();
+    // If we got here via panelFocus.startConversationWith(...), open the
+    // create modal pre-seeded with those sessions.
+    const seed = panelFocus.consumeConversationSeed();
+    if (seed.length > 0) {
+      openCreateModal(seed);
+    }
   });
 
   // --- Create channel ---
-  function openCreateModal() {
+  // When opening the modal we pre-populate one participant row per currently-
+  // running session in the active profile, so the user can uncheck/remove
+  // rather than build the list from scratch. Falls back to a single empty row
+  // when there are no running sessions to seed from.
+  function openCreateModal(seedSessions: string[] = []) {
     newChannelName = '';
-    participantRows = [{ name: '', type: 'session', session_name: '', ollama_model: '', system_prompt: '' }];
+    participantRows = [];
     showCreateModal = true;
-    loadSessionsForModal();
+    loadSessionsForModal(seedSessions);
   }
 
-  async function loadSessionsForModal() {
+  async function loadSessionsForModal(seedSessions: string[] = []) {
     const a = await getApi();
     if (!a) return;
     try {
-      availableSessions = ((await a.GetSessions()) ?? []).filter((s: any) => s.active);
+      const all = ((await a.GetSessions()) ?? []) as any[];
+      const activeProfile = profileState.active?.name?.toLowerCase() ?? '';
+      availableSessions = all.filter((s: any) => {
+        if (!s.active) return false;
+        if (!activeProfile) return true;
+        return (s.workspace_profile ?? '').toLowerCase() === activeProfile;
+      });
+      // Seed participantRows. Explicit seedSessions (from "start conversation
+      // from Sessions panel") wins; otherwise every running session is included.
+      const namesToSeed = seedSessions.length > 0
+        ? availableSessions.filter(s => seedSessions.includes(s.name))
+        : availableSessions;
+      participantRows = namesToSeed.length > 0
+        ? namesToSeed.map((s: any) => ({
+            name: s.name,
+            type: 'session' as const,
+            session_name: s.name,
+            ollama_model: '',
+            system_prompt: '',
+          }))
+        : [{ name: '', type: 'session' as const, session_name: '', ollama_model: '', system_prompt: '' }];
     } catch { /* ignore */ }
   }
 
@@ -163,6 +199,64 @@
 
   function removeParticipantRow(i: number) {
     participantRows = participantRows.filter((_, idx) => idx !== i);
+  }
+
+  // --- Live participant management (post-creation) ---
+
+  async function openAddParticipant() {
+    if (!selected) return;
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const all = ((await a.GetSessions()) ?? []) as any[];
+      const activeProfile = profileState.active?.name?.toLowerCase() ?? '';
+      const inChannel = new Set(selected.participants.map(p => p.name));
+      addParticipantCandidates = all
+        .filter((s: any) => s.active)
+        .filter((s: any) => !activeProfile || (s.workspace_profile ?? '').toLowerCase() === activeProfile)
+        .filter((s: any) => !inChannel.has(s.name));
+      addParticipantSelection = addParticipantCandidates[0]?.name ?? '';
+      showAddParticipantModal = true;
+    } catch (err: any) {
+      notifications.error(`Failed to load sessions: ${err?.message ?? err}`);
+    }
+  }
+
+  async function handleAddParticipant() {
+    if (!selected || !addParticipantSelection) return;
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const updated = await a.AddChannelParticipant(selected.id, {
+        name: addParticipantSelection,
+        type: 'session',
+        session_name: addParticipantSelection,
+        ollama_model: '',
+        system_prompt: '',
+      });
+      selected = updated;
+      // Refresh the list so the participant-count badge updates.
+      channels = channels.map(c => c.id === updated.id ? updated : c);
+      showAddParticipantModal = false;
+      notifications.success(`${addParticipantSelection} joined the conversation`);
+    } catch (err: any) {
+      notifications.error(`Failed to add: ${err?.message ?? err}`);
+    }
+  }
+
+  async function handleRemoveParticipant(name: string) {
+    if (!selected) return;
+    if (!confirm(`Remove ${name} from this conversation?`)) return;
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const updated = await a.RemoveChannelParticipant(selected.id, name);
+      selected = updated;
+      channels = channels.map(c => c.id === updated.id ? updated : c);
+      notifications.success(`${name} removed`);
+    } catch (err: any) {
+      notifications.error(`Failed to remove: ${err?.message ?? err}`);
+    }
   }
 
   async function handleCreate() {
@@ -187,7 +281,7 @@
           system_prompt: p.system_prompt || undefined,
         })),
       });
-      notifications.success(`Channel "${newChannelName}" created`);
+      notifications.success(`Conversation "${newChannelName}" created`);
       showCreateModal = false;
       await loadChannels();
       await selectChannel(channel);
@@ -228,8 +322,8 @@
     const a = await getApi();
     if (!a) { isCompleting = false; return; }
     try {
-      await a.CompleteChannel(selected.id, { by: myName, reason: 'Channel ended by user' });
-      notifications.success('Channel ended');
+      await a.CompleteChannel(selected.id, { by: myName, reason: 'Conversation ended by user' });
+      notifications.success('Conversation ended');
       await loadChannels();
       // Refresh selected to show updated status
       const updated = channels.find(c => c.id === selected!.id);
@@ -258,7 +352,7 @@
     if (!a) return;
     try {
       await a.DeleteChannel(ch.id);
-      notifications.success(`Channel "${ch.name}" deleted`);
+      notifications.success(`Conversation "${ch.name}" deleted`);
       if (selected?.id === ch.id) { selected = null; messages = []; lastMessageId = null; }
       await loadChannels();
     } catch (err: any) {
@@ -322,8 +416,8 @@
           {isBatchDeleting ? 'Deleting…' : 'Delete'}
         </button>
       {:else}
-        <span class="list-title">Channels</span>
-        <button class="btn-icon" onclick={openCreateModal} title="New channel">
+        <span class="list-title">Conversations</span>
+        <button class="btn-icon" onclick={() => openCreateModal()} title="New conversation">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
         </button>
       {/if}
@@ -332,7 +426,7 @@
     {#if loading}
       <div class="list-empty">Loading…</div>
     {:else if channels.length === 0}
-      <div class="list-empty">No channels yet</div>
+      <div class="list-empty">No conversations yet</div>
     {:else}
       <ul class="channel-items">
         {#each channels as ch (ch.id)}
@@ -359,7 +453,7 @@
                 <span class="channel-name">{ch.name}</span>
                 <span class="participant-count">{ch.participants.length}</span>
               </button>
-              <button class="btn-delete-channel" onclick={(e) => requestDelete(ch, e)} title="Delete channel">
+              <button class="btn-delete-channel" onclick={(e) => requestDelete(ch, e)} title="Delete conversation">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
               </button>
             {/if}
@@ -373,8 +467,8 @@
   <div class="channel-view">
     {#if !selected}
       <EmptyState
-        title="No channel selected"
-        message="Select a channel from the list or create a new one."
+        title="No conversation selected"
+        message="Select a conversation from the list or create a new one."
       />
     {:else}
       <div class="channel-header">
@@ -389,8 +483,19 @@
             <span class="participant-chip" title={p.type}>
               {p.type === 'session' ? '💻' : p.type === 'ollama' ? '🤖' : '👤'}
               {p.name}
+              {#if selected.status !== 'completed' && p.name !== myName}
+                <button
+                  class="participant-remove"
+                  onclick={() => handleRemoveParticipant(p.name)}
+                  title="Remove from conversation"
+                  aria-label="Remove {p.name}"
+                >×</button>
+              {/if}
             </span>
           {/each}
+          {#if selected.status !== 'completed'}
+            <button class="add-participant-btn" onclick={openAddParticipant} title="Add a running session">+ add session</button>
+          {/if}
         </div>
       </div>
 
@@ -443,7 +548,7 @@
         </div>
       {:else}
         <div class="channel-ended">
-          Channel ended{selected.completed_by ? ` by ${selected.completed_by}` : ''}.
+          Conversation ended{selected.completed_by ? ` by ${selected.completed_by}` : ''}.
         </div>
       {/if}
     {/if}
@@ -454,7 +559,7 @@
 {#if showCreateModal}
   <Modal onClose={() => showCreateModal = false}>
     <div class="modal-body">
-      <label class="field-label" for="ch-name">Channel name</label>
+      <label class="field-label" for="ch-name">Conversation name</label>
       <input id="ch-name" class="field-input" bind:value={newChannelName} placeholder="e.g. architecture-debate" />
 
       <div class="participants-section">
@@ -488,6 +593,28 @@
         <button class="btn-primary" onclick={handleCreate} disabled={isCreating || !newChannelName.trim()}>
           {isCreating ? 'Creating…' : 'Create Channel'}
         </button>
+      </div>
+    </div>
+  </Modal>
+{/if}
+
+{#if showAddParticipantModal}
+  <Modal onClose={() => showAddParticipantModal = false}>
+    <div class="modal-body">
+      <h2>Add session to conversation</h2>
+      {#if addParticipantCandidates.length === 0}
+        <p class="hint">No other running sessions in the active profile.</p>
+      {:else}
+        <label class="field-label" for="ap-select">Session</label>
+        <select id="ap-select" class="field-input" bind:value={addParticipantSelection}>
+          {#each addParticipantCandidates as s (s.name)}
+            <option value={s.name}>{s.session_name ?? s.name}</option>
+          {/each}
+        </select>
+      {/if}
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick={() => showAddParticipantModal = false}>Cancel</button>
+        <button class="btn-primary" onclick={handleAddParticipant} disabled={!addParticipantSelection}>Add</button>
       </div>
     </div>
   </Modal>
@@ -764,7 +891,24 @@
     background: var(--color-bg-tertiary);
     color: var(--color-text-secondary);
     border: 1px solid var(--color-border-primary);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
   }
+  .participant-remove {
+    background: none; border: none; padding: 0 0 0 2px;
+    color: var(--color-text-tertiary); cursor: pointer;
+    font-size: 14px; line-height: 1;
+  }
+  .participant-remove:hover { color: var(--color-error); }
+  .add-participant-btn {
+    background: none;
+    border: 1px dashed var(--color-border-secondary);
+    border-radius: 99px;
+    padding: 2px 8px; font-size: 11px;
+    color: var(--color-text-tertiary); cursor: pointer;
+  }
+  .add-participant-btn:hover { color: var(--color-accent); border-color: var(--color-accent); }
 
   /* Messages */
   .messages {

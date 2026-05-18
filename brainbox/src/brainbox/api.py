@@ -100,6 +100,7 @@ from .langfuse_client import (
 )
 from .messages import get_message_log, get_messages, route as route_message
 from .channels import (
+    add_participant as channel_add_participant,
     complete_channel,
     create_channel,
     delete_channel,
@@ -108,6 +109,7 @@ from .channels import (
     list_channels,
     on_event as channel_on_event,
     post_message as channel_post_message,
+    remove_participant as channel_remove_participant,
 )
 from .playbooks import (
     cancel_playbook,
@@ -564,6 +566,21 @@ async def sse_events(
 # ---------------------------------------------------------------------------
 
 
+# Ring buffer of recent seal failures surfaced by /api/credentials/authority/status.
+# Bounded so it can't grow unbounded; large enough to cover a busy day.
+_recent_seal_failures: _collections.deque[dict[str, Any]] = _collections.deque(maxlen=50)
+
+
+def _record_seal_failure(error: str, *, status: int) -> None:
+    _recent_seal_failures.append(
+        {
+            "when": int(time.time() * 1000),
+            "status": status,
+            "error": error[:300],
+        }
+    )
+
+
 @app.get("/api/credentials/pending")
 async def credentials_pending(
     as_: str | None = Query(None, alias="as"),
@@ -596,10 +613,19 @@ async def credentials_pending(
 
 @app.post("/api/credentials/{request_id}/sealed")
 async def credentials_sealed(
-    request_id: str, request: Request, _key=Depends(require_api_key)
+    request_id: str,
+    request: Request,
+    as_: str | None = Query(None, alias="as"),
+    _key=Depends(require_api_key),
 ):
-    """Daemon uploads sealed ciphertext. Resolves the awaiting producer."""
+    """Daemon uploads sealed ciphertext. Resolves the awaiting producer.
+
+    When ?as=<runner_name> is passed and that runner is registered, we record
+    last_seal_at on it so the Authority Health UI can show "last successful
+    seal: 3s ago" instead of just "registered".
+    """
     from .credentials.queue import get_queue
+    from .runners import get_registry
 
     body = await request.body()
     if not body:
@@ -607,6 +633,8 @@ async def credentials_sealed(
     queue = get_queue()
     if not await queue.fulfill(request_id, body):
         raise HTTPException(status_code=404, detail="request not found or already fulfilled")
+    if as_:
+        await get_registry().mark_seal(as_)
     return {"ok": True, "bytes": len(body)}
 
 
@@ -645,10 +673,9 @@ async def credentials_seal_request(
         live = [r for r in authorities if now_ms - r.last_seen < 90_000]
         if not live:
             names = ", ".join(r.name for r in authorities)
-            raise HTTPException(
-                status_code=503,
-                detail=f"all secret authorities offline (registered but stale: {names})",
-            )
+            msg = f"all secret authorities offline (registered but stale: {names})"
+            _record_seal_failure(msg, status=503)
+            raise HTTPException(status_code=503, detail=msg)
 
     queue = get_queue()
     req = await queue.enqueue(
@@ -660,8 +687,148 @@ async def credentials_seal_request(
         sealed = await asyncio.wait_for(req.fut, timeout=float(body.get("timeout", 60)))
     except asyncio.TimeoutError as exc:
         await queue.cancel(req.id, "seal-request timed out")
-        raise HTTPException(status_code=504, detail="no secret authority responded in time") from exc
+        msg = "no secret authority responded in time"
+        _record_seal_failure(msg, status=504)
+        raise HTTPException(status_code=504, detail=msg) from exc
     return Response(content=sealed, media_type="application/octet-stream")
+
+
+@app.get("/api/credentials/authority/status")
+async def credentials_authority_status(_key=Depends(require_api_key)):
+    """Health snapshot for the Wails command center.
+
+    Returns every runner that advertises secret_authority, whether it's
+    online (last_seen < 90s), and when it last successfully sealed a
+    bundle — plus the ring buffer of recent seal failures.
+    """
+    from .runners import get_registry
+
+    now_ms = int(time.time() * 1000)
+    reg = get_registry()
+    all_runners = await reg.list_runners()
+    authorities = []
+    for r in all_runners:
+        if not r.capabilities.get("secret_authority"):
+            continue
+        online = (now_ms - r.last_seen) < 90_000
+        authorities.append(
+            {
+                "name": r.name,
+                "version": r.version,
+                "tags": r.tags,
+                "online": online,
+                "last_seen": r.last_seen,
+                "last_seen_age_ms": now_ms - r.last_seen,
+                "last_seal_at": r.last_seal_at,
+                "last_seal_age_ms": (
+                    None if r.last_seal_at is None else now_ms - r.last_seal_at
+                ),
+            }
+        )
+    return {
+        "authorities": authorities,
+        "any_online": any(a["online"] for a in authorities),
+        "recent_failures": list(_recent_seal_failures),
+    }
+
+
+@app.post("/api/sessions/preview")
+async def sessions_preview(request: Request, _key=Depends(require_api_key)):
+    """Dispatch preview: where will a session with these parameters land?
+
+    Body fields (all optional):
+        backend: "docker" (default) or "utm"
+        runner: explicit runner name. "" or null means in-process.
+        tags: list[str] — preferred runner tags
+
+    Returns:
+        selected_runner: name of the runner that will execute, or null
+        in_process: True if no runner was chosen and the API will run locally
+        reason: human-readable explanation
+        candidates: list of registered runners matching the backend capability
+    """
+    from .runners import get_registry
+
+    body = await request.json() if (await request.body()) else {}
+    backend = (body.get("backend") or "docker").lower()
+    requested = body.get("runner") or None
+    preferred_tags = [t for t in (body.get("tags") or []) if isinstance(t, str)]
+
+    reg = get_registry()
+    all_runners = await reg.list_runners()
+    now_ms = int(time.time() * 1000)
+
+    def runner_to_dict(r, score: int | None = None) -> dict[str, Any]:
+        online = (now_ms - r.last_seen) < 90_000
+        return {
+            "name": r.name,
+            "version": r.version,
+            "tags": r.tags,
+            "online": online,
+            "supports_backend": bool(r.capabilities.get(backend)),
+            "tag_score": score,
+        }
+
+    eligible = [r for r in all_runners if r.capabilities.get(backend)]
+
+    def score(r) -> int:
+        if not preferred_tags:
+            return 0
+        return sum(1 for t in preferred_tags if t in r.tags)
+
+    candidates = sorted(
+        (runner_to_dict(r, score=score(r)) for r in eligible),
+        key=lambda d: (-1 if d["online"] else 0, -(d["tag_score"] or 0), d["name"]),
+    )
+
+    if requested and requested != "local":
+        match = next((r for r in all_runners if r.name == requested), None)
+        if match is None:
+            return {
+                "selected_runner": None,
+                "in_process": False,
+                "reason": f"runner {requested!r} is not registered",
+                "candidates": candidates,
+                "error": "not_registered",
+            }
+        if not match.capabilities.get(backend):
+            return {
+                "selected_runner": None,
+                "in_process": False,
+                "reason": f"runner {requested!r} does not advertise capability {backend!r}",
+                "candidates": candidates,
+                "error": "missing_capability",
+            }
+        online = (now_ms - match.last_seen) < 90_000
+        if not online:
+            return {
+                "selected_runner": requested,
+                "in_process": False,
+                "reason": f"runner {requested!r} matches but is stale (last_seen {(now_ms - match.last_seen) // 1000}s ago)",
+                "candidates": candidates,
+                "error": "stale",
+            }
+        return {
+            "selected_runner": requested,
+            "in_process": False,
+            "reason": f"explicit runner {requested!r} ({backend} capable, online)",
+            "candidates": candidates,
+        }
+
+    # No explicit runner requested — the API will execute in-process.
+    if not candidates:
+        return {
+            "selected_runner": None,
+            "in_process": True,
+            "reason": f"no runner requested; no registered runner advertises {backend!r} either",
+            "candidates": [],
+        }
+    return {
+        "selected_runner": None,
+        "in_process": True,
+        "reason": f"no runner requested; falls back to in-process {backend} backend. {len(candidates)} eligible runner(s) available if you want remote dispatch",
+        "candidates": candidates,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2127,6 +2294,163 @@ async def hub_remove_repo(name: str, _key=Depends(require_api_key)):
 # ---------------------------------------------------------------------------
 
 
+async def _bootstrap_session_in_channel(
+    participant: ChannelParticipant,
+    channel: Any,
+    *,
+    note: str = "",
+) -> None:
+    """Drop a CHANNEL.md into the session's container and nudge Claude (via
+    tmux) to start participating. Called both when a channel is first created
+    AND when a session is added to an already-live channel — without this
+    bootstrap, the session has no idea it's been included and won't respond.
+
+    `note` is appended to the tmux prompt so e.g. late joins can say
+    "you've been added to an in-progress conversation, catch up first."
+    Errors are logged but don't bubble — bootstrap failure shouldn't block
+    the channel mutation that triggered it.
+    """
+    if participant.type != "session" or not participant.session_name:
+        return
+
+    api_port = settings.api_port
+    api_key_val = get_api_key()
+    bootstrap = (
+        f"# Group Channel: {channel.name}\n\n"
+        f"You are **{participant.name}** in a group discussion.\n\n"
+        f"**Channel ID:** `{channel.id}`\n"
+        f"**API URL:** `http://host.docker.internal:{api_port}`\n"
+        f"**Your API key:** `{api_key_val}`\n\n"
+        "## How to participate\n\n"
+        "Use these MCP tools (already available in your session):\n"
+        f'- `channel_read(channel_id="{channel.id}", since_id=<last_id>)` — get new messages\n'
+        f'- `channel_send(channel_id="{channel.id}", content=<msg>, summary=<brief>)` — post a message\n'
+        f'- `channel_complete(channel_id="{channel.id}", reason=<why>)` — signal discussion is done\n\n'
+        "## Rules\n"
+        "1. Poll `channel_read` every few seconds to check for new messages\n"
+        "2. Respond to broadcast messages and messages addressed to @" + participant.name + "\n"
+        "3. When sending, always include `summary=` with a 1-2 sentence brief of your key point\n"
+        "4. Use `addressed_to=` to direct a response at a specific participant\n"
+        "5. Call `channel_complete` when you believe the discussion has concluded\n"
+    )
+    if participant.system_prompt:
+        bootstrap += f"6. Your role: {participant.system_prompt}\n"
+
+    try:
+        client = _docker()
+        container_name = _find_container_name(client, participant.session_name)
+        container = client.containers.get(container_name)
+        loop = asyncio.get_running_loop()
+        import io
+        import tarfile
+
+        # Pre-flight: confirm tmux session 'main' is actually live in the
+        # container. If we skip this check and the session isn't there,
+        # `tmux send-keys` exits non-zero but `exec_run` reports it as
+        # a normal completion — leading to a false-positive bootstrap_sent
+        # log while the agent never actually receives anything.
+        check_res = await loop.run_in_executor(
+            None,
+            lambda c=container: c.exec_run(
+                ["tmux", "has-session", "-t", "main"],
+                user="developer",
+            ),
+        )
+        if check_res.exit_code != 0:
+            log.warning(
+                "channel.bootstrap_exec_failed",
+                metadata={
+                    "session": participant.session_name,
+                    "channel_id": channel.id,
+                    "reason": (
+                        "no tmux session 'main' in container — the agent "
+                        "isn't running yet. Open the session's terminal "
+                        "once to spawn it, or wait for the container to "
+                        "finish booting, then retry."
+                    ),
+                    "tmux_has_session_exit": check_res.exit_code,
+                },
+            )
+            return
+
+        content_bytes = bootstrap.encode("utf-8")
+        tarstream = io.BytesIO()
+        with tarfile.open(fileobj=tarstream, mode="w") as tar:
+            info = tarfile.TarInfo(name="CHANNEL.md")
+            info.size = len(content_bytes)
+            tar.addfile(info, io.BytesIO(content_bytes))
+        tarstream.seek(0)
+        await loop.run_in_executor(
+            None,
+            lambda c=container, ts=tarstream: c.put_archive("/home/developer", ts),
+        )
+
+        tmux_prompt = (
+            f"Read /home/developer/CHANNEL.md carefully. "
+            f"You are now a participant in group channel '{channel.name}' (ID: {channel.id}). "
+            f"Begin participating autonomously: use channel_read to poll for messages, "
+            f"respond using channel_send (always include a summary=), and call channel_complete "
+            f"when the discussion has concluded. "
+            f"{note}"
+            f"Start now by reading the channel and introducing yourself."
+        )
+        # Type the prompt as literal text, then press Enter as a separate
+        # tmux call with a brief pause between. Claude Code v2.x's TUI
+        # treats a single send-keys batch like a bracketed paste and
+        # consumes the trailing Enter as part of the paste rather than as
+        # a submit keystroke. Splitting the send into two operations gives
+        # the TUI a chance to leave paste mode before the Enter arrives.
+        type_res = await loop.run_in_executor(
+            None,
+            lambda c=container, prompt=tmux_prompt: c.exec_run(
+                ["tmux", "send-keys", "-t", "main", "-l", prompt],
+                user="developer",
+            ),
+        )
+        if type_res.exit_code != 0:
+            stderr = (type_res.output or b"").decode("utf-8", errors="replace").strip()
+            log.warning(
+                "channel.bootstrap_exec_failed",
+                metadata={
+                    "session": participant.session_name,
+                    "channel_id": channel.id,
+                    "reason": f"tmux send-keys (text) failed (exit {type_res.exit_code}): {stderr or 'unknown'}",
+                },
+            )
+            return
+
+        await asyncio.sleep(0.3)
+
+        send_res = await loop.run_in_executor(
+            None,
+            lambda c=container: c.exec_run(
+                ["tmux", "send-keys", "-t", "main", "Enter"],
+                user="developer",
+            ),
+        )
+        if send_res.exit_code != 0:
+            stderr = (send_res.output or b"").decode("utf-8", errors="replace").strip()
+            log.warning(
+                "channel.bootstrap_exec_failed",
+                metadata={
+                    "session": participant.session_name,
+                    "channel_id": channel.id,
+                    "reason": f"tmux send-keys (Enter) failed (exit {send_res.exit_code}): {stderr or 'unknown'}",
+                },
+            )
+            return
+
+        log.info(
+            "channel.bootstrap_sent",
+            metadata={"session": participant.session_name, "channel_id": channel.id},
+        )
+    except Exception as exc:
+        log.warning(
+            "channel.bootstrap_exec_failed",
+            metadata={"session": participant.session_name, "reason": str(exc)},
+        )
+
+
 @app.post("/api/hub/channels")
 async def hub_create_channel(body: CreateChannelRequest, request: Request, _key=Depends(require_api_key)):
     """Create a group chat channel and bootstrap session participants."""
@@ -2142,76 +2466,8 @@ async def hub_create_channel(body: CreateChannelRequest, request: Request, _key=
     ]
     channel = create_channel(body.name, participants)
 
-    # Bootstrap session participants with channel instructions
-    api_port = settings.api_port
-    api_key_val = get_api_key()
     for p in participants:
-        if p.type != "session" or not p.session_name:
-            continue
-        bootstrap = (
-            f"# Group Channel: {channel.name}\n\n"
-            f"You are **{p.name}** in a group discussion.\n\n"
-            f"**Channel ID:** `{channel.id}`\n"
-            f"**API URL:** `http://host.docker.internal:{api_port}`\n"
-            f"**Your API key:** `{api_key_val}`\n\n"
-            "## How to participate\n\n"
-            "Use these MCP tools (already available in your session):\n"
-            f'- `channel_read(channel_id="{channel.id}", since_id=<last_id>)` — get new messages\n'
-            f'- `channel_send(channel_id="{channel.id}", content=<msg>, summary=<brief>)` — post a message\n'
-            f'- `channel_complete(channel_id="{channel.id}", reason=<why>)` — signal discussion is done\n\n'
-            "## Rules\n"
-            "1. Poll `channel_read` every few seconds to check for new messages\n"
-            "2. Respond to broadcast messages and messages addressed to @" + p.name + "\n"
-            "3. When sending, always include `summary=` with a 1-2 sentence brief of your key point\n"
-            "4. Use `addressed_to=` to direct a response at a specific participant\n"
-            "5. Call `channel_complete` when you believe the discussion has concluded\n"
-        )
-        if p.system_prompt:
-            bootstrap += f"6. Your role: {p.system_prompt}\n"
-
-        try:
-            client = _docker()
-            container_name = _find_container_name(client, p.session_name)
-            container = client.containers.get(container_name)
-            loop = asyncio.get_running_loop()
-            # Write CHANNEL.md into container using binary copy (no shell, no injection risk)
-            import io
-            import tarfile
-
-            content_bytes = bootstrap.encode("utf-8")
-            tarstream = io.BytesIO()
-            with tarfile.open(fileobj=tarstream, mode="w") as tar:
-                info = tarfile.TarInfo(name="CHANNEL.md")
-                info.size = len(content_bytes)
-                tar.addfile(info, io.BytesIO(content_bytes))
-            tarstream.seek(0)
-            await loop.run_in_executor(
-                None,
-                lambda c=container, ts=tarstream: c.put_archive("/home/developer", ts),
-            )
-            # Send bootstrap prompt to Claude via tmux so the agent starts participating
-            tmux_prompt = (
-                f"Read /home/developer/CHANNEL.md carefully. "
-                f"You are now a participant in group channel '{channel.name}' (ID: {channel.id}). "
-                f"Begin participating autonomously: use channel_read to poll for messages, "
-                f"respond using channel_send (always include a summary=), and call channel_complete "
-                f"when the discussion has concluded. Start now by reading the channel and introducing yourself."
-            )
-            await loop.run_in_executor(
-                None,
-                lambda c=container, prompt=tmux_prompt: c.exec_run(
-                    ["tmux", "send-keys", "-t", "main", prompt, "Enter"]
-                ),
-            )
-            log.info(
-                "channel.bootstrap_sent",
-                metadata={"session": p.session_name, "channel_id": channel.id},
-            )
-        except Exception as exc:
-            log.warning(
-                "channel.bootstrap_exec_failed",
-                metadata={"session": p.session_name, "reason": str(exc)},
-            )
+        await _bootstrap_session_in_channel(p, channel)
 
     return channel.model_dump()
 
@@ -2235,6 +2491,55 @@ async def hub_delete_channel(channel_id: str, _key=Depends(require_api_key)):
         delete_channel(channel_id)
         _broadcast_sse(json.dumps({"action": "channel.deleted", "channel_id": channel_id}))
         return {"ok": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/hub/channels/{channel_id}/participants")
+async def hub_add_channel_participant(
+    channel_id: str,
+    body: ChannelParticipant,
+    _key=Depends(require_api_key),
+):
+    """Add a session as a participant in an already-created channel.
+
+    Returns the updated channel. 404 if the channel doesn't exist; 400 if
+    the participant is already in the channel or the channel is completed.
+    """
+    try:
+        channel = channel_add_participant(channel_id, body)
+        _broadcast_sse(json.dumps({"action": "channel.participant_added", "channel_id": channel_id}))
+        # Critical: bootstrap the session so it actually starts participating.
+        # Without this, the participant row exists but the container never
+        # learns about the channel and never polls / responds.
+        await _bootstrap_session_in_channel(
+            body,
+            channel,
+            note=(
+                "Note: you've been added to an in-progress conversation. "
+                "Use channel_read to catch up on prior messages before responding. "
+            ),
+        )
+        return channel.model_dump()
+    except ValueError as exc:
+        msg = str(exc)
+        status = 404 if "not found" in msg else 400
+        raise HTTPException(status_code=status, detail=msg)
+
+
+@app.delete("/api/hub/channels/{channel_id}/participants/{name}")
+async def hub_remove_channel_participant(
+    channel_id: str,
+    name: str,
+    _key=Depends(require_api_key),
+):
+    """Remove a participant from a channel by name. The participant stops
+    receiving messages but historical messages they posted stay in the log.
+    """
+    try:
+        channel = channel_remove_participant(channel_id, name)
+        _broadcast_sse(json.dumps({"action": "channel.participant_removed", "channel_id": channel_id, "name": name}))
+        return channel.model_dump()
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
