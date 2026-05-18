@@ -2076,8 +2076,13 @@ async def hub_submit_task(body: TaskCreate, _key=Depends(require_api_key)):
 
 
 @app.get("/api/hub/tasks")
-async def hub_list_tasks(status: str | None = None, limit: int = 50, _key=Depends(require_api_key)):
-    tasks = list_tasks(status=status, limit=limit)
+async def hub_list_tasks(
+    status: str | None = None,
+    limit: int = 50,
+    job_id: str | None = None,
+    _key=Depends(require_api_key),
+):
+    tasks = list_tasks(status=status, limit=limit, job_id=job_id)
     return [t.model_dump() for t in tasks]
 
 

@@ -61,6 +61,13 @@ func (a *App) CancelHubTask(taskID string) error {
 	return a.client.CancelTask(taskID)
 }
 
+// GetTaskLineage returns all tasks belonging to a job tree (same job_id).
+// Pass the root supervisor's task ID as jobID. The Timeline panel uses this
+// to build the full tree for a selected job.
+func (a *App) GetTaskLineage(jobID string) ([]brainbox.Task, error) {
+	return a.client.ListTasksByJob(jobID)
+}
+
 // ListAgentRoles returns brainbox's multi-agent role catalog (developer,
 // supervisor, worker, reviewer, …). Renamed from ListAgents to avoid
 // shadowing the new App.ListAgents which lists detected CLI tools.

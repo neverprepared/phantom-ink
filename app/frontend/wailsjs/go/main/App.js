@@ -250,6 +250,10 @@ export function GetTask(arg1) {
   return window['go']['main']['App']['GetTask'](arg1);
 }
 
+export function GetTaskLineage(arg1) {
+  return window['go']['main']['App']['GetTaskLineage'](arg1);
+}
+
 export function GetTaskStats(arg1) {
   return window['go']['main']['App']['GetTaskStats'](arg1);
 }

@@ -148,7 +148,9 @@ class Task(BaseModel):
     error: str | None = None
     repo_url: str | None = None  # Associated repository
     workspace_profile: str | None = None  # Profile that submitted this task
-    job_id: str | None = None  # Parent supervisor task ID (own id if this is the root)
+    job_id: str | None = None       # Parent supervisor task ID (own id if this is the root)
+    spawned_by: str | None = None   # Task ID that directly spawned this task (None for roots)
+    child_task_ids: list[str] = Field(default_factory=list)  # Tasks spawned by this one
 
 
 # ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@
   import SettingsPanel from '../panels/SettingsPanel.svelte';
   import RunnersPanel from '../panels/RunnersPanel.svelte';
   import DashboardPanel from '../panels/DashboardPanel.svelte';
+  import TimelinePanel from '../panels/TimelinePanel.svelte';
 </script>
 
 <div class="shell">
@@ -26,7 +27,9 @@
   <div class="body">
     <Sidebar />
     <main class="content">
-      {#if currentPanel.value === 'sessions'}
+      {#if currentPanel.value === 'timeline'}
+        <TimelinePanel />
+      {:else if currentPanel.value === 'sessions'}
         <SessionsPanel />
       {:else if currentPanel.value === 'agent-roles'}
         <AgentRolesPanel />
