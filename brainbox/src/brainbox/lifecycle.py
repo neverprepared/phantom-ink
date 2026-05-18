@@ -1071,6 +1071,9 @@ async def configure(ctx_or_name: SessionContext | str) -> SessionContext:
         resolved["BRAINBOX_TASK_ID"] = ctx.task_id
     if ctx.job_id:
         resolved["BRAINBOX_JOB_ID"] = ctx.job_id
+    # Inject token ID so the agent can authenticate API calls with its own identity
+    if ctx.token:
+        resolved["BRAINBOX_TOKEN_ID"] = ctx.token.token_id
 
     # Inject repo URL if associated
     if ctx.repo_url:

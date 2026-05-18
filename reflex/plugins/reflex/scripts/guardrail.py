@@ -668,6 +668,15 @@ def list_patterns():
 # Main
 # =============================================================================
 
+def _get_agent_identity() -> dict:
+    """Read brainbox session identity from environment."""
+    return {
+        "task_id": os.environ.get("BRAINBOX_TASK_ID", ""),
+        "token_id": os.environ.get("BRAINBOX_TOKEN_ID", ""),
+        "job_id": os.environ.get("BRAINBOX_JOB_ID", ""),
+    }
+
+
 def main():
     """Main entry point."""
     # Handle --list-patterns flag (no stdin needed, bypasses pattern matching)
@@ -693,6 +702,17 @@ def main():
 
         # Determine decision
         decision, match = determine_decision(matches)
+
+        # Log identity alongside every non-allow decision for audit trail
+        identity = _get_agent_identity()
+        if decision != Decision.ALLOW and (identity["task_id"] or identity["token_id"]):
+            audit = {
+                "guardrail": decision.value,
+                "tool": tool_name,
+                "pattern": match.pattern.name if match else None,
+                **identity,
+            }
+            print(json.dumps(audit), file=sys.stderr)
 
         # Output and exit
         # Claude Code expects: exit 0 + JSON on stdout for all decisions.

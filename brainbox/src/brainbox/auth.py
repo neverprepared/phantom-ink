@@ -5,11 +5,13 @@ from __future__ import annotations
 import os
 import secrets
 from pathlib import Path
+from typing import Callable
 
 from fastapi import HTTPException, Request
 
 from .config import settings
 from .log import get_logger
+from .models import Token
 
 log = get_logger()
 
@@ -75,3 +77,46 @@ def require_api_key(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Missing or invalid API key")
     if not secrets.compare_digest(provided, _api_key):
         raise HTTPException(status_code=401, detail="Missing or invalid API key")
+
+
+def get_bearer_token(request: Request) -> Token | None:
+    """Extract and validate a Bearer token from the Authorization header."""
+    from .registry import validate_token
+
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    token_id = auth[7:].strip()
+    return validate_token(token_id)
+
+
+def _is_api_key_valid(request: Request) -> bool:
+    """Return True if a valid X-API-Key header is present."""
+    provided = request.headers.get("x-api-key", "")
+    return bool(provided and _api_key and secrets.compare_digest(provided, _api_key))
+
+
+def require_capability(capability: str) -> Callable:
+    """Dependency factory: accepts API key (full trust) OR session token with the named capability.
+
+    Returns the session Token if authenticated via bearer token, or None if authenticated
+    via API key. Raises 401/403 otherwise.
+    """
+    def _dep(request: Request) -> Token | None:
+        # API key → full trust, no capability check needed
+        if _is_api_key_valid(request):
+            return None
+        # Bearer token path
+        token = get_bearer_token(request)
+        if not token:
+            raise HTTPException(
+                status_code=401,
+                detail="Missing or invalid API key or Bearer token",
+            )
+        if capability not in token.capabilities:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Token lacks required capability: {capability!r}",
+            )
+        return token
+    return _dep
