@@ -574,6 +574,8 @@ export namespace brainbox {
 	    session_name: string;
 	    workspace_profile: string;
 	    job_id: string;
+	    spawned_by: string;
+	    child_task_ids: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Task(source);
@@ -593,6 +595,8 @@ export namespace brainbox {
 	        this.session_name = source["session_name"];
 	        this.workspace_profile = source["workspace_profile"];
 	        this.job_id = source["job_id"];
+	        this.spawned_by = source["spawned_by"];
+	        this.child_task_ids = source["child_task_ids"];
 	    }
 	}
 	export class HubState {

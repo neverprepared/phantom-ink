@@ -74,6 +74,8 @@ async def submit_task(
     now = _now_ms()
     # Supervisors own their job; workers inherit the supervisor's task_id as job_id
     resolved_job_id = job_id or task_id
+    # spawned_by is set when a parent task explicitly spawned this one
+    spawned_by = job_id if (job_id and job_id != task_id) else None
     task = Task(
         id=task_id,
         description=description,
@@ -84,7 +86,13 @@ async def submit_task(
         repo_url=repo_url,
         workspace_profile=workspace_profile,
         job_id=resolved_job_id,
+        spawned_by=spawned_by,
     )
+    # Register this task as a child of its parent so the lineage is bidirectional
+    if spawned_by and spawned_by in _tasks:
+        parent = _tasks[spawned_by]
+        if task_id not in parent.child_task_ids:
+            parent.child_task_ids.append(task_id)
 
     # Policy check
     check = evaluate_task_assignment(agent_def, task)
@@ -196,6 +204,7 @@ def list_tasks(
     *,
     status: str | None = None,
     agent_name: str | None = None,
+    job_id: str | None = None,
     limit: int | None = 50,
 ) -> list[Task]:
     result = list(_tasks.values())
@@ -207,6 +216,8 @@ def list_tasks(
         result = [t for t in result if t.status == status_enum]
     if agent_name:
         result = [t for t in result if t.agent_name == agent_name]
+    if job_id:
+        result = [t for t in result if t.job_id == job_id]
     result.sort(key=lambda t: t.created_at, reverse=True)
     if limit is not None:
         result = result[:limit]

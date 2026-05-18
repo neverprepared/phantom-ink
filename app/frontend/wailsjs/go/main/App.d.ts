@@ -127,6 +127,8 @@ export function GetSystemInfo():Promise<main.SystemInfo>;
 
 export function GetTask(arg1:string):Promise<main.TaskRow>;
 
+export function GetTaskLineage(arg1:string):Promise<Array<brainbox.Task>>;
+
 export function GetTaskStats(arg1:number):Promise<main.TaskStats>;
 
 export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;

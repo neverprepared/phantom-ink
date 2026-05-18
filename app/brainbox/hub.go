@@ -16,6 +16,8 @@ type Task struct {
 	SessionName      string      `json:"session_name"`
 	WorkspaceProfile string      `json:"workspace_profile"`
 	JobID            string      `json:"job_id"`
+	SpawnedBy        string      `json:"spawned_by"`       // task ID of the parent that spawned this one
+	ChildTaskIDs     []string    `json:"child_task_ids"`   // task IDs of children spawned by this task
 }
 
 // AgentDefinition represents a registered agent definition.
@@ -147,6 +149,16 @@ func (c *Client) ListTasks(status string) ([]Task, error) {
 	if status != "" {
 		path += "?status=" + status
 	}
+	var tasks []Task
+	if err := c.get(path, &tasks); err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
+// ListTasksByJob returns all tasks with the given job_id (the full job tree).
+func (c *Client) ListTasksByJob(jobID string) ([]Task, error) {
+	path := fmt.Sprintf("/api/hub/tasks?job_id=%s&limit=200", jobID)
 	var tasks []Task
 	if err := c.get(path, &tasks); err != nil {
 		return nil, err
