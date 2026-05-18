@@ -734,6 +734,12 @@ async def _provision_via_runner(*, runner: str, **payload: Any) -> SessionContex
             f"runner {runner!r} does not advertise capability {requested_backend!r}"
         )
 
+    # Backpressure: refuse if runner is at capacity.
+    if info.in_flight >= info.max_concurrent:
+        raise RuntimeError(
+            f"runner {runner!r} is saturated ({info.in_flight}/{info.max_concurrent} in flight) — retry later"
+        )
+
     serializable = {
         k: (v.model_dump() if hasattr(v, "model_dump") else v)
         for k, v in payload.items()

@@ -4,12 +4,15 @@ import "net/url"
 
 // Runner describes a registered remote runner returned by GET /api/runners.
 type Runner struct {
-	Name         string          `json:"name"`
-	Capabilities map[string]bool `json:"capabilities"`
-	Tags         []string        `json:"tags"`
-	Version      string          `json:"version"`
-	RegisteredAt int64           `json:"registered_at"`
-	LastSeen     int64           `json:"last_seen"`
+	Name          string          `json:"name"`
+	Capabilities  map[string]bool `json:"capabilities"`
+	Tags          []string        `json:"tags"`
+	Version       string          `json:"version"`
+	RegisteredAt  int64           `json:"registered_at"`
+	LastSeen      int64           `json:"last_seen"`
+	QueueDepth    int             `json:"queue_depth"`
+	InFlight      int             `json:"in_flight"`
+	MaxConcurrent int             `json:"max_concurrent"`
 }
 
 // PairingTicket is the response from POST /api/runners/pair/start.

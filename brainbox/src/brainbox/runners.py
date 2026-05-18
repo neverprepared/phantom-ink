@@ -30,6 +30,10 @@ class RunnerInfo:
     # Last successful credential seal (epoch ms). None if this runner has
     # never sealed — either it's not the secret_authority, or it's brand new.
     last_seal_at: int | None = None
+    # Load metrics — reported by the runner on register / heartbeat.
+    queue_depth: int = 0     # items queued but not yet picked up
+    in_flight: int = 0       # sessions currently provisioning on this runner
+    max_concurrent: int = 4  # runner's self-reported concurrency limit
 
 
 @dataclass
@@ -62,6 +66,8 @@ class RunnerRegistry:
         capabilities: dict[str, bool],
         tags: list[str] | None = None,
         version: str = "",
+        in_flight: int = 0,
+        max_concurrent: int = 4,
     ) -> RunnerInfo:
         now = int(time.time() * 1000)
         info = RunnerInfo(
@@ -71,6 +77,8 @@ class RunnerRegistry:
             version=version,
             registered_at=now,
             last_seen=now,
+            in_flight=max(0, in_flight),
+            max_concurrent=max(1, max_concurrent),
         )
         async with self._lock:
             self._runners[name] = info
@@ -93,6 +101,25 @@ class RunnerRegistry:
                 now = int(time.time() * 1000)
                 r.last_seen = now
                 r.last_seal_at = now
+
+    async def update_load(
+        self,
+        name: str,
+        *,
+        in_flight: int | None = None,
+        max_concurrent: int | None = None,
+    ) -> bool:
+        """Update runner-reported load metrics. Returns False if runner not found."""
+        async with self._lock:
+            r = self._runners.get(name)
+            if r is None:
+                return False
+            r.last_seen = int(time.time() * 1000)
+            if in_flight is not None:
+                r.in_flight = max(0, in_flight)
+            if max_concurrent is not None and max_concurrent > 0:
+                r.max_concurrent = max_concurrent
+            return True
 
     async def list_runners(self) -> list[RunnerInfo]:
         async with self._lock:
@@ -138,6 +165,9 @@ class RunnerRegistry:
             self._pending.setdefault(runner, []).append(item)
             self._by_work_id[item.id] = item
             ev = self._events.setdefault(runner, asyncio.Event())
+            r = self._runners.get(runner)
+            if r is not None:
+                r.queue_depth = len(self._pending[runner])
         ev.set()
         return item
 
@@ -160,6 +190,7 @@ class RunnerRegistry:
             r = self._runners.get(runner)
             if r is not None:
                 r.last_seen = int(time.time() * 1000)
+                r.queue_depth = len(pending)
             return item
 
     async def fulfill(self, work_id: str, result: dict[str, Any]) -> bool:

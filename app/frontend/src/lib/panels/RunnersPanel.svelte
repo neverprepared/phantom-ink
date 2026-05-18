@@ -11,6 +11,9 @@
     version: string;
     registered_at: number;  // epoch ms
     last_seen: number;      // epoch ms
+    queue_depth: number;
+    in_flight: number;
+    max_concurrent: number;
   }
 
   let runners = $state<Runner[]>([]);
@@ -80,6 +83,16 @@
       .filter(([_, v]) => v)
       .map(([k]) => k.replace('secret_authority', 'cred-authority'));
   }
+
+  function headroom(r: Runner): number {
+    const max = r.max_concurrent || 4;
+    return Math.max(0, max - (r.in_flight || 0));
+  }
+
+  function capacityPct(r: Runner): number {
+    const max = r.max_concurrent || 4;
+    return Math.round(((r.in_flight || 0) / max) * 100);
+  }
 </script>
 
 <div class="panel">
@@ -111,6 +124,7 @@
           <th>name</th>
           <th>backends</th>
           <th>tags</th>
+          <th>capacity</th>
           <th>version</th>
           <th>last seen</th>
           <th></th>
@@ -136,6 +150,15 @@
               {/each}
               {#if (r.tags ?? []).length === 0}
                 <span class="muted">—</span>
+              {/if}
+            </td>
+            <td class="capacity-cell">
+              <div class="cap-bar-wrap" title="{r.in_flight || 0}/{r.max_concurrent || 4} in flight, {headroom(r)} free">
+                <div class="cap-bar" style="width: {capacityPct(r)}%" class:saturated={headroom(r) === 0}></div>
+              </div>
+              <span class="cap-label">{r.in_flight || 0}/{r.max_concurrent || 4}</span>
+              {#if (r.queue_depth || 0) > 0}
+                <span class="queue-badge">+{r.queue_depth} queued</span>
               {/if}
             </td>
             <td class="muted">{r.version || '—'}</td>
@@ -287,6 +310,45 @@
     color: var(--color-accent);
     text-transform: lowercase;
   }
+  .capacity-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .cap-bar-wrap {
+    width: 48px;
+    height: 6px;
+    background: var(--color-surface-subtle);
+    border-radius: 3px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .cap-bar {
+    height: 100%;
+    background: var(--color-info);
+    border-radius: 3px;
+    transition: width 300ms ease;
+    min-width: 2px;
+  }
+  .cap-bar.saturated {
+    background: var(--color-error);
+  }
+  .cap-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-text-secondary);
+  }
+  .queue-badge {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-warning, #f59e0b);
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.2);
+    border-radius: var(--radius-sm);
+    padding: 0 5px;
+  }
+
   .muted {
     color: var(--color-text-tertiary);
   }
