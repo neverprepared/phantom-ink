@@ -153,6 +153,53 @@ def add_participant(channel_id: str, participant: ChannelParticipant) -> Channel
     return channel
 
 
+def join_channel(
+    channel_id: str,
+    *,
+    session_name: str,
+    display_name: str | None = None,
+) -> Channel:
+    """Session-initiated self-registration into a live channel.
+
+    Idempotent — returns the channel without error if the session is already
+    a participant. On first join, appends a 'join' system message so other
+    participants can see who arrived.
+    """
+    channel = _channels.get(channel_id)
+    if not channel:
+        raise ValueError(f"Channel '{channel_id}' not found")
+    if channel.status == "completed":
+        raise ValueError(f"Channel '{channel_id}' is already completed")
+
+    name = display_name or session_name
+    # Idempotent: already a member by session_name or display name
+    already = next(
+        (p for p in channel.participants if p.session_name == session_name or p.name == name),
+        None,
+    )
+    if already:
+        return channel
+
+    participant = ChannelParticipant(name=name, type="session", session_name=session_name)
+    channel.participants.append(participant)
+
+    # Announce the join to the channel log
+    join_msg = ChannelMessage(
+        channel_id=channel_id,
+        from_participant=name,
+        content=f"{name} joined the channel.",
+        type="join",
+    )
+    _messages[channel_id].append(join_msg)
+
+    _emit("channel.participant_joined", {"channel_id": channel_id, "participant": participant})
+    log.info(
+        "channel.participant_joined",
+        metadata={"channel_id": channel_id, "name": name, "session": session_name},
+    )
+    return channel
+
+
 def remove_participant(channel_id: str, name: str) -> Channel:
     channel = _channels.get(channel_id)
     if not channel:

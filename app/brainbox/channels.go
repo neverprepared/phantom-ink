@@ -147,3 +147,15 @@ func (c *Client) RemoveChannelParticipant(id, name string) (Channel, error) {
 	}
 	return channel, nil
 }
+
+// JoinChannel registers the calling session as a participant using its bearer
+// token identity. Idempotent — safe to call if already a member.
+// This is a session-initiated join (as opposed to AddChannelParticipant which
+// is app-initiated). Only used by agents running inside containers.
+func (c *Client) JoinChannel(id string) (Channel, error) {
+	var channel Channel
+	if err := c.post(fmt.Sprintf("/api/hub/channels/%s/join", id), nil, &channel); err != nil {
+		return channel, err
+	}
+	return channel, nil
+}

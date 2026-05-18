@@ -2590,6 +2590,41 @@ async def hub_add_channel_participant(
         raise HTTPException(status_code=status, detail=msg)
 
 
+@app.post("/api/hub/channels/{channel_id}/join")
+async def hub_join_channel(
+    channel_id: str,
+    token: Token = Depends(require_token),
+):
+    """Session self-join: register as a channel participant using bearer token identity.
+
+    Idempotent — safe to call if already a member. The session identity is
+    derived from the bearer token; no body is needed. Requires the
+    'hub_messaging' capability.
+    """
+    from .channels import join_channel
+    from .router import get_task as _get_task
+
+    if "hub_messaging" not in token.capabilities:
+        raise HTTPException(
+            status_code=403,
+            detail="Token lacks required capability: 'hub_messaging'",
+        )
+
+    task = _get_task(token.task_id) if token.task_id else None
+    session_name = (task.session_name if task else None) or token.agent_name
+
+    try:
+        channel = join_channel(channel_id, session_name=session_name)
+        _broadcast_sse(
+            json.dumps({"action": "channel.participant_joined", "channel_id": channel_id, "session": session_name})
+        )
+        return channel.model_dump()
+    except ValueError as exc:
+        msg = str(exc)
+        status = 404 if "not found" in msg else 400
+        raise HTTPException(status_code=status, detail=msg)
+
+
 @app.delete("/api/hub/channels/{channel_id}/participants/{name}")
 async def hub_remove_channel_participant(
     channel_id: str,
