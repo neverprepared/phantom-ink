@@ -201,12 +201,12 @@
       </span>
     </button>
 
-    <button class="stat-card" onclick={() => navigate('events')}>
+    <button class="stat-card" onclick={() => navigate('timeline')}>
       <span class="stat-label">» RUNNING TASKS</span>
       <span class="stat-value blue">{runningHubTasks.length + (taskStats?.running ?? 0)}</span>
     </button>
 
-    <button class="stat-card" onclick={() => navigate('events')}>
+    <button class="stat-card" onclick={() => navigate('timeline')}>
       <span class="stat-label">» FAILED (24h)</span>
       <span class="stat-value" class:red={failedCount() > 0} class:muted={failedCount() === 0}>
         {failedCount()}
