@@ -4,6 +4,7 @@
   import { brainboxEvents } from '../events.svelte';
   import { authorityState } from '../authority.svelte';
   import { currentPanel, profileState } from '../stores.svelte';
+  import { notifications } from '../notifications.svelte';
 
   interface ActionItem {
     kind: string;
@@ -149,6 +150,36 @@
   function navigate(panel: string) {
     currentPanel.value = panel;
   }
+
+  // --- Dispatch task form ---
+  const AGENTS = ['supervisor','worker','reviewer','linter','qa','python','golang','typescript','assistant'];
+  let dispatchAgent = $state('supervisor');
+  let dispatchDesc  = $state('');
+  let dispatchRepo  = $state('');
+  let dispatching   = $state(false);
+
+  async function handleDispatch() {
+    if (!dispatchDesc.trim()) return;
+    dispatching = true;
+    try {
+      const a = await getApi();
+      if (!a) return;
+      await a.SubmitTask({
+        description: dispatchDesc.trim(),
+        agent_name: dispatchAgent,
+        repo_url: dispatchRepo.trim() || undefined,
+        workspace_profile: profileState.active?.name ?? '',
+      });
+      dispatchDesc = '';
+      dispatchRepo = '';
+      notifications.success('Task dispatched');
+      void load(true);
+    } catch (err: any) {
+      notifications.error(`Dispatch failed: ${err?.message ?? err}`);
+    } finally {
+      dispatching = false;
+    }
+  }
 </script>
 
 <div class="dashboard">
@@ -194,6 +225,39 @@
       </span>
     </button>
   </div>
+
+  <!-- Dispatch task -->
+  <section class="section">
+    <div class="section-header">
+      <span>» DISPATCH AGENT</span>
+    </div>
+    <div class="dispatch-form">
+      <div class="dispatch-row">
+        <select bind:value={dispatchAgent} class="dispatch-select">
+          {#each AGENTS as a (a)}
+            <option value={a}>{a}</option>
+          {/each}
+        </select>
+        <input
+          class="dispatch-repo"
+          bind:value={dispatchRepo}
+          placeholder="repo url (optional)"
+        />
+        <button
+          class="dispatch-btn"
+          onclick={handleDispatch}
+          disabled={dispatching || !dispatchDesc.trim()}
+        >{dispatching ? '…' : '[ run ]'}</button>
+      </div>
+      <textarea
+        class="dispatch-desc"
+        bind:value={dispatchDesc}
+        rows="2"
+        placeholder="describe the task…"
+        onkeydown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleDispatch(); }}
+      ></textarea>
+    </div>
+  </section>
 
   <!-- Scheduled chains -->
   {#if fires.length > 0}
@@ -385,6 +449,70 @@
     border-color: rgba(234, 179, 8, 0.2);
     color: var(--color-warning);
   }
+
+  /* --- Dispatch form --- */
+  .dispatch-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+  }
+
+  .dispatch-row {
+    display: flex;
+    gap: var(--spacing-sm);
+    align-items: center;
+  }
+
+  .dispatch-select,
+  .dispatch-repo {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-primary);
+    padding: 5px 9px;
+  }
+  .dispatch-select { flex-shrink: 0; cursor: pointer; }
+  .dispatch-repo { flex: 1; min-width: 0; }
+  .dispatch-repo::placeholder { color: var(--color-text-muted); }
+  .dispatch-select:focus,
+  .dispatch-repo:focus { outline: 1px solid var(--color-accent); border-color: var(--color-accent); }
+
+  .dispatch-desc {
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-primary);
+    padding: 6px 9px;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+  .dispatch-desc::placeholder { color: var(--color-text-muted); }
+  .dispatch-desc:focus { outline: 1px solid var(--color-accent); border-color: var(--color-accent); }
+
+  .dispatch-btn {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--color-accent);
+    background: transparent;
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-sm);
+    padding: 5px 14px;
+    flex-shrink: 0;
+    transition: background 120ms ease;
+  }
+  .dispatch-btn:hover:not(:disabled) { background: rgba(234, 179, 8, 0.08); }
+  .dispatch-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
   /* --- Scheduled chains --- */
   .fire-list {
