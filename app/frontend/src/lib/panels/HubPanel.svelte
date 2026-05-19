@@ -13,6 +13,46 @@
   let tasks = $state<any[]>([]);
   let agents = $state<any[]>([]);
   let tokens = $state<any[]>([]);
+
+  // --- Submit task form ---
+  const AGENT_OPTIONS = [
+    { value: 'supervisor', label: 'supervisor', desc: 'orchestrates agents' },
+    { value: 'worker',     label: 'worker',     desc: 'implements & opens PR' },
+    { value: 'reviewer',   label: 'reviewer',   desc: 'reviews open PRs' },
+    { value: 'linter',     label: 'linter',     desc: 'static analysis' },
+    { value: 'qa',         label: 'qa',         desc: 'writes tests' },
+    { value: 'python',     label: 'python',     desc: 'python expert' },
+    { value: 'golang',     label: 'golang',     desc: 'go expert' },
+    { value: 'typescript', label: 'typescript', desc: 'ts/node expert' },
+    { value: 'assistant',  label: 'assistant',  desc: 'general purpose' },
+  ];
+  let submitAgent = $state('supervisor');
+  let submitDesc = $state('');
+  let submitRepo = $state('');
+  let isSubmitting = $state(false);
+
+  async function handleSubmitTask() {
+    if (!submitDesc.trim()) return;
+    isSubmitting = true;
+    try {
+      const a = await getApi();
+      if (!a) return;
+      await a.SubmitTask({
+        description: submitDesc.trim(),
+        agent_name: submitAgent,
+        repo_url: submitRepo.trim() || undefined,
+        workspace_profile: profileState.active?.name ?? '',
+      });
+      submitDesc = '';
+      submitRepo = '';
+      notifications.success('Task submitted');
+      refresh();
+    } catch (err: any) {
+      notifications.error(`Submit failed: ${err?.message ?? err}`);
+    } finally {
+      isSubmitting = false;
+    }
+  }
   let dockerStats = $state<any[]>([]);
   let localProcesses = $state<any[]>([]);
   let systemInfo = $state<{ cpu_cores: number; mem_total_gib: number }>({ cpu_cores: 0, mem_total_gib: 0 });
@@ -348,8 +388,39 @@
     <!-- Active tasks -->
     <div class="section">
       <h2>tasks</h2>
+
+      <!-- Submit form -->
+      <div class="submit-form">
+        <div class="submit-row">
+          <select bind:value={submitAgent} class="agent-select" aria-label="Agent">
+            {#each AGENT_OPTIONS as opt (opt.value)}
+              <option value={opt.value}>{opt.label} — {opt.desc}</option>
+            {/each}
+          </select>
+          <input
+            class="repo-input"
+            bind:value={submitRepo}
+            placeholder="repo url (optional)"
+            aria-label="Repo URL"
+          />
+          <button
+            class="btn-submit-task"
+            onclick={handleSubmitTask}
+            disabled={isSubmitting || !submitDesc.trim()}
+          >{isSubmitting ? 'submitting…' : 'submit'}</button>
+        </div>
+        <textarea
+          class="desc-input"
+          bind:value={submitDesc}
+          rows="2"
+          placeholder="Describe what the agent should do…"
+          aria-label="Task description"
+          onkeydown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmitTask(); }}
+        ></textarea>
+      </div>
+
       {#if filteredTasks.length === 0}
-        <EmptyState title="No tasks" message="Submit a task to start an agent." />
+        <EmptyState title="No tasks" message="Submit a task above to start an agent." />
       {:else}
         <div class="list">
           {#each filteredTasks as task (task.id)}
@@ -688,6 +759,80 @@
     transition: width 0.5s;
   }
   .res-bar.cpu { background: var(--color-accent); }
+
+  /* === Submit form === */
+  .submit-form {
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-xl);
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: var(--shadow-card);
+  }
+
+  .submit-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .agent-select {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 6px 10px;
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+  .agent-select:focus { outline: 1px solid var(--color-info); border-color: var(--color-info); }
+
+  .repo-input {
+    flex: 1;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+    font-size: 12px;
+    padding: 6px 10px;
+    min-width: 0;
+  }
+  .repo-input::placeholder { color: var(--color-text-tertiary); }
+  .repo-input:focus { outline: 1px solid var(--color-info); border-color: var(--color-info); }
+
+  .desc-input {
+    width: 100%;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+    font-size: 13px;
+    font-family: inherit;
+    padding: 8px 10px;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+  .desc-input::placeholder { color: var(--color-text-tertiary); }
+  .desc-input:focus { outline: 1px solid var(--color-info); border-color: var(--color-info); }
+
+  .btn-submit-task {
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    color: var(--color-info);
+    padding: 6px 16px;
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    font-weight: 500;
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+  .btn-submit-task:hover:not(:disabled) { background: rgba(59, 130, 246, 0.2); border-color: var(--color-info); }
+  .btn-submit-task:disabled { opacity: 0.4; cursor: not-allowed; }
 
   /* === Task list === */
   .list { display: flex; flex-direction: column; gap: 8px; }
