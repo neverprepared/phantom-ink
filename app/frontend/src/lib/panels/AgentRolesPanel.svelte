@@ -8,6 +8,60 @@
   import Modal from '../components/Modal.svelte';
   import ProfilePicker from '../components/ProfilePicker.svelte';
 
+  // --- CLI Tools (PATH-detected coding agents) ---
+  interface CliAgent {
+    id: string;
+    binary: string;
+    label: string;
+    path: string;
+    version: string;
+    enabled: boolean;
+    detected: boolean;
+    detected_at: string;
+  }
+  let cliAgents = $state<CliAgent[]>([]);
+  let cliLoading = $state(true);
+  let cliRescanning = $state(false);
+  let cliExpanded = $state(false);
+
+  async function loadCliAgents() {
+    const a = await getApi();
+    if (!a) { cliLoading = false; return; }
+    try {
+      cliAgents = (await a.ListAgents()) ?? [];
+    } catch {} finally {
+      cliLoading = false;
+    }
+  }
+
+  async function rescanCliAgents() {
+    cliRescanning = true;
+    const a = await getApi();
+    if (!a) { cliRescanning = false; return; }
+    try {
+      cliAgents = (await a.RescanAgents()) ?? [];
+      notifications.success('Agents rescanned');
+    } catch (err: any) {
+      notifications.error(`Rescan failed: ${err?.message ?? err}`);
+    } finally {
+      cliRescanning = false;
+    }
+  }
+
+  async function toggleCliAgent(agent: CliAgent) {
+    if (!agent.detected) return;
+    const next = !agent.enabled;
+    cliAgents = cliAgents.map(a => a.id === agent.id ? { ...a, enabled: next } : a);
+    const a = await getApi();
+    if (!a) return;
+    try {
+      await a.SetAgentEnabled(agent.id, next);
+    } catch (err: any) {
+      cliAgents = cliAgents.map(a => a.id === agent.id ? { ...a, enabled: !next } : a);
+      notifications.error(`Failed to toggle ${agent.label}: ${err?.message ?? err}`);
+    }
+  }
+
   const BUILTIN_AGENTS = new Set(['assistant']);
   const ALL_CAPABILITIES = ['shell_exec', 'read_code', 'write_code', 'hub_messaging'];
 
@@ -316,12 +370,13 @@
   onMount(() => {
     refresh();
     loadOllamaModels();
+    loadCliAgents();
   });
 </script>
 
 <div class="panel">
   <div class="panel-header">
-    <h1 class="panel-title">Agent Roles</h1>
+    <h1 class="panel-title">Agents</h1>
     <button class="btn-primary" onclick={() => openCreate()}>+ new agent</button>
   </div>
 
@@ -430,6 +485,61 @@
       </div>
     {/each}
   {/if}
+
+  <!-- CLI Tools section -->
+  <div class="category-section" style="margin-top: 32px;">
+    <div class="category-header" role="button" tabindex="0"
+      onclick={() => cliExpanded = !cliExpanded}
+      onkeydown={(e) => e.key === 'Enter' || e.key === ' ' ? (cliExpanded = !cliExpanded) : null}
+    >
+      <span class="category-toggle-icon" class:collapsed={!cliExpanded}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+      </span>
+      <span class="category-label">cli tools</span>
+      <span class="category-count">{cliAgents.filter(a => a.detected).length} / {cliAgents.length}</span>
+      <div class="category-actions" role="none" onclick={(e) => e.stopPropagation()}>
+        <button class="btn-add-to-category" onclick={rescanCliAgents} disabled={cliRescanning}>
+          {cliRescanning ? 'scanning…' : 'rescan'}
+        </button>
+      </div>
+    </div>
+    {#if cliExpanded}
+      <p class="cli-hint">Coding-agent CLIs detected on your PATH.</p>
+      {#if cliLoading}
+        <div class="loading">scanning…</div>
+      {:else if cliAgents.length === 0}
+        <div class="loading">No CLI agents found. Click rescan.</div>
+      {:else}
+        <div class="agent-list">
+          {#each cliAgents as agent (agent.id)}
+            <div class="cli-card" class:undetected={!agent.detected} class:cli-enabled={agent.enabled}>
+              <div class="cli-top">
+                <div class="cli-identity">
+                  <span class="cli-dot" class:detected={agent.detected}></span>
+                  <span class="cli-label">{agent.label}</span>
+                  <span class="agent-image">{agent.binary}</span>
+                </div>
+                {#if agent.detected}
+                  <label class="toggle-switch" title={agent.enabled ? 'Disable' : 'Enable'}>
+                    <input type="checkbox" checked={agent.enabled} onchange={() => toggleCliAgent(agent)} />
+                    <span class="toggle-track"></span>
+                  </label>
+                {:else}
+                  <span class="not-installed">not installed</span>
+                {/if}
+              </div>
+              {#if agent.detected}
+                <div class="cli-detail">
+                  <div class="cli-row"><span class="cli-key">path</span><code class="cli-val">{agent.path}</code></div>
+                  {#if agent.version}<div class="cli-row"><span class="cli-key">version</span><span class="cli-val">{agent.version}</span></div>{/if}
+                </div>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
+    {/if}
+  </div>
 </div>
 
 {#if showModal}
@@ -1128,5 +1238,122 @@
     font-size: 11px;
     color: var(--color-text-tertiary);
     font-weight: 400;
+  }
+
+  /* CLI Tools section */
+  .cli-hint {
+    font-size: 12px;
+    color: var(--color-text-tertiary);
+    margin: 0 0 10px;
+  }
+
+  .cli-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-primary);
+    border-left: 3px solid var(--color-border-primary);
+    border-radius: var(--radius-lg);
+    padding: 12px 16px;
+  }
+  .cli-card.cli-enabled { border-left-color: var(--color-success); }
+  .cli-card.undetected { opacity: 0.55; }
+
+  .cli-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .cli-identity {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .cli-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #374151;
+    flex-shrink: 0;
+  }
+  .cli-dot.detected {
+    background: var(--color-success);
+    box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
+  }
+
+  .cli-label {
+    font-weight: 500;
+    font-size: 13px;
+    color: var(--color-text-primary);
+  }
+
+  .not-installed {
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    font-style: italic;
+  }
+
+  .cli-detail {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--color-border-primary);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .cli-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 11px;
+  }
+
+  .cli-key {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-tertiary);
+    min-width: 56px;
+    flex-shrink: 0;
+  }
+
+  .cli-val {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-text-secondary);
+    word-break: break-all;
+  }
+
+  .toggle-switch { position: relative; display: inline-flex; cursor: pointer; }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .toggle-track {
+    width: 32px;
+    height: 18px;
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: 9999px;
+    position: relative;
+    transition: all 0.2s;
+  }
+  .toggle-track::after {
+    content: '';
+    width: 12px;
+    height: 12px;
+    background: var(--color-text-tertiary);
+    border-radius: 50%;
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: all 0.2s;
+  }
+  .toggle-switch input:checked + .toggle-track {
+    background: rgba(16, 185, 129, 0.2);
+    border-color: rgba(16, 185, 129, 0.4);
+  }
+  .toggle-switch input:checked + .toggle-track::after {
+    background: var(--color-success);
+    left: 16px;
   }
 </style>

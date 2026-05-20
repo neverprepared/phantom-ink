@@ -106,7 +106,7 @@
     if (!a) { loading = false; return; }
     try {
       const [repos, hs] = await Promise.all([
-        a.ListRepos(),
+        a.ListRepos(activeProfile?.name ?? ''),
         a.GetHubState(),
       ]);
       allRepos = repos ?? [];

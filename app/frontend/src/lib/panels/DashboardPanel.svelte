@@ -14,12 +14,15 @@
     ref?: string;
   }
 
-  let sessions    = $state<any[]>([]);
-  let hubTasks    = $state<any[]>([]);
-  let fires       = $state<any[]>([]);
-  let taskStats   = $state<any>(null);
-  let loading     = $state(true);
-  let refreshing  = $state(false);
+  let sessions      = $state<any[]>([]);
+  let hubTasks      = $state<any[]>([]);
+  let fires         = $state<any[]>([]);
+  let taskStats     = $state<any>(null);
+  let dockerStats   = $state<any[]>([]);
+  let localProcs    = $state<any[]>([]);
+  let systemInfo    = $state<{ cpu_cores: number; mem_total_gib: number }>({ cpu_cores: 0, mem_total_gib: 0 });
+  let loading       = $state(true);
+  let refreshing    = $state(false);
 
   let activeProfile = $derived(profileState.active);
 
@@ -37,9 +40,39 @@
     );
   });
 
+  let filteredDockerStats = $derived.by(() => {
+    if (!activeProfile) return dockerStats;
+    const sessionNames = new Set(filteredSessions.map((s: any) => s.name));
+    return dockerStats.filter((d: any) => sessionNames.has(d.name));
+  });
+
+  let filteredLocal = $derived.by(() => {
+    if (!activeProfile) return localProcs;
+    return localProcs.filter((p: any) =>
+      (p.workspace_profile ?? '').toLowerCase() === activeProfile!.name.toLowerCase()
+    );
+  });
+
   let activeSessions   = $derived(filteredSessions.filter((s: any) => s.active));
   let runningHubTasks  = $derived(filteredTasks.filter((t: any) => t.status === 'running'));
   let failedHubTasks   = $derived(filteredTasks.filter((t: any) => t.status === 'failed'));
+
+  let containerCPU = $derived(filteredDockerStats.reduce((sum: number, s: any) => sum + parseFloat(s.cpu_perc || '0'), 0));
+  let containerMem = $derived(filteredDockerStats.reduce((sum: number, s: any) => {
+    const m = s.mem_usage || '';
+    const match = m.match(/([\d.]+)\s*(MiB|GiB)/);
+    if (!match) return sum;
+    const val = parseFloat(match[1]);
+    return sum + (match[2] === 'GiB' ? val * 1024 : val);
+  }, 0));
+  let localCPU = $derived(filteredLocal.reduce((sum: number, p: any) => sum + parseFloat(p.cpu_perc || '0'), 0));
+  let localMem = $derived(filteredLocal.reduce((sum: number, p: any) => sum + parseFloat(p.mem_mb || '0'), 0));
+  let totalCPU = $derived(containerCPU + localCPU);
+  let totalMem = $derived(containerMem + localMem);
+  let sysCPUMax = $derived(systemInfo.cpu_cores * 100);
+  let sysCPUPct = $derived(sysCPUMax > 0 ? (totalCPU / sysCPUMax) * 100 : 0);
+  let sysMemTotalMiB = $derived(systemInfo.mem_total_gib * 1024);
+  let sysMemPct = $derived(sysMemTotalMiB > 0 ? (totalMem / sysMemTotalMiB) * 100 : 0);
 
   let actionItems = $derived.by((): ActionItem[] => {
     const items: ActionItem[] = [];
@@ -99,23 +132,42 @@
     if (!a) return;
     if (!silent) loading = true; else refreshing = true;
     try {
-      const [s, tasks, f, ts] = await Promise.all([
+      const [s, tasks, f, ts, ds, procs] = await Promise.all([
         (a.GetSessions() as Promise<any>).catch(() => []),
-        (a.ListHubTasks('') as Promise<any>).catch(() => []),
+        (a.ListHubTasks('', profileState.active?.name ?? '') as Promise<any>).catch(() => []),
         (a.ListUpcomingFires(5) as Promise<any>).catch(() => []),
         (a.GetTaskStats(24) as Promise<any>).catch(() => null),
+        (a.GetDockerStats() as Promise<any>).catch(() => []),
+        (a.FindClaudeProcesses() as Promise<any>).catch(() => []),
       ]);
-      sessions  = s ?? [];
-      hubTasks  = tasks ?? [];
-      fires     = f ?? [];
-      taskStats = ts;
+      sessions    = s ?? [];
+      hubTasks    = tasks ?? [];
+      fires       = f ?? [];
+      taskStats   = ts;
+      dockerStats = ds ?? [];
+      localProcs  = procs ?? [];
     } finally {
       loading    = false;
       refreshing = false;
     }
   }
 
-  onMount(() => { void load(); });
+  onMount(async () => {
+    void load();
+    const a = await getApi();
+    if (a) {
+      try { systemInfo = await a.GetSystemInfo(); } catch {}
+    }
+  });
+
+  // Poll docker stats every 10s independently
+  onMount(() => {
+    const interval = setInterval(async () => {
+      const a = await getApi();
+      if (a) { try { dockerStats = (await a.GetDockerStats()) ?? []; } catch {} }
+    }, 10_000);
+    return () => clearInterval(interval);
+  });
 
   let _lastEvent = $derived(brainboxEvents.last);
   $effect(() => {
@@ -299,6 +351,51 @@
       </div>
       {/each}
     </div>
+  </section>
+  {/if}
+
+  <!-- Resource monitoring -->
+  {#if filteredDockerStats.length > 0 || filteredLocal.length > 0}
+  <section class="section">
+    <div class="section-header">
+      <span>» RESOURCE USAGE</span>
+      <span class="res-summary mono">
+        {totalCPU.toFixed(1)}% cpu
+        {#if systemInfo.cpu_cores > 0}/ {systemInfo.cpu_cores} cores{/if}
+        · {totalMem >= 1024 ? (totalMem / 1024).toFixed(1) + ' GiB' : totalMem.toFixed(0) + ' MiB'} mem
+      </span>
+    </div>
+    {#if systemInfo.cpu_cores > 0}
+      <div class="res-bars">
+        <div class="res-bar-row">
+          <span class="res-bar-label">CPU</span>
+          <div class="res-bar-track"><div class="res-bar-fill cpu" style="width: {Math.min(sysCPUPct, 100)}%"></div></div>
+          <span class="res-bar-pct">{sysCPUPct.toFixed(1)}%</span>
+        </div>
+        {#if systemInfo.mem_total_gib > 0}
+        <div class="res-bar-row">
+          <span class="res-bar-label">MEM</span>
+          <div class="res-bar-track"><div class="res-bar-fill mem" style="width: {Math.min(sysMemPct, 100)}%"></div></div>
+          <span class="res-bar-pct">{sysMemPct.toFixed(1)}%</span>
+        </div>
+        {/if}
+      </div>
+    {/if}
+    {#if filteredDockerStats.length > 0}
+    <div class="res-table">
+      <div class="res-thead">
+        <span>container</span><span>cpu</span><span>memory</span><span>net i/o</span>
+      </div>
+      {#each filteredDockerStats as stat (stat.id)}
+      <div class="res-trow">
+        <span class="res-name">{stat.name}</span>
+        <span class="res-val">{stat.cpu_perc}</span>
+        <span class="res-val">{stat.mem_usage}</span>
+        <span class="res-val">{stat.net_io}</span>
+      </div>
+      {/each}
+    </div>
+    {/if}
   </section>
   {/if}
 
@@ -632,6 +729,94 @@
   }
 
   .mono { font-family: var(--font-mono); }
+
+  /* --- Resource monitoring --- */
+  .res-summary {
+    font-size: 10px;
+    color: var(--color-text-muted);
+    letter-spacing: 0.04em;
+  }
+
+  .res-bars {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    margin-bottom: var(--spacing-md);
+  }
+
+  .res-bar-row {
+    display: grid;
+    grid-template-columns: 36px 1fr 44px;
+    align-items: center;
+    gap: var(--spacing-sm);
+  }
+
+  .res-bar-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    color: var(--color-text-tertiary);
+  }
+
+  .res-bar-track {
+    height: 6px;
+    background: var(--color-bg-tertiary);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .res-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.5s ease;
+    min-width: 2px;
+  }
+  .res-bar-fill.cpu { background: var(--color-accent); }
+  .res-bar-fill.mem { background: var(--color-info); }
+
+  .res-bar-pct {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-text-muted);
+    text-align: right;
+  }
+
+  .res-table {
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  .res-thead, .res-trow {
+    display: grid;
+    grid-template-columns: 1fr 80px 120px 100px;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-xs) var(--spacing-md);
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }
+
+  .res-thead {
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-tertiary);
+    letter-spacing: 0.06em;
+  }
+
+  .res-trow {
+    border-top: 1px solid var(--color-border-primary);
+    color: var(--color-text-secondary);
+  }
+
+  .res-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--color-text-primary);
+  }
+
+  .res-val {
+    color: var(--color-text-secondary);
+  }
 
   /* Responsive: collapse to 2-col on narrow windows */
   @media (max-width: 700px) {

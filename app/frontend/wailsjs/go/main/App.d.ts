@@ -149,9 +149,9 @@ export function ListChainRuns(arg1:string,arg2:number):Promise<Array<main.ChainR
 
 export function ListChains():Promise<Array<main.Chain>>;
 
-export function ListChannels():Promise<Array<brainbox.Channel>>;
+export function ListChannels(arg1:string):Promise<Array<brainbox.Channel>>;
 
-export function ListHubTasks(arg1:string):Promise<Array<brainbox.Task>>;
+export function ListHubTasks(arg1:string,arg2:string):Promise<Array<brainbox.Task>>;
 
 export function ListNFSExports():Promise<Array<main.NFSExport>>;
 
@@ -161,7 +161,7 @@ export function ListPlaybooks(arg1:string):Promise<Array<brainbox.Playbook>>;
 
 export function ListProfileDirs(arg1:string):Promise<Array<string>>;
 
-export function ListRepos():Promise<Array<brainbox.Repo>>;
+export function ListRepos(arg1:string):Promise<Array<brainbox.Repo>>;
 
 export function ListRunners():Promise<Array<brainbox.Runner>>;
 

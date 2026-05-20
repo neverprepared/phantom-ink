@@ -53,13 +53,19 @@ async def submit_task(
     workspace_profile: str | None = None,
     workspace_home: str | None = None,
     job_id: str | None = None,
+    runner: str | None = None,
+    runner_tags: list[str] | None = None,
+    backend: str = "docker",
+    priority: int = 0,
+    max_attempts: int = 1,
+    deadline_ms: int | None = None,
 ) -> Task:
-    """Create and launch a task for the given agent.
+    """Enqueue a task for the given agent.
 
-    When *repo_url* is provided the task is associated with a tracked repo
-    and the container receives the repo's volume mount + role prompt.
+    Returns immediately with the task in PENDING state. The scheduler loop
+    dispatches it to a runner (or in-process) within seconds.
     """
-    from . import lifecycle
+    from . import scheduler
 
     if not description:
         raise ValueError("Task description is required")
@@ -76,6 +82,7 @@ async def submit_task(
     resolved_job_id = job_id or task_id
     # spawned_by is set when a parent task explicitly spawned this one
     spawned_by = job_id if (job_id and job_id != task_id) else None
+
     task = Task(
         id=task_id,
         description=description,
@@ -85,10 +92,18 @@ async def submit_task(
         updated_at=now,
         repo_url=repo_url,
         workspace_profile=workspace_profile,
+        workspace_home=workspace_home,
         job_id=resolved_job_id,
         spawned_by=spawned_by,
+        runner_name=runner,
+        runner_tags=runner_tags or [],
+        backend=backend,
+        priority=priority,
+        max_attempts=max_attempts,
+        deadline_ms=deadline_ms,
     )
-    # Register this task as a child of its parent so the lineage is bidirectional
+
+    # Register as child of parent task
     if spawned_by and spawned_by in _tasks:
         parent = _tasks[spawned_by]
         if task_id not in parent.child_task_ids:
@@ -99,66 +114,10 @@ async def submit_task(
     if not check.allowed:
         raise ValueError(f"Policy denied: {check.reason}")
 
-    # Use longer TTL for persistent agents
-    ttl = settings.hub.persistent_token_ttl if agent_def.persistent else settings.hub.token_ttl
-    token = issue_token(agent_name, task_id, ttl=ttl)
-    task.token_id = token.token_id
-
-    # Build session name
-    session_name = f"task-{task_id[:8]}"
-    task.session_name = session_name
-    task.status = TaskStatus.RUNNING
-    task.updated_at = _now_ms()
     _tasks[task_id] = task
-
-    # Resolve workspace context: task-level overrides repo-level
-    repo_workspace_home = workspace_home
-    repo_workspace_profile = workspace_profile
-    if not repo_workspace_home and repo_url:
-        repo = _repos.get(_repo_name(repo_url))
-        if repo:
-            repo_workspace_home = repo_workspace_home or repo.workspace_home
-            repo_workspace_profile = repo_workspace_profile or repo.workspace_profile
-
-    # Launch container with role-specific configuration
-    try:
-        await lifecycle.run_pipeline(
-            session_name=session_name,
-            role=agent_name,
-            hardened=agent_def.hardened,
-            token=token,
-            repo_url=repo_url,
-            task_description=description,
-            task_id=task_id,
-            job_id=resolved_job_id,
-            workspace_home=repo_workspace_home,
-            workspace_profile=repo_workspace_profile,
-        )
-    except Exception as exc:
-        task.status = TaskStatus.FAILED
-        task.error = str(exc)
-        task.updated_at = _now_ms()
-        revoke_token(token.token_id)
-        log.error("router.task_launch_failed", metadata={"task_id": task_id, "reason": str(exc)})
-        _emit("task.failed", task)
-        raise
-
-    # Track container in repo if applicable
-    if repo_url:
-        repo = _repos.get(_repo_name(repo_url))
-        if repo:
-            repo.containers[agent_name] = session_name
-
-    log.info(
-        "router.task_started",
-        metadata={
-            "task_id": task_id,
-            "session": session_name,
-            "agent": agent_name,
-            "repo": repo_url,
-        },
-    )
-    _emit("task.started", task)
+    log.info("router.task_queued", metadata={"task_id": task_id, "agent": agent_name})
+    _emit("task.queued", task)
+    scheduler.notify()
     return task
 
 
@@ -200,11 +159,30 @@ def get_task(task_id: str) -> Task | None:
     return _tasks.get(task_id)
 
 
+def _add_channel_to_task(task_id: str, channel_id: str) -> None:
+    task = _tasks.get(task_id)
+    if task and channel_id not in task.channel_ids:
+        task.channel_ids.append(channel_id)
+
+
+def on_channel_completed(task_id: str, channel_id: str, summary: str) -> None:
+    """Called by channels.complete_channel when a task-linked channel finishes."""
+    task = _tasks.get(task_id)
+    if not task:
+        return
+    log.info(
+        "router.channel_completed",
+        metadata={"task_id": task_id, "channel_id": channel_id},
+    )
+    _emit("task.signal", task)
+
+
 def list_tasks(
     *,
     status: str | None = None,
     agent_name: str | None = None,
     job_id: str | None = None,
+    workspace_profile: str | None = None,
     limit: int | None = 50,
 ) -> list[Task]:
     result = list(_tasks.values())
@@ -218,6 +196,8 @@ def list_tasks(
         result = [t for t in result if t.agent_name == agent_name]
     if job_id:
         result = [t for t in result if t.job_id == job_id]
+    if workspace_profile is not None:
+        result = [t for t in result if t.workspace_profile == workspace_profile]
     result.sort(key=lambda t: t.created_at, reverse=True)
     if limit is not None:
         result = result[:limit]
@@ -329,6 +309,9 @@ async def check_running_tasks() -> None:
 
         if session.state == SessionState.RECYCLED:
             await fail_task(task.id, "Container was recycled externally")
+        elif task.deadline_ms and _now_ms() > task.deadline_ms:
+            log.info("router.task_deadline_exceeded", metadata={"task_id": task.id})
+            await cancel_task(task.id)
 
 
 async def _restart_persistent_task(task: Task) -> None:
@@ -425,8 +408,11 @@ def get_repo(name: str) -> Repository | None:
     return _repos.get(name)
 
 
-def list_repos() -> list[Repository]:
-    return list(_repos.values())
+def list_repos(*, workspace_profile: str | None = None) -> list[Repository]:
+    result = list(_repos.values())
+    if workspace_profile is not None:
+        result = [r for r in result if r.workspace_profile == workspace_profile]
+    return result
 
 
 def remove_repo(name: str) -> bool:

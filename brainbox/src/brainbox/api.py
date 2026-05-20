@@ -25,7 +25,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from datetime import datetime, timezone
 
-from .auth import get_api_key, load_or_create_key, require_api_key, require_capability
+from .auth import _is_api_key_valid, get_api_key, get_bearer_token, load_or_create_key, require_api_key, require_capability
 from .config import settings
 from .rate_limit import limiter, rate_limit_exceeded_handler
 from .hub import init as hub_init, shutdown as hub_shutdown
@@ -1035,9 +1035,12 @@ async def runners_pair_claim(request: Request):
 
 
 @app.get("/api/sessions")
-async def api_list_sessions():
+async def api_list_sessions(workspace_profile: str | None = None):
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _get_sessions_info)
+    sessions = await loop.run_in_executor(None, _get_sessions_info)
+    if workspace_profile is not None:
+        sessions = [s for s in sessions if s.get("workspace_profile") == workspace_profile]
+    return sessions
 
 
 @app.get("/api/sessions/{name}")
@@ -2116,7 +2119,7 @@ async def hub_delete_agent(name: str, _key=Depends(require_api_key)):
 @app.post("/api/hub/tasks", status_code=201)
 async def hub_submit_task(
     body: TaskCreate,
-    token: Token | None = Depends(require_capability("hub_messaging")),
+    token: Token | None = Depends(require_capability("task_submit")),
 ):
     try:
         task = await submit_task(
@@ -2126,6 +2129,12 @@ async def hub_submit_task(
             workspace_profile=body.workspace_profile,
             workspace_home=body.workspace_home,
             job_id=body.job_id,
+            runner=body.runner,
+            runner_tags=body.runner_tags,
+            backend=body.backend,
+            priority=body.priority,
+            max_attempts=body.max_attempts,
+            deadline_ms=body.deadline_ms,
         )
         _broadcast_sse(json.dumps({"action": "task.submit", "agent": body.agent_name, "repo": body.repo_url or ""}))
         return task.model_dump()
@@ -2138,9 +2147,10 @@ async def hub_list_tasks(
     status: str | None = None,
     limit: int = 50,
     job_id: str | None = None,
+    workspace_profile: str | None = None,
     _key=Depends(require_api_key),
 ):
-    tasks = list_tasks(status=status, limit=limit, job_id=job_id)
+    tasks = list_tasks(status=status, limit=limit, job_id=job_id, workspace_profile=workspace_profile)
     return [t.model_dump() for t in tasks]
 
 
@@ -2153,7 +2163,14 @@ async def hub_get_task(task_id: str, _key=Depends(require_api_key)):
 
 
 @app.delete("/api/hub/tasks/{task_id}")
-async def hub_cancel_task(task_id: str, _key=Depends(require_api_key)):
+async def hub_cancel_task(task_id: str, request: Request):
+    """Cancel a task. Accepts API key (full trust) or the owning agent's bearer token."""
+    if not _is_api_key_valid(request):
+        token = get_bearer_token(request)
+        if not token:
+            raise HTTPException(status_code=401, detail="Missing or invalid API key or Bearer token")
+        if token.task_id != task_id:
+            raise HTTPException(status_code=403, detail="Token is not the owner of this task")
     try:
         task = await cancel_task(task_id)
         _broadcast_sse(json.dumps({"action": "task.cancel", "task_id": task_id}))
@@ -2270,8 +2287,11 @@ async def hub_message_log(_key=Depends(require_api_key)):
 
 
 @app.get("/api/hub/repos")
-async def hub_list_repos(_key=Depends(require_api_key)):
-    return [r.model_dump() for r in list_repos()]
+async def hub_list_repos(
+    workspace_profile: str | None = None,
+    _key=Depends(require_api_key),
+):
+    return [r.model_dump() for r in list_repos(workspace_profile=workspace_profile)]
 
 
 @app.post("/api/hub/repos", status_code=201)
@@ -2527,7 +2547,16 @@ async def hub_create_channel(body: CreateChannelRequest, request: Request, _key=
         )
         for p in body.participants
     ]
-    channel = create_channel(body.name, participants)
+    channel = create_channel(
+        body.name,
+        participants,
+        parent_task_id=body.parent_task_id,
+        workspace_profile=body.workspace_profile,
+    )
+
+    if body.parent_task_id:
+        from .router import _add_channel_to_task
+        _add_channel_to_task(body.parent_task_id, channel.id)
 
     for p in participants:
         await _bootstrap_session_in_channel(p, channel)
@@ -2536,8 +2565,11 @@ async def hub_create_channel(body: CreateChannelRequest, request: Request, _key=
 
 
 @app.get("/api/hub/channels")
-async def hub_list_channels(_key=Depends(require_api_key)):
-    return [c.model_dump() for c in list_channels()]
+async def hub_list_channels(
+    workspace_profile: str | None = None,
+    _key=Depends(require_api_key),
+):
+    return [c.model_dump() for c in list_channels(workspace_profile=workspace_profile)]
 
 
 @app.get("/api/hub/channels/{channel_id}")
@@ -2615,6 +2647,10 @@ async def hub_join_channel(
 
     try:
         channel = join_channel(channel_id, session_name=session_name)
+        if task and channel.id not in task.channel_ids:
+            task.channel_ids.append(channel.id)
+            if channel.parent_task_id is None:
+                channel.parent_task_id = task.id
         _broadcast_sse(
             json.dumps({"action": "channel.participant_joined", "channel_id": channel_id, "session": session_name})
         )
@@ -2653,6 +2689,60 @@ async def hub_get_channel_messages(
         raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' not found")
     msgs = channel_get_messages(channel_id, since_id=since_id)
     return [m.model_dump() for m in msgs]
+
+
+@app.get("/api/hub/channels/{channel_id}/wait")
+async def hub_wait_channel_activity(
+    channel_id: str,
+    since_id: str | None = Query(default=None),
+    timeout: float = Query(default=30.0, ge=1.0, le=120.0),
+    _key=Depends(require_api_key),
+):
+    """Long-poll: block until a new message arrives or channel completes.
+
+    Returns immediately if there are already messages after since_id or the
+    channel is already completed. Otherwise waits up to `timeout` seconds.
+    """
+    channel = get_channel(channel_id)
+    if channel is None:
+        raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' not found")
+
+    msgs = channel_get_messages(channel_id, since_id=since_id)
+    if msgs or channel.status == "completed":
+        return {
+            "messages": [m.model_dump() for m in msgs],
+            "completed": channel.status == "completed",
+            "completion_reason": channel.completed_by,
+        }
+
+    wakeup = asyncio.Event()
+
+    def _listener(event: str, data: object) -> None:
+        if event in ("channel.message", "channel.completed"):
+            payload = data if isinstance(data, dict) else {}
+            cid = payload.get("channel_id") or (data.id if hasattr(data, "id") else None)
+            if cid == channel_id:
+                wakeup.set()
+
+    import brainbox.channels as _ch_module
+    _ch_module._listeners.append(_listener)
+    try:
+        await asyncio.wait_for(wakeup.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        pass
+    finally:
+        try:
+            _ch_module._listeners.remove(_listener)
+        except ValueError:
+            pass
+
+    msgs = channel_get_messages(channel_id, since_id=since_id)
+    channel = get_channel(channel_id)
+    return {
+        "messages": [m.model_dump() for m in msgs],
+        "completed": channel.status == "completed" if channel else True,
+        "completion_reason": channel.completed_by if channel else None,
+    }
 
 
 @app.post("/api/hub/channels/{channel_id}/messages")

@@ -7,14 +7,12 @@
   // Panels (lazy imports)
   import SessionsPanel from '../panels/SessionsPanel.svelte';
   import AgentRolesPanel from '../panels/AgentRolesPanel.svelte';
-  import AgentsPanel from '../panels/AgentsPanel.svelte';
+  import ArtifactsPanel from '../panels/ArtifactsPanel.svelte';
   import ChainsPanel from '../panels/ChainsPanel.svelte';
   import ConversationsPanel from '../panels/ConversationsPanel.svelte';
-  import HubPanel from '../panels/HubPanel.svelte';
   import ReposPanel from '../panels/ReposPanel.svelte';
   import ServicesPanel from '../panels/ServicesPanel.svelte';
   import PlaybooksPanel from '../panels/PlaybooksPanel.svelte';
-  import EventFeedPanel from '../panels/EventFeedPanel.svelte';
   import ProfilesPanel from '../panels/ProfilesPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
   import RunnersPanel from '../panels/RunnersPanel.svelte';
@@ -31,10 +29,8 @@
         <TimelinePanel />
       {:else if currentPanel.value === 'sessions'}
         <SessionsPanel />
-      {:else if currentPanel.value === 'agent-roles'}
-        <AgentRolesPanel />
       {:else if currentPanel.value === 'agents'}
-        <AgentsPanel />
+        <AgentRolesPanel />
       {:else if currentPanel.value === 'dashboard'}
         <DashboardPanel />
       {:else if currentPanel.value === 'repos'}
@@ -47,8 +43,8 @@
         <ConversationsPanel />
       {:else if currentPanel.value === 'playbooks'}
         <PlaybooksPanel />
-      {:else if currentPanel.value === 'events'}
-        <EventFeedPanel />
+      {:else if currentPanel.value === 'artifacts'}
+        <ArtifactsPanel />
       {:else if currentPanel.value === 'profiles'}
         <ProfilesPanel />
       {:else if currentPanel.value === 'settings'}

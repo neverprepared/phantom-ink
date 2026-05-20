@@ -26,19 +26,23 @@ type ChannelMessage struct {
 
 // Channel represents a group chat channel.
 type Channel struct {
-	ID           string               `json:"id"`
-	Name         string               `json:"name"`
-	Participants []ChannelParticipant `json:"participants"`
-	Status       string               `json:"status"` // "active" or "completed"
-	CreatedAt    int64                `json:"created_at"`
-	CompletedAt  *int64               `json:"completed_at,omitempty"`
-	CompletedBy  string               `json:"completed_by,omitempty"`
+	ID               string               `json:"id"`
+	Name             string               `json:"name"`
+	Participants     []ChannelParticipant `json:"participants"`
+	Status           string               `json:"status"` // "active" or "completed"
+	CreatedAt        int64                `json:"created_at"`
+	CompletedAt      *int64               `json:"completed_at,omitempty"`
+	CompletedBy      string               `json:"completed_by,omitempty"`
+	ParentTaskID     string               `json:"parent_task_id,omitempty"`
+	WorkspaceProfile string               `json:"workspace_profile,omitempty"`
 }
 
 // CreateChannelRequest is the payload for POST /api/hub/channels.
 type CreateChannelRequest struct {
-	Name         string                       `json:"name"`
-	Participants []ChannelParticipantRequest  `json:"participants"`
+	Name             string                      `json:"name"`
+	Participants     []ChannelParticipantRequest `json:"participants"`
+	ParentTaskID     string                      `json:"parent_task_id,omitempty"`
+	WorkspaceProfile string                      `json:"workspace_profile,omitempty"`
 }
 
 // ChannelParticipantRequest is a participant spec in CreateChannelRequest.
@@ -64,10 +68,14 @@ type CompleteChannelRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// ListChannels returns all group chat channels.
-func (c *Client) ListChannels() ([]Channel, error) {
+// ListChannels returns all group chat channels, optionally filtered by workspace profile.
+func (c *Client) ListChannels(workspaceProfile string) ([]Channel, error) {
+	path := "/api/hub/channels"
+	if workspaceProfile != "" {
+		path += "?workspace_profile=" + workspaceProfile
+	}
 	var channels []Channel
-	if err := c.get("/api/hub/channels", &channels); err != nil {
+	if err := c.get(path, &channels); err != nil {
 		return nil, err
 	}
 	return channels, nil

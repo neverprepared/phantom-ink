@@ -65,6 +65,9 @@ async def init() -> None:
     _check_task = loop.create_task(_periodic_check())
     _ollama_watcher_task = loop.create_task(ollama_watcher())
 
+    from . import scheduler as _scheduler
+    _scheduler.start()
+
     # Ensure persistent repo agents are running after state restore
     for repo in list_repos():
         try:
@@ -97,6 +100,9 @@ async def shutdown() -> None:
     if _ollama_watcher_task and not _ollama_watcher_task.done():
         _ollama_watcher_task.cancel()
         _ollama_watcher_task = None
+
+    from . import scheduler as _scheduler
+    _scheduler.stop()
 
     await _flush_state()
     log.info("hub.shutdown")

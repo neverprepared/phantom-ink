@@ -190,6 +190,8 @@ export namespace brainbox {
 	    created_at: number;
 	    completed_at?: number;
 	    completed_by?: string;
+	    parent_task_id?: string;
+	    workspace_profile?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Channel(source);
@@ -204,6 +206,8 @@ export namespace brainbox {
 	        this.created_at = source["created_at"];
 	        this.completed_at = source["completed_at"];
 	        this.completed_by = source["completed_by"];
+	        this.parent_task_id = source["parent_task_id"];
+	        this.workspace_profile = source["workspace_profile"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -342,6 +346,8 @@ export namespace brainbox {
 	export class CreateChannelRequest {
 	    name: string;
 	    participants: ChannelParticipantRequest[];
+	    parent_task_id?: string;
+	    workspace_profile?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CreateChannelRequest(source);
@@ -351,6 +357,8 @@ export namespace brainbox {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.participants = this.convertValues(source["participants"], ChannelParticipantRequest);
+	        this.parent_task_id = source["parent_task_id"];
+	        this.workspace_profile = source["workspace_profile"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -576,6 +584,7 @@ export namespace brainbox {
 	    job_id: string;
 	    spawned_by: string;
 	    child_task_ids: string[];
+	    channel_ids: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Task(source);
@@ -597,6 +606,7 @@ export namespace brainbox {
 	        this.job_id = source["job_id"];
 	        this.spawned_by = source["spawned_by"];
 	        this.child_task_ids = source["child_task_ids"];
+	        this.channel_ids = source["channel_ids"];
 	    }
 	}
 	export class HubState {

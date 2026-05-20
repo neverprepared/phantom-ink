@@ -4,6 +4,41 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def reset_hub_state():
+    """Reset all module-level hub state before and after each test.
+
+    Covers: auth, registry, runners, channels, router. Hub background tasks
+    are never started in unit tests so they don't need resetting.
+    """
+    import brainbox.auth as _auth
+    import brainbox.channels as _ch
+    import brainbox.registry as _reg
+    import brainbox.router as _router
+    from brainbox.runners import reset_registry_for_tests
+
+    from brainbox.scheduler import reset_for_tests as _reset_scheduler
+
+    def _reset():
+        _auth._api_key = ""
+        _reg._agents.clear()
+        _reg._tokens.clear()
+        _reg._role_prompts.clear()
+        reset_registry_for_tests()  # clears _singleton + _pairing_singleton
+        _ch._channels.clear()
+        _ch._messages.clear()
+        _ch._listeners.clear()
+        _ch._ollama_last_read.clear()
+        _router._tasks.clear()
+        _router._listeners.clear()
+        _router._repos.clear()
+        _reset_scheduler()
+
+    _reset()
+    yield
+    _reset()
+
+
+@pytest.fixture(autouse=True)
 def _override_api_key_auth():
     """Disable API key auth for all tests by default.
 

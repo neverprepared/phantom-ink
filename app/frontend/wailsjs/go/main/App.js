@@ -294,12 +294,12 @@ export function ListChains() {
   return window['go']['main']['App']['ListChains']();
 }
 
-export function ListChannels() {
-  return window['go']['main']['App']['ListChannels']();
+export function ListChannels(arg1) {
+  return window['go']['main']['App']['ListChannels'](arg1);
 }
 
-export function ListHubTasks(arg1) {
-  return window['go']['main']['App']['ListHubTasks'](arg1);
+export function ListHubTasks(arg1, arg2) {
+  return window['go']['main']['App']['ListHubTasks'](arg1, arg2);
 }
 
 export function ListNFSExports() {
@@ -318,8 +318,8 @@ export function ListProfileDirs(arg1) {
   return window['go']['main']['App']['ListProfileDirs'](arg1);
 }
 
-export function ListRepos() {
-  return window['go']['main']['App']['ListRepos']();
+export function ListRepos(arg1) {
+  return window['go']['main']['App']['ListRepos'](arg1);
 }
 
 export function ListRunners() {

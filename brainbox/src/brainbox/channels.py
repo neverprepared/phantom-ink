@@ -45,8 +45,19 @@ def on_event(fn: Callable) -> None:
 # ---------------------------------------------------------------------------
 
 
-def create_channel(name: str, participants: list[ChannelParticipant]) -> Channel:
-    channel = Channel(name=name, participants=participants)
+def create_channel(
+    name: str,
+    participants: list[ChannelParticipant],
+    *,
+    parent_task_id: str | None = None,
+    workspace_profile: str | None = None,
+) -> Channel:
+    channel = Channel(
+        name=name,
+        participants=participants,
+        parent_task_id=parent_task_id,
+        workspace_profile=workspace_profile,
+    )
     _channels[channel.id] = channel
     _messages[channel.id] = []
     _emit("channel.created", channel)
@@ -58,8 +69,11 @@ def get_channel(channel_id: str) -> Channel | None:
     return _channels.get(channel_id)
 
 
-def list_channels() -> list[Channel]:
-    return list(_channels.values())
+def list_channels(*, workspace_profile: str | None = None) -> list[Channel]:
+    result = list(_channels.values())
+    if workspace_profile is not None:
+        result = [c for c in result if c.workspace_profile == workspace_profile]
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +134,14 @@ def complete_channel(channel_id: str, by: str, reason: str | None = None) -> Cha
     channel.completed_by = by
     _emit("channel.completed", channel)
     log.info("channel.completed", metadata={"channel_id": channel_id, "by": by})
+
+    if channel.parent_task_id:
+        try:
+            from . import router
+            router.on_channel_completed(channel.parent_task_id, channel.id, reason or "Channel completed.")
+        except Exception:
+            pass
+
     return channel
 
 

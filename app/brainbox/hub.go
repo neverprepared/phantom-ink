@@ -18,6 +18,7 @@ type Task struct {
 	JobID            string      `json:"job_id"`
 	SpawnedBy        string      `json:"spawned_by"`       // task ID of the parent that spawned this one
 	ChildTaskIDs     []string    `json:"child_task_ids"`   // task IDs of children spawned by this task
+	ChannelIDs       []string    `json:"channel_ids"`      // channels spawned by this task
 }
 
 // AgentDefinition represents a registered agent definition.
@@ -143,11 +144,16 @@ func (c *Client) GetHubState() (HubState, error) {
 	return state, nil
 }
 
-// ListTasks returns all hub tasks, optionally filtered by status.
-func (c *Client) ListTasks(status string) ([]Task, error) {
+// ListTasks returns hub tasks, optionally filtered by status and/or workspace profile.
+func (c *Client) ListTasks(status, workspaceProfile string) ([]Task, error) {
 	path := "/api/hub/tasks"
+	sep := "?"
 	if status != "" {
-		path += "?status=" + status
+		path += sep + "status=" + status
+		sep = "&"
+	}
+	if workspaceProfile != "" {
+		path += sep + "workspace_profile=" + workspaceProfile
 	}
 	var tasks []Task
 	if err := c.get(path, &tasks); err != nil {
@@ -234,10 +240,14 @@ func (c *Client) GetMessageLog() ([]Message, error) {
 	return messages, nil
 }
 
-// ListRepos returns all tracked repositories.
-func (c *Client) ListRepos() ([]Repo, error) {
+// ListRepos returns tracked repositories, optionally filtered by workspace profile.
+func (c *Client) ListRepos(workspaceProfile string) ([]Repo, error) {
+	path := "/api/hub/repos"
+	if workspaceProfile != "" {
+		path += "?workspace_profile=" + workspaceProfile
+	}
 	var repos []Repo
-	if err := c.get("/api/hub/repos", &repos); err != nil {
+	if err := c.get(path, &repos); err != nil {
 		return nil, err
 	}
 	return repos, nil

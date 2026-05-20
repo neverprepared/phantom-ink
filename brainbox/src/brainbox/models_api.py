@@ -232,6 +232,8 @@ class CreateChannelRequest(BaseModel):
     participants: list[ChannelParticipantRequest] = Field(
         ..., min_length=1, description="Participants to add at creation"
     )
+    parent_task_id: str | None = None
+    workspace_profile: str | None = None
 
 
 class PostChannelMessageRequest(BaseModel):

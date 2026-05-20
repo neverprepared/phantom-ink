@@ -67,7 +67,7 @@
     if (!a) return;
     if (!silent) loading = true; else refreshing = true;
     try {
-      const tasks = (await (a.ListHubTasks('') as Promise<any>).catch(() => [])) ?? [];
+      const tasks = (await (a.ListHubTasks('', profileState.active?.name ?? '') as Promise<any>).catch(() => [])) ?? [];
       allTasks = tasks;
     } finally {
       loading    = false;

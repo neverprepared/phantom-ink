@@ -125,6 +125,40 @@ class RunnerRegistry:
         async with self._lock:
             return list(self._runners.values())
 
+    async def select_runner(
+        self,
+        *,
+        backend: str = "docker",
+        preferred_tags: list[str] | None = None,
+    ) -> str | None:
+        """Return the name of the best available runner, or None if none eligible.
+
+        Eligibility: runner must advertise the backend capability, be online
+        (last_seen within 90s), and have headroom (in_flight < max_concurrent).
+        Among eligible runners: most headroom first, then shortest queue, then
+        highest tag overlap, then alphabetical tiebreak.
+        """
+        now_ms = int(time.time() * 1000)
+        async with self._lock:
+            runners = list(self._runners.values())
+
+        def _is_eligible(r: RunnerInfo) -> bool:
+            return (
+                bool(r.capabilities.get(backend))
+                and (now_ms - r.last_seen) < 90_000
+                and r.in_flight < r.max_concurrent
+            )
+
+        def _sort_key(r: RunnerInfo) -> tuple:
+            headroom = max(0, r.max_concurrent - r.in_flight)
+            tag_score = sum(1 for t in (preferred_tags or []) if t in r.tags)
+            return (-headroom, r.queue_depth, -tag_score, r.name)
+
+        eligible = [r for r in runners if _is_eligible(r)]
+        if not eligible:
+            return None
+        return min(eligible, key=_sort_key).name
+
     async def get(self, name: str) -> RunnerInfo | None:
         async with self._lock:
             return self._runners.get(name)
