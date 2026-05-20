@@ -126,6 +126,10 @@ export function ExportSecretsTemplate(arg1) {
   return window['go']['main']['App']['ExportSecretsTemplate'](arg1);
 }
 
+export function FetchMetricUrl(arg1, arg2, arg3) {
+  return window['go']['main']['App']['FetchMetricUrl'](arg1, arg2, arg3);
+}
+
 export function FindClaudeProcesses() {
   return window['go']['main']['App']['FindClaudeProcesses']();
 }
@@ -168,6 +172,10 @@ export function GetContainerDiskUsage() {
 
 export function GetContainerMetrics() {
   return window['go']['main']['App']['GetContainerMetrics']();
+}
+
+export function GetDashboardLayout(arg1) {
+  return window['go']['main']['App']['GetDashboardLayout'](arg1);
 }
 
 export function GetDiskBreakdown() {
@@ -260,6 +268,10 @@ export function GetTaskStats(arg1) {
 
 export function GetTraceDetail(arg1) {
   return window['go']['main']['App']['GetTraceDetail'](arg1);
+}
+
+export function GetWidgetCount(arg1, arg2) {
+  return window['go']['main']['App']['GetWidgetCount'](arg1, arg2);
 }
 
 export function GetWorktree(arg1) {
@@ -390,6 +402,10 @@ export function RunChain(arg1, arg2, arg3) {
   return window['go']['main']['App']['RunChain'](arg1, arg2, arg3);
 }
 
+export function RunMetricScript(arg1) {
+  return window['go']['main']['App']['RunMetricScript'](arg1);
+}
+
 export function RunPlaybook(arg1, arg2) {
   return window['go']['main']['App']['RunPlaybook'](arg1, arg2);
 }
@@ -400,6 +416,10 @@ export function RunPreflightChecks() {
 
 export function SaveChain(arg1) {
   return window['go']['main']['App']['SaveChain'](arg1);
+}
+
+export function SaveDashboardLayout(arg1, arg2) {
+  return window['go']['main']['App']['SaveDashboardLayout'](arg1, arg2);
 }
 
 export function SaveSchedule(arg1) {

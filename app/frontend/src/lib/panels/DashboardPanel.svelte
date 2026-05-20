@@ -1,28 +1,35 @@
 <script lang="ts">
+  import 'gridstack/dist/gridstack.min.css';
+  import 'gridstack/dist/gridstack-extra.min.css';
+  import { GridStack } from 'gridstack';
+  import { mount, unmount, onMount } from 'svelte';
   import { getApi } from '../utils/api';
-  import { onMount } from 'svelte';
   import { brainboxEvents } from '../events.svelte';
   import { authorityState } from '../authority.svelte';
-  import { currentPanel, profileState } from '../stores.svelte';
-  import { notifications } from '../notifications.svelte';
+  import { profileState, dashboardState, dashboardDataStore } from '../stores.svelte';
+  import { DEFAULT_LAYOUT } from '../widgets/defaultLayout';
+  import type { WidgetInstance, WidgetKind, ActionItem } from '../widgets/types';
 
-  interface ActionItem {
-    kind: string;
-    title: string;
-    desc: string;
-    severity: 'urgent' | 'warning' | 'info';
-    ref?: string;
-  }
+  import StatCounterWidget    from '../widgets/StatCounterWidget.svelte';
+  import DispatchFormWidget   from '../widgets/DispatchFormWidget.svelte';
+  import ChainsListWidget     from '../widgets/ChainsListWidget.svelte';
+  import ActionItemsWidget    from '../widgets/ActionItemsWidget.svelte';
+  import ResourceMonitorWidget from '../widgets/ResourceMonitorWidget.svelte';
+  import CustomCounterWidget  from '../widgets/CustomCounterWidget.svelte';
+  import ScriptMetricWidget   from '../widgets/ScriptMetricWidget.svelte';
+  import HttpMetricWidget     from '../widgets/HttpMetricWidget.svelte';
+  import WidgetDrawer         from '../components/WidgetDrawer.svelte';
 
-  let sessions      = $state<any[]>([]);
-  let hubTasks      = $state<any[]>([]);
-  let fires         = $state<any[]>([]);
-  let taskStats     = $state<any>(null);
-  let dockerStats   = $state<any[]>([]);
-  let localProcs    = $state<any[]>([]);
-  let systemInfo    = $state<{ cpu_cores: number; mem_total_gib: number }>({ cpu_cores: 0, mem_total_gib: 0 });
-  let loading       = $state(true);
-  let refreshing    = $state(false);
+  // --- Data state ---
+  let sessions    = $state<any[]>([]);
+  let hubTasks    = $state<any[]>([]);
+  let fires       = $state<any[]>([]);
+  let taskStats   = $state<any>(null);
+  let dockerStats = $state<any[]>([]);
+  let localProcs  = $state<any[]>([]);
+  let systemInfo  = $state<{ cpu_cores: number; mem_total_gib: number }>({ cpu_cores: 0, mem_total_gib: 0 });
+  let loading     = $state(true);
+  let refreshing  = $state(false);
 
   let activeProfile = $derived(profileState.active);
 
@@ -53,26 +60,9 @@
     );
   });
 
-  let activeSessions   = $derived(filteredSessions.filter((s: any) => s.active));
-  let runningHubTasks  = $derived(filteredTasks.filter((t: any) => t.status === 'running'));
-  let failedHubTasks   = $derived(filteredTasks.filter((t: any) => t.status === 'failed'));
-
-  let containerCPU = $derived(filteredDockerStats.reduce((sum: number, s: any) => sum + parseFloat(s.cpu_perc || '0'), 0));
-  let containerMem = $derived(filteredDockerStats.reduce((sum: number, s: any) => {
-    const m = s.mem_usage || '';
-    const match = m.match(/([\d.]+)\s*(MiB|GiB)/);
-    if (!match) return sum;
-    const val = parseFloat(match[1]);
-    return sum + (match[2] === 'GiB' ? val * 1024 : val);
-  }, 0));
-  let localCPU = $derived(filteredLocal.reduce((sum: number, p: any) => sum + parseFloat(p.cpu_perc || '0'), 0));
-  let localMem = $derived(filteredLocal.reduce((sum: number, p: any) => sum + parseFloat(p.mem_mb || '0'), 0));
-  let totalCPU = $derived(containerCPU + localCPU);
-  let totalMem = $derived(containerMem + localMem);
-  let sysCPUMax = $derived(systemInfo.cpu_cores * 100);
-  let sysCPUPct = $derived(sysCPUMax > 0 ? (totalCPU / sysCPUMax) * 100 : 0);
-  let sysMemTotalMiB = $derived(systemInfo.mem_total_gib * 1024);
-  let sysMemPct = $derived(sysMemTotalMiB > 0 ? (totalMem / sysMemTotalMiB) * 100 : 0);
+  let activeSessions  = $derived(filteredSessions.filter((s: any) => s.active));
+  let runningHubTasks = $derived(filteredTasks.filter((t: any) => t.status === 'running'));
+  let failedHubTasks  = $derived(filteredTasks.filter((t: any) => t.status === 'failed'));
 
   let actionItems = $derived.by((): ActionItem[] => {
     const items: ActionItem[] = [];
@@ -82,8 +72,7 @@
     if (auth) {
       if (auth.authorities.length > 0 && !auth.any_online) {
         items.push({
-          kind: 'auth',
-          title: 'credential authority offline',
+          kind: 'auth', title: 'credential authority offline',
           desc: 'all registered runners are stale — credential sealing will fail',
           severity: 'urgent',
         });
@@ -99,16 +88,14 @@
 
     for (const t of runningHubTasks) {
       const created = typeof t.created_at === 'number'
-        ? t.created_at
-        : parseFloat(t.created_at ?? '0') * 1000;
+        ? t.created_at : parseFloat(t.created_at ?? '0') * 1000;
       const ageMin = Math.floor((now - created) / 60_000);
       if (ageMin > 30) {
         items.push({
           kind: 'task_stuck',
           title: `${t.session_name || t.id.slice(0, 8)} still running`,
           desc: `running for ${ageMin}m — may be stuck`,
-          severity: 'warning',
-          ref: t.id,
+          severity: 'warning', ref: t.id,
         });
       }
     }
@@ -116,18 +103,146 @@
     for (const t of failedHubTasks.slice(0, 3)) {
       const err = typeof t.error === 'string' ? t.error : JSON.stringify(t.error ?? '');
       items.push({
-        kind: 'task_failed',
-        title: `task failed`,
+        kind: 'task_failed', title: 'task failed',
         desc: err.slice(0, 100) || (t.description ?? '').slice(0, 100) || t.id.slice(0, 12),
-        severity: 'warning',
-        ref: t.id,
+        severity: 'warning', ref: t.id,
       });
     }
 
     return items;
   });
 
-  async function load(silent = false) {
+  // Sync computed data into shared store so widget components can read reactively
+  $effect(() => {
+    dashboardDataStore.value = {
+      sessions, hubTasks, fires, taskStats,
+      dockerStats: filteredDockerStats,
+      localProcs: filteredLocal,
+      systemInfo, actionItems,
+      activeSessions: activeSessions.length,
+      runningTasks: runningHubTasks.length + (taskStats?.running ?? 0),
+      failedTasks: failedHubTasks.length + (taskStats?.failed ?? 0),
+      loading, refreshing,
+    };
+  });
+
+  // --- Grid state ---
+  let gridEl: HTMLElement;
+  let grid: GridStack | null = null;
+  const mountedWidgets = new Map<string, any>();
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  let drawerOpen = $state(false);
+
+  const WIDGET_MAP: Record<WidgetKind, any> = {
+    'stat-counter':     StatCounterWidget,
+    'dispatch-form':    DispatchFormWidget,
+    'chains-list':      ChainsListWidget,
+    'action-items':     ActionItemsWidget,
+    'resource-monitor': ResourceMonitorWidget,
+    'custom-counter':   CustomCounterWidget,
+    'script-metric':    ScriptMetricWidget,
+    'http-metric':      HttpMetricWidget,
+  };
+
+  function mountWidget(w: WidgetInstance): void {
+    if (!grid) return;
+    const itemEl = grid.addWidget({
+      id: w.id, x: w.x, y: w.y, w: w.w, h: w.h,
+      minW: w.minW, minH: w.minH,
+    }) as HTMLElement;
+    const contentEl = itemEl.querySelector('.grid-stack-item-content') as HTMLElement;
+    const instance = mount(WIDGET_MAP[w.kind], { target: contentEl, props: { config: w.config } });
+    mountedWidgets.set(w.id, instance);
+
+    const btn = document.createElement('button');
+    btn.className = 'widget-remove-btn';
+    btn.textContent = '✕';
+    btn.setAttribute('aria-label', 'Remove widget');
+    btn.addEventListener('click', (e) => { e.stopPropagation(); handleRemoveWidget(w.id); });
+    itemEl.appendChild(btn);
+  }
+
+  async function saveLayout(): Promise<void> {
+    if (!grid) return;
+    const saved = grid.save(false) as any[];
+    const current = dashboardState.widgets;
+    const updated: WidgetInstance[] = saved
+      .map((item: any) => {
+        const orig = current.find(w => w.id === item.id);
+        if (!orig) return null;
+        return { ...orig, x: item.x ?? orig.x, y: item.y ?? orig.y, w: item.w ?? orig.w, h: item.h ?? orig.h };
+      })
+      .filter(Boolean) as WidgetInstance[];
+    dashboardState.updateWidgets(updated);
+    const a = await getApi();
+    if (a) {
+      try {
+        await a.SaveDashboardLayout(
+          profileState.active?.name ?? '',
+          JSON.stringify({ version: 1, widgets: updated }),
+        );
+      } catch {}
+    }
+  }
+
+  function handleAddWidget(w: WidgetInstance): void {
+    if (!grid) return;
+    dashboardState.updateWidgets([...dashboardState.widgets, w]);
+    mountWidget(w);
+    drawerOpen = false;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveLayout, 800);
+  }
+
+  function handleRemoveWidget(id: string): void {
+    if (!grid) return;
+    const inst = mountedWidgets.get(id);
+    if (inst) { unmount(inst); mountedWidgets.delete(id); }
+    const el = gridEl.querySelector(`[gs-id="${id}"]`) as HTMLElement | null;
+    if (el) grid.removeWidget(el, true);
+    dashboardState.updateWidgets(dashboardState.widgets.filter(w => w.id !== id));
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveLayout, 800);
+  }
+
+  async function reloadLayout(profileName: string): Promise<void> {
+    if (!grid) return;
+    for (const [, inst] of mountedWidgets) unmount(inst);
+    mountedWidgets.clear();
+    grid.removeAll();
+
+    const a = await getApi();
+    let layout = { version: 1 as const, widgets: [...DEFAULT_LAYOUT.widgets] };
+    if (a) {
+      const stored = await a.GetDashboardLayout(profileName).catch(() => '');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (parsed?.version === 1 && Array.isArray(parsed.widgets) && parsed.widgets.length > 0) {
+            layout = parsed;
+          }
+        } catch {}
+      }
+    }
+    dashboardState.layout = layout;
+    for (const w of layout.widgets) mountWidget(w);
+  }
+
+  function handleReset(): void {
+    if (!grid) return;
+    for (const [, inst] of mountedWidgets) unmount(inst);
+    mountedWidgets.clear();
+    grid.removeAll();
+    const layout = { version: 1 as const, widgets: [...DEFAULT_LAYOUT.widgets] };
+    dashboardState.layout = layout;
+    for (const w of layout.widgets) mountWidget(w);
+    drawerOpen = false;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveLayout, 800);
+  }
+
+  // --- Data loading ---
+  async function load(silent = false): Promise<void> {
     const a = await getApi();
     if (!a) return;
     if (!silent) loading = true; else refreshing = true;
@@ -152,27 +267,19 @@
     }
   }
 
-  onMount(async () => {
-    void load();
-    const a = await getApi();
-    if (a) {
-      try { systemInfo = await a.GetSystemInfo(); } catch {}
+  // Reload layout and data when profile changes (after initial mount)
+  let _trackedProfile = '';
+  $effect(() => {
+    const name = profileState.active?.name ?? '';
+    if (name !== _trackedProfile && grid) {
+      _trackedProfile = name;
+      void reloadLayout(name);
+      void load();
     }
   });
 
-  // Poll docker stats every 10s independently
-  onMount(() => {
-    const interval = setInterval(async () => {
-      const a = await getApi();
-      if (a) { try { dockerStats = (await a.GetDockerStats()) ?? []; } catch {} }
-    }, 10_000);
-    return () => clearInterval(interval);
-  });
-
   let _lastEvent = $derived(brainboxEvents.last);
-  $effect(() => {
-    if (_lastEvent) void load(true);
-  });
+  $effect(() => { if (_lastEvent) void load(true); });
 
   let now = $state(new Date());
   const _tick = setInterval(() => { now = new Date(); }, 60_000);
@@ -184,54 +291,58 @@
     });
   }
 
-  function formatNextFire(iso: string): string {
-    const d = new Date(iso);
-    const today = new Date();
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
-    const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-    if (d.toDateString() === today.toDateString()) return time;
-    if (d.toDateString() === tomorrow.toDateString()) return `tomorrow ${time}`;
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ` ${time}`;
-  }
+  onMount(async () => {
+    const a = await getApi();
+    let layout = { version: 1 as const, widgets: [...DEFAULT_LAYOUT.widgets] };
 
-  function failedCount(): number {
-    return failedHubTasks.length + (taskStats?.failed ?? 0);
-  }
-
-  function navigate(panel: string) {
-    currentPanel.value = panel;
-  }
-
-  // --- Dispatch task form ---
-  const AGENTS = ['supervisor','worker','reviewer','linter','qa','python','golang','typescript','assistant'];
-  let dispatchAgent = $state('supervisor');
-  let dispatchDesc  = $state('');
-  let dispatchRepo  = $state('');
-  let dispatching   = $state(false);
-
-  async function handleDispatch() {
-    if (!dispatchDesc.trim()) return;
-    dispatching = true;
-    try {
-      const a = await getApi();
-      if (!a) return;
-      await a.SubmitTask({
-        description: dispatchDesc.trim(),
-        agent_name: dispatchAgent,
-        repo_url: dispatchRepo.trim() || undefined,
-        workspace_profile: profileState.active?.name ?? '',
-      });
-      dispatchDesc = '';
-      dispatchRepo = '';
-      notifications.success('Task dispatched');
-      void load(true);
-    } catch (err: any) {
-      notifications.error(`Dispatch failed: ${err?.message ?? err}`);
-    } finally {
-      dispatching = false;
+    if (a) {
+      const stored = await a.GetDashboardLayout(profileState.active?.name ?? '').catch(() => '');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (parsed?.version === 1 && Array.isArray(parsed.widgets) && parsed.widgets.length > 0) {
+            layout = parsed;
+          }
+        } catch {}
+      }
+      try { systemInfo = await a.GetSystemInfo(); } catch {}
     }
-  }
+
+    dashboardState.layout = layout;
+    _trackedProfile = profileState.active?.name ?? '';
+
+    grid = GridStack.init({
+      column: 12,
+      cellHeight: 60,
+      cellHeightUnit: 'px',
+      margin: 8,
+      animate: true,
+      draggable: { handle: '.widget-drag-handle' },
+      resizable: { handles: 'se' },
+    }, gridEl);
+
+    for (const w of layout.widgets) mountWidget(w);
+
+    grid.on('change', () => {
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(saveLayout, 800);
+    });
+
+    void load();
+
+    const dockerInterval = setInterval(async () => {
+      const api = await getApi();
+      if (api) { try { dockerStats = (await api.GetDockerStats()) ?? []; } catch {} }
+    }, 10_000);
+
+    return () => {
+      if (saveTimer) clearTimeout(saveTimer);
+      for (const [, inst] of mountedWidgets) unmount(inst);
+      mountedWidgets.clear();
+      grid?.destroy(false);
+      clearInterval(dockerInterval);
+    };
+  });
 </script>
 
 <div class="dashboard">
@@ -244,187 +355,38 @@
     <div class="datestamp">[ {formatDate(now)} ]</div>
   </div>
 
-  <!-- Stat cards -->
-  <div class="stat-row">
-    <button class="stat-card" onclick={() => navigate('sessions')}>
-      <span class="stat-label">» ACTIVE SESSIONS</span>
-      <span class="stat-value" class:green={activeSessions.length > 0} class:muted={activeSessions.length === 0}>
-        {activeSessions.length}
-      </span>
-    </button>
-
-    <button class="stat-card" onclick={() => navigate('timeline')}>
-      <span class="stat-label">» RUNNING TASKS</span>
-      <span class="stat-value blue">{runningHubTasks.length + (taskStats?.running ?? 0)}</span>
-    </button>
-
-    <button class="stat-card" onclick={() => navigate('timeline')}>
-      <span class="stat-label">» FAILED (24h)</span>
-      <span class="stat-value" class:red={failedCount() > 0} class:muted={failedCount() === 0}>
-        {failedCount()}
-      </span>
-    </button>
-
-    <button class="stat-card" onclick={() => navigate('chains')}>
-      <span class="stat-label">» SCHEDULED</span>
-      <span class="stat-value">{fires.length}</span>
-    </button>
-
-    <button class="stat-card" class:urgent={actionItems.length > 0}>
-      <span class="stat-label">» ACTION ITEMS</span>
-      <span class="stat-value" class:orange={actionItems.length > 0} class:muted={actionItems.length === 0}>
-        {actionItems.length}
-      </span>
-    </button>
+  <div class="grid-wrap">
+    <div class="grid-stack" bind:this={gridEl}></div>
   </div>
-
-  <!-- Dispatch task -->
-  <section class="section">
-    <div class="section-header">
-      <span>» DISPATCH AGENT</span>
-    </div>
-    <div class="dispatch-form">
-      <div class="dispatch-row">
-        <select bind:value={dispatchAgent} class="dispatch-select">
-          {#each AGENTS as a (a)}
-            <option value={a}>{a}</option>
-          {/each}
-        </select>
-        <input
-          class="dispatch-repo"
-          bind:value={dispatchRepo}
-          placeholder="repo url (optional)"
-        />
-        <button
-          class="dispatch-btn"
-          onclick={handleDispatch}
-          disabled={dispatching || !dispatchDesc.trim()}
-        >{dispatching ? '…' : '[ run ]'}</button>
-      </div>
-      <textarea
-        class="dispatch-desc"
-        bind:value={dispatchDesc}
-        rows="2"
-        placeholder="describe the task…"
-        onkeydown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleDispatch(); }}
-      ></textarea>
-    </div>
-  </section>
-
-  <!-- Scheduled chains -->
-  {#if fires.length > 0}
-  <section class="section">
-    <div class="section-header">
-      <span>» SCHEDULED CHAINS</span>
-      <span class="badge">{fires.length} upcoming</span>
-    </div>
-    <div class="fire-list">
-      {#each fires as fire (fire.schedule_id)}
-      <button class="fire-row" onclick={() => navigate('chains')}>
-        <span class="fire-time">{formatNextFire(fire.next_fire_at)}</span>
-        <span class="fire-name">{fire.chain_name || fire.chain_id.slice(0, 12)}</span>
-        <span class="fire-cron mono">{fire.cron_expr}</span>
-      </button>
-      {/each}
-    </div>
-  </section>
-  {/if}
-
-  <!-- Action items -->
-  {#if actionItems.length > 0}
-  <section class="section">
-    <div class="section-header">
-      <span>» ACTION ITEMS</span>
-      <span class="badge warn">{actionItems.length} pending</span>
-    </div>
-    <div class="action-list">
-      {#each actionItems as item}
-      <div class="action-row sev-{item.severity}">
-        <span class="check">[ ]</span>
-        <div class="action-body">
-          <span class="action-title">{item.title}</span>
-          {#if item.desc}<span class="action-desc">{item.desc}</span>{/if}
-        </div>
-        {#if item.ref}
-          <span class="action-ref mono">{item.ref.slice(0, 8)}</span>
-        {/if}
-      </div>
-      {/each}
-    </div>
-  </section>
-  {/if}
-
-  <!-- Resource monitoring -->
-  {#if filteredDockerStats.length > 0 || filteredLocal.length > 0}
-  <section class="section">
-    <div class="section-header">
-      <span>» RESOURCE USAGE</span>
-      <span class="res-summary mono">
-        {totalCPU.toFixed(1)}% cpu
-        {#if systemInfo.cpu_cores > 0}/ {systemInfo.cpu_cores} cores{/if}
-        · {totalMem >= 1024 ? (totalMem / 1024).toFixed(1) + ' GiB' : totalMem.toFixed(0) + ' MiB'} mem
-      </span>
-    </div>
-    {#if systemInfo.cpu_cores > 0}
-      <div class="res-bars">
-        <div class="res-bar-row">
-          <span class="res-bar-label">CPU</span>
-          <div class="res-bar-track"><div class="res-bar-fill cpu" style="width: {Math.min(sysCPUPct, 100)}%"></div></div>
-          <span class="res-bar-pct">{sysCPUPct.toFixed(1)}%</span>
-        </div>
-        {#if systemInfo.mem_total_gib > 0}
-        <div class="res-bar-row">
-          <span class="res-bar-label">MEM</span>
-          <div class="res-bar-track"><div class="res-bar-fill mem" style="width: {Math.min(sysMemPct, 100)}%"></div></div>
-          <span class="res-bar-pct">{sysMemPct.toFixed(1)}%</span>
-        </div>
-        {/if}
-      </div>
-    {/if}
-    {#if filteredDockerStats.length > 0}
-    <div class="res-table">
-      <div class="res-thead">
-        <span>container</span><span>cpu</span><span>memory</span><span>net i/o</span>
-      </div>
-      {#each filteredDockerStats as stat (stat.id)}
-      <div class="res-trow">
-        <span class="res-name">{stat.name}</span>
-        <span class="res-val">{stat.cpu_perc}</span>
-        <span class="res-val">{stat.mem_usage}</span>
-        <span class="res-val">{stat.net_io}</span>
-      </div>
-      {/each}
-    </div>
-    {/if}
-  </section>
-  {/if}
-
-  {#if loading}
-    <div class="loading">loading system state…</div>
-  {:else if !loading && actionItems.length === 0 && fires.length === 0}
-    <div class="nominal">
-      <span class="dot-green"></span>
-      all systems nominal
-    </div>
-  {/if}
 </div>
+
+<button class="fab" onclick={() => drawerOpen = !drawerOpen} aria-label="Open widget drawer">+</button>
+
+<WidgetDrawer
+  open={drawerOpen}
+  onClose={() => drawerOpen = false}
+  onAdd={handleAddWidget}
+  onRemove={handleRemoveWidget}
+  onReset={handleReset}
+  widgets={dashboardState.widgets}
+/>
 
 <style>
   .dashboard {
-    padding: var(--panel-padding);
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-3xl);
-    min-height: 100%;
+    height: 100%;
+    overflow: hidden;
   }
 
-  /* --- Header --- */
   .header {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    padding: var(--panel-padding);
     padding-bottom: var(--spacing-md);
     border-bottom: 1px solid var(--color-border-primary);
+    flex-shrink: 0;
   }
 
   .brand {
@@ -465,363 +427,81 @@
     letter-spacing: 0.04em;
   }
 
-  /* --- Stat cards --- */
-  .stat-row {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: var(--spacing-md);
-  }
-
-  .stat-card {
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    padding: var(--spacing-lg) var(--spacing-xl);
-    cursor: pointer;
-    text-align: left;
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-sm);
-    box-shadow: var(--shadow-card);
-    transition: box-shadow 120ms ease, border-color 120ms ease;
-  }
-
-  .stat-card:hover {
-    box-shadow: var(--shadow-card-hover);
-    border-color: var(--color-border-secondary);
-  }
-
-  .stat-card.urgent {
-    border-color: rgba(234, 179, 8, 0.3);
-  }
-
-  .stat-label {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 0.08em;
-    color: var(--color-text-tertiary);
-    white-space: nowrap;
-  }
-
-  .stat-value {
-    font-family: var(--font-mono);
-    font-size: 32px;
-    font-weight: 700;
-    line-height: 1;
-    color: var(--color-text-primary);
-  }
-  .stat-value.green  { color: var(--color-success); }
-  .stat-value.blue   { color: var(--color-info); }
-  .stat-value.red    { color: var(--color-error); }
-  .stat-value.orange { color: var(--color-warning); }
-  .stat-value.muted  { color: var(--color-text-muted); }
-
-  /* --- Sections --- */
-  .section {
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-md);
-  }
-
-  .section-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    letter-spacing: 0.08em;
-    color: var(--color-text-secondary);
-  }
-
-  .badge {
-    font-size: 10px;
-    padding: 2px 8px;
-    border-radius: var(--radius-sm);
-    background: var(--color-surface-subtle);
-    border: 1px solid var(--color-border-primary);
-    color: var(--color-text-tertiary);
-  }
-  .badge.warn {
-    background: rgba(234, 179, 8, 0.08);
-    border-color: rgba(234, 179, 8, 0.2);
-    color: var(--color-warning);
-  }
-
-  /* --- Dispatch form --- */
-  .dispatch-form {
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-sm);
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    padding: var(--spacing-md);
-  }
-
-  .dispatch-row {
-    display: flex;
-    gap: var(--spacing-sm);
-    align-items: center;
-  }
-
-  .dispatch-select,
-  .dispatch-repo {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    background: var(--color-bg-primary);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-sm);
-    color: var(--color-text-primary);
-    padding: 5px 9px;
-  }
-  .dispatch-select { flex-shrink: 0; cursor: pointer; }
-  .dispatch-repo { flex: 1; min-width: 0; }
-  .dispatch-repo::placeholder { color: var(--color-text-muted); }
-  .dispatch-select:focus,
-  .dispatch-repo:focus { outline: 1px solid var(--color-accent); border-color: var(--color-accent); }
-
-  .dispatch-desc {
-    width: 100%;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    background: var(--color-bg-primary);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-sm);
-    color: var(--color-text-primary);
-    padding: 6px 9px;
-    resize: vertical;
-    box-sizing: border-box;
-  }
-  .dispatch-desc::placeholder { color: var(--color-text-muted); }
-  .dispatch-desc:focus { outline: 1px solid var(--color-accent); border-color: var(--color-accent); }
-
-  .dispatch-btn {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    color: var(--color-accent);
-    background: transparent;
-    border: 1px solid var(--color-accent);
-    border-radius: var(--radius-sm);
-    padding: 5px 14px;
-    flex-shrink: 0;
-    transition: background 120ms ease;
-  }
-  .dispatch-btn:hover:not(:disabled) { background: rgba(234, 179, 8, 0.08); }
-  .dispatch-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-
-  /* --- Scheduled chains --- */
-  .fire-list {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .fire-row {
-    display: grid;
-    grid-template-columns: 120px 1fr auto;
-    align-items: center;
-    gap: var(--spacing-lg);
-    padding: var(--spacing-sm) var(--spacing-md);
-    border-radius: var(--radius-sm);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    text-align: left;
-    color: inherit;
-    transition: background 100ms ease;
-  }
-  .fire-row:hover { background: var(--color-surface-hover); }
-
-  .fire-time {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--color-accent);
-    font-weight: 500;
-  }
-
-  .fire-name {
-    font-size: 13px;
-    color: var(--color-text-primary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .fire-cron {
-    font-size: 11px;
-    color: var(--color-text-muted);
-  }
-
-  /* --- Action items --- */
-  .action-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-sm);
-  }
-
-  .action-row {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--spacing-md);
-    padding: var(--spacing-sm) var(--spacing-md);
-    border-radius: var(--radius-sm);
-    border-left: 2px solid transparent;
-  }
-  .action-row.sev-urgent  { border-left-color: var(--color-error); background: rgba(239, 68, 68, 0.04); }
-  .action-row.sev-warning { border-left-color: var(--color-warning); background: rgba(234, 179, 8, 0.04); }
-  .action-row.sev-info    { border-left-color: var(--color-info); background: rgba(14, 165, 233, 0.04); }
-
-  .check {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--color-text-muted);
-    padding-top: 1px;
-    flex-shrink: 0;
-  }
-
-  .action-body {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+  .grid-wrap {
     flex: 1;
-    min-width: 0;
+    overflow-y: auto;
+    padding: 8px;
   }
 
-  .action-title {
-    font-size: 13px;
-    color: var(--color-text-primary);
-  }
-
-  .action-desc {
-    font-size: 11px;
-    color: var(--color-text-tertiary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .action-ref {
-    font-size: 10px;
-    color: var(--color-text-muted);
-    flex-shrink: 0;
-  }
-
-  /* --- Loading / nominal --- */
-  .loading, .nominal {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--color-text-muted);
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    padding: var(--spacing-2xl) 0;
-  }
-
-  .dot-green {
-    width: 7px;
-    height: 7px;
+  /* FAB */
+  .fab {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 44px;
+    height: 44px;
     border-radius: 50%;
-    background: var(--color-success);
-    box-shadow: var(--shadow-status-active);
-    flex-shrink: 0;
-  }
-
-  .mono { font-family: var(--font-mono); }
-
-  /* --- Resource monitoring --- */
-  .res-summary {
-    font-size: 10px;
-    color: var(--color-text-muted);
-    letter-spacing: 0.04em;
-  }
-
-  .res-bars {
+    background: var(--color-accent);
+    color: #000;
+    border: none;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 190;
     display: flex;
-    flex-direction: column;
-    gap: var(--spacing-xs);
-    margin-bottom: var(--spacing-md);
-  }
-
-  .res-bar-row {
-    display: grid;
-    grid-template-columns: 36px 1fr 44px;
     align-items: center;
-    gap: var(--spacing-sm);
+    justify-content: center;
+    font-family: inherit;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    transition: opacity 120ms ease, transform 120ms ease;
   }
+  .fab:hover { opacity: 0.85; transform: scale(1.05); }
 
-  .res-bar-label {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 0.06em;
-    color: var(--color-text-tertiary);
-  }
-
-  .res-bar-track {
-    height: 6px;
-    background: var(--color-bg-tertiary);
-    border-radius: 3px;
+  /* gridstack overrides */
+  :global(.grid-stack-item-content) {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-md);
     overflow: hidden;
+    box-shadow: var(--shadow-card);
   }
 
-  .res-bar-fill {
-    height: 100%;
-    border-radius: 3px;
-    transition: width 0.5s ease;
-    min-width: 2px;
+  :global(.grid-stack-item > .ui-resizable-se) {
+    bottom: 4px;
+    right: 4px;
+    width: 12px;
+    height: 12px;
+    opacity: 0.25;
   }
-  .res-bar-fill.cpu { background: var(--color-accent); }
-  .res-bar-fill.mem { background: var(--color-info); }
+  :global(.grid-stack-item:hover > .ui-resizable-se) { opacity: 0.6; }
 
-  .res-bar-pct {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--color-text-muted);
-    text-align: right;
-  }
-
-  .res-table {
+  :global(.widget-remove-btn) {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--color-bg-primary);
     border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-  }
-
-  .res-thead, .res-trow {
-    display: grid;
-    grid-template-columns: 1fr 80px 120px 100px;
-    gap: var(--spacing-sm);
-    padding: var(--spacing-xs) var(--spacing-md);
-    font-family: var(--font-mono);
+    color: var(--color-text-muted);
     font-size: 10px;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    opacity: 0;
+    transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+  }
+  :global(.grid-stack-item:hover .widget-remove-btn) { opacity: 1; }
+  :global(.widget-remove-btn:hover) {
+    background: var(--color-error);
+    border-color: var(--color-error);
+    color: #fff;
   }
 
-  .res-thead {
-    background: var(--color-bg-tertiary);
-    color: var(--color-text-tertiary);
-    letter-spacing: 0.06em;
-  }
-
-  .res-trow {
-    border-top: 1px solid var(--color-border-primary);
-    color: var(--color-text-secondary);
-  }
-
-  .res-name {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: var(--color-text-primary);
-  }
-
-  .res-val {
-    color: var(--color-text-secondary);
-  }
-
-  /* Responsive: collapse to 2-col on narrow windows */
-  @media (max-width: 700px) {
-    .stat-row {
-      grid-template-columns: repeat(2, 1fr);
-    }
-  }
+  :global(.grid-stack) { background: transparent; }
 </style>

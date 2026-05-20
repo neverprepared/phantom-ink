@@ -6,7 +6,6 @@
 
   // Panels (lazy imports)
   import SessionsPanel from '../panels/SessionsPanel.svelte';
-  import AgentRolesPanel from '../panels/AgentRolesPanel.svelte';
   import ArtifactsPanel from '../panels/ArtifactsPanel.svelte';
   import ChainsPanel from '../panels/ChainsPanel.svelte';
   import ConversationsPanel from '../panels/ConversationsPanel.svelte';
@@ -15,7 +14,6 @@
   import PlaybooksPanel from '../panels/PlaybooksPanel.svelte';
   import ProfilesPanel from '../panels/ProfilesPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
-  import RunnersPanel from '../panels/RunnersPanel.svelte';
   import DashboardPanel from '../panels/DashboardPanel.svelte';
   import TimelinePanel from '../panels/TimelinePanel.svelte';
 </script>
@@ -29,8 +27,6 @@
         <TimelinePanel />
       {:else if currentPanel.value === 'sessions'}
         <SessionsPanel />
-      {:else if currentPanel.value === 'agents'}
-        <AgentRolesPanel />
       {:else if currentPanel.value === 'dashboard'}
         <DashboardPanel />
       {:else if currentPanel.value === 'repos'}
@@ -49,8 +45,6 @@
         <ProfilesPanel />
       {:else if currentPanel.value === 'settings'}
         <SettingsPanel />
-      {:else if currentPanel.value === 'runners'}
-        <RunnersPanel />
       {/if}
     </main>
   </div>

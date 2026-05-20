@@ -65,6 +65,8 @@ export function EnqueueTask(arg1:main.EnqueueTaskRequest):Promise<string>;
 
 export function ExportSecretsTemplate(arg1:string):Promise<string>;
 
+export function FetchMetricUrl(arg1:string,arg2:string,arg3:string):Promise<number>;
+
 export function FindClaudeProcesses():Promise<Array<main.LocalProcess>>;
 
 export function FocusTerminalTab(arg1:string):Promise<void>;
@@ -86,6 +88,8 @@ export function GetConfig():Promise<main.Config>;
 export function GetContainerDiskUsage():Promise<Array<main.ContainerDiskStat>>;
 
 export function GetContainerMetrics():Promise<Array<brainbox.ContainerMetrics>>;
+
+export function GetDashboardLayout(arg1:string):Promise<string>;
 
 export function GetDiskBreakdown():Promise<main.DiskBreakdown>;
 
@@ -132,6 +136,8 @@ export function GetTaskLineage(arg1:string):Promise<Array<brainbox.Task>>;
 export function GetTaskStats(arg1:number):Promise<main.TaskStats>;
 
 export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;
+
+export function GetWidgetCount(arg1:string,arg2:string):Promise<number>;
 
 export function GetWorktree(arg1:string):Promise<brainbox.Worktree>;
 
@@ -197,11 +203,15 @@ export function RetryTask(arg1:string):Promise<void>;
 
 export function RunChain(arg1:string,arg2:string,arg3:string):Promise<string>;
 
+export function RunMetricScript(arg1:string):Promise<number>;
+
 export function RunPlaybook(arg1:string,arg2:string):Promise<brainbox.Playbook>;
 
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
 
 export function SaveChain(arg1:main.Chain):Promise<main.Chain>;
+
+export function SaveDashboardLayout(arg1:string,arg2:string):Promise<void>;
 
 export function SaveSchedule(arg1:main.ScheduleRow):Promise<main.ScheduleRow>;
 
