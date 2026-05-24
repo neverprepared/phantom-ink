@@ -151,7 +151,7 @@ Useful types for project notes:
 - **Database schema**: `dbml`, `erd`
 - **Sequence / flow**: `plantuml`, `seqdiag`
 
-Note: `plantuml` and `mermaid` are disabled by default in obsidian-kroki — enable them in plugin settings, or use Obsidian's native mermaid renderer. Refer to the individual diagram type skills for syntax.
+Note: `plantuml` and `mermaid` are disabled by default in obsidian-kroki — enable them in plugin settings, or use Obsidian's native mermaid renderer. See the purpose-grouped diagram skills for syntax: `architecture-diagrams`, `sequence-diagrams`, `flowchart-diagrams`, `database-diagrams`, `uml-diagrams`.
 
 ## Example: Full Project Lifecycle
 

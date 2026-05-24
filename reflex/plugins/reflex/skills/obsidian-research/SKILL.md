@@ -228,7 +228,7 @@ The language identifier is the Kroki type name exactly: `plantuml`, `d2`, `graph
 | Protocol / packets | `bytefield`, `wavedrom` |
 | Quick sketch | `nomnoml`, `svgbob`, `ditaa` |
 
-The `phantom-diagrams` MCP (`convert_diagram`) is still useful for rendering diagrams *outside* of Obsidian (in chat, CI pipelines, etc.). Refer to the individual diagram type skills for syntax.
+The `phantom-diagrams` MCP (`convert_diagram`) is still useful for rendering diagrams *outside* of Obsidian (in chat, CI pipelines, etc.). See the purpose-grouped diagram skills for syntax: `architecture-diagrams`, `sequence-diagrams`, `database-diagrams`, `flowchart-diagrams`, `uml-diagrams`, `network-diagrams`, `data-viz-diagrams`, `ascii-diagrams`, `technical-diagrams`, `process-diagrams`, `sketch-diagrams`.
 
 ## Integration
 
