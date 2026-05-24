@@ -7,8 +7,9 @@ set -eu
 
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-QUEUE_FILE="${CLAUDE_DIR}/reflex/.langfuse-queue.jsonl"
-PID_FILE="${CLAUDE_DIR}/reflex/.langfuse-drainer.pid"
+PROFILE="${WORKSPACE_PROFILE:-default}"
+QUEUE_FILE="${CLAUDE_DIR}/reflex/.langfuse-queue-${PROFILE}.jsonl"
+PID_FILE="${CLAUDE_DIR}/reflex/.langfuse-drainer-${PROFILE}.pid"
 
 # Source profile env if available (hooks don't run in login shells)
 if [ -f /run/profile/.env ]; then
@@ -29,7 +30,11 @@ fi
 # Read tool data, stamp with current time, and append to queue
 TOOL_DATA=$(cat)
 QUEUED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-TOOL_DATA=$(printf '%s' "$TOOL_DATA" | jq --arg ts "$QUEUED_AT" '. + {_queued_at: $ts}')
+TOOL_DATA=$(printf '%s' "$TOOL_DATA" | jq -c \
+    --arg ts "$QUEUED_AT" \
+    --arg cwd "$PWD" \
+    --arg profile "${WORKSPACE_PROFILE:-}" \
+    '. + {_queued_at: $ts, _cwd: $cwd, _workspace_profile: $profile}')
 mkdir -p "$(dirname "$QUEUE_FILE")"
 printf '%s\n' "$TOOL_DATA" >> "$QUEUE_FILE"
 
@@ -46,6 +51,7 @@ export LANGFUSE_PUBLIC_KEY
 export LANGFUSE_SECRET_KEY
 [[ -n "${LANGFUSE_BASE_URL:-}" ]] && export LANGFUSE_BASE_URL
 export LANGFUSE_USER_ID="${WORKSPACE_PROFILE:-$HOME}"
+export LANGFUSE_PROFILE="$PROFILE"
 export CLAUDE_CONFIG_DIR="$CLAUDE_DIR"
 
 nohup "$SCRIPT_DIR/langfuse-drainer.sh" > /dev/null 2>&1 &
