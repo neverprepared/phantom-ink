@@ -6,6 +6,15 @@ description: Create complex graph visualizations using Graphviz DOT language, wi
 
 # Graphviz Diagrams Skill
 
+## Rendering via Kroki MCP
+
+```
+convert_diagram("graphviz", dot_source, "svg")   # preferred
+convert_diagram("graphviz", dot_source, "png")   # raster
+```
+
+No companion container required. Formats: `svg`, `png`, `jpeg`.
+
 ## When to Use
 - Complex dependency graphs
 - Call graphs and code flow

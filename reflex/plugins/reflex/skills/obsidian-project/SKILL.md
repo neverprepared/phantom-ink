@@ -123,6 +123,36 @@ Arguments:
   ttl_days: 365
 ```
 
+## Diagrams in Project Notes
+
+With the [obsidian-kroki](https://github.com/gregzuro/obsidian-kroki) plugin installed, project notes can embed any Kroki diagram type as a fenced code block — it renders inline automatically. The language identifier is the Kroki type name.
+
+```d2
+frontend: Frontend
+backend: Backend
+db: Database {shape: cylinder}
+
+frontend -> backend: HTTPS
+backend -> db: SQL
+```
+
+```plantuml
+@startuml
+[*] --> Planning
+Planning --> InProgress : kick off
+InProgress --> Review : PR ready
+Review --> Done : approved
+@enduml
+```
+
+Useful types for project notes:
+- **Architecture**: `d2`, `plantuml`, `c4plantuml`, `structurizr`
+- **Timeline / gantt**: `mermaid` (native Obsidian renderer)
+- **Database schema**: `dbml`, `erd`
+- **Sequence / flow**: `plantuml`, `seqdiag`
+
+Note: `plantuml` and `mermaid` are disabled by default in obsidian-kroki — enable them in plugin settings, or use Obsidian's native mermaid renderer. Refer to the individual diagram type skills for syntax.
+
 ## Example: Full Project Lifecycle
 
 ```
