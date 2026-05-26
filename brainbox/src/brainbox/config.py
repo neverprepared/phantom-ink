@@ -114,15 +114,6 @@ class CosignSettings(BaseSettings):
     oidc_issuer: str = ""  # OIDC issuer URL for keyless verification
 
 
-class ArtifactSettings(BaseSettings):
-    mode: Literal["off", "warn", "enforce"] = "warn"
-    endpoint: str = "http://localhost:9090"
-    access_key: SecretStr = SecretStr("")
-    secret_key: SecretStr = SecretStr("")
-    bucket: str = "artifacts"
-    region: str = "us-east-1"
-
-
 def _langfuse_env_fallback(*env_names: str) -> str:
     """Return the first set env var from the list, or empty string."""
     import os
@@ -244,8 +235,6 @@ class Settings(BaseSettings):
     user: str = "65534:65534"
     config_dir: Path = Field(default_factory=_default_config_dir)
     cors_origins: list[str] = Field(default_factory=list)
-    artifact_max_size: int = 100 * 1024 * 1024  # 100MB default
-
     ttl: int = 3600
     health_check_interval: int = 30  # seconds
     health_check_timeout: int = 5  # seconds
@@ -257,7 +246,6 @@ class Settings(BaseSettings):
     resources: ResourceSettings = Field(default_factory=ResourceSettings)
     hardening: HardeningSettings = Field(default_factory=HardeningSettings)
     cosign: CosignSettings = Field(default_factory=CosignSettings)
-    artifact: ArtifactSettings = Field(default_factory=ArtifactSettings)
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
     profile: ProfileSettings = Field(default_factory=ProfileSettings)

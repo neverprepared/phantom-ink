@@ -211,3 +211,19 @@ export const connectionState = {
     _lastEventText = text;
   },
 };
+
+// ---------------------------------------------------------------------------
+// Debug flags
+// ---------------------------------------------------------------------------
+
+let _showEventLog = $state(
+  typeof localStorage !== 'undefined' && localStorage.getItem('debug_event_log') === 'true'
+);
+
+export const debugState = {
+  get showEventLog() { return _showEventLog; },
+  set showEventLog(v: boolean) {
+    _showEventLog = v;
+    if (typeof localStorage !== 'undefined') localStorage.setItem('debug_event_log', String(v));
+  },
+};

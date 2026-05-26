@@ -39,7 +39,6 @@ from .lifecycle import (
     monitor as lifecycle_monitor,
 )
 from .validation import (
-    validate_artifact_key,
     validate_session_name,
     ValidationError,
 )
@@ -82,14 +81,6 @@ from .router import (
     remove_repo,
     submit_task,
     update_repo,
-)
-from .artifacts import (
-    ArtifactError,
-    delete_artifact,
-    download_artifact,
-    health_check as artifact_health_check,
-    list_artifacts,
-    upload_artifact,
 )
 from .langfuse_client import (
     LangfuseError,
@@ -3006,129 +2997,6 @@ async def hub_worktree_session(worktree_id: str, request: Request, _key=Depends(
     worktree_attach_session(worktree_id, ctx.session_name)
     _broadcast_sse(json.dumps({"action": "worktree.updated", "worktree_id": worktree_id}))
     return {"worktree_id": worktree_id, "session": ctx.session_name}
-
-
-# ---------------------------------------------------------------------------
-# Artifact store
-# ---------------------------------------------------------------------------
-
-
-async def _artifact_op(operation_fn, *args, **kwargs):
-    """Run an artifact operation respecting the configured mode."""
-    mode = settings.artifact.mode
-    if mode == "off":
-        raise HTTPException(status_code=503, detail="Artifact store is disabled")
-    try:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, lambda: operation_fn(*args, **kwargs))
-    except ArtifactError as exc:
-        if "not found" in exc.reason:
-            raise HTTPException(status_code=404, detail=str(exc))
-        if mode == "enforce":
-            raise HTTPException(status_code=502, detail=str(exc))
-        log.warning("artifact.operation_failed", metadata={"error": str(exc)})
-        return None
-    except Exception as exc:
-        if mode == "enforce":
-            raise HTTPException(status_code=502, detail=str(exc))
-        log.warning("artifact.operation_failed", metadata={"error": str(exc)})
-        return None
-
-
-@app.get("/api/artifacts/health")
-async def api_artifact_health():
-    """Check artifact store connectivity."""
-    mode = settings.artifact.mode
-    if mode == "off":
-        return {"healthy": False, "mode": "off", "url": None, "detail": "Artifact store is disabled"}
-    loop = asyncio.get_running_loop()
-    healthy = await loop.run_in_executor(None, artifact_health_check)
-    return {"healthy": healthy, "mode": mode, "url": settings.artifact.endpoint, "detail": None}
-
-
-@app.get("/api/artifacts")
-async def api_list_artifacts(prefix: str = Query(default=""), _key=Depends(require_api_key)):
-    """List artifacts, optionally filtered by key prefix."""
-    result = await _artifact_op(list_artifacts, prefix)
-    if result is None:
-        return []
-    return [
-        {"key": a.key, "size": a.size, "etag": a.etag, "timestamp": a.timestamp} for a in result
-    ]
-
-
-@app.post("/api/artifacts/{key:path}", status_code=201)
-@limiter.limit("30/minute")
-async def api_upload_artifact(key: str, request: Request, _key=Depends(require_api_key)):
-    """Upload an artifact (raw bytes in request body)."""
-    # Validate artifact key to prevent path traversal
-    try:
-        validated_key = validate_artifact_key(key)
-    except ValidationError as val_err:
-        log.error("artifact.upload.validation_failed", metadata={"key": key, "error": str(val_err)})
-        raise HTTPException(status_code=400, detail=str(val_err))
-
-    # Enforce upload size limit
-    max_size = settings.artifact_max_size
-    content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > max_size:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Upload too large ({int(content_length)} bytes). Max: {max_size} bytes.",
-        )
-
-    data = await request.body()
-    if len(data) > max_size:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Upload too large ({len(data)} bytes). Max: {max_size} bytes.",
-        )
-
-    content_type = request.headers.get("content-type", "application/octet-stream")
-    metadata = {"content_type": content_type}
-
-    task_id = request.headers.get("x-task-id")
-    if task_id:
-        metadata["task_id"] = task_id
-
-    result = await _artifact_op(upload_artifact, validated_key, data, metadata)
-    if result is None:
-        return {"stored": False, "key": validated_key}
-    return {"stored": True, "key": result.key, "size": result.size, "etag": result.etag}
-
-
-@app.get("/api/artifacts/{key:path}")
-@limiter.limit("30/minute")
-async def api_download_artifact(request: Request, key: str):
-    """Download an artifact by key."""
-    # Validate artifact key to prevent path traversal
-    try:
-        validated_key = validate_artifact_key(key)
-    except ValidationError as val_err:
-        log.error(
-            "artifact.download.validation_failed", metadata={"key": key, "error": str(val_err)}
-        )
-        raise HTTPException(status_code=400, detail=str(val_err))
-
-    result = await _artifact_op(download_artifact, validated_key)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Artifact not available")
-    body, metadata = result
-    content_type = metadata.get("content_type", "application/octet-stream")
-    return Response(content=body, media_type=content_type)
-
-
-@app.delete("/api/artifacts/{key:path}")
-@limiter.limit("30/minute")
-async def api_delete_artifact(request: Request, key: str, _key=Depends(require_api_key)):
-    """Delete an artifact by key."""
-    try:
-        validated_key = validate_artifact_key(key)
-    except ValidationError as val_err:
-        log.error("artifact.delete.validation_failed", metadata={"key": key, "error": str(val_err)})
-        raise HTTPException(status_code=400, detail=str(val_err))
-    await _artifact_op(delete_artifact, validated_key)
-    return {"success": True, "key": validated_key}
 
 
 # ---------------------------------------------------------------------------

@@ -1,13 +1,15 @@
 <script lang="ts">
   import { panels } from '../panels';
-  import { currentPanel, sidebarCollapsed } from '../stores.svelte';
+  import { currentPanel, sidebarCollapsed, debugState } from '../stores.svelte';
 
   let search = $state('');
 
+  let visiblePanels = $derived(panels.filter(p => !p.debug || debugState.showEventLog));
+
   let filteredPanels = $derived(
     search.trim()
-      ? panels.filter(p => p.label.toLowerCase().includes(search.trim().toLowerCase()))
-      : panels
+      ? visiblePanels.filter(p => p.label.toLowerCase().includes(search.trim().toLowerCase()))
+      : visiblePanels
   );
 </script>
 

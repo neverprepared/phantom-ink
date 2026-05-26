@@ -208,22 +208,6 @@ func (a *App) DeleteRepo(name string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Artifacts
-// ---------------------------------------------------------------------------
-
-func (a *App) ListArtifacts(prefix string) ([]brainbox.Artifact, error) {
-	return a.client.ListArtifacts(prefix)
-}
-
-func (a *App) DownloadArtifact(key string) ([]byte, error) {
-	return a.client.DownloadArtifact(key)
-}
-
-func (a *App) DeleteArtifact(key string) error {
-	return a.client.DeleteArtifact(key)
-}
-
-// ---------------------------------------------------------------------------
 // Observability
 // ---------------------------------------------------------------------------
 

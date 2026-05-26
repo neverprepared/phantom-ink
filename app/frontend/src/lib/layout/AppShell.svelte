@@ -6,7 +6,6 @@
 
   // Panels (lazy imports)
   import SessionsPanel from '../panels/SessionsPanel.svelte';
-  import ArtifactsPanel from '../panels/ArtifactsPanel.svelte';
   import ChainsPanel from '../panels/ChainsPanel.svelte';
   import ConversationsPanel from '../panels/ConversationsPanel.svelte';
   import ReposPanel from '../panels/ReposPanel.svelte';
@@ -39,8 +38,6 @@
         <ConversationsPanel />
       {:else if currentPanel.value === 'playbooks'}
         <PlaybooksPanel />
-      {:else if currentPanel.value === 'artifacts'}
-        <ArtifactsPanel />
       {:else if currentPanel.value === 'profiles'}
         <ProfilesPanel />
       {:else if currentPanel.value === 'settings'}

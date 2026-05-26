@@ -5,10 +5,18 @@
       "description": "Jira and Confluence integration",
       "category": "collaboration",
       "url": "https://github.com/sooperset/mcp-atlassian",
-      "requires": ["JIRA_URL", "JIRA_USERNAME", "JIRA_API_TOKEN"],
+      "requires": [
+        "JIRA_URL",
+        "JIRA_USERNAME",
+        "JIRA_API_TOKEN"
+      ],
       "definition": {
         "command": "uvx",
-        "args": ["--python", "3.12", "mcp-atlassian==0.13.0"],
+        "args": [
+          "--python",
+          "3.12",
+          "mcp-atlassian==0.21.1"
+        ],
         "env": {
           "JIRA_URL": "${JIRA_URL}",
           "JIRA_USERNAME": "${JIRA_USERNAME}",
@@ -26,7 +34,11 @@
       "requires": [],
       "definition": {
         "command": "uvx",
-        "args": ["mcp-server-git==2025.12.18", "--repository", "."],
+        "args": [
+          "mcp-server-git==2026.1.14",
+          "--repository",
+          "."
+        ],
         "env": {}
       }
     },
@@ -34,13 +46,19 @@
       "description": "GitHub repos, issues, PRs, and code security",
       "category": "development",
       "url": "https://github.com/github/github-mcp-server",
-      "requires": ["GITHUB_TOKEN"],
+      "requires": [
+        "GITHUB_TOKEN"
+      ],
       "definition": {
         "command": "docker",
         "args": [
-          "run", "-i", "--rm",
-          "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
-          "-e", "GITHUB_TOOLSETS",
+          "run",
+          "-i",
+          "--rm",
+          "-e",
+          "GITHUB_PERSONAL_ACCESS_TOKEN",
+          "-e",
+          "GITHUB_TOOLSETS",
           "ghcr.io/github/github-mcp-server"
         ],
         "env": {
@@ -56,17 +74,31 @@
       "requires": [],
       "definition": {
         "command": "npx",
-        "args": ["-y", "mcp-remote@0.1.37", "https://mcp.microsoft-learn.com/api/mcp/sse"]
+        "args": [
+          "-y",
+          "mcp-remote@0.1.38",
+          "https://mcp.microsoft-learn.com/api/mcp/sse"
+        ]
       }
     },
     "azure": {
       "description": "Azure resource management",
       "category": "cloud",
       "url": "https://github.com/microsoft/mcp",
-      "requires": ["AZURE_SUBSCRIPTION_ID", "AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"],
+      "requires": [
+        "AZURE_SUBSCRIPTION_ID",
+        "AZURE_TENANT_ID",
+        "AZURE_CLIENT_ID",
+        "AZURE_CLIENT_SECRET"
+      ],
       "definition": {
         "command": "npx",
-        "args": ["-y", "@azure/mcp@2.0.0-beta.10", "server", "start"],
+        "args": [
+          "-y",
+          "@azure/mcp@3.0.0-beta.10",
+          "server",
+          "start"
+        ],
         "env": {
           "AZURE_SUBSCRIPTION_ID": "${AZURE_SUBSCRIPTION_ID}",
           "AZURE_TENANT_ID": "${AZURE_TENANT_ID}",
@@ -79,10 +111,16 @@
       "description": "Azure DevOps CI/CD and repos",
       "category": "cloud",
       "url": "https://github.com/microsoft/azure-devops-mcp",
-      "requires": ["AZURE_DEVOPS_ORG", "AZURE_DEVOPS_PAT"],
+      "requires": [
+        "AZURE_DEVOPS_ORG",
+        "AZURE_DEVOPS_PAT"
+      ],
       "definition": {
         "command": "npx",
-        "args": ["-y", "@azure-devops/mcp@2.2.2"],
+        "args": [
+          "-y",
+          "@azure-devops/mcp@2.7.0"
+        ],
         "env": {
           "AZURE_DEVOPS_ORG_URL": "https://dev.azure.com/${AZURE_DEVOPS_ORG}",
           "AZURE_DEVOPS_PAT": "${AZURE_DEVOPS_PAT}"
@@ -96,17 +134,24 @@
       "requires": [],
       "definition": {
         "command": "uvx",
-        "args": ["markitdown-mcp"]
+        "args": [
+          "markitdown-mcp"
+        ]
       }
     },
     "sql-server": {
       "description": "Microsoft SQL Server queries",
       "category": "database",
       "url": "https://github.com/bymcs/mssql-mcp",
-      "requires": ["MSSQL_CONNECTION_STRING"],
+      "requires": [
+        "MSSQL_CONNECTION_STRING"
+      ],
       "definition": {
         "command": "npx",
-        "args": ["-y", "mssql-mcp@2.1.1"],
+        "args": [
+          "-y",
+          "mssql-mcp@2.3.2"
+        ],
         "env": {
           "MSSQL_CONNECTION_STRING": "${MSSQL_CONNECTION_STRING}"
         }
@@ -119,7 +164,10 @@
       "requires": [],
       "definition": {
         "command": "npx",
-        "args": ["-y", "@playwright/mcp@0.0.55"],
+        "args": [
+          "-y",
+          "@playwright/mcp@0.0.75"
+        ],
         "env": {}
       }
     },
@@ -127,10 +175,16 @@
       "description": "Microsoft Dev Box management",
       "category": "cloud",
       "url": "https://github.com/microsoft/devbox-mcp-server",
-      "requires": ["AZURE_SUBSCRIPTION_ID", "AZURE_TENANT_ID"],
+      "requires": [
+        "AZURE_SUBSCRIPTION_ID",
+        "AZURE_TENANT_ID"
+      ],
       "definition": {
         "command": "npx",
-        "args": ["-y", "@microsoft/devbox-mcp@0.0.3-alpha.4"],
+        "args": [
+          "-y",
+          "@microsoft/devbox-mcp@0.0.3-alpha.4"
+        ],
         "env": {
           "AZURE_SUBSCRIPTION_ID": "${AZURE_SUBSCRIPTION_ID}",
           "AZURE_TENANT_ID": "${AZURE_TENANT_ID}"
@@ -141,10 +195,16 @@
       "description": "Azure AI Foundry models and services",
       "category": "cloud",
       "url": "https://github.com/azure-ai-foundry/mcp-foundry",
-      "requires": ["AZURE_TENANT_ID"],
+      "requires": [
+        "AZURE_TENANT_ID"
+      ],
       "definition": {
         "command": "npx",
-        "args": ["-y", "mcp-remote@0.1.37", "https://mcp.ai.azure.com"],
+        "args": [
+          "-y",
+          "mcp-remote@0.1.38",
+          "https://mcp.ai.azure.com"
+        ],
         "env": {
           "AZURE_TENANT_ID": "${AZURE_TENANT_ID}"
         }
@@ -157,7 +217,11 @@
       "requires": [],
       "definition": {
         "command": "npx",
-        "args": ["-y", "kubernetes-mcp-server@0.0.56", "--disable-destructive"],
+        "args": [
+          "-y",
+          "kubernetes-mcp-server@0.0.62",
+          "--disable-destructive"
+        ],
         "env": {
           "KUBECONFIG": "${KUBECONFIG:-~/.kube/config}"
         }
@@ -170,17 +234,30 @@
       "requires": [],
       "definition": {
         "command": "spacectl",
-        "args": ["mcp", "server"]
+        "args": [
+          "mcp",
+          "server"
+        ]
       }
     },
     "google-workspace": {
       "description": "Gmail, Calendar, Drive, Docs, Sheets",
       "category": "collaboration",
       "url": "https://github.com/taylorwilsdon/google_workspace_mcp",
-      "requires": ["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "USER_GOOGLE_EMAIL"],
+      "requires": [
+        "GOOGLE_OAUTH_CLIENT_ID",
+        "GOOGLE_OAUTH_CLIENT_SECRET",
+        "USER_GOOGLE_EMAIL"
+      ],
       "definition": {
         "command": "uvx",
-        "args": ["--python", "3.12", "workspace-mcp==1.7.1", "--tool-tier", "core"],
+        "args": [
+          "--python",
+          "3.12",
+          "workspace-mcp==1.20.4",
+          "--tool-tier",
+          "core"
+        ],
         "env": {
           "GOOGLE_OAUTH_CLIENT_ID": "${GOOGLE_OAUTH_CLIENT_ID}",
           "GOOGLE_OAUTH_CLIENT_SECRET": "${GOOGLE_OAUTH_CLIENT_SECRET}",
@@ -189,7 +266,10 @@
       },
       "container_definition": {
         "command": "workspace-mcp",
-        "args": ["--tool-tier", "core"],
+        "args": [
+          "--tool-tier",
+          "core"
+        ],
         "env": {
           "GOOGLE_OAUTH_CLIENT_ID": "${GOOGLE_OAUTH_CLIENT_ID}",
           "GOOGLE_OAUTH_CLIENT_SECRET": "${GOOGLE_OAUTH_CLIENT_SECRET}",
@@ -205,8 +285,10 @@
       "definition": {
         "command": "uvx",
         "args": [
-          "--from", "git+https://github.com/neverprepared/ink-bunny#subdirectory=brainbox",
-          "--extra", "mcp",
+          "--from",
+          "git+https://github.com/neverprepared/ink-bunny#subdirectory=brainbox",
+          "--extra",
+          "mcp",
           "brainbox",
           "mcp"
         ],
@@ -226,10 +308,15 @@
       "description": "Cloudflare DNS record management — list, create, update, delete DNS records",
       "category": "cloud",
       "url": "https://github.com/neverprepared/mcp-cloudflare-dns",
-      "requires": ["CLOUDFLARE_API_TOKEN"],
+      "requires": [
+        "CLOUDFLARE_API_TOKEN"
+      ],
       "definition": {
         "command": "npx",
-        "args": ["-y", "@neverprepared/mcp-cloudflare-dns"],
+        "args": [
+          "-y",
+          "@neverprepared/mcp-cloudflare-dns"
+        ],
         "env": {
           "CLOUDFLARE_API_TOKEN": "${CLOUDFLARE_API_TOKEN}"
         }
@@ -246,10 +333,17 @@
       "description": "Uptime Kuma v2 monitoring — monitors, notifications, tags, status pages, and maintenance",
       "category": "observability",
       "url": "https://github.com/neverprepared/mcp-uptime-kuma",
-      "requires": ["UPTIME_KUMA_URL", "UPTIME_KUMA_USERNAME", "UPTIME_KUMA_PASSWORD"],
+      "requires": [
+        "UPTIME_KUMA_URL",
+        "UPTIME_KUMA_USERNAME",
+        "UPTIME_KUMA_PASSWORD"
+      ],
       "definition": {
         "command": "npx",
-        "args": ["-y", "@neverprepared/mcp-uptime-kuma"],
+        "args": [
+          "-y",
+          "@neverprepared/mcp-uptime-kuma"
+        ],
         "env": {
           "UPTIME_KUMA_URL": "${UPTIME_KUMA_URL:-http://localhost:3001}",
           "UPTIME_KUMA_USERNAME": "${UPTIME_KUMA_USERNAME}",
@@ -274,10 +368,15 @@
       "description": "New Relic observability — NerdGraph GraphQL API for metrics, alerts, and entity management",
       "category": "observability",
       "url": "https://github.com/neverprepared/mcp-new-relic",
-      "requires": ["NEW_RELIC_API_KEY"],
+      "requires": [
+        "NEW_RELIC_API_KEY"
+      ],
       "definition": {
         "command": "npx",
-        "args": ["-y", "@neverprepared/mcp-new-relic"],
+        "args": [
+          "-y",
+          "@neverprepared/mcp-new-relic"
+        ],
         "env": {
           "NEW_RELIC_API_KEY": "${NEW_RELIC_API_KEY}"
         }
@@ -290,17 +389,26 @@
       "requires": [],
       "definition": {
         "command": "az-pim-cli",
-        "args": ["mcp"]
+        "args": [
+          "mcp"
+        ]
       }
     },
     "argocd": {
       "description": "Argo CD application management — list, sync, and inspect applications and resources",
       "category": "cloud",
       "url": "https://github.com/argoproj-labs/mcp-for-argocd",
-      "requires": ["ARGOCD_BASE_URL", "ARGOCD_API_TOKEN"],
+      "requires": [
+        "ARGOCD_BASE_URL",
+        "ARGOCD_API_TOKEN"
+      ],
       "definition": {
         "command": "npx",
-        "args": ["-y", "argocd-mcp@0.5.0", "stdio"],
+        "args": [
+          "-y",
+          "argocd-mcp@0.7.0",
+          "stdio"
+        ],
         "env": {
           "ARGOCD_BASE_URL": "${ARGOCD_BASE_URL}",
           "ARGOCD_API_TOKEN": "${ARGOCD_API_TOKEN}"
@@ -321,10 +429,17 @@
       "description": "Publish Markdown documents to Confluence — converts to ADF, renders Mermaid diagrams as attachments",
       "category": "docs",
       "url": "https://github.com/neverprepared/mcp-markdown-to-confluence",
-      "requires": ["CONFLUENCE_BASE_URL", "CONFLUENCE_EMAIL", "CONFLUENCE_API_TOKEN"],
+      "requires": [
+        "CONFLUENCE_BASE_URL",
+        "CONFLUENCE_EMAIL",
+        "CONFLUENCE_API_TOKEN"
+      ],
       "definition": {
         "command": "npx",
-        "args": ["-y", "@neverprepared/mcp-markdown-to-confluence@1.0.1"],
+        "args": [
+          "-y",
+          "@neverprepared/mcp-markdown-to-confluence@1.4.2"
+        ],
         "env": {
           "CONFLUENCE_BASE_URL": "${CONFLUENCE_BASE_URL}",
           "CONFLUENCE_EMAIL": "${CONFLUENCE_EMAIL}",
@@ -345,13 +460,20 @@
       "description": "Grafana dashboards, datasources, alerts, and Loki/Prometheus queries",
       "category": "observability",
       "url": "https://github.com/grafana/mcp-grafana",
-      "requires": ["GRAFANA_URL", "GRAFANA_API_KEY"],
+      "requires": [
+        "GRAFANA_URL",
+        "GRAFANA_API_KEY"
+      ],
       "definition": {
         "command": "docker",
         "args": [
-          "run", "-i", "--rm",
-          "-e", "GRAFANA_URL",
-          "-e", "GRAFANA_API_KEY",
+          "run",
+          "-i",
+          "--rm",
+          "-e",
+          "GRAFANA_URL",
+          "-e",
+          "GRAFANA_API_KEY",
           "grafana/mcp-grafana:latest"
         ],
         "env": {
@@ -367,21 +489,27 @@
       "requires": [],
       "definition": {
         "command": "uvx",
-        "args": ["mcp-utm"],
+        "args": [
+          "mcp-utm"
+        ],
         "env": {}
       }
     },
-    "obsidian-second-brain": {
-      "description": "Obsidian second brain — read and search notes from a local vault using the PARA method",
+    "mcp-brain": {
+      "description": "mcp-brain — unified memory, reasoning, and validation server (replaces obsidian-second-brain)",
       "category": "knowledge",
-      "url": "https://github.com/neverprepared/mcp-obsidian-second-brain",
-      "requires": ["OBSIDIAN_VAULT_PATH"],
+      "url": "https://github.com/mindmorass/mcp-brain",
+      "requires": [
+        "BRAIN_VAULT_PATH"
+      ],
       "definition": {
-        "command": "mcp-obsidian-second-brain",
-        "args": [],
+        "command": "node",
+        "args": [
+          "/Users/cdowning/workspaces/profiles/personal/code/mcp/mcp-brain/dist/index.js"
+        ],
         "env": {
-          "OBSIDIAN_VAULT_PATH": "${OBSIDIAN_VAULT_PATH}",
-          "LOG_LEVEL": "${LOG_LEVEL:-info}"
+          "BRAIN_VAULT_PATH": "${BRAIN_VAULT_PATH:-${OBSIDIAN_VAULT_PATH}}",
+          "MCP_BRAIN_LOG_LEVEL": "${MCP_BRAIN_LOG_LEVEL:-info}"
         }
       }
     }

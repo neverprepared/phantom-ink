@@ -50,46 +50,6 @@ def validate_session_name(name: str) -> str:
     return name
 
 
-def validate_artifact_key(key: str) -> str:
-    """
-    Validate artifact key to prevent path traversal attacks.
-
-    Rules:
-    - Cannot be empty
-    - Cannot contain '..' (path traversal)
-    - Cannot start with '/' (absolute paths)
-    - Cannot contain null bytes
-
-    Args:
-        key: Artifact key to validate
-
-    Returns:
-        The validated, normalized key (stripped of leading/trailing slashes)
-
-    Raises:
-        ValidationError: If key is invalid
-    """
-    if not key:
-        raise ValidationError("Artifact key cannot be empty")
-
-    if "\x00" in key:
-        raise ValidationError("Artifact key cannot contain null bytes")
-
-    if ".." in key:
-        raise ValidationError(f"Invalid artifact key '{key}': cannot contain '..'")
-
-    if key.startswith("/"):
-        raise ValidationError(f"Invalid artifact key '{key}': cannot be absolute path")
-
-    # Normalize: strip leading/trailing slashes
-    normalized = key.strip("/")
-
-    if not normalized:
-        raise ValidationError("Artifact key cannot be empty after normalization")
-
-    return normalized
-
-
 def validate_volume_mount(volume_spec: str) -> Tuple[str, str, str]:
     """
     Validate and parse volume mount specification.
