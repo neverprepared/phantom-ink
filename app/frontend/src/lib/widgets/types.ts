@@ -28,6 +28,7 @@ export interface ScriptMetricConfig {
   valueType?: 'number' | 'string';
   color?: string;
   interval?: number;
+  jobId?: string;      // set after auto-registration with collect scheduler
 }
 
 export interface HttpMetricConfig {
@@ -38,6 +39,7 @@ export interface HttpMetricConfig {
   valueType?: 'number' | 'string';
   color?: string;
   interval?: number;
+  jobId?: string;      // set after auto-registration with collect scheduler
 }
 
 export type WidgetConfig = StatCounterConfig | CustomCounterConfig | ScriptMetricConfig | HttpMetricConfig | Record<string, never>;

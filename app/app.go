@@ -23,10 +23,12 @@ type App struct {
 	db         *DB
 	client     *brainbox.Client
 	sse        *brainbox.SSEListener
-	worker        *worker
-	workerStop    context.CancelFunc
-	scheduler     *scheduler
-	schedulerStop context.CancelFunc
+	worker           *worker
+	workerStop       context.CancelFunc
+	scheduler        *scheduler
+	schedulerStop    context.CancelFunc
+	collectScheduler *collectScheduler
+	collectStop      context.CancelFunc
 }
 
 // NewApp creates a new App instance.
@@ -87,6 +89,12 @@ func (a *App) startup(ctx context.Context) {
 		a.schedulerStop = schedCancel
 		a.scheduler = newScheduler(a)
 		a.scheduler.Start(schedCtx)
+
+		// Collect scheduler — runs data collection jobs and stores entries.
+		collectCtx, collectCancel := context.WithCancel(ctx)
+		a.collectStop = collectCancel
+		a.collectScheduler = newCollectScheduler(a)
+		a.collectScheduler.Start(collectCtx)
 	}
 }
 
@@ -100,11 +108,17 @@ func (a *App) shutdown(_ context.Context) {
 	if a.schedulerStop != nil {
 		a.schedulerStop()
 	}
+	if a.collectStop != nil {
+		a.collectStop()
+	}
 	if a.worker != nil {
 		a.worker.Wait()
 	}
 	if a.scheduler != nil {
 		a.scheduler.Wait()
+	}
+	if a.collectScheduler != nil {
+		a.collectScheduler.Wait()
 	}
 	if a.sse != nil {
 		a.sse.Stop()

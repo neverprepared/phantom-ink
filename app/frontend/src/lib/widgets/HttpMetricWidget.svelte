@@ -4,20 +4,57 @@
   import { profileState } from '../stores.svelte';
   import type { HttpMetricConfig } from './types';
 
-  let { config }: { config: HttpMetricConfig } = $props();
+  let { config, onConfigUpdate }: {
+    config: HttpMetricConfig;
+    onConfigUpdate?: (patch: Partial<HttpMetricConfig>) => void;
+  } = $props();
 
   let value   = $state<string | null>(null);
   let error   = $state(false);
   let loading = $state(true);
 
   const isString = $derived(config.valueType === 'string');
+  const profile  = $derived(profileState.active?.name ?? '');
+
+  // Build a synthetic shell command so HTTP metrics can also be scheduled
+  const syntheticCommand = $derived(
+    `op run -- curl -sf${config.header ? ` -H "${config.header}"` : ''} "${config.url}"` +
+    (config.path ? ` | jq -r '.${config.path}'` : '')
+  );
 
   async function fetchValue() {
     const a = await getApi();
     if (!a) return;
+
+    if (config.jobId) {
+      try {
+        const entry = await a.GetLatestCollectedEntry(config.jobId, config.url);
+        if (entry) {
+          value = entry.value || null;
+          error = false;
+        }
+      } catch {
+        error = true;
+      } finally {
+        loading = false;
+      }
+      return;
+    }
+
+    // Live fetch + auto-register
     try {
-      value = await a.FetchMetricUrl(profileState.active?.name ?? '', config.url, config.path ?? '', config.header ?? '');
+      value = await a.FetchMetricUrl(profile, config.url, config.path ?? '', config.header ?? '');
       error = false;
+      if (onConfigUpdate) {
+        try {
+          const job = await a.SaveCollectJob({
+            id: '', profile, name: config.label, command: syntheticCommand,
+            interval_s: config.interval ?? 60, enabled: true,
+            default_actions: '[]', last_error: '', created_at: 0,
+          });
+          onConfigUpdate({ jobId: job.id });
+        } catch { /* non-fatal */ }
+      }
     } catch {
       error = true;
     } finally {
@@ -29,7 +66,13 @@
     void fetchValue();
     const ms = (config.interval ?? 60) * 1000;
     const interval = setInterval(fetchValue, ms);
-    return () => clearInterval(interval);
+
+    const handler = () => void fetchValue();
+    window.runtime?.EventsOn('collect:update', handler);
+    return () => {
+      clearInterval(interval);
+      window.runtime?.EventsOff('collect:update');
+    };
   });
 </script>
 
@@ -48,7 +91,7 @@
   {/if}
   <span class="stat-sub">
     {config.url.replace(/^https?:\/\//, '').slice(0, 24)}{config.url.length > 31 ? '…' : ''}
-    · {config.interval ?? 60}s
+    · {config.interval ?? 60}s{config.jobId ? ' · ●' : ''}
   </span>
 </div>
 

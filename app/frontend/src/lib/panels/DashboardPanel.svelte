@@ -144,6 +144,15 @@
     'http-metric':      HttpMetricWidget,
   };
 
+  function patchWidgetConfig(id: string, patch: Record<string, unknown>): void {
+    const updated = dashboardState.widgets.map(existing =>
+      existing.id === id ? { ...existing, config: { ...existing.config, ...patch } } : existing
+    );
+    dashboardState.updateWidgets(updated);
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveLayout, 800);
+  }
+
   function mountWidget(w: WidgetInstance): void {
     if (!grid) return;
     const itemEl = grid.addWidget({
@@ -151,7 +160,11 @@
       minW: w.minW, minH: w.minH,
     }) as HTMLElement;
     const contentEl = itemEl.querySelector('.grid-stack-item-content') as HTMLElement;
-    const instance = mount(WIDGET_MAP[w.kind], { target: contentEl, props: { config: w.config } });
+    const props: Record<string, unknown> = { config: w.config };
+    if (w.kind === 'script-metric' || w.kind === 'http-metric') {
+      props.onConfigUpdate = (patch: Record<string, unknown>) => patchWidgetConfig(w.id, patch);
+    }
+    const instance = mount(WIDGET_MAP[w.kind], { target: contentEl, props });
     mountedWidgets.set(w.id, instance);
 
     const btn = document.createElement('button');
@@ -183,6 +196,24 @@
         );
       } catch {}
     }
+  }
+
+  function handleUpdateWidget(w: WidgetInstance): void {
+    const updated = dashboardState.widgets.map(existing => existing.id === w.id ? { ...existing, config: w.config } : existing);
+    dashboardState.updateWidgets(updated);
+
+    // Re-mount the widget with its new config
+    const inst = mountedWidgets.get(w.id);
+    const el = gridEl?.querySelector(`[gs-id="${w.id}"]`) as HTMLElement | null;
+    if (inst && el) {
+      unmount(inst);
+      const contentEl = el.querySelector('.grid-stack-item-content') as HTMLElement;
+      const newInst = mount(WIDGET_MAP[w.kind], { target: contentEl, props: { config: w.config } });
+      mountedWidgets.set(w.id, newInst);
+    }
+
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveLayout, 800);
   }
 
   function handleAddWidget(w: WidgetInstance): void {
@@ -366,6 +397,7 @@
   open={drawerOpen}
   onClose={() => drawerOpen = false}
   onAdd={handleAddWidget}
+  onUpdate={handleUpdateWidget}
   onRemove={handleRemoveWidget}
   onReset={handleReset}
   widgets={dashboardState.widgets}

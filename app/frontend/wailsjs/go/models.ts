@@ -66,24 +66,6 @@ export namespace brainbox {
 	        this.ollama_model = source["ollama_model"];
 	    }
 	}
-	export class Artifact {
-	    key: string;
-	    size: number;
-	    last_modified: string;
-	    content_type: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Artifact(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.key = source["key"];
-	        this.size = source["size"];
-	        this.last_modified = source["last_modified"];
-	        this.content_type = source["content_type"];
-	    }
-	}
 	export class AuthorityInfo {
 	    name: string;
 	    version: string;
@@ -1230,6 +1212,76 @@ export namespace main {
 	    }
 	}
 	
+	export class CollectJob {
+	    id: string;
+	    profile: string;
+	    name: string;
+	    command: string;
+	    interval_s: number;
+	    enabled: boolean;
+	    default_actions: string;
+	    last_run_at?: number;
+	    last_error: string;
+	    created_at: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CollectJob(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.profile = source["profile"];
+	        this.name = source["name"];
+	        this.command = source["command"];
+	        this.interval_s = source["interval_s"];
+	        this.enabled = source["enabled"];
+	        this.default_actions = source["default_actions"];
+	        this.last_run_at = source["last_run_at"];
+	        this.last_error = source["last_error"];
+	        this.created_at = source["created_at"];
+	    }
+	}
+	export class CollectedEntry {
+	    job_id: string;
+	    entry_id: string;
+	    profile: string;
+	    kind: string;
+	    title: string;
+	    description: string;
+	    value: string;
+	    url: string;
+	    start_at?: number;
+	    end_at?: number;
+	    status: string;
+	    tags: string[];
+	    metadata: number[];
+	    actions: number[];
+	    collected_at: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CollectedEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.job_id = source["job_id"];
+	        this.entry_id = source["entry_id"];
+	        this.profile = source["profile"];
+	        this.kind = source["kind"];
+	        this.title = source["title"];
+	        this.description = source["description"];
+	        this.value = source["value"];
+	        this.url = source["url"];
+	        this.start_at = source["start_at"];
+	        this.end_at = source["end_at"];
+	        this.status = source["status"];
+	        this.tags = source["tags"];
+	        this.metadata = source["metadata"];
+	        this.actions = source["actions"];
+	        this.collected_at = source["collected_at"];
+	    }
+	}
 	export class Config {
 	    base_url: string;
 	    api_key: string;

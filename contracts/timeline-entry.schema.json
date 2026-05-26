@@ -75,8 +75,8 @@
             },
             "kind": {
               "type": "string",
-              "enum": ["open_url", "copy"],
-              "description": "'open_url' opens url in system browser; 'copy' copies value to clipboard."
+              "enum": ["open_url", "copy", "dispatch", "prompt"],
+              "description": "'open_url' opens url in system browser; 'copy' copies value to clipboard; 'dispatch' sends a task to a brainbox hub agent without confirmation; 'prompt' pre-fills the dispatch form for user review before sending."
             },
             "url": {
               "type": "string",
@@ -85,6 +85,18 @@
             "value": {
               "type": "string",
               "description": "Required when kind=copy."
+            },
+            "agent": {
+              "type": "string",
+              "description": "For kind=dispatch|prompt: target agent name (e.g. 'developer', 'reviewer'). Defaults to 'developer'."
+            },
+            "prompt": {
+              "type": "string",
+              "description": "For kind=dispatch: prompt template sent directly to the agent. Supports {field} and {metadata.field} substitution."
+            },
+            "template": {
+              "type": "string",
+              "description": "For kind=prompt: pre-filled prompt template opened for user review. Supports {field} and {metadata.field} substitution."
             }
           }
         }

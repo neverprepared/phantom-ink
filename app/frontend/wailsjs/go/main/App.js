@@ -78,6 +78,10 @@ export function DeleteChannel(arg1) {
   return window['go']['main']['App']['DeleteChannel'](arg1);
 }
 
+export function DeleteCollectJob(arg1) {
+  return window['go']['main']['App']['DeleteCollectJob'](arg1);
+}
+
 export function DeleteOllamaModel(arg1) {
   return window['go']['main']['App']['DeleteOllamaModel'](arg1);
 }
@@ -190,6 +194,10 @@ export function GetLangfuseHealth() {
   return window['go']['main']['App']['GetLangfuseHealth']();
 }
 
+export function GetLatestCollectedEntry(arg1, arg2) {
+  return window['go']['main']['App']['GetLatestCollectedEntry'](arg1, arg2);
+}
+
 export function GetMessageLog() {
   return window['go']['main']['App']['GetMessageLog']();
 }
@@ -298,6 +306,14 @@ export function ListChannels(arg1) {
   return window['go']['main']['App']['ListChannels'](arg1);
 }
 
+export function ListCollectJobs(arg1) {
+  return window['go']['main']['App']['ListCollectJobs'](arg1);
+}
+
+export function ListCollectedEntries(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListCollectedEntries'](arg1, arg2, arg3);
+}
+
 export function ListHubTasks(arg1, arg2) {
   return window['go']['main']['App']['ListHubTasks'](arg1, arg2);
 }
@@ -390,6 +406,10 @@ export function RunChain(arg1, arg2, arg3) {
   return window['go']['main']['App']['RunChain'](arg1, arg2, arg3);
 }
 
+export function RunCollectJobNow(arg1) {
+  return window['go']['main']['App']['RunCollectJobNow'](arg1);
+}
+
 export function RunMetricScript(arg1, arg2) {
   return window['go']['main']['App']['RunMetricScript'](arg1, arg2);
 }
@@ -404,6 +424,10 @@ export function RunPreflightChecks() {
 
 export function SaveChain(arg1) {
   return window['go']['main']['App']['SaveChain'](arg1);
+}
+
+export function SaveCollectJob(arg1) {
+  return window['go']['main']['App']['SaveCollectJob'](arg1);
 }
 
 export function SaveDashboardLayout(arg1, arg2) {

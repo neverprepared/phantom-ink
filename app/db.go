@@ -216,6 +216,47 @@ var migrations = []migration{
 	{version: 10, fn: func(conn *sql.DB) error {
 		return addColumnIfMissing(conn, "chains", "files_json", "TEXT NOT NULL DEFAULT '[]'")
 	}},
+	// v11: data collection scheduler — periodic commands whose output is
+	// stored as timeline entries (metrics, events). collected_entries are
+	// upserted by (job_id, entry_id) so reruns update existing rows.
+	{version: 11, sql: `
+		CREATE TABLE IF NOT EXISTS collect_jobs (
+			id              TEXT PRIMARY KEY,
+			profile         TEXT NOT NULL DEFAULT '',
+			name            TEXT NOT NULL,
+			command         TEXT NOT NULL,
+			interval_s      INTEGER NOT NULL DEFAULT 300,
+			enabled         INTEGER NOT NULL DEFAULT 1,
+			default_actions TEXT NOT NULL DEFAULT '[]',
+			last_run_at     INTEGER,
+			last_error      TEXT NOT NULL DEFAULT '',
+			created_at      INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_collect_jobs_profile ON collect_jobs(profile);
+
+		CREATE TABLE IF NOT EXISTS collected_entries (
+			job_id       TEXT NOT NULL,
+			entry_id     TEXT NOT NULL,
+			profile      TEXT NOT NULL DEFAULT '',
+			kind         TEXT NOT NULL DEFAULT 'metric',
+			title        TEXT NOT NULL DEFAULT '',
+			description  TEXT NOT NULL DEFAULT '',
+			value        TEXT NOT NULL DEFAULT '',
+			url          TEXT NOT NULL DEFAULT '',
+			start_at     INTEGER,
+			end_at       INTEGER,
+			status       TEXT NOT NULL DEFAULT 'active',
+			tags         TEXT NOT NULL DEFAULT '[]',
+			metadata     TEXT NOT NULL DEFAULT '{}',
+			actions      TEXT NOT NULL DEFAULT '[]',
+			collected_at INTEGER NOT NULL,
+			PRIMARY KEY (job_id, entry_id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_collected_entries_profile   ON collected_entries(profile);
+		CREATE INDEX IF NOT EXISTS idx_collected_entries_kind      ON collected_entries(profile, kind);
+		CREATE INDEX IF NOT EXISTS idx_collected_entries_start_at  ON collected_entries(start_at);
+		CREATE INDEX IF NOT EXISTS idx_collected_entries_collected ON collected_entries(collected_at DESC);
+	`},
 }
 
 func (db *DB) migrate() error {
