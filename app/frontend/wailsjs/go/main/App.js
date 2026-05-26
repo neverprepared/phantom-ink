@@ -70,16 +70,16 @@ export function DeleteAgent(arg1) {
   return window['go']['main']['App']['DeleteAgent'](arg1);
 }
 
-export function DeleteArtifact(arg1) {
-  return window['go']['main']['App']['DeleteArtifact'](arg1);
-}
-
 export function DeleteChain(arg1) {
   return window['go']['main']['App']['DeleteChain'](arg1);
 }
 
 export function DeleteChannel(arg1) {
   return window['go']['main']['App']['DeleteChannel'](arg1);
+}
+
+export function DeleteCollectJob(arg1) {
+  return window['go']['main']['App']['DeleteCollectJob'](arg1);
 }
 
 export function DeleteOllamaModel(arg1) {
@@ -114,16 +114,16 @@ export function DeleteWorktree(arg1) {
   return window['go']['main']['App']['DeleteWorktree'](arg1);
 }
 
-export function DownloadArtifact(arg1) {
-  return window['go']['main']['App']['DownloadArtifact'](arg1);
-}
-
 export function EnqueueTask(arg1) {
   return window['go']['main']['App']['EnqueueTask'](arg1);
 }
 
 export function ExportSecretsTemplate(arg1) {
   return window['go']['main']['App']['ExportSecretsTemplate'](arg1);
+}
+
+export function FetchMetricUrl(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['FetchMetricUrl'](arg1, arg2, arg3, arg4);
 }
 
 export function FindClaudeProcesses() {
@@ -170,6 +170,10 @@ export function GetContainerMetrics() {
   return window['go']['main']['App']['GetContainerMetrics']();
 }
 
+export function GetDashboardLayout(arg1) {
+  return window['go']['main']['App']['GetDashboardLayout'](arg1);
+}
+
 export function GetDiskBreakdown() {
   return window['go']['main']['App']['GetDiskBreakdown']();
 }
@@ -188,6 +192,10 @@ export function GetHubState() {
 
 export function GetLangfuseHealth() {
   return window['go']['main']['App']['GetLangfuseHealth']();
+}
+
+export function GetLatestCollectedEntry(arg1, arg2) {
+  return window['go']['main']['App']['GetLatestCollectedEntry'](arg1, arg2);
 }
 
 export function GetMessageLog() {
@@ -262,6 +270,10 @@ export function GetTraceDetail(arg1) {
   return window['go']['main']['App']['GetTraceDetail'](arg1);
 }
 
+export function GetWidgetCount(arg1, arg2) {
+  return window['go']['main']['App']['GetWidgetCount'](arg1, arg2);
+}
+
 export function GetWorktree(arg1) {
   return window['go']['main']['App']['GetWorktree'](arg1);
 }
@@ -278,10 +290,6 @@ export function ListAgents() {
   return window['go']['main']['App']['ListAgents']();
 }
 
-export function ListArtifacts(arg1) {
-  return window['go']['main']['App']['ListArtifacts'](arg1);
-}
-
 export function ListBackups() {
   return window['go']['main']['App']['ListBackups']();
 }
@@ -294,12 +302,20 @@ export function ListChains() {
   return window['go']['main']['App']['ListChains']();
 }
 
-export function ListChannels() {
-  return window['go']['main']['App']['ListChannels']();
+export function ListChannels(arg1) {
+  return window['go']['main']['App']['ListChannels'](arg1);
 }
 
-export function ListHubTasks(arg1) {
-  return window['go']['main']['App']['ListHubTasks'](arg1);
+export function ListCollectJobs(arg1) {
+  return window['go']['main']['App']['ListCollectJobs'](arg1);
+}
+
+export function ListCollectedEntries(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListCollectedEntries'](arg1, arg2, arg3);
+}
+
+export function ListHubTasks(arg1, arg2) {
+  return window['go']['main']['App']['ListHubTasks'](arg1, arg2);
 }
 
 export function ListNFSExports() {
@@ -318,8 +334,8 @@ export function ListProfileDirs(arg1) {
   return window['go']['main']['App']['ListProfileDirs'](arg1);
 }
 
-export function ListRepos() {
-  return window['go']['main']['App']['ListRepos']();
+export function ListRepos(arg1) {
+  return window['go']['main']['App']['ListRepos'](arg1);
 }
 
 export function ListRunners() {
@@ -390,6 +406,14 @@ export function RunChain(arg1, arg2, arg3) {
   return window['go']['main']['App']['RunChain'](arg1, arg2, arg3);
 }
 
+export function RunCollectJobNow(arg1) {
+  return window['go']['main']['App']['RunCollectJobNow'](arg1);
+}
+
+export function RunMetricScript(arg1, arg2) {
+  return window['go']['main']['App']['RunMetricScript'](arg1, arg2);
+}
+
 export function RunPlaybook(arg1, arg2) {
   return window['go']['main']['App']['RunPlaybook'](arg1, arg2);
 }
@@ -400,6 +424,14 @@ export function RunPreflightChecks() {
 
 export function SaveChain(arg1) {
   return window['go']['main']['App']['SaveChain'](arg1);
+}
+
+export function SaveCollectJob(arg1) {
+  return window['go']['main']['App']['SaveCollectJob'](arg1);
+}
+
+export function SaveDashboardLayout(arg1, arg2) {
+  return window['go']['main']['App']['SaveDashboardLayout'](arg1, arg2);
 }
 
 export function SaveSchedule(arg1) {

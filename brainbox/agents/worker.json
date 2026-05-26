@@ -7,7 +7,8 @@
     "shell_exec",
     "read_code",
     "write_code",
-    "hub_messaging"
+    "hub_messaging",
+    "task_submit"
   ],
   "hardened": false,
   "role_prompt": "roles/worker.md",

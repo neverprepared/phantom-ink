@@ -7,11 +7,9 @@ set -eu
 
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-QUEUE_FILE="${CLAUDE_DIR}/reflex/.langfuse-queue.jsonl"
-PID_FILE="${CLAUDE_DIR}/reflex/.langfuse-drainer.pid"
-
-# Clean up PID file on exit
-trap 'rm -f "$PID_FILE"' EXIT INT TERM
+PROFILE="${LANGFUSE_PROFILE:-default}"
+QUEUE_FILE="${CLAUDE_DIR}/reflex/.langfuse-queue-${PROFILE}.jsonl"
+PID_FILE="${CLAUDE_DIR}/reflex/.langfuse-drainer-${PROFILE}.pid"
 
 # Determine uvx python flags (check once at startup)
 PYTHON_FLAG="--python 3.12"
@@ -19,8 +17,7 @@ if ! uvx --quiet --python 3.12 python -c "pass" 2>/dev/null; then
     PYTHON_FLAG=""
 fi
 
-while true; do
-    sleep 2
+drain_queue() {
     if [ -f "$QUEUE_FILE" ] && [ -s "$QUEUE_FILE" ]; then
         PROC_FILE="${QUEUE_FILE}.processing"
         mv "$QUEUE_FILE" "$PROC_FILE"
@@ -33,4 +30,11 @@ while true; do
             mv "$PROC_FILE" "${PROC_FILE}.failed" 2>/dev/null || true
         fi
     fi
+}
+
+trap 'drain_queue; rm -f "$PID_FILE"' EXIT INT TERM
+
+while true; do
+    sleep 2
+    drain_queue
 done

@@ -439,63 +439,6 @@ def api_info() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Artifact tools
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool()
-def artifact_health() -> dict[str, Any]:
-    """Check artifact storage (MinIO) health and connectivity."""
-    return _request("GET", "/api/artifacts/health")
-
-
-@mcp.tool()
-def list_artifacts(prefix: str = "") -> list[dict[str, Any]]:
-    """List stored artifacts, optionally filtered by key prefix.
-
-    Args:
-        prefix: Key prefix to filter by (e.g. "myproject/")
-    """
-    path = "/api/artifacts"
-    if prefix:
-        path += f"?prefix={prefix}"
-    return _request("GET", path)
-
-
-@mcp.tool()
-def upload_artifact(key: str, content: str) -> dict[str, Any]:
-    """Upload a text artifact to storage.
-
-    Args:
-        key: Storage key / path (e.g. "myproject/report.md")
-        content: Text content to store
-    """
-    return _request_raw(
-        "POST", f"/api/artifacts/{key}", content.encode(), content_type="text/plain"
-    )
-
-
-@mcp.tool()
-def download_artifact(key: str) -> dict[str, Any]:
-    """Download an artifact from storage.
-
-    Args:
-        key: Storage key / path (e.g. "myproject/report.md")
-    """
-    return _request("GET", f"/api/artifacts/{key}")
-
-
-@mcp.tool()
-def delete_artifact(key: str) -> dict[str, Any]:
-    """Delete an artifact from storage.
-
-    Args:
-        key: Storage key / path (e.g. "myproject/report.md")
-    """
-    return _request("DELETE", f"/api/artifacts/{key}")
-
-
-# ---------------------------------------------------------------------------
 # LangFuse trace tools
 # ---------------------------------------------------------------------------
 

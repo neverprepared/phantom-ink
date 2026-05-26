@@ -127,25 +127,11 @@ func (c ServiceConfig) ActiveURL(defaultURL string) string {
 // ComposePath is relative to the repo root (resolved at runtime).
 var knownServices = []ServiceDef{
 	{
-		Name:        "qdrant",
-		Label:       "Qdrant",
-		Description: "Vector database for RAG and semantic search",
-		DefaultURL:  "http://localhost:6333",
-		Port:        6333,
-	},
-	{
 		Name:        "langfuse",
 		Label:       "LangFuse",
 		Description: "LLM observability — traces, metrics, and cost tracking",
 		DefaultURL:  "http://localhost:3000",
 		Port:        3000,
-	},
-	{
-		Name:        "minio",
-		Label:       "MinIO",
-		Description: "S3-compatible object storage for artifacts",
-		DefaultURL:  "http://localhost:9090",
-		Port:        9090,
 	},
 	{
 		Name:        "ollama",
@@ -154,13 +140,6 @@ var knownServices = []ServiceDef{
 		DefaultURL:  "http://localhost:11434",
 		Port:        11434,
 		Native:      true,
-	},
-	{
-		Name:        "n8n",
-		Label:       "n8n",
-		Description: "Workflow automation — webhooks, integrations, and scheduled tasks",
-		DefaultURL:  "http://localhost:5678",
-		Port:        5678,
 	},
 }
 

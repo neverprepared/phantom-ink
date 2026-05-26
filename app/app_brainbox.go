@@ -47,8 +47,8 @@ func (a *App) GetHubState() (brainbox.HubState, error) {
 
 // ListHubTasks returns brainbox hub tasks. Renamed from ListTasks to avoid
 // shadowing the new App.ListTasks which reads the local task queue.
-func (a *App) ListHubTasks(status string) ([]brainbox.Task, error) {
-	return a.client.ListTasks(status)
+func (a *App) ListHubTasks(status, workspaceProfile string) ([]brainbox.Task, error) {
+	return a.client.ListTasks(status, workspaceProfile)
 }
 
 func (a *App) SubmitTask(req brainbox.SubmitTaskRequest) (brainbox.Task, error) {
@@ -191,8 +191,8 @@ func (a *App) GetMessageLog() ([]brainbox.Message, error) {
 // Repos
 // ---------------------------------------------------------------------------
 
-func (a *App) ListRepos() ([]brainbox.Repo, error) {
-	return a.client.ListRepos()
+func (a *App) ListRepos(workspaceProfile string) ([]brainbox.Repo, error) {
+	return a.client.ListRepos(workspaceProfile)
 }
 
 func (a *App) AddRepo(req brainbox.AddRepoRequest) (brainbox.Repo, error) {
@@ -205,22 +205,6 @@ func (a *App) UpdateRepo(name string, req brainbox.UpdateRepoRequest) (brainbox.
 
 func (a *App) DeleteRepo(name string) error {
 	return a.client.DeleteRepo(name)
-}
-
-// ---------------------------------------------------------------------------
-// Artifacts
-// ---------------------------------------------------------------------------
-
-func (a *App) ListArtifacts(prefix string) ([]brainbox.Artifact, error) {
-	return a.client.ListArtifacts(prefix)
-}
-
-func (a *App) DownloadArtifact(key string) ([]byte, error) {
-	return a.client.DownloadArtifact(key)
-}
-
-func (a *App) DeleteArtifact(key string) error {
-	return a.client.DeleteArtifact(key)
 }
 
 // ---------------------------------------------------------------------------
@@ -252,8 +236,8 @@ func (a *App) GetTraceDetail(traceID string) (brainbox.TraceDetail, error) {
 }
 
 // ListChannels returns all group chat channels.
-func (a *App) ListChannels() ([]brainbox.Channel, error) {
-	return a.client.ListChannels()
+func (a *App) ListChannels(workspaceProfile string) ([]brainbox.Channel, error) {
+	return a.client.ListChannels(workspaceProfile)
 }
 
 // GetChannel returns a single channel by ID.

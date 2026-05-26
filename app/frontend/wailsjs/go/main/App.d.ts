@@ -37,11 +37,11 @@ export function CreateWorktreeSession(arg1:string):Promise<brainbox.WorktreeSess
 
 export function DeleteAgent(arg1:string):Promise<void>;
 
-export function DeleteArtifact(arg1:string):Promise<void>;
-
 export function DeleteChain(arg1:string):Promise<void>;
 
 export function DeleteChannel(arg1:string):Promise<void>;
+
+export function DeleteCollectJob(arg1:string):Promise<void>;
 
 export function DeleteOllamaModel(arg1:string):Promise<void>;
 
@@ -59,11 +59,11 @@ export function DeleteSession(arg1:string):Promise<brainbox.SessionActionRespons
 
 export function DeleteWorktree(arg1:string):Promise<void>;
 
-export function DownloadArtifact(arg1:string):Promise<Array<number>>;
-
 export function EnqueueTask(arg1:main.EnqueueTaskRequest):Promise<string>;
 
 export function ExportSecretsTemplate(arg1:string):Promise<string>;
+
+export function FetchMetricUrl(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function FindClaudeProcesses():Promise<Array<main.LocalProcess>>;
 
@@ -87,6 +87,8 @@ export function GetContainerDiskUsage():Promise<Array<main.ContainerDiskStat>>;
 
 export function GetContainerMetrics():Promise<Array<brainbox.ContainerMetrics>>;
 
+export function GetDashboardLayout(arg1:string):Promise<string>;
+
 export function GetDiskBreakdown():Promise<main.DiskBreakdown>;
 
 export function GetDiskOverview():Promise<main.DiskOverview>;
@@ -96,6 +98,8 @@ export function GetDockerStats():Promise<Array<main.ContainerStat>>;
 export function GetHubState():Promise<brainbox.HubState>;
 
 export function GetLangfuseHealth():Promise<brainbox.HealthStatus>;
+
+export function GetLatestCollectedEntry(arg1:string,arg2:string):Promise<main.CollectedEntry>;
 
 export function GetMessageLog():Promise<Array<brainbox.Message>>;
 
@@ -133,6 +137,8 @@ export function GetTaskStats(arg1:number):Promise<main.TaskStats>;
 
 export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;
 
+export function GetWidgetCount(arg1:string,arg2:string):Promise<number>;
+
 export function GetWorktree(arg1:string):Promise<brainbox.Worktree>;
 
 export function LaunchTeam(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<brainbox.SessionActionResponse>;
@@ -141,17 +147,19 @@ export function ListAgentRoles():Promise<Array<brainbox.AgentDefinition>>;
 
 export function ListAgents():Promise<Array<main.DetectedAgent>>;
 
-export function ListArtifacts(arg1:string):Promise<Array<brainbox.Artifact>>;
-
 export function ListBackups():Promise<Array<string>>;
 
 export function ListChainRuns(arg1:string,arg2:number):Promise<Array<main.ChainRunRow>>;
 
 export function ListChains():Promise<Array<main.Chain>>;
 
-export function ListChannels():Promise<Array<brainbox.Channel>>;
+export function ListChannels(arg1:string):Promise<Array<brainbox.Channel>>;
 
-export function ListHubTasks(arg1:string):Promise<Array<brainbox.Task>>;
+export function ListCollectJobs(arg1:string):Promise<Array<main.CollectJob>>;
+
+export function ListCollectedEntries(arg1:string,arg2:string,arg3:string):Promise<Array<main.CollectedEntry>>;
+
+export function ListHubTasks(arg1:string,arg2:string):Promise<Array<brainbox.Task>>;
 
 export function ListNFSExports():Promise<Array<main.NFSExport>>;
 
@@ -161,7 +169,7 @@ export function ListPlaybooks(arg1:string):Promise<Array<brainbox.Playbook>>;
 
 export function ListProfileDirs(arg1:string):Promise<Array<string>>;
 
-export function ListRepos():Promise<Array<brainbox.Repo>>;
+export function ListRepos(arg1:string):Promise<Array<brainbox.Repo>>;
 
 export function ListRunners():Promise<Array<brainbox.Runner>>;
 
@@ -197,11 +205,19 @@ export function RetryTask(arg1:string):Promise<void>;
 
 export function RunChain(arg1:string,arg2:string,arg3:string):Promise<string>;
 
+export function RunCollectJobNow(arg1:string):Promise<void>;
+
+export function RunMetricScript(arg1:string,arg2:string):Promise<string>;
+
 export function RunPlaybook(arg1:string,arg2:string):Promise<brainbox.Playbook>;
 
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
 
 export function SaveChain(arg1:main.Chain):Promise<main.Chain>;
+
+export function SaveCollectJob(arg1:main.CollectJob):Promise<main.CollectJob>;
+
+export function SaveDashboardLayout(arg1:string,arg2:string):Promise<void>;
 
 export function SaveSchedule(arg1:main.ScheduleRow):Promise<main.ScheduleRow>;
 

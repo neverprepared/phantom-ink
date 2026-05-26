@@ -133,6 +133,12 @@ class TaskCreate(BaseModel):
     workspace_profile: str | None = None
     workspace_home: str | None = None
     job_id: str | None = None  # Parent supervisor task ID; None means this task IS the job root
+    runner: str | None = None                              # explicit runner name; None = auto-select
+    runner_tags: list[str] = Field(default_factory=list)  # preferred tags for auto-selection
+    backend: str = "docker"                                # backend capability to match
+    priority: int = 0                                      # higher = dispatched sooner
+    max_attempts: int = 1                                  # permanent failure after N dispatch failures
+    deadline_ms: int | None = None                         # epoch ms; fail if not RUNNING by then
 
 
 class Task(BaseModel):
@@ -151,6 +157,17 @@ class Task(BaseModel):
     job_id: str | None = None       # Parent supervisor task ID (own id if this is the root)
     spawned_by: str | None = None   # Task ID that directly spawned this task (None for roots)
     child_task_ids: list[str] = Field(default_factory=list)  # Tasks spawned by this one
+    channel_ids: list[str] = Field(default_factory=list)    # Channels spawned by this task
+    runner_name: str | None = None  # Runner that handled this task; None = executed in-process
+    workspace_home: str | None = None    # Stored for scheduler retry on backoff
+    backend: str = "docker"              # Backend capability required for this task
+    runner_tags: list[str] = Field(default_factory=list)  # Preferred runner tags
+    priority: int = 0                    # Higher = dispatched sooner
+    max_attempts: int = 1                # Permanent failure after N dispatch failures
+    attempts: int = 0                    # Dispatch attempts so far
+    deadline_ms: int | None = None       # Epoch ms; fail if not RUNNING by this time
+    next_attempt_at: int | None = None   # Epoch ms; backoff: don't retry before this
+    last_error: str | None = None        # Error from the most recent failed dispatch attempt
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +302,8 @@ class Channel(BaseModel):
     created_at: int = Field(default_factory=_now_ms)
     completed_at: int | None = None
     completed_by: str | None = None
+    parent_task_id: str | None = None  # task that spawned this channel
+    workspace_profile: str | None = None
 
 
 class PlaybookTask(BaseModel):

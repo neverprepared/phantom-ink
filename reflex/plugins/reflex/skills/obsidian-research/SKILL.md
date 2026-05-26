@@ -183,6 +183,53 @@ Arguments:
 
 Returns a chronological view of memory atoms — no retrieval roundtrip, no scoring.
 
+## Diagrams in Vault Notes
+
+With the [obsidian-kroki](https://github.com/gregzuro/obsidian-kroki) plugin installed, any fenced code block whose language identifier matches a Kroki diagram type is rendered inline automatically — no pre-rendering or MCP call needed.
+
+```plantuml
+@startuml
+Client -> API: request
+API -> DB: query
+@enduml
+```
+
+```d2
+frontend -> backend: HTTPS
+backend -> db: SQL
+```
+
+```graphviz
+digraph G { A -> B -> C }
+```
+
+The language identifier is the Kroki type name exactly: `plantuml`, `d2`, `graphviz`, `mermaid`, `c4plantuml`, `structurizr`, `dbml`, `erd`, `nomnoml`, `ditaa`, `svgbob`, `wavedrom`, `bytefield`, `vega`, `vegalite`, `bpmn`, `excalidraw`, `blockdiag`, `seqdiag`, `actdiag`, `nwdiag`, `packetdiag`, `rackdiag`, `diagramsnet`, `pikchr`, `symbolator`, `umlet`.
+
+**Important defaults:**
+- `mermaid` is **disabled by default** in obsidian-kroki (conflicts with Obsidian's native renderer) — use Obsidian's native mermaid block or enable it explicitly in plugin settings
+- `plantuml` is also disabled by default — enable in plugin settings if needed
+
+**File inclusion:** load diagram source from a vault file instead of inlining it:
+````
+```plantuml
+@from_file:diagrams/my-diagram.puml
+```
+````
+
+**Choose the right type for the content:**
+
+| Content | Diagram type |
+|---------|-------------|
+| Architecture / C4 | `plantuml`, `c4plantuml`, `structurizr`, `d2` |
+| Database schema | `dbml`, `erd` |
+| Sequence / flow | `plantuml`, `seqdiag`, `mermaid` |
+| Network topology | `nwdiag`, `graphviz` |
+| Data visualization | `vegalite`, `vega` |
+| Protocol / packets | `bytefield`, `wavedrom` |
+| Quick sketch | `nomnoml`, `svgbob`, `ditaa` |
+
+The `phantom-diagrams` MCP (`convert_diagram`) is still useful for rendering diagrams *outside* of Obsidian (in chat, CI pipelines, etc.). See the purpose-grouped diagram skills for syntax: `architecture-diagrams`, `sequence-diagrams`, `database-diagrams`, `flowchart-diagrams`, `uml-diagrams`, `network-diagrams`, `data-viz-diagrams`, `ascii-diagrams`, `technical-diagrams`, `process-diagrams`, `sketch-diagrams`.
+
 ## Integration
 
 - **Supersedes**: the previous `web-research` skill (deleted) — this is the canonical research workflow now

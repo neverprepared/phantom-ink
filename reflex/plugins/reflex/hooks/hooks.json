@@ -59,17 +59,7 @@
         ]
       },
       {
-        "matcher": "WebSearch|WebFetch",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/memory-hook.sh",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "mcp__obsidian-second-brain__memory_search",
+        "matcher": "mcp__phantom-brain__brain_recall",
         "hooks": [
           {
             "type": "command",
@@ -79,7 +69,17 @@
         ]
       },
       {
-        "matcher": "WebSearch|WebFetch|mcp__obsidian-second-brain__memory_store|mcp__obsidian-second-brain__memory_update|mcp__obsidian-second-brain__task_complete",
+        "matcher": "WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/brain-perceive-hook.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "WebSearch|WebFetch|mcp__phantom-brain__brain_synthesize",
         "hooks": [
           {
             "type": "command",

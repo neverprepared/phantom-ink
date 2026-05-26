@@ -29,11 +29,17 @@ Image → Claude Vision → Mermaid/DOT code → Save → Optionally store as a 
 - Flowcharts, sequence diagrams, class diagrams, ER diagrams
 - Renders in GitHub, GitLab, Notion, VS Code
 - File extension: `.mmd` or `.mermaid`
+- See `flowchart-diagrams` or `sequence-diagrams` skill for Mermaid syntax
 
 ### DOT/Graphviz
 - More layout control
 - Better for complex graphs
 - File extension: `.dot` or `.gv`
+- See `architecture-diagrams` skill for Graphviz DOT reference
+
+### Other Kroki types
+- For PlantUML, D2, or other Kroki types see the purpose-grouped skills: `architecture-diagrams`, `sequence-diagrams`, `uml-diagrams`, etc.
+- Render any converted source: `convert_diagram(type, source, "svg")`
 
 ## Conversion Process
 

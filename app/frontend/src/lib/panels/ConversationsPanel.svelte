@@ -24,6 +24,8 @@
     created_at: number;
     completed_at?: number;
     completed_by?: string;
+    parent_task_id?: string;
+    workspace_profile?: string;
   }
 
   interface ChannelMessage {
@@ -52,7 +54,13 @@
   let selectedIds = $state<Set<string>>(new Set());
   let isBatchDeleting = $state(false);
 
-  const allSelected = $derived(channels.length > 0 && channels.every(c => selectedIds.has(c.id)));
+  let filteredChannels = $derived.by(() => {
+    if (!profileState.active) return channels;
+    const target = profileState.active.name.toLowerCase();
+    return channels.filter(c => (c.workspace_profile ?? '').toLowerCase() === target);
+  });
+
+  const allSelected = $derived(filteredChannels.length > 0 && filteredChannels.every(c => selectedIds.has(c.id)));
   const someSelected = $derived(selectedIds.size > 0);
 
   // Create channel modal
@@ -93,7 +101,7 @@
     const a = await getApi();
     if (!a) { loading = false; return; }
     try {
-      channels = (await a.ListChannels()) ?? [];
+      channels = (await a.ListChannels(profileState.active?.name ?? '')) ?? [];
     } catch (err: any) {
       notifications.error(`Failed to load conversations: ${err?.message ?? err}`);
     } finally {
@@ -280,6 +288,7 @@
           ollama_model: p.type === 'ollama' ? p.ollama_model : undefined,
           system_prompt: p.system_prompt || undefined,
         })),
+        workspace_profile: profileState.active?.name ?? undefined,
       });
       notifications.success(`Conversation "${newChannelName}" created`);
       showCreateModal = false;
@@ -374,7 +383,7 @@
   }
 
   function toggleSelectAll() {
-    selectedIds = allSelected ? new Set() : new Set(channels.map(c => c.id));
+    selectedIds = allSelected ? new Set() : new Set(filteredChannels.map(c => c.id));
   }
 
   async function handleBatchDelete() {
@@ -425,11 +434,11 @@
 
     {#if loading}
       <div class="list-empty">Loading…</div>
-    {:else if channels.length === 0}
+    {:else if filteredChannels.length === 0}
       <div class="list-empty">No conversations yet</div>
     {:else}
       <ul class="channel-items">
-        {#each channels as ch (ch.id)}
+        {#each filteredChannels as ch (ch.id)}
           <li class="channel-item-row" class:row-selecting={someSelected}>
             <input
               type="checkbox"

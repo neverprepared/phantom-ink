@@ -167,6 +167,32 @@ export const profileColorStore = {
 };
 
 // ---------------------------------------------------------------------------
+// Dashboard widget layout + shared runtime data
+// ---------------------------------------------------------------------------
+
+import type { DashboardLayout, DashboardData, WidgetInstance } from './widgets/types';
+
+let _dashboardLayout = $state<DashboardLayout | null>(null);
+
+export const dashboardState = {
+  get layout() { return _dashboardLayout; },
+  set layout(v: DashboardLayout | null) { _dashboardLayout = v; },
+  get widgets(): WidgetInstance[] { return _dashboardLayout?.widgets ?? []; },
+  updateWidgets(widgets: WidgetInstance[]) {
+    _dashboardLayout = _dashboardLayout
+      ? { ..._dashboardLayout, widgets }
+      : { version: 1, widgets };
+  },
+};
+
+let _dashboardData = $state<DashboardData | null>(null);
+
+export const dashboardDataStore = {
+  get value() { return _dashboardData; },
+  set value(v: DashboardData | null) { _dashboardData = v; },
+};
+
+// ---------------------------------------------------------------------------
 // Connection status
 // ---------------------------------------------------------------------------
 
@@ -183,5 +209,21 @@ export const connectionState = {
     _connected = true;
     _lastEventTime = new Date();
     _lastEventText = text;
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Debug flags
+// ---------------------------------------------------------------------------
+
+let _showEventLog = $state(
+  typeof localStorage !== 'undefined' && localStorage.getItem('debug_event_log') === 'true'
+);
+
+export const debugState = {
+  get showEventLog() { return _showEventLog; },
+  set showEventLog(v: boolean) {
+    _showEventLog = v;
+    if (typeof localStorage !== 'undefined') localStorage.setItem('debug_event_log', String(v));
   },
 };

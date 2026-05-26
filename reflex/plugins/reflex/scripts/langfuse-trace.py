@@ -18,6 +18,68 @@ import os
 import sys
 from datetime import datetime, timezone, timedelta
 
+# API pricing per million tokens (used as proxy for subscription cost estimation)
+MODEL_PRICING = {
+    "claude-opus-4-7":          {"input": 15.00, "output": 75.00, "cache_read": 1.50,  "cache_write": 18.75},
+    "claude-sonnet-4-6":        {"input":  3.00, "output": 15.00, "cache_read": 0.30,  "cache_write":  3.75},
+    "claude-haiku-4-5":         {"input":  0.80, "output":  4.00, "cache_read": 0.08,  "cache_write":  1.00},
+    "claude-haiku-4-5-20251001": {"input": 0.80, "output":  4.00, "cache_read": 0.08,  "cache_write":  1.00},
+}
+_DEFAULT_PRICING = {"input": 3.00, "output": 15.00, "cache_read": 0.30, "cache_write": 3.75}
+
+
+def read_transcript_usage(transcript_path: str) -> dict | None:
+    """Read the most recent assistant turn's token usage from the transcript JSONL."""
+    if not transcript_path or not os.path.exists(transcript_path):
+        return None
+    try:
+        last_usage = None
+        with open(transcript_path, "rb") as fh:
+            # Scan from end to find last assistant message with usage
+            fh.seek(0, 2)
+            size = fh.tell()
+            chunk_size = min(32_768, size)
+            fh.seek(max(0, size - chunk_size))
+            tail = fh.read().decode("utf-8", errors="replace")
+        for line in reversed(tail.splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            msg = entry.get("message") if isinstance(entry, dict) else None
+            if not isinstance(msg, dict):
+                continue
+            usage = msg.get("usage")
+            if not usage:
+                continue
+            model = msg.get("model", "")
+            pricing = MODEL_PRICING.get(model, _DEFAULT_PRICING)
+            input_tok     = usage.get("input_tokens", 0)
+            output_tok    = usage.get("output_tokens", 0)
+            cache_read    = usage.get("cache_read_input_tokens", 0)
+            cache_write   = usage.get("cache_creation_input_tokens", 0)
+            cost = (
+                input_tok   * pricing["input"]       / 1_000_000 +
+                output_tok  * pricing["output"]      / 1_000_000 +
+                cache_read  * pricing["cache_read"]  / 1_000_000 +
+                cache_write * pricing["cache_write"] / 1_000_000
+            )
+            return {
+                "model":                    model,
+                "turn_input_tokens":        input_tok,
+                "turn_output_tokens":       output_tok,
+                "turn_cache_read_tokens":   cache_read,
+                "turn_cache_write_tokens":  cache_write,
+                "turn_cost_estimate_usd":   round(cost, 6),
+                "turn_cost_note":           "per-assistant-turn; duplicated across batched tool calls",
+            }
+        return None
+    except Exception:
+        return None
+
 # Check for langfuse package
 try:
     from langfuse import get_client, propagate_attributes
@@ -37,8 +99,18 @@ def get_session_id() -> str:
 
 def parse_tool_data(data: dict) -> dict:
     """Extract relevant fields from Claude Code tool call data."""
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            return {"tool_name": "unknown", "tool_input": {}, "tool_response": {}, "session_id": None, "tool_use_id": None, "success": True, "error": None}
+
     # Claude Code PostToolUse hook sends: tool_name, tool_input, tool_response
     tool_response = data.get("tool_response", {})
+
+    # tool_response may be a plain string (raw tool output) rather than a dict
+    if isinstance(tool_response, str):
+        tool_response = {"output": tool_response}
 
     # Determine if there was an error
     error = tool_response.get("stderr") if tool_response.get("stderr") else None
@@ -49,6 +121,9 @@ def parse_tool_data(data: dict) -> dict:
         "tool_response": tool_response,
         "session_id": data.get("session_id"),
         "tool_use_id": data.get("tool_use_id"),
+        "transcript_path": data.get("transcript_path"),
+        "cwd": data.get("_cwd"),
+        "workspace_profile": data.get("_workspace_profile") or None,
         "success": not bool(error),
         "error": error,
     }
@@ -116,24 +191,47 @@ def send_trace(tool_data: dict) -> None:
         else:
             queued_at = datetime.now(timezone.utc)
 
+        metadata = {
+            "source": "claude-code",
+            "hook_event": "PostToolUse",
+            "plugin": "reflex",
+            "tool_name": parsed["tool_name"],
+            "success": parsed["success"],
+        }
+        if parsed.get("workspace_profile"):
+            metadata["workspace_profile"] = parsed["workspace_profile"]
+        if parsed.get("cwd"):
+            metadata["cwd"] = parsed["cwd"]
+        if parsed.get("transcript_path"):
+            metadata["transcript_path"] = parsed["transcript_path"]
+
+        if parsed.get("tool_use_id"):
+            metadata["tool_use_id"] = parsed["tool_use_id"]
+
+        turn_usage = read_transcript_usage(parsed.get("transcript_path"))
+        if turn_usage:
+            metadata.update(turn_usage)
+            debug_log(f"usage: model={turn_usage['model']} in={turn_usage['turn_input_tokens']} out={turn_usage['turn_output_tokens']} cost=${turn_usage['turn_cost_estimate_usd']}")
+        else:
+            debug_log("usage: no transcript data found")
+
         with propagate_attributes(session_id=session_id, user_id=user_id):
             with langfuse.start_as_current_observation(
                 as_type="span",
                 name=f"tool:{parsed['tool_name']}",
-                start_time=queued_at,
                 input=parsed["tool_input"],
-                metadata={
-                    "source": "claude-code",
-                    "plugin": "reflex",
-                    "tool_name": parsed["tool_name"],
-                    "tool_use_id": parsed.get("tool_use_id"),
-                    "success": parsed["success"],
-                },
+                metadata=metadata,
             ) as span:
-                # Update with output and explicit end time
-                span.update(output=parsed["tool_response"], end_time=queued_at)
+                update_kwargs = {"output": parsed["tool_response"], "start_time": queued_at, "end_time": queued_at}
+                if turn_usage:
+                    update_kwargs["usage"] = {
+                        "input":      turn_usage["turn_input_tokens"],
+                        "output":     turn_usage["turn_output_tokens"],
+                        "unit":       "TOKENS",
+                        "total_cost": turn_usage["turn_cost_estimate_usd"],
+                    }
+                span.update(**update_kwargs)
 
-                # Add error level if there was an error
                 if parsed["error"]:
                     span.update(level="ERROR", status_message=str(parsed["error"]))
 
