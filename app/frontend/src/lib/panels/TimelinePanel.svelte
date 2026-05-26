@@ -2,7 +2,7 @@
   import { getApi } from '../utils/api';
   import { onMount } from 'svelte';
   import { brainboxEvents } from '../events.svelte';
-  import { profileState } from '../stores.svelte';
+  import { profileState, dashboardState, currentPanel } from '../stores.svelte';
 
   // ── Types ──────────────────────────────────────────────────────────────
 
@@ -100,19 +100,25 @@
   let editingJobId = $state<string | null>(null);  // null = no edit, 'new' = create form
   let runningJobId = $state<string | null>(null);
   let editDraft    = $state({ name: '', command: '', interval_s: 300, enabled: true });
+  let jobsProfile  = $state('');
+  $effect(() => { jobsProfile = profile; });
 
   const profile = $derived(profileState.active?.name ?? '');
+
+  // streamProfile: '' = all profiles, otherwise scoped to a specific one.
+  // Initialised to the active profile; syncs when the active profile changes.
+  let streamProfile = $state('');
+  $effect(() => { streamProfile = profile; });
 
   // ── Stream view ────────────────────────────────────────────────────────
 
   let streamItems = $derived.by((): StreamItem[] => {
-    const now = Date.now();
     const items: StreamItem[] = [];
 
-    // Hub tasks as stream items
+    // Hub tasks — filter by streamProfile when set
     const myTasks = allTasks.filter(t =>
       !t.spawned_by &&
-      (!profile || (t.workspace_profile ?? '').toLowerCase() === profile.toLowerCase())
+      (!streamProfile || (t.workspace_profile ?? '').toLowerCase() === streamProfile.toLowerCase())
     );
     for (const t of myTasks) {
       items.push({
@@ -127,11 +133,14 @@
       });
     }
 
-    // Collected events
-    const filtered = tagFilter
-      ? collectEntries.filter(e => e.tags?.includes(tagFilter))
+    // Collected events — filter by streamProfile and tag client-side
+    const profileFiltered = streamProfile
+      ? collectEntries.filter(e => (e.profile ?? '').toLowerCase() === streamProfile.toLowerCase())
       : collectEntries;
-    for (const e of filtered) {
+    const tagFiltered = tagFilter
+      ? profileFiltered.filter(e => e.tags?.includes(tagFilter))
+      : profileFiltered;
+    for (const e of tagFiltered) {
       items.push({
         id: `entry:${e.job_id}:${e.entry_id}`,
         source: 'event',
@@ -190,9 +199,10 @@
     if (!a) return;
     if (!silent) loading = true; else refreshing = true;
     try {
+      // Load all profiles' data — stream filters client-side via streamProfile
       const [tasks, entries] = await Promise.all([
-        (a.ListHubTasks('', profile) as Promise<any>).catch(() => []),
-        (a.ListCollectedEntries(profile, 'event', '') as Promise<any>).catch(() => []),
+        (a.ListHubTasks('', '') as Promise<any>).catch(() => []),
+        (a.ListCollectedEntries('', 'event', '') as Promise<any>).catch(() => []),
       ]);
       allTasks = tasks ?? [];
       collectEntries = entries ?? [];
@@ -207,7 +217,7 @@
     if (!a) return;
     jobsLoading = true;
     try {
-      collectJobs = ((await (a.ListCollectJobs as any)(profile)) ?? []) as CollectJob[];
+      collectJobs = ((await (a.ListCollectJobs as any)('')) ?? []) as CollectJob[];
     } finally {
       jobsLoading = false;
     }
@@ -219,7 +229,7 @@
     const isNew = editingJobId === 'new';
     const payload = {
       id: isNew ? '' : (editingJobId ?? ''),
-      profile,
+      profile: isNew ? (jobsProfile || profile) : (collectJobs.find(j => j.id === editingJobId)?.profile ?? profile),
       name: editDraft.name.trim(),
       command: editDraft.command.trim(),
       interval_s: editDraft.interval_s,
@@ -280,6 +290,36 @@
   }
 
   function cancelEdit() { editingJobId = null; }
+
+  let addedJobId = $state<string | null>(null);
+
+  async function addJobToWidget(job: CollectJob) {
+    const a = await getApi();
+    if (!a) return;
+    const id = `w-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const widget = {
+      id,
+      kind: 'script-metric' as const,
+      config: {
+        label: job.name,
+        command: job.command,
+        interval: job.interval_s,
+        jobId: job.id,
+        valueType: 'number' as const,
+      },
+      x: 0, y: 0, w: 3, h: 2, minW: 2, minH: 2,
+    };
+    const updated = [...dashboardState.widgets, widget];
+    dashboardState.updateWidgets(updated);
+    try {
+      await a.SaveDashboardLayout(
+        profile,
+        JSON.stringify({ version: 1, widgets: updated }),
+      );
+      addedJobId = job.id;
+      setTimeout(() => { addedJobId = null; }, 2500);
+    } catch {}
+  }
 
   function fmtLastRun(job: CollectJob): string {
     if (!job.last_run_at) return 'never';
@@ -464,6 +504,25 @@
     for (const e of collectEntries) e.tags?.forEach(t => set.add(t));
     return [...set].sort();
   });
+
+  // All profiles present in stream data
+  let streamProfiles = $derived.by(() => {
+    const set = new Set<string>();
+    for (const t of allTasks) if (t.workspace_profile) set.add(t.workspace_profile);
+    for (const e of collectEntries) if (e.profile) set.add(e.profile);
+    return [...set].sort();
+  });
+
+  // Jobs tab: profiles + filtered view
+  let jobProfiles = $derived.by(() => {
+    const set = new Set<string>();
+    for (const j of collectJobs) if (j.profile) set.add(j.profile);
+    return [...set].sort();
+  });
+
+  let visibleJobs = $derived(
+    jobsProfile ? collectJobs.filter(j => j.profile === jobsProfile) : collectJobs
+  );
 </script>
 
 <div class="timeline">
@@ -488,13 +547,29 @@
     <div class="empty">loading…</div>
 
   {:else if tab === 'stream'}
+    <!-- Profile filter -->
+    {#if streamProfiles.length > 1}
+      <div class="filter-row">
+        <span class="filter-label">profile</span>
+        <div class="tag-bar inline">
+          <button class="tag" class:active={streamProfile === ''} onclick={() => streamProfile = ''}>all</button>
+          {#each streamProfiles as p (p)}
+            <button class="tag" class:active={streamProfile === p} onclick={() => streamProfile = streamProfile === p ? '' : p}>{p}</button>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     <!-- Tag filter -->
     {#if allTags.length > 0}
-      <div class="tag-bar">
-        <button class="tag" class:active={tagFilter === ''} onclick={() => tagFilter = ''}>all</button>
-        {#each allTags as t (t)}
-          <button class="tag" class:active={tagFilter === t} onclick={() => tagFilter = tagFilter === t ? '' : t}>{t}</button>
-        {/each}
+      <div class="filter-row">
+        <span class="filter-label">tag</span>
+        <div class="tag-bar inline">
+          <button class="tag" class:active={tagFilter === ''} onclick={() => tagFilter = ''}>all</button>
+          {#each allTags as t (t)}
+            <button class="tag" class:active={tagFilter === t} onclick={() => tagFilter = tagFilter === t ? '' : t}>{t}</button>
+          {/each}
+        </div>
       </div>
     {/if}
 
@@ -620,8 +695,21 @@
 
   {:else if tab === 'jobs'}
     <!-- Collect jobs management -->
+    <!-- Profile filter -->
+    {#if jobProfiles.length > 1}
+      <div class="filter-row">
+        <span class="filter-label">profile</span>
+        <div class="tag-bar inline">
+          <button class="tag" class:active={jobsProfile === ''} onclick={() => jobsProfile = ''}>all</button>
+          {#each jobProfiles as p (p)}
+            <button class="tag" class:active={jobsProfile === p} onclick={() => jobsProfile = jobsProfile === p ? '' : p}>{p}</button>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     <div class="jobs-header">
-      <span class="jobs-count">{collectJobs.length} job{collectJobs.length !== 1 ? 's' : ''}</span>
+      <span class="jobs-count">{visibleJobs.length} job{visibleJobs.length !== 1 ? 's' : ''}</span>
       {#if editingJobId !== 'new'}
         <button class="jobs-add-btn" onclick={startNew}>+ new job</button>
       {/if}
@@ -656,9 +744,11 @@
       <div class="empty">loading…</div>
     {:else if collectJobs.length === 0 && editingJobId !== 'new'}
       <div class="empty">no collect jobs yet — create one to schedule data collection</div>
+    {:else if visibleJobs.length === 0 && editingJobId !== 'new'}
+      <div class="empty">no jobs for this profile</div>
     {:else}
       <div class="job-list">
-        {#each collectJobs as job (job.id)}
+        {#each visibleJobs as job (job.id)}
           <div class="job-card" class:editing={editingJobId === job.id}>
             {#if editingJobId === job.id}
               <div class="job-form inline">
@@ -707,6 +797,14 @@
                   </div>
                 </div>
                 <div class="job-btns">
+                  <button
+                    class="job-btn"
+                    onclick={() => addJobToWidget(job)}
+                    title="add to dashboard"
+                    class:added={addedJobId === job.id}
+                  >
+                    {addedJobId === job.id ? '✓' : '+'}
+                  </button>
                   <button
                     class="job-btn"
                     onclick={() => runJobNow(job.id)}
@@ -774,11 +872,20 @@
     padding: var(--spacing-3xl) 0; line-height: 1.5;
   }
 
-  /* ── Tag filter bar ── */
+  /* ── Filter bars ── */
+  .filter-row {
+    display: flex; align-items: center; gap: var(--spacing-sm);
+    padding-bottom: var(--spacing-xs);
+  }
+  .filter-label {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--color-text-muted); width: 38px; flex-shrink: 0;
+  }
   .tag-bar {
     display: flex; flex-wrap: wrap; gap: 6px;
     padding-bottom: var(--spacing-sm);
   }
+  .tag-bar.inline { padding-bottom: 0; }
   .tag {
     font-family: var(--font-mono); font-size: 10px;
     padding: 2px 8px; border-radius: 999px;
@@ -993,6 +1100,7 @@
   .job-btn:hover:not(:disabled) { border-color: var(--color-accent); color: var(--color-accent); }
   .job-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .job-btn.danger:hover:not(:disabled) { border-color: var(--color-error); color: var(--color-error); }
+  .job-btn.added { border-color: var(--color-success); color: var(--color-success); }
 
   /* Job form */
   .job-form {

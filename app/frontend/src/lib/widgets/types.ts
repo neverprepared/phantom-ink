@@ -6,7 +6,8 @@ export type WidgetKind =
   | 'resource-monitor'
   | 'custom-counter'
   | 'script-metric'
-  | 'http-metric';
+  | 'http-metric'
+  | 'stream';
 
 export interface StatCounterConfig {
   label: string;
@@ -42,7 +43,15 @@ export interface HttpMetricConfig {
   jobId?: string;      // set after auto-registration with collect scheduler
 }
 
-export type WidgetConfig = StatCounterConfig | CustomCounterConfig | ScriptMetricConfig | HttpMetricConfig | Record<string, never>;
+export interface StreamWidgetConfig {
+  label?: string;
+  profile?: string;  // '' = all profiles
+  tag?: string;      // '' = all tags
+  sources?: ('task' | 'event')[];  // default: both
+  limit?: number;    // max rows, default 20
+}
+
+export type WidgetConfig = StatCounterConfig | CustomCounterConfig | ScriptMetricConfig | HttpMetricConfig | StreamWidgetConfig | Record<string, never>;
 
 export interface WidgetInstance {
   id: string;

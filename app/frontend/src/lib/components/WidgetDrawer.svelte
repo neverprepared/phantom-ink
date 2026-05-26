@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { WidgetInstance, WidgetKind, StatCounterConfig, CustomCounterConfig, ScriptMetricConfig, HttpMetricConfig } from '../widgets/types';
+  import type { WidgetInstance, WidgetKind, StatCounterConfig, CustomCounterConfig, ScriptMetricConfig, HttpMetricConfig, StreamWidgetConfig } from '../widgets/types';
 
   let {
     open,
@@ -52,6 +52,13 @@
   let hmColor     = $state('');
   let hmInterval  = $state('60');
 
+  // stream fields
+  let stLabel   = $state('stream');
+  let stProfile = $state('');
+  let stTag     = $state('');
+  let stLimit   = $state('20');
+  let stSources = $state<('task' | 'event')[]>(['task', 'event']);
+
   const WIDGET_KINDS: { kind: WidgetKind; label: string; desc: string }[] = [
     { kind: 'stat-counter',     label: 'Stat Counter',       desc: 'Shows a live count from shared dashboard data.' },
     { kind: 'custom-counter',   label: 'Custom Counter',     desc: 'Fetches a count from any API endpoint.' },
@@ -61,6 +68,7 @@
     { kind: 'resource-monitor', label: 'Resource Monitor',   desc: 'CPU, memory, and container stats.' },
     { kind: 'script-metric',    label: 'Script Metric',      desc: 'Run a shell command, display its output as a number or string.' },
     { kind: 'http-metric',      label: 'HTTP Metric',        desc: 'Poll a JSON endpoint, extract a number or string.' },
+    { kind: 'stream',           label: 'Stream',             desc: 'Chronological feed of tasks and collected events.' },
   ];
 
   const DATA_KEYS: { key: StatCounterConfig['dataKey']; label: string }[] = [
@@ -110,6 +118,12 @@
         config: { label: hmLabel || 'METRIC', url: hmUrl, path: hmPath || undefined, header: hmHeader || undefined, valueType: hmValueType, color: hmColor || undefined, interval: parseInt(hmInterval) || 60 } satisfies HttpMetricConfig,
         x: 0, y: 999, w: 2, h: 2, minW: 2, minH: 2,
       };
+    } else if (addKind === 'stream') {
+      widget = {
+        id, kind: 'stream',
+        config: { label: stLabel || 'stream', profile: stProfile || undefined, tag: stTag || undefined, sources: stSources, limit: parseInt(stLimit) || 20 } satisfies StreamWidgetConfig,
+        x: 0, y: 999, w: 4, h: 5, minW: 3, minH: 3,
+      };
     } else {
       const SIZE: Record<WidgetKind, { w: number; h: number; minW: number; minH: number }> = {
         'stat-counter':     { w: 2, h: 2, minW: 2, minH: 2 },
@@ -120,6 +134,7 @@
         'chains-list':      { w: 3, h: 4, minW: 2, minH: 2 },
         'action-items':     { w: 3, h: 4, minW: 2, minH: 2 },
         'resource-monitor': { w: 12, h: 4, minW: 4, minH: 3 },
+        'stream':           { w: 4, h: 5, minW: 3, minH: 3 },
       };
       widget = { id, kind: addKind, config: {}, x: 0, y: 999, ...SIZE[addKind] };
     }
@@ -140,6 +155,8 @@
       scLabel = c.label ?? ''; scColor = c.color ?? 'default'; scDataKey = c.dataKey ?? 'activeSessions'; scNavTarget = c.navTarget ?? '';
     } else if (w.kind === 'custom-counter') {
       ccLabel = c.label ?? ''; ccApi = c.api ?? 'hub_tasks'; ccStatus = c.filter?.status ?? ''; ccColor = c.color ?? '';
+    } else if (w.kind === 'stream') {
+      stLabel = c.label ?? 'stream'; stProfile = c.profile ?? ''; stTag = c.tag ?? ''; stLimit = String(c.limit ?? 20); stSources = c.sources ?? ['task', 'event'];
     }
   }
 
@@ -155,6 +172,8 @@
       config = { label: scLabel || 'Counter', color: scColor, navTarget: scNavTarget || undefined, dataKey: scDataKey };
     } else if (w.kind === 'custom-counter') {
       config = { label: ccLabel || 'Count', api: ccApi, filter: ccStatus ? { status: ccStatus } : {}, color: ccColor || undefined };
+    } else if (w.kind === 'stream') {
+      config = { label: stLabel || 'stream', profile: stProfile || undefined, tag: stTag || undefined, sources: stSources, limit: parseInt(stLimit) || 20 };
     } else {
       config = w.config;
     }
@@ -171,6 +190,7 @@
     'chains-list':      'Scheduled Chains',
     'action-items':     'Action Items',
     'resource-monitor': 'Resource Monitor',
+    'stream':           'Stream',
   };
 </script>
 
@@ -313,6 +333,30 @@
               <label>Interval (seconds)</label>
               <input type="number" bind:value={hmInterval} min="10" max="3600" />
             </div>
+          {:else if addKind === 'stream'}
+            <div class="field">
+              <label>Label</label>
+              <input type="text" bind:value={stLabel} placeholder="stream" />
+            </div>
+            <div class="field">
+              <label>Profile (leave blank for all)</label>
+              <input type="text" bind:value={stProfile} placeholder="personal" />
+            </div>
+            <div class="field">
+              <label>Tag filter (optional)</label>
+              <input type="text" bind:value={stTag} placeholder="calendar" />
+            </div>
+            <div class="field">
+              <label>Sources</label>
+              <div class="check-row">
+                <label class="check-label"><input type="checkbox" checked={stSources.includes('event')} onchange={e => { if ((e.target as HTMLInputElement).checked) { stSources = [...stSources, 'event']; } else { stSources = stSources.filter(s => s !== 'event'); } }} /> Events</label>
+                <label class="check-label"><input type="checkbox" checked={stSources.includes('task')} onchange={e => { if ((e.target as HTMLInputElement).checked) { stSources = [...stSources, 'task']; } else { stSources = stSources.filter(s => s !== 'task'); } }} /> Tasks</label>
+              </div>
+            </div>
+            <div class="field">
+              <label>Max items</label>
+              <input type="number" bind:value={stLimit} min="5" max="100" />
+            </div>
           {:else}
             <p class="no-config">No configuration needed.</p>
           {/if}
@@ -353,6 +397,18 @@
               <div class="field"><label>API</label><select bind:value={ccApi}><option value="hub_tasks">Hub Tasks</option><option value="sessions">Sessions</option><option value="repos">Repos</option></select></div>
               <div class="field"><label>Status filter</label><input type="text" bind:value={ccStatus} placeholder="running, failed, … (optional)" /></div>
               <div class="field"><label>Color (CSS)</label><input type="text" bind:value={ccColor} /></div>
+            {:else if editingWidget.kind === 'stream'}
+              <div class="field"><label>Label</label><input type="text" bind:value={stLabel} /></div>
+              <div class="field"><label>Profile (blank = all)</label><input type="text" bind:value={stProfile} placeholder="personal" /></div>
+              <div class="field"><label>Tag filter</label><input type="text" bind:value={stTag} placeholder="calendar" /></div>
+              <div class="field">
+                <label>Sources</label>
+                <div class="check-row">
+                  <label class="check-label"><input type="checkbox" checked={stSources.includes('event')} onchange={e => { if ((e.target as HTMLInputElement).checked) { stSources = [...stSources, 'event']; } else { stSources = stSources.filter(s => s !== 'event'); } }} /> Events</label>
+                  <label class="check-label"><input type="checkbox" checked={stSources.includes('task')} onchange={e => { if ((e.target as HTMLInputElement).checked) { stSources = [...stSources, 'task']; } else { stSources = stSources.filter(s => s !== 'task'); } }} /> Tasks</label>
+                </div>
+              </div>
+              <div class="field"><label>Max items</label><input type="number" bind:value={stLimit} min="5" max="100" /></div>
             {:else}
               <p class="no-config">No editable configuration for this widget type.</p>
             {/if}
@@ -542,6 +598,9 @@
     color: var(--color-text-tertiary);
     margin: 0;
   }
+
+  .check-row { display: flex; gap: var(--spacing-md); }
+  .check-label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-text-secondary); cursor: pointer; }
 
   .btn-add {
     padding: 8px 16px;

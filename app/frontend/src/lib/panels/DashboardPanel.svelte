@@ -18,6 +18,7 @@
   import CustomCounterWidget  from '../widgets/CustomCounterWidget.svelte';
   import ScriptMetricWidget   from '../widgets/ScriptMetricWidget.svelte';
   import HttpMetricWidget     from '../widgets/HttpMetricWidget.svelte';
+  import StreamWidget         from '../widgets/StreamWidget.svelte';
   import WidgetDrawer         from '../components/WidgetDrawer.svelte';
 
   // --- Data state ---
@@ -142,6 +143,7 @@
     'custom-counter':   CustomCounterWidget,
     'script-metric':    ScriptMetricWidget,
     'http-metric':      HttpMetricWidget,
+    'stream':           StreamWidget,
   };
 
   function patchWidgetConfig(id: string, patch: Record<string, unknown>): void {
