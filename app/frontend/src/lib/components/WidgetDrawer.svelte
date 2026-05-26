@@ -5,6 +5,7 @@
     open,
     onClose,
     onAdd,
+    onUpdate,
     onRemove,
     onReset,
     widgets,
@@ -12,6 +13,7 @@
     open: boolean;
     onClose: () => void;
     onAdd: (w: WidgetInstance) => void;
+    onUpdate: (w: WidgetInstance) => void;
     onRemove: (id: string) => void;
     onReset: () => void;
     widgets: WidgetInstance[];
@@ -35,18 +37,20 @@
   let ccColor    = $state('');
 
   // script-metric fields
-  let smLabel    = $state('');
-  let smCommand  = $state('');
-  let smColor    = $state('');
-  let smInterval = $state('60');
+  let smLabel     = $state('');
+  let smCommand   = $state('');
+  let smValueType = $state<'number' | 'string'>('number');
+  let smColor     = $state('');
+  let smInterval  = $state('60');
 
   // http-metric fields
-  let hmLabel    = $state('');
-  let hmUrl      = $state('');
-  let hmPath     = $state('');
-  let hmHeader   = $state('');
-  let hmColor    = $state('');
-  let hmInterval = $state('60');
+  let hmLabel     = $state('');
+  let hmUrl       = $state('');
+  let hmPath      = $state('');
+  let hmHeader    = $state('');
+  let hmValueType = $state<'number' | 'string'>('number');
+  let hmColor     = $state('');
+  let hmInterval  = $state('60');
 
   const WIDGET_KINDS: { kind: WidgetKind; label: string; desc: string }[] = [
     { kind: 'stat-counter',     label: 'Stat Counter',       desc: 'Shows a live count from shared dashboard data.' },
@@ -55,8 +59,8 @@
     { kind: 'chains-list',      label: 'Scheduled Chains',   desc: 'Upcoming scheduled chain fires.' },
     { kind: 'action-items',     label: 'Action Items',       desc: 'System alerts and action items.' },
     { kind: 'resource-monitor', label: 'Resource Monitor',   desc: 'CPU, memory, and container stats.' },
-    { kind: 'script-metric',    label: 'Script Metric',      desc: 'Run a shell command, display its integer output.' },
-    { kind: 'http-metric',      label: 'HTTP Metric',        desc: 'Poll a JSON endpoint, extract a number.' },
+    { kind: 'script-metric',    label: 'Script Metric',      desc: 'Run a shell command, display its output as a number or string.' },
+    { kind: 'http-metric',      label: 'HTTP Metric',        desc: 'Poll a JSON endpoint, extract a number or string.' },
   ];
 
   const DATA_KEYS: { key: StatCounterConfig['dataKey']; label: string }[] = [
@@ -97,13 +101,13 @@
     } else if (addKind === 'script-metric') {
       widget = {
         id, kind: 'script-metric',
-        config: { label: smLabel || 'METRIC', command: smCommand, color: smColor || undefined, interval: parseInt(smInterval) || 60 } satisfies ScriptMetricConfig,
+        config: { label: smLabel || 'METRIC', command: smCommand, valueType: smValueType, color: smColor || undefined, interval: parseInt(smInterval) || 60 } satisfies ScriptMetricConfig,
         x: 0, y: 999, w: 2, h: 2, minW: 2, minH: 2,
       };
     } else if (addKind === 'http-metric') {
       widget = {
         id, kind: 'http-metric',
-        config: { label: hmLabel || 'METRIC', url: hmUrl, path: hmPath || undefined, header: hmHeader || undefined, color: hmColor || undefined, interval: parseInt(hmInterval) || 60 } satisfies HttpMetricConfig,
+        config: { label: hmLabel || 'METRIC', url: hmUrl, path: hmPath || undefined, header: hmHeader || undefined, valueType: hmValueType, color: hmColor || undefined, interval: parseInt(hmInterval) || 60 } satisfies HttpMetricConfig,
         x: 0, y: 999, w: 2, h: 2, minW: 2, minH: 2,
       };
     } else {
@@ -120,6 +124,42 @@
       widget = { id, kind: addKind, config: {}, x: 0, y: 999, ...SIZE[addKind] };
     }
     onAdd(widget);
+  }
+
+  // --- edit state ---
+  let editingWidget = $state<WidgetInstance | null>(null);
+
+  function startEdit(w: WidgetInstance) {
+    editingWidget = w;
+    const c = w.config as any;
+    if (w.kind === 'script-metric') {
+      smLabel = c.label ?? ''; smCommand = c.command ?? ''; smValueType = c.valueType ?? 'number'; smColor = c.color ?? ''; smInterval = String(c.interval ?? 60);
+    } else if (w.kind === 'http-metric') {
+      hmLabel = c.label ?? ''; hmUrl = c.url ?? ''; hmPath = c.path ?? ''; hmHeader = c.header ?? ''; hmValueType = c.valueType ?? 'number'; hmColor = c.color ?? ''; hmInterval = String(c.interval ?? 60);
+    } else if (w.kind === 'stat-counter') {
+      scLabel = c.label ?? ''; scColor = c.color ?? 'default'; scDataKey = c.dataKey ?? 'activeSessions'; scNavTarget = c.navTarget ?? '';
+    } else if (w.kind === 'custom-counter') {
+      ccLabel = c.label ?? ''; ccApi = c.api ?? 'hub_tasks'; ccStatus = c.filter?.status ?? ''; ccColor = c.color ?? '';
+    }
+  }
+
+  function handleSaveEdit() {
+    if (!editingWidget) return;
+    const w = editingWidget;
+    let config: any;
+    if (w.kind === 'script-metric') {
+      config = { label: smLabel || 'METRIC', command: smCommand, valueType: smValueType, color: smColor || undefined, interval: parseInt(smInterval) || 60 };
+    } else if (w.kind === 'http-metric') {
+      config = { label: hmLabel || 'METRIC', url: hmUrl, path: hmPath || undefined, header: hmHeader || undefined, valueType: hmValueType, color: hmColor || undefined, interval: parseInt(hmInterval) || 60 };
+    } else if (w.kind === 'stat-counter') {
+      config = { label: scLabel || 'Counter', color: scColor, navTarget: scNavTarget || undefined, dataKey: scDataKey };
+    } else if (w.kind === 'custom-counter') {
+      config = { label: ccLabel || 'Count', api: ccApi, filter: ccStatus ? { status: ccStatus } : {}, color: ccColor || undefined };
+    } else {
+      config = w.config;
+    }
+    onUpdate({ ...w, config });
+    editingWidget = null;
   }
 
   const KIND_LABELS: Record<WidgetKind, string> = {
@@ -224,7 +264,14 @@
             </div>
             <div class="field">
               <label>Command</label>
-              <textarea bind:value={smCommand} rows="3" placeholder="echo 42&#10;# stdout must be a single integer"></textarea>
+              <textarea bind:value={smCommand} rows="3" placeholder="echo 42&#10;# or: echo 'hello world'"></textarea>
+            </div>
+            <div class="field">
+              <label>Value type</label>
+              <select bind:value={smValueType}>
+                <option value="number">Number</option>
+                <option value="string">String</option>
+              </select>
             </div>
             <div class="field">
               <label>Color (CSS)</label>
@@ -252,6 +299,13 @@
               <input type="text" bind:value={hmHeader} placeholder="Authorization: Bearer TOKEN" />
             </div>
             <div class="field">
+              <label>Value type</label>
+              <select bind:value={hmValueType}>
+                <option value="number">Number</option>
+                <option value="string">String</option>
+              </select>
+            </div>
+            <div class="field">
               <label>Color (CSS)</label>
               <input type="text" bind:value={hmColor} placeholder="#22c55e or var(--color-info)" />
             </div>
@@ -268,22 +322,63 @@
 
       {:else}
         <!-- Manage tab -->
-        <div class="widget-list">
-          {#each widgets as w (w.id)}
-            <div class="widget-row">
-              <span class="widget-kind">{KIND_LABELS[w.kind]}</span>
-              {#if 'label' in w.config}
-                <span class="widget-label">{(w.config as any).label}</span>
-              {/if}
-              <button class="btn-remove" onclick={() => onRemove(w.id)} aria-label="Remove widget">✕</button>
-            </div>
-          {/each}
-          {#if widgets.length === 0}
-            <p class="empty">No widgets.</p>
-          {/if}
-        </div>
+        {#if editingWidget}
+          <div class="edit-header">
+            <button class="btn-back" onclick={() => editingWidget = null}>← back</button>
+            <span class="edit-title">Edit {KIND_LABELS[editingWidget.kind]}</span>
+          </div>
 
-        <button class="btn-reset" onclick={onReset}>Reset to default layout</button>
+          <div class="config-form">
+            {#if editingWidget.kind === 'script-metric'}
+              <div class="field"><label>Label</label><input type="text" bind:value={smLabel} placeholder="UNREAD EMAILS" /></div>
+              <div class="field"><label>Command</label><textarea bind:value={smCommand} rows="3" placeholder="echo 42"></textarea></div>
+              <div class="field"><label>Value type</label><select bind:value={smValueType}><option value="number">Number</option><option value="string">String</option></select></div>
+              <div class="field"><label>Color (CSS)</label><input type="text" bind:value={smColor} placeholder="#22c55e" /></div>
+              <div class="field"><label>Interval (seconds)</label><input type="number" bind:value={smInterval} min="10" max="3600" /></div>
+            {:else if editingWidget.kind === 'http-metric'}
+              <div class="field"><label>Label</label><input type="text" bind:value={hmLabel} placeholder="OPEN PRS" /></div>
+              <div class="field"><label>URL</label><input type="text" bind:value={hmUrl} placeholder="https://api.example.com/count" /></div>
+              <div class="field"><label>JSON path</label><input type="text" bind:value={hmPath} placeholder="data.total" /></div>
+              <div class="field"><label>Header (optional)</label><input type="text" bind:value={hmHeader} placeholder="Authorization: Bearer TOKEN" /></div>
+              <div class="field"><label>Value type</label><select bind:value={hmValueType}><option value="number">Number</option><option value="string">String</option></select></div>
+              <div class="field"><label>Color (CSS)</label><input type="text" bind:value={hmColor} /></div>
+              <div class="field"><label>Interval (seconds)</label><input type="number" bind:value={hmInterval} min="10" max="3600" /></div>
+            {:else if editingWidget.kind === 'stat-counter'}
+              <div class="field"><label>Label</label><input type="text" bind:value={scLabel} placeholder="MY COUNTER" /></div>
+              <div class="field"><label>Data</label><select bind:value={scDataKey}>{#each DATA_KEYS as d (d.key)}<option value={d.key}>{d.label}</option>{/each}</select></div>
+              <div class="field"><label>Color</label><select bind:value={scColor}>{#each COLORS as c (c.val)}<option value={c.val}>{c.label}</option>{/each}</select></div>
+              <div class="field"><label>Navigate to</label><select bind:value={scNavTarget}>{#each NAV_TARGETS as t (t)}<option value={t}>{t || '(none)'}</option>{/each}</select></div>
+            {:else if editingWidget.kind === 'custom-counter'}
+              <div class="field"><label>Label</label><input type="text" bind:value={ccLabel} placeholder="MY METRIC" /></div>
+              <div class="field"><label>API</label><select bind:value={ccApi}><option value="hub_tasks">Hub Tasks</option><option value="sessions">Sessions</option><option value="repos">Repos</option></select></div>
+              <div class="field"><label>Status filter</label><input type="text" bind:value={ccStatus} placeholder="running, failed, … (optional)" /></div>
+              <div class="field"><label>Color (CSS)</label><input type="text" bind:value={ccColor} /></div>
+            {:else}
+              <p class="no-config">No editable configuration for this widget type.</p>
+            {/if}
+            <button class="btn-add" onclick={handleSaveEdit}>Save changes</button>
+          </div>
+        {:else}
+          <div class="widget-list">
+            {#each widgets as w (w.id)}
+              <div class="widget-row">
+                <div class="widget-info">
+                  <span class="widget-kind">{KIND_LABELS[w.kind]}</span>
+                  {#if 'label' in w.config}
+                    <span class="widget-label">{(w.config as any).label}</span>
+                  {/if}
+                </div>
+                <button class="btn-edit" onclick={() => startEdit(w)} aria-label="Edit widget">✎</button>
+                <button class="btn-remove" onclick={() => onRemove(w.id)} aria-label="Remove widget">✕</button>
+              </div>
+            {/each}
+            {#if widgets.length === 0}
+              <p class="empty">No widgets.</p>
+            {/if}
+          </div>
+
+          <button class="btn-reset" onclick={onReset}>Reset to default layout</button>
+        {/if}
       {/if}
     </div>
   </div>
@@ -469,33 +564,73 @@
     gap: 6px;
   }
 
+  .edit-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+
+  .btn-back {
+    background: none;
+    border: none;
+    color: var(--color-accent);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0;
+    font-family: inherit;
+  }
+  .btn-back:hover { opacity: 0.8; }
+
+  .edit-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
   .widget-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     padding: 8px 12px;
     background: var(--color-bg-primary);
     border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-md);
   }
 
+  .widget-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
   .widget-kind {
     font-size: 12px;
     font-weight: 500;
     color: var(--color-text-primary);
-    flex: 1;
-    min-width: 0;
   }
 
   .widget-label {
     font-size: 11px;
     color: var(--color-text-tertiary);
     font-family: var(--font-mono);
-    max-width: 80px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  .btn-edit {
+    background: none;
+    border: none;
+    color: var(--color-text-tertiary);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 4px;
+    flex-shrink: 0;
+  }
+  .btn-edit:hover { color: var(--color-accent); }
 
   .btn-remove {
     background: none;

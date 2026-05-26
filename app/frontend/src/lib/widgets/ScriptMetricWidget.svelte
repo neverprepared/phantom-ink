@@ -1,31 +1,34 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
+  import { profileState } from '../stores.svelte';
   import type { ScriptMetricConfig } from './types';
 
   let { config }: { config: ScriptMetricConfig } = $props();
 
-  let count   = $state<number | null>(null);
-  let error   = $state(false);
+  let value   = $state<string | null>(null);
+  let error   = $state<string | null>(null);
   let loading = $state(true);
 
-  async function fetchCount() {
+  const isString = $derived(config.valueType === 'string');
+
+  async function fetchValue() {
     const a = await getApi();
-    if (!a) return;
+    if (!a) { error = 'no api'; loading = false; return; }
     try {
-      count = await a.RunMetricScript(config.command);
-      error = false;
-    } catch {
-      error = true;
+      value = await a.RunMetricScript(profileState.active?.name ?? '', config.command);
+      error = null;
+    } catch (e: any) {
+      error = e?.message ?? String(e);
     } finally {
       loading = false;
     }
   }
 
   onMount(() => {
-    void fetchCount();
+    void fetchValue();
     const ms = (config.interval ?? 60) * 1000;
-    const interval = setInterval(fetchCount, ms);
+    const interval = setInterval(fetchValue, ms);
     return () => clearInterval(interval);
   });
 </script>
@@ -37,9 +40,12 @@
   {#if loading}
     <span class="stat-value muted">…</span>
   {:else if error}
-    <span class="stat-value err">!</span>
+    <span class="stat-value err" title={error}>!</span>
+    <span class="stat-err">{error}</span>
+  {:else if isString}
+    <span class="stat-str" style={config.color ? `color: ${config.color}` : ''}>{value}</span>
   {:else}
-    <span class="stat-value" style={config.color ? `color: ${config.color}` : ''}>{count}</span>
+    <span class="stat-value" style={config.color ? `color: ${config.color}` : ''}>{value}</span>
   {/if}
   <span class="stat-sub">script · {config.interval ?? 60}s</span>
 </div>
@@ -77,6 +83,28 @@
   }
   .stat-value.muted { color: var(--color-text-muted); }
   .stat-value.err   { color: var(--color-error); }
+
+  .stat-str {
+    font-family: var(--font-mono);
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--color-text-primary);
+    word-break: break-word;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+  }
+
+  .stat-err {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-error);
+    opacity: 0.8;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
 
   .stat-sub {
     font-family: var(--font-mono);

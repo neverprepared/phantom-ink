@@ -1,19 +1,22 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
+  import { profileState } from '../stores.svelte';
   import type { HttpMetricConfig } from './types';
 
   let { config }: { config: HttpMetricConfig } = $props();
 
-  let count   = $state<number | null>(null);
+  let value   = $state<string | null>(null);
   let error   = $state(false);
   let loading = $state(true);
 
-  async function fetchCount() {
+  const isString = $derived(config.valueType === 'string');
+
+  async function fetchValue() {
     const a = await getApi();
     if (!a) return;
     try {
-      count = await a.FetchMetricUrl(config.url, config.path ?? '', config.header ?? '');
+      value = await a.FetchMetricUrl(profileState.active?.name ?? '', config.url, config.path ?? '', config.header ?? '');
       error = false;
     } catch {
       error = true;
@@ -23,9 +26,9 @@
   }
 
   onMount(() => {
-    void fetchCount();
+    void fetchValue();
     const ms = (config.interval ?? 60) * 1000;
-    const interval = setInterval(fetchCount, ms);
+    const interval = setInterval(fetchValue, ms);
     return () => clearInterval(interval);
   });
 </script>
@@ -38,8 +41,10 @@
     <span class="stat-value muted">…</span>
   {:else if error}
     <span class="stat-value err">!</span>
+  {:else if isString}
+    <span class="stat-str" style={config.color ? `color: ${config.color}` : ''}>{value}</span>
   {:else}
-    <span class="stat-value" style={config.color ? `color: ${config.color}` : ''}>{count}</span>
+    <span class="stat-value" style={config.color ? `color: ${config.color}` : ''}>{value}</span>
   {/if}
   <span class="stat-sub">
     {config.url.replace(/^https?:\/\//, '').slice(0, 24)}{config.url.length > 31 ? '…' : ''}
@@ -80,6 +85,19 @@
   }
   .stat-value.muted { color: var(--color-text-muted); }
   .stat-value.err   { color: var(--color-error); }
+
+  .stat-str {
+    font-family: var(--font-mono);
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--color-text-primary);
+    word-break: break-word;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+  }
 
   .stat-sub {
     font-family: var(--font-mono);

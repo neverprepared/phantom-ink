@@ -37,8 +37,6 @@ export function CreateWorktreeSession(arg1:string):Promise<brainbox.WorktreeSess
 
 export function DeleteAgent(arg1:string):Promise<void>;
 
-export function DeleteArtifact(arg1:string):Promise<void>;
-
 export function DeleteChain(arg1:string):Promise<void>;
 
 export function DeleteChannel(arg1:string):Promise<void>;
@@ -59,13 +57,11 @@ export function DeleteSession(arg1:string):Promise<brainbox.SessionActionRespons
 
 export function DeleteWorktree(arg1:string):Promise<void>;
 
-export function DownloadArtifact(arg1:string):Promise<Array<number>>;
-
 export function EnqueueTask(arg1:main.EnqueueTaskRequest):Promise<string>;
 
 export function ExportSecretsTemplate(arg1:string):Promise<string>;
 
-export function FetchMetricUrl(arg1:string,arg2:string,arg3:string):Promise<number>;
+export function FetchMetricUrl(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function FindClaudeProcesses():Promise<Array<main.LocalProcess>>;
 
@@ -147,8 +143,6 @@ export function ListAgentRoles():Promise<Array<brainbox.AgentDefinition>>;
 
 export function ListAgents():Promise<Array<main.DetectedAgent>>;
 
-export function ListArtifacts(arg1:string):Promise<Array<brainbox.Artifact>>;
-
 export function ListBackups():Promise<Array<string>>;
 
 export function ListChainRuns(arg1:string,arg2:number):Promise<Array<main.ChainRunRow>>;
@@ -203,7 +197,7 @@ export function RetryTask(arg1:string):Promise<void>;
 
 export function RunChain(arg1:string,arg2:string,arg3:string):Promise<string>;
 
-export function RunMetricScript(arg1:string):Promise<number>;
+export function RunMetricScript(arg1:string,arg2:string):Promise<string>;
 
 export function RunPlaybook(arg1:string,arg2:string):Promise<brainbox.Playbook>;
 

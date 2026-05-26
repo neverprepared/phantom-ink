@@ -70,10 +70,6 @@ export function DeleteAgent(arg1) {
   return window['go']['main']['App']['DeleteAgent'](arg1);
 }
 
-export function DeleteArtifact(arg1) {
-  return window['go']['main']['App']['DeleteArtifact'](arg1);
-}
-
 export function DeleteChain(arg1) {
   return window['go']['main']['App']['DeleteChain'](arg1);
 }
@@ -114,10 +110,6 @@ export function DeleteWorktree(arg1) {
   return window['go']['main']['App']['DeleteWorktree'](arg1);
 }
 
-export function DownloadArtifact(arg1) {
-  return window['go']['main']['App']['DownloadArtifact'](arg1);
-}
-
 export function EnqueueTask(arg1) {
   return window['go']['main']['App']['EnqueueTask'](arg1);
 }
@@ -126,8 +118,8 @@ export function ExportSecretsTemplate(arg1) {
   return window['go']['main']['App']['ExportSecretsTemplate'](arg1);
 }
 
-export function FetchMetricUrl(arg1, arg2, arg3) {
-  return window['go']['main']['App']['FetchMetricUrl'](arg1, arg2, arg3);
+export function FetchMetricUrl(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['FetchMetricUrl'](arg1, arg2, arg3, arg4);
 }
 
 export function FindClaudeProcesses() {
@@ -290,10 +282,6 @@ export function ListAgents() {
   return window['go']['main']['App']['ListAgents']();
 }
 
-export function ListArtifacts(arg1) {
-  return window['go']['main']['App']['ListArtifacts'](arg1);
-}
-
 export function ListBackups() {
   return window['go']['main']['App']['ListBackups']();
 }
@@ -402,8 +390,8 @@ export function RunChain(arg1, arg2, arg3) {
   return window['go']['main']['App']['RunChain'](arg1, arg2, arg3);
 }
 
-export function RunMetricScript(arg1) {
-  return window['go']['main']['App']['RunMetricScript'](arg1);
+export function RunMetricScript(arg1, arg2) {
+  return window['go']['main']['App']['RunMetricScript'](arg1, arg2);
 }
 
 export function RunPlaybook(arg1, arg2) {

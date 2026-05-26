@@ -25,6 +25,7 @@ export interface CustomCounterConfig {
 export interface ScriptMetricConfig {
   label: string;
   command: string;
+  valueType?: 'number' | 'string';
   color?: string;
   interval?: number;
 }
@@ -34,6 +35,7 @@ export interface HttpMetricConfig {
   url: string;
   path?: string;
   header?: string;
+  valueType?: 'number' | 'string';
   color?: string;
   interval?: number;
 }
