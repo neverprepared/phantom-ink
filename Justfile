@@ -56,9 +56,6 @@ bb-docker-build:
 bb-docker-start *ARGS:
     cd brainbox && ./scripts/run.sh {{ ARGS }}
 
-bb-minio:
-    cd docker/minio && docker compose up -d
-
 # === Shell Profiler (Go) ===
 
 sp-build:
@@ -75,9 +72,6 @@ sp-lint:
 reflex-dev:
     claude --plugin-dir reflex
 
-reflex-qdrant:
-    cd docker/qdrant && docker compose up -d
-
 reflex-langfuse:
     cd docker/langfuse && docker compose up -d
 
@@ -86,3 +80,9 @@ reflex-langfuse:
 test-all: bb-test sp-test
 
 lint-all: bb-lint sp-lint
+
+# Validate a collection script's output against the timeline entry contract.
+# Usage: just validate-output ./path/to/script.sh
+# Requires: npm install -g ajv-cli
+validate-output script:
+    {{script}} | ajv validate -s contracts/timeline-entry.schema.json --errors=text
