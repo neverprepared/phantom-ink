@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { connectionState, commandPalette, profileState } from '../stores.svelte';
-
+  import { connectionState, commandPalette, profileState, profileColorStore } from '../stores.svelte';
+  import { getProfileColor } from '../utils/profileColors';
   import { notifications } from '../notifications.svelte';
 
   let connected = $derived(connectionState.connected);
@@ -54,7 +54,7 @@
 
 <div class="titlebar">
   <div class="titlebar-left">
-    <span class="brand">PhantomInk</span>
+    <span class="brand">Phantom<b>Ink</b></span>
   </div>
 
   {#if profiles.length > 0}
@@ -65,13 +65,14 @@
         onclick={() => selectProfile(null)}
       >all</button>
       {#each profiles as p (p.name)}
+        {@const pc = getProfileColor(p.name, profileColorStore.getOverride(p.name))}
         <button
           class="tab"
           class:active={activeProfile?.name === p.name}
           class:no-secrets={p.secrets_mode === 'none'}
           onclick={() => selectProfile(p.name)}
           title={p.secrets_mode === 'none' ? `${p.path} (no secrets configured)` : `${p.path} (${p.secrets_mode})`}
-        >{p.name}</button>
+        ><span class="tab-dot" style="background: {pc.text}"></span>{p.name}</button>
       {/each}
       <button class="tab-refresh" onclick={refreshProfiles} title="Refresh profiles" aria-label="Refresh profiles">
         <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
@@ -101,8 +102,8 @@
     align-items: center;
     gap: 12px;
     padding: 0 var(--titlebar-pad-right) 0 var(--titlebar-pad-left);
-    background: var(--color-bg-secondary);
-    border-bottom: 1px solid var(--color-border-primary);
+    background: var(--titlebar, var(--color-bg-secondary));
+    border-bottom: 1px solid var(--border, var(--color-border-primary));
     flex-shrink: 0;
     --wails-draggable: drag;
   }
@@ -116,9 +117,13 @@
 
   .brand {
     font-size: 13px;
-    font-weight: 600;
-    color: var(--color-accent);
-    letter-spacing: 0.02em;
+    font-weight: 800;
+    color: var(--accent, var(--color-accent));
+    letter-spacing: -0.01em;
+  }
+  .brand b {
+    color: var(--text, var(--color-text-primary));
+    font-weight: 800;
   }
 
   /* Profile tabs */
@@ -168,6 +173,15 @@
   }
   .tab.no-secrets.active {
     opacity: 0.8;
+  }
+
+  .tab-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+    margin-right: 5px;
   }
 
   .tab-refresh {

@@ -7,7 +7,11 @@ export type WidgetKind =
   | 'custom-counter'
   | 'script-metric'
   | 'http-metric'
-  | 'stream';
+  | 'stream'
+  | 'calendar'
+  | 'tasks'
+  | 'notes'
+  | 'sessions-mini';
 
 export interface StatCounterConfig {
   label: string;
@@ -51,7 +55,11 @@ export interface StreamWidgetConfig {
   limit?: number;    // max rows, default 20
 }
 
-export type WidgetConfig = StatCounterConfig | CustomCounterConfig | ScriptMetricConfig | HttpMetricConfig | StreamWidgetConfig | Record<string, never>;
+export interface NotesWidgetConfig {
+  widgetId?: string;
+}
+
+export type WidgetConfig = StatCounterConfig | CustomCounterConfig | ScriptMetricConfig | HttpMetricConfig | StreamWidgetConfig | NotesWidgetConfig | Record<string, never>;
 
 export interface WidgetInstance {
   id: string;
@@ -63,10 +71,18 @@ export interface WidgetInstance {
   h: number;
   minW?: number;
   minH?: number;
+  collectionId?: string;
+}
+
+export interface DashboardCollection {
+  id: string;
+  name: string;
 }
 
 export interface DashboardLayout {
   version: 1;
+  collections?: DashboardCollection[];
+  activeCollectionId?: string;
   widgets: WidgetInstance[];
 }
 

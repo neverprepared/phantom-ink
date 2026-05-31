@@ -388,3 +388,116 @@
   --font-ui: system-ui, 'Cantarell', 'Noto Sans', sans-serif;
   --font-mono: 'JetBrains Mono', 'Noto Sans Mono', monospace;
 }
+
+/* ==========================================================================
+   Design-spec short-form aliases (prototype token names)
+   Components built from the design handoff use these names.
+   They alias into the existing semantic tokens where possible,
+   with per-theme overrides for tokens that have no direct equivalent.
+   ========================================================================== */
+
+:root {
+  /* Aliases into existing tokens */
+  --bg:            var(--color-bg-primary);
+  --bg-elev:       var(--color-bg-secondary);
+  --bg-sunken:     var(--color-bg-tertiary);
+  --sidebar:       var(--color-bg-sidebar);
+  --border:        var(--color-border-primary);
+  --border-strong: var(--color-border-secondary);
+  --text:          var(--color-text-primary);
+  --text-muted:    var(--color-text-secondary);
+  --text-faint:    var(--color-text-tertiary);
+  --accent:        var(--color-accent);
+  --accent-soft:   var(--color-accent-soft);
+  --run:           var(--color-success);
+  --task:          var(--color-info);
+  --fail:          var(--color-error);
+  --r-sm:          var(--radius-sm);
+  --r-md:          var(--radius-md);
+  --r-lg:          var(--radius-lg);
+  --r-xl:          var(--radius-xl);
+  --font-sans:     var(--font-ui);
+
+  /* Tokens without existing equivalents — dark defaults */
+  --bg-hover:      #2b2826;
+  --titlebar-bg:   #1f1d1b;
+  --accent-line:   #5c3328;
+  --run-soft:      #21301a;
+  --task-soft:     #133036;
+  --fail-soft:     #391c1d;
+  --sched:         #a98ff0;
+  --sched-soft:    color-mix(in srgb, #a98ff0 16%, transparent);
+  --shadow-sm:     0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:     0 6px 22px -8px rgba(0,0,0,.6);
+  --shadow-lg:     0 28px 70px -14px rgba(0,0,0,.75);
+  --grid-dot:      rgba(255,250,240,.035);
+
+  /* titlebar background alias (prototype uses --titlebar) */
+  --titlebar:      var(--titlebar-bg);
+
+  /* Layout constants */
+  --w-gap:         16px;
+  --main-pad:      30px;
+  --dur:           .22s;
+  --ease:          cubic-bezier(.22,.61,.36,1);
+}
+
+[data-theme="paper"] {
+  --bg-hover:      #f6f4ef;
+  --titlebar-bg:   #f6f4ef;
+  --accent-line:   #f3c9bd;
+  --run-soft:      #eaf4e0;
+  --task-soft:     #e2f3f6;
+  --fail-soft:     #fce8e8;
+  --sched:         #b09ae8;
+  --sched-soft:    color-mix(in srgb, #b09ae8 16%, transparent);
+  --shadow-sm:     0 1px 2px rgba(40,36,28,.05);
+  --shadow-md:     0 4px 18px -6px rgba(40,36,28,.12);
+  --shadow-lg:     0 24px 60px -12px rgba(40,36,28,.28);
+  --grid-dot:      rgba(44,42,38,.04);
+}
+
+[data-theme="light"] {
+  --bg-hover:      #f2f4f7;
+  --titlebar-bg:   #fbfcfd;
+  --accent-line:   #f6cabf;
+  --run-soft:      #e6f5ec;
+  --task-soft:     #e1f2f7;
+  --fail-soft:     #fce9ea;
+  --sched:         #8b6fd6;
+  --sched-soft:    color-mix(in srgb, #8b6fd6 16%, transparent);
+  --shadow-sm:     0 1px 2px rgba(20,28,40,.05);
+  --shadow-md:     0 4px 18px -6px rgba(20,28,40,.12);
+  --shadow-lg:     0 24px 60px -12px rgba(20,28,40,.24);
+  --grid-dot:      rgba(20,28,40,.045);
+}
+
+[data-theme="muse"] {
+  --bg-hover:      #f6f3fc;
+  --titlebar-bg:   #f6f2fc;
+  --accent-line:   #ddc9f3;
+  --run-soft:      #e6f4ee;
+  --task-soft:     #e8f0fc;
+  --fail-soft:     #fae6ef;
+  --sched:         #9b6dd8;
+  --sched-soft:    color-mix(in srgb, #9b6dd8 16%, transparent);
+  --shadow-sm:     0 1px 2px rgba(58,42,96,.06);
+  --shadow-md:     0 6px 22px -8px rgba(58,42,96,.16);
+  --shadow-lg:     0 26px 64px -14px rgba(58,42,96,.30);
+  --grid-dot:      rgba(58,42,96,.045);
+}
+
+[data-theme="vision"] {
+  --bg-hover:      #1c2836;
+  --titlebar-bg:   #131d2a;
+  --accent-line:   #1d4651;
+  --run-soft:      #11302a;
+  --task-soft:     #102b33;
+  --fail-soft:     #36161f;
+  --sched:         #7e9cf0;
+  --sched-soft:    color-mix(in srgb, #7e9cf0 16%, transparent);
+  --shadow-sm:     0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:     0 6px 24px -8px rgba(0,0,0,.55);
+  --shadow-lg:     0 28px 72px -14px rgba(0,0,0,.7);
+  --grid-dot:      rgba(180,220,255,.04);
+}
