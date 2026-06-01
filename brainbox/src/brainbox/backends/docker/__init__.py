@@ -306,6 +306,7 @@ class DockerBackend:
         """
         import os
 
+        slog.info("bundle.keygen_start")
         kg = await _run(
             container.exec_run,
             [
@@ -333,6 +334,7 @@ class DockerBackend:
                 f"failed to read recipient: {rcat.output.decode(errors='replace')}"
             )
         recipient = rcat.output.decode().strip()
+        slog.info("bundle.keygen_done", metadata={"recipient_len": len(recipient)})
 
         if os.environ.get("BRAINBOX_CC_API_URL"):
             # Runner path — post seal-request to the central API; the API
@@ -360,14 +362,13 @@ class DockerBackend:
             )
             sealed_via = "inline"
 
-        # put_archive on a running container that has socket bind mounts (notably
-        # the GPG agent socket) trips a Docker Desktop bug — the daemon tries to
-        # rbind-mount the socket as a directory and fails. Stream the ciphertext
-        # in over stdin via `docker exec -i` instead, which uses the exec API
-        # rather than the archive endpoint.
+        slog.info("bundle.seal_done", metadata={"sealed_via": sealed_via, "bytes": len(ciphertext)})
+
         await self._write_file_via_exec(
-            ctx.container_name, "/run/brainbox/bundle.age", ciphertext
+            container, "/run/brainbox/bundle.age", ciphertext
         )
+
+        slog.info("bundle.write_done")
 
         # Docker creates parent dirs for bind-mounted sockets/files as root, so
         # /home/developer/.gnupg (and any other dir Docker auto-creates for our
@@ -407,34 +408,25 @@ class DockerBackend:
         )
 
     async def _write_file_via_exec(
-        self, container_name: str, dest_path: str, data: bytes
+        self, container: Any, dest_path: str, data: bytes
     ) -> None:
-        """Stream bytes into a file inside a running container via `docker exec -i`.
+        """Write bytes into a file inside a running container via the Docker SDK.
 
-        Workaround for a Docker Desktop bug where put_archive against a running
-        container with bind-mounted sockets fails. base64 is POSIX-standard and
-        present in the brainbox image.
+        Uses container.exec_run with base64-encoded data passed as a shell
+        argument to avoid subprocess PATH issues and the Docker Desktop
+        put_archive bug with bind-mounted sockets.
         """
-        import asyncio
         import base64
 
-        proc = await asyncio.create_subprocess_exec(
-            "docker",
-            "exec",
-            "-i",
-            container_name,
-            "sh",
-            "-c",
-            f"base64 -d > {dest_path}",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        b64_data = base64.b64encode(data).decode("ascii")
+        result = await _run(
+            container.exec_run,
+            ["sh", "-c", f"printf '%s' {shlex.quote(b64_data)} | base64 -d > {dest_path}"],
         )
-        _stdout, stderr = await proc.communicate(input=base64.b64encode(data))
-        if proc.returncode != 0:
+        if result.exit_code:
             raise RuntimeError(
-                f"docker exec write to {dest_path} failed (exit {proc.returncode}): "
-                f"{stderr.decode(errors='replace')[:200]}"
+                f"write to {dest_path} failed (exit {result.exit_code}): "
+                f"{result.output.decode(errors='replace')[:200]}"
             )
 
     async def _seal_via_queue(self, ctx: SessionContext, recipient: str) -> bytes:
