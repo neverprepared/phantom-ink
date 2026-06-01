@@ -1245,7 +1245,7 @@ async def api_start_session(
         await lifecycle_monitor(ctx)
         _audit_log(request, "session.start", session_name=session_name, success=True)
         _broadcast_sse(json.dumps({"action": "session.start", "session": session_name}))
-        return {"success": True, "url": f"http://localhost:{ctx.port}"}
+        return {"success": True, "url": f"http://{settings.public_host}:{ctx.port}"}
     except Exception as exc:
         log.error(
             "session.start_failed.lifecycle", metadata={"session": session_name, "error": str(exc)}
@@ -1269,7 +1269,7 @@ async def api_start_session(
 
             _audit_log(request, "session.start", session_name=session_name, success=True)
             _broadcast_sse(json.dumps({"action": "session.start", "session": session_name}))
-            return {"success": True, "url": f"http://localhost:{port}"}
+            return {"success": True, "url": f"http://{settings.public_host}:{port}"}
         except docker.errors.NotFound:
             _audit_log(
                 request,

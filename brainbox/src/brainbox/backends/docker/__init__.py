@@ -852,6 +852,7 @@ class DockerBackend:
 
     def get_sessions_info(self) -> list[dict[str, Any]]:
         """List all managed Docker containers."""
+        from ...config import settings
         sessions = []
         try:
             client = _docker()
@@ -899,7 +900,7 @@ class DockerBackend:
                         "name": name,
                         "session_name": session_name,
                         "port": port,
-                        "url": f"http://localhost:{port}" if port else None,
+                        "url": f"http://{settings.public_host}:{port}" if port else None,
                         "volume": volume,
                         "active": is_running,
                         "llm_provider": llm_provider,
