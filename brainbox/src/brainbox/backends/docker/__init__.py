@@ -547,6 +547,9 @@ class DockerBackend:
         # `tmux send-keys` no-op'd silently against a missing server).
         if not ctx.hardened:
             title = f"{ctx.role.capitalize()} - {ctx.session_name}"
+            # exec_run provides a minimal environment; ensure standard bin dirs are present
+            # so ttyd-wrapper.sh can find tmux/ttyd regardless of image PATH configuration.
+            _exec_env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
 
             try:
                 await _run(
@@ -554,6 +557,7 @@ class DockerBackend:
                     ["/home/developer/ttyd-wrapper.sh"],
                     detach=True,
                     user="developer",
+                    environment=_exec_env,
                 )
                 slog.info("container.wrapper_autostarted")
             except Exception as exc:
@@ -580,6 +584,7 @@ class DockerBackend:
                     ttyd_cmd,
                     detach=True,
                     user="developer",
+                    environment=_exec_env,
                 )
             except Exception as exc:
                 slog.warning("container.ttyd_start_failed", metadata={"reason": str(exc)})
