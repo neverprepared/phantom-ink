@@ -3716,7 +3716,7 @@ async def profile_image_status(name: str):
                     resp = await client.head(
                         url,
                         auth=auth,
-                        headers={"Accept": "application/vnd.docker.distribution.manifest.v2+json"},
+                        headers={"Accept": "*/*"},
                         timeout=5,
                     )
                 if resp.status_code == 200:
