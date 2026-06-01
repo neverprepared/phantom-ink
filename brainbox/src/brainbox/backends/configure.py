@@ -266,6 +266,52 @@ async def inject_claude_config(
         slog.warning("configure.claude_config_patch_failed", metadata={"reason": str(exc)})
 
 
+async def inject_claude_trust(
+    executor: GuestExecutor,
+    *,
+    slog: Any | None = None,
+) -> None:
+    """Patch ~/.claude.json to trust session working directories.
+
+    Used for profile image sessions where credentials are baked in — we only
+    need to ensure any session-specific mount paths are trusted so Claude
+    doesn't prompt on startup.
+    """
+    slog = slog or log
+    home = executor.home_dir
+    paths = [f"{home}/workspace", f"{home}/task-repo", home]
+    trust_patch = {
+        "hasCompletedOnboarding": True,
+        "bypassPermissionsModeAccepted": True,
+        "projects": {
+            p: {
+                "hasTrustDialogAccepted": True,
+                "allowedTools": [],
+                "mcpContextUris": [],
+                "projectOnboardingSeenCount": 0,
+            }
+            for p in paths
+        },
+    }
+    try:
+        patch_json = json.dumps(trust_patch)
+        p_j = json.dumps(f"{home}/.claude.json").replace('"', '\\"')
+        await executor.exec_shell(
+            f'echo {shlex.quote(patch_json)} | python3 -c "'
+            "import json, pathlib, sys; "
+            f"p = pathlib.Path({p_j}); "
+            "d = json.loads(p.read_text()) if p.exists() else {}; "
+            "patch = json.load(sys.stdin); "
+            "d.update({k: v for k, v in patch.items() if k != 'projects'}); "
+            "d.setdefault('projects', {}).update(patch.get('projects', {})); "
+            "p.write_text(json.dumps(d, indent=2))"
+            '"'
+        )
+        slog.info("configure.claude_trust_patched")
+    except Exception as exc:
+        slog.warning("configure.claude_trust_patch_failed", metadata={"reason": str(exc)})
+
+
 async def inject_claude_settings(
     executor: GuestExecutor,
     *,

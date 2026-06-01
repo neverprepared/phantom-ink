@@ -222,6 +222,7 @@ class DockerBackend:
         from ..configure import (
             inject_claude_config,
             inject_claude_settings,
+            inject_claude_trust,
             inject_env_file,
             inject_role_prompt,
             inject_task,
@@ -271,9 +272,11 @@ class DockerBackend:
         else:
             await inject_env_file(executor, secrets, ctx.session_name, slog=slog)
 
-        # Claude OAuth config: skip when credentials are baked into a profile image.
         if not ctx.hardened and not ctx.profile_image:
             await inject_claude_config(executor, oauth_account, slog=slog)
+        elif ctx.profile_image:
+            # Credentials are baked in — only ensure session-specific paths are trusted.
+            await inject_claude_trust(executor, slog=slog)
 
         # Inject role prompt file for --append-system-prompt-file
         if ctx.role_prompt_file:
