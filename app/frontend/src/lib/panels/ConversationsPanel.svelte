@@ -1087,7 +1087,7 @@
   .btn-end:hover:not(:disabled) {
     background: rgba(239,68,68,0.1);
     border-color: rgba(239,68,68,0.4);
-    color: #ef4444;
+    color: var(--fail, #ef4444);
   }
 
   .channel-ended {
@@ -1165,7 +1165,7 @@
   }
 
   .btn-remove:hover:not(:disabled) {
-    color: #ef4444;
+    color: var(--fail, #ef4444);
   }
 
   .btn-add-participant {

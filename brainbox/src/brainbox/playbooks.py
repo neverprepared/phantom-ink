@@ -29,7 +29,6 @@ log = get_logger()
 # ---------------------------------------------------------------------------
 
 _playbooks: dict[str, Playbook] = {}
-_builtin_ids: set[str] = set()  # IDs of built-in playbooks (cannot be deleted)
 _run_tasks: dict[str, asyncio.Task] = {}  # playbook_id -> active asyncio.Task
 _listeners: list[Callable] = []
 
@@ -71,8 +70,8 @@ def _parse_tasks(markdown: str) -> list[PlaybookTask]:
 # ---------------------------------------------------------------------------
 
 
-def create_playbook(name: str, markdown: str, workspace_profile: str = "global") -> Playbook:
-    pb = Playbook(name=name, markdown=markdown, tasks=_parse_tasks(markdown), workspace_profile=workspace_profile)
+def create_playbook(name: str, markdown: str, workspace_profile: str = "global", runner: str | None = None) -> Playbook:
+    pb = Playbook(name=name, markdown=markdown, tasks=_parse_tasks(markdown), workspace_profile=workspace_profile, runner=runner)
     _playbooks[pb.id] = pb
     _emit("playbook.created", pb)
     log.info("playbook.created", metadata={"id": pb.id, "name": name, "tasks": len(pb.tasks)})
@@ -93,11 +92,36 @@ def list_playbooks(profile: str | None = None) -> list[Playbook]:
     ]
 
 
+_UNSET = object()
+
+
+def update_playbook(
+    playbook_id: str,
+    *,
+    name: str | None = None,
+    markdown: str | None = None,
+    runner: object = _UNSET,
+) -> Playbook:
+    pb = _playbooks.get(playbook_id)
+    if pb is None:
+        raise ValueError(f"Playbook '{playbook_id}' not found")
+    if pb.status == "running":
+        raise ValueError("Cannot update a running playbook")
+    if name is not None:
+        pb.name = name
+    if markdown is not None:
+        pb.markdown = markdown
+        pb.tasks = _parse_tasks(markdown)
+    if runner is not _UNSET:
+        pb.runner = runner  # type: ignore[assignment]
+    _emit("playbook.updated", pb)
+    log.info("playbook.updated", metadata={"id": playbook_id})
+    return pb
+
+
 def delete_playbook(playbook_id: str) -> None:
     if playbook_id not in _playbooks:
         raise ValueError(f"Playbook '{playbook_id}' not found")
-    if playbook_id in _builtin_ids:
-        raise ValueError("Built-in playbooks cannot be deleted")
     cancel_playbook(playbook_id)
     del _playbooks[playbook_id]
     log.info("playbook.deleted", metadata={"id": playbook_id})
@@ -108,11 +132,16 @@ def delete_playbook(playbook_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def run_playbook(playbook_id: str, *, workspace_profile: str | None = None) -> Playbook:
+async def run_playbook(
+    playbook_id: str,
+    *,
+    workspace_profile: str | None = None,
+    runner: str | None = None,
+) -> Playbook:
     """Start sequential execution; returns immediately. Runs in background.
 
     *workspace_profile* overrides the playbook's saved profile for this run.
-    Used when a global playbook needs a specific profile context at runtime.
+    *runner* overrides the playbook's saved runner for this run.
     """
     pb = _playbooks.get(playbook_id)
     if not pb:
@@ -120,10 +149,9 @@ async def run_playbook(playbook_id: str, *, workspace_profile: str | None = None
     if pb.status == "running":
         raise ValueError(f"Playbook '{playbook_id}' is already running")
 
-    # Apply runtime profile override (doesn't change the saved playbook)
     run_profile = workspace_profile or pb.workspace_profile
+    run_runner = runner if runner is not None else pb.runner
 
-    # Reset task statuses for a fresh run
     for task in pb.tasks:
         task.status = "pending"
         task.output = None
@@ -132,7 +160,7 @@ async def run_playbook(playbook_id: str, *, workspace_profile: str | None = None
         task.started_at = None
         task.finished_at = None
 
-    task = asyncio.create_task(_execute(playbook_id, run_profile=run_profile))
+    task = asyncio.create_task(_execute(playbook_id, run_profile=run_profile, run_runner=run_runner))
     _run_tasks[playbook_id] = task
     return pb
 
@@ -148,19 +176,19 @@ def cancel_playbook(playbook_id: str) -> None:
         log.info("playbook.cancelled", metadata={"id": playbook_id})
 
 
-async def _execute(playbook_id: str, *, run_profile: str = "global") -> None:
+async def _execute(playbook_id: str, *, run_profile: str = "global", run_runner: str | None = None) -> None:
     from .models import _now_ms
     pb = _playbooks[playbook_id]
     pb.status = "running"
     pb.started_at = _now_ms()
     _emit("playbook.started", pb)
-    log.info("playbook.started", metadata={"id": playbook_id, "tasks": len(pb.tasks), "profile": run_profile})
+    log.info("playbook.started", metadata={"id": playbook_id, "tasks": len(pb.tasks), "profile": run_profile, "runner": run_runner})
 
     try:
         for task in pb.tasks:
             if pb.status == "cancelled":
                 break
-            await _run_task(pb, task, run_profile=run_profile)
+            await _run_task(pb, task, run_profile=run_profile, run_runner=run_runner)
             if task.status == "failed":
                 pb.status = "failed"
                 pb.finished_at = _now_ms()
@@ -187,14 +215,14 @@ async def _execute(playbook_id: str, *, run_profile: str = "global") -> None:
         _run_tasks.pop(playbook_id, None)
 
 
-async def _run_task(pb: Playbook, task: PlaybookTask, *, run_profile: str = "global") -> None:
+async def _run_task(pb: Playbook, task: PlaybookTask, *, run_profile: str = "global", run_runner: str | None = None) -> None:
     from .models import _now_ms
     session_name = f"pb-{pb.id[:6]}-t{task.index}"
     task.status = "running"
     task.session_name = session_name
     task.started_at = _now_ms()
     _emit("playbook.task_started", {"playbook_id": pb.id, "task_id": task.id})
-    log.info("playbook.task_started", metadata={"playbook": pb.id, "task": task.index, "session": session_name})
+    log.info("playbook.task_started", metadata={"playbook": pb.id, "task": task.index, "session": session_name, "runner": run_runner})
 
     api_key = _load_api_key()
     base_url = f"http://localhost:{settings.api_port}"
@@ -211,6 +239,8 @@ async def _run_task(pb: Playbook, task: PlaybookTask, *, run_profile: str = "glo
                 workspace_home = _resolve_workspace_home(run_profile)
                 if workspace_home:
                     create_body["workspace_home"] = workspace_home
+            if run_runner:
+                create_body["runner"] = run_runner
             resp = await client.post("/api/create", json=create_body, headers=headers)
             resp.raise_for_status()
 
@@ -327,62 +357,6 @@ def _resolve_workspace_home(profile_name: str) -> str | None:
         return str(candidate)
 
     return None
-
-
-# ---------------------------------------------------------------------------
-# Built-in playbook loading
-# ---------------------------------------------------------------------------
-
-
-def _builtin_dir() -> Path:
-    """Return the path to the built-in playbooks directory."""
-    return Path(__file__).resolve().parent.parent.parent / "playbooks"
-
-
-def load_builtins() -> int:
-    """Load built-in playbook templates from brainbox/playbooks/*.md.
-
-    Called once at API startup. Returns the number of playbooks loaded.
-    Skips files whose display name already exists (idempotent across restarts).
-    Also marks any restored-from-state playbooks with matching names as builtins
-    so they cannot be deleted.
-    """
-    pb_dir = _builtin_dir()
-    if not pb_dir.is_dir():
-        return 0
-
-    loaded = 0
-    existing_names = {pb.name: pb.id for pb in _playbooks.values()}
-
-    for md_file in sorted(pb_dir.glob("*.md")):
-        try:
-            markdown = md_file.read_text()
-            title_match = re.match(r"^#\s+(.+)$", markdown, re.MULTILINE)
-            display_name = title_match.group(1).strip() if title_match else md_file.stem.replace("-", " ").title()
-
-            if display_name in existing_names:
-                # Already exists (restored from state) — mark it as builtin
-                _builtin_ids.add(existing_names[display_name])
-                continue
-
-            pb = Playbook(
-                name=display_name,
-                markdown=markdown,
-                tasks=_parse_tasks(markdown),
-                workspace_profile="global",
-            )
-            _playbooks[pb.id] = pb
-            _builtin_ids.add(pb.id)
-            existing_names[display_name] = pb.id
-            loaded += 1
-            log.info(
-                "playbook.builtin_loaded",
-                metadata={"id": pb.id, "name": display_name, "tasks": len(pb.tasks), "file": md_file.name},
-            )
-        except Exception as exc:
-            log.warning("playbook.builtin_load_failed", metadata={"file": md_file.name, "reason": str(exc)})
-
-    return loaded
 
 
 # ---------------------------------------------------------------------------

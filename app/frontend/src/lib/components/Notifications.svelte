@@ -42,27 +42,27 @@
   }
 
   .notification.success {
-    background: rgba(16, 185, 129, 0.15);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-    color: #6ee7b7;
+    background: color-mix(in srgb, var(--run, #22c55e) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--run, #22c55e) 30%, transparent);
+    color: var(--run, #6ee7b7);
   }
 
   .notification.error {
-    background: rgba(239, 68, 68, 0.15);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    color: #fca5a5;
+    background: color-mix(in srgb, var(--fail, #ef4444) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--fail, #ef4444) 30%, transparent);
+    color: var(--fail, #fca5a5);
   }
 
   .notification.info {
-    background: rgba(59, 130, 246, 0.15);
-    border: 1px solid rgba(59, 130, 246, 0.3);
-    color: #93c5fd;
+    background: color-mix(in srgb, var(--task, #3b82f6) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--task, #3b82f6) 30%, transparent);
+    color: var(--task, #93c5fd);
   }
 
   .notification.warning {
-    background: rgba(245, 158, 11, 0.15);
-    border: 1px solid rgba(245, 158, 11, 0.3);
-    color: #fcd34d;
+    background: color-mix(in srgb, var(--sched, #f59e0b) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--sched, #f59e0b) 30%, transparent);
+    color: var(--sched, #fcd34d);
   }
 
   .msg {

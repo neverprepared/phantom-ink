@@ -50,6 +50,11 @@ async def _monitor_loop() -> None:
         for name, ctx in list(_tracked.items()):
             slog = get_logger(session_name=name, container_name=ctx.container_name)
 
+            # Remote runner sessions: health is owned by the runner, not us.
+            # The runner heartbeats the API; we skip local Docker/UTM checks.
+            if ctx.runner_name:
+                continue
+
             try:
                 # Delegate health check to backend with timeout
                 backend = create_backend(ctx.backend)

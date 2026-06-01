@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { connectionState, commandPalette, profileState } from '../stores.svelte';
-
+  import { connectionState, commandPalette, profileState, profileColorStore } from '../stores.svelte';
+  import { getProfileColor } from '../utils/profileColors';
   import { notifications } from '../notifications.svelte';
 
   let connected = $derived(connectionState.connected);
@@ -54,7 +54,7 @@
 
 <div class="titlebar">
   <div class="titlebar-left">
-    <span class="brand">PhantomInk</span>
+    <span class="brand">Phantom<b>Ink</b></span>
   </div>
 
   {#if profiles.length > 0}
@@ -65,13 +65,14 @@
         onclick={() => selectProfile(null)}
       >all</button>
       {#each profiles as p (p.name)}
+        {@const pc = getProfileColor(p.name, profileColorStore.getOverride(p.name))}
         <button
           class="tab"
           class:active={activeProfile?.name === p.name}
           class:no-secrets={p.secrets_mode === 'none'}
           onclick={() => selectProfile(p.name)}
           title={p.secrets_mode === 'none' ? `${p.path} (no secrets configured)` : `${p.path} (${p.secrets_mode})`}
-        >{p.name}</button>
+        ><span class="tab-dot" style="background: {pc.text}"></span>{p.name}</button>
       {/each}
       <button class="tab-refresh" onclick={refreshProfiles} title="Refresh profiles" aria-label="Refresh profiles">
         <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
@@ -99,10 +100,10 @@
     height: var(--titlebar-height);
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 18px;
     padding: 0 var(--titlebar-pad-right) 0 var(--titlebar-pad-left);
-    background: var(--color-bg-secondary);
-    border-bottom: 1px solid var(--color-border-primary);
+    background: var(--titlebar, var(--color-bg-secondary));
+    border-bottom: 1px solid var(--border, var(--color-border-primary));
     flex-shrink: 0;
     --wails-draggable: drag;
   }
@@ -115,10 +116,15 @@
   }
 
   .brand {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--color-accent);
-    letter-spacing: 0.02em;
+    font-size: 19px;
+    font-weight: 800;
+    color: var(--accent, var(--color-accent));
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+  }
+  .brand b {
+    color: var(--text, var(--color-text-primary));
+    font-weight: 800;
   }
 
   /* Profile tabs */
@@ -126,10 +132,10 @@
     display: flex;
     align-items: center;
     gap: 2px;
-    background: var(--color-surface-subtle);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-lg);
-    padding: 2px;
+    background: var(--bg-sunken, var(--color-surface-subtle));
+    border: 1px solid var(--border, var(--color-border-primary));
+    border-radius: 99px;
+    padding: 4px;
     flex-shrink: 1;
     min-width: 0;
     overflow-x: auto;
@@ -140,26 +146,29 @@
   .profile-tabs::-webkit-scrollbar { display: none; }
 
   .tab {
+    display: flex;
+    align-items: center;
+    gap: 7px;
     background: transparent;
     border: none;
-    border-radius: var(--radius-md);
-    color: var(--color-text-tertiary);
-    font-size: 11px;
-    font-weight: 500;
-    padding: 3px 10px;
+    border-radius: 99px;
+    color: var(--text-faint, var(--color-text-tertiary));
+    font-size: 13.5px;
+    font-weight: 600;
+    padding: 5px 13px;
     white-space: nowrap;
     transition: all 0.15s;
     flex-shrink: 0;
   }
 
   .tab:hover {
-    color: var(--color-text-secondary);
-    background: var(--color-surface-hover);
+    color: var(--text-muted, var(--color-text-secondary));
+    background: transparent;
   }
 
   .tab.active {
-    background: var(--color-accent-soft);
-    color: var(--color-accent);
+    background: var(--accent-soft, var(--color-accent-soft));
+    color: var(--accent, var(--color-accent));
     font-weight: 600;
   }
 
@@ -168,6 +177,15 @@
   }
   .tab.no-secrets.active {
     opacity: 0.8;
+  }
+
+  .tab-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+    margin-right: 5px;
   }
 
   .tab-refresh {
@@ -199,45 +217,53 @@
   .conn-status {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--color-text-tertiary);
+    gap: 7px;
+    font-size: 13px;
+    color: var(--text-faint, var(--color-text-tertiary));
   }
 
   .conn-dot {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
     background: var(--color-dot-offline);
     flex-shrink: 0;
   }
 
   .conn-status.connected .conn-dot {
-    background: var(--color-success);
-    box-shadow: var(--shadow-status-active);
+    background: var(--run, var(--color-success));
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--run, var(--color-success)) 60%, transparent);
+    animation: status-pulse 2.4s infinite;
   }
 
   .conn-status.connected {
-    color: var(--color-text-secondary);
+    color: var(--text-muted, var(--color-text-secondary));
+  }
+
+  @keyframes status-pulse {
+    0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run, var(--color-success)) 55%, transparent); }
+    70%  { box-shadow: 0 0 0 6px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
   }
 
   .palette-btn {
     display: flex;
     align-items: center;
-    gap: 6px;
-    background: var(--color-surface-hover);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    color: var(--color-text-tertiary);
-    padding: 4px 8px;
-    font-size: 11px;
+    gap: 9px;
+    background: var(--bg-elev, var(--color-surface-hover));
+    border: 1px solid var(--border, var(--color-border-secondary));
+    border-radius: var(--r-sm, var(--radius-sm));
+    color: var(--text-muted, var(--color-text-secondary));
+    padding: 6px 12px;
+    font-size: 13px;
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .palette-btn:hover {
-    background: var(--color-surface-active);
-    color: var(--color-text-secondary);
+    border-color: var(--border-strong, var(--color-border-primary));
+    background: var(--bg-elev, var(--color-surface-hover));
+    color: var(--text, var(--color-text-primary));
   }
 
   .restart-btn {

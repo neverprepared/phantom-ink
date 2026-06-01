@@ -297,6 +297,11 @@ func (a *App) CreatePlaybook(req brainbox.CreatePlaybookRequest) (brainbox.Playb
 	return a.client.CreatePlaybook(req)
 }
 
+// UpdatePlaybook updates a playbook's name and/or markdown instructions.
+func (a *App) UpdatePlaybook(id string, req brainbox.UpdatePlaybookRequest) (brainbox.Playbook, error) {
+	return a.client.UpdatePlaybook(id, req)
+}
+
 // DeletePlaybook deletes a playbook (cancels it first if running).
 func (a *App) DeletePlaybook(id string) error {
 	return a.client.DeletePlaybook(id)

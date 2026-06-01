@@ -10,16 +10,22 @@
   import { DEFAULT_LAYOUT } from '../widgets/defaultLayout';
   import type { WidgetInstance, WidgetKind, ActionItem } from '../widgets/types';
 
-  import StatCounterWidget    from '../widgets/StatCounterWidget.svelte';
-  import DispatchFormWidget   from '../widgets/DispatchFormWidget.svelte';
-  import ChainsListWidget     from '../widgets/ChainsListWidget.svelte';
-  import ActionItemsWidget    from '../widgets/ActionItemsWidget.svelte';
+  import StatCounterWidget     from '../widgets/StatCounterWidget.svelte';
+  import DispatchFormWidget    from '../widgets/DispatchFormWidget.svelte';
+  import ChainsListWidget      from '../widgets/ChainsListWidget.svelte';
+  import ActionItemsWidget     from '../widgets/ActionItemsWidget.svelte';
   import ResourceMonitorWidget from '../widgets/ResourceMonitorWidget.svelte';
-  import CustomCounterWidget  from '../widgets/CustomCounterWidget.svelte';
-  import ScriptMetricWidget   from '../widgets/ScriptMetricWidget.svelte';
-  import HttpMetricWidget     from '../widgets/HttpMetricWidget.svelte';
-  import StreamWidget         from '../widgets/StreamWidget.svelte';
-  import WidgetDrawer         from '../components/WidgetDrawer.svelte';
+  import CustomCounterWidget   from '../widgets/CustomCounterWidget.svelte';
+  import ScriptMetricWidget    from '../widgets/ScriptMetricWidget.svelte';
+  import HttpMetricWidget      from '../widgets/HttpMetricWidget.svelte';
+  import StreamWidget          from '../widgets/StreamWidget.svelte';
+  import CalendarWidget        from '../widgets/CalendarWidget.svelte';
+  import TasksWidget           from '../widgets/TasksWidget.svelte';
+  import NotesWidget           from '../widgets/NotesWidget.svelte';
+  import SessionsMiniWidget    from '../widgets/SessionsMiniWidget.svelte';
+  import WidgetDrawer          from '../components/WidgetDrawer.svelte';
+
+  import type { DashboardCollection } from '../widgets/types';
 
   // --- Data state ---
   let sessions    = $state<any[]>([]);
@@ -134,6 +140,55 @@
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let drawerOpen = $state(false);
 
+  // --- Collections ---
+  let activeCollectionId = $state<string | null>(null);
+  let arrangeMode = $state(false);
+
+  let collections = $derived<DashboardCollection[]>(
+    dashboardState.layout?.collections ?? []
+  );
+
+  let activeCollection = $derived(
+    collections.find(c => c.id === activeCollectionId) ?? collections[0] ?? null
+  );
+
+  function addCollection(name: string): void {
+    const id = 'col-' + Date.now();
+    const updated = [...collections, { id, name }];
+    const layout = dashboardState.layout ?? { version: 1 as const, widgets: [] };
+    dashboardState.layout = { ...layout, collections: updated };
+    activeCollectionId = id;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveLayout, 800);
+    // Reload grid to show empty collection
+    void reloadLayout(profileState.active?.name ?? '');
+  }
+
+  function switchCollection(id: string): void {
+    activeCollectionId = id;
+    void reloadLayout(profileState.active?.name ?? '');
+  }
+
+  function collectionWidgetCount(id: string): number {
+    return dashboardState.widgets.filter(w => w.collectionId === id).length;
+  }
+
+  function promptNewCollection(): void {
+    const name = window.prompt('Collection name?');
+    if (name?.trim()) addCollection(name.trim());
+  }
+
+  function visibleWidgets(): WidgetInstance[] {
+    const all = dashboardState.widgets;
+    if (!activeCollectionId && collections.length === 0) return all;
+    const cid = activeCollectionId ?? collections[0]?.id ?? null;
+    if (!cid) return all;
+    // If no widgets have a collectionId, show all (backwards compatibility)
+    const hasCollectionWidgets = all.some(w => w.collectionId);
+    if (!hasCollectionWidgets) return all;
+    return all.filter(w => !w.collectionId || w.collectionId === cid);
+  }
+
   const WIDGET_MAP: Record<WidgetKind, any> = {
     'stat-counter':     StatCounterWidget,
     'dispatch-form':    DispatchFormWidget,
@@ -144,6 +199,10 @@
     'script-metric':    ScriptMetricWidget,
     'http-metric':      HttpMetricWidget,
     'stream':           StreamWidget,
+    'calendar':         CalendarWidget,
+    'tasks':            TasksWidget,
+    'notes':            NotesWidget,
+    'sessions-mini':    SessionsMiniWidget,
   };
 
   function patchWidgetConfig(id: string, patch: Record<string, unknown>): void {
@@ -175,6 +234,34 @@
     btn.setAttribute('aria-label', 'Remove widget');
     btn.addEventListener('click', (e) => { e.stopPropagation(); handleRemoveWidget(w.id); });
     itemEl.appendChild(btn);
+
+    // Inject grip into the widget header if one exists, otherwise overlay top-left.
+    // Uses the verbatim `drag` glyph from icons.jsx (2 cols × 3 rows, cx=9/15, cy=6/12/18).
+    const dragSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+      <circle cx="9" cy="6" r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="9" cy="18" r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="15" cy="6" r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="15" cy="12" r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="15" cy="18" r="1.4" fill="currentColor" stroke="none"/>
+    </svg>`;
+
+    const header = contentEl.querySelector('.widget-header');
+    if (header) {
+      // Header widget: prepend grip span as first child of the header row
+      const grip = document.createElement('span');
+      grip.className = 'widget-grip widget-drag-handle';
+      grip.setAttribute('aria-hidden', 'true');
+      grip.innerHTML = dragSvg;
+      header.prepend(grip);
+    } else {
+      // Drag-strip widget: overlay grip at top-left of the card
+      const grip = document.createElement('div');
+      grip.className = 'widget-grip widget-grip-overlay widget-drag-handle';
+      grip.setAttribute('aria-hidden', 'true');
+      grip.innerHTML = dragSvg;
+      itemEl.appendChild(grip);
+    }
   }
 
   async function saveLayout(): Promise<void> {
@@ -192,9 +279,15 @@
     const a = await getApi();
     if (a) {
       try {
+        const layout = dashboardState.layout;
         await a.SaveDashboardLayout(
           profileState.active?.name ?? '',
-          JSON.stringify({ version: 1, widgets: updated }),
+          JSON.stringify({
+            version: 1,
+            widgets: updated,
+            collections: layout?.collections ?? [],
+            activeCollectionId: activeCollectionId ?? undefined,
+          }),
         );
       } catch {}
     }
@@ -220,8 +313,11 @@
 
   function handleAddWidget(w: WidgetInstance): void {
     if (!grid) return;
-    dashboardState.updateWidgets([...dashboardState.widgets, w]);
-    mountWidget(w);
+    // Stamp the active collection onto new widgets
+    const cid = activeCollectionId ?? collections[0]?.id;
+    const stamped: WidgetInstance = cid ? { ...w, collectionId: cid } : w;
+    dashboardState.updateWidgets([...dashboardState.widgets, stamped]);
+    mountWidget(stamped);
     drawerOpen = false;
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(saveLayout, 800);
@@ -245,7 +341,7 @@
     grid.removeAll();
 
     const a = await getApi();
-    let layout = { version: 1 as const, widgets: [...DEFAULT_LAYOUT.widgets] };
+    let layout: typeof dashboardState.layout = { version: 1, widgets: [...DEFAULT_LAYOUT.widgets] };
     if (a) {
       const stored = await a.GetDashboardLayout(profileName).catch(() => '');
       if (stored) {
@@ -258,7 +354,15 @@
       }
     }
     dashboardState.layout = layout;
-    for (const w of layout.widgets) mountWidget(w);
+
+    // Restore active collection from saved layout
+    if (layout.activeCollectionId) {
+      activeCollectionId = layout.activeCollectionId;
+    } else if (layout.collections?.length) {
+      activeCollectionId = layout.collections[0].id;
+    }
+
+    for (const w of visibleWidgets()) mountWidget(w);
   }
 
   function handleReset(): void {
@@ -344,6 +448,13 @@
     dashboardState.layout = layout;
     _trackedProfile = profileState.active?.name ?? '';
 
+    // Restore active collection
+    if (layout.activeCollectionId) {
+      activeCollectionId = layout.activeCollectionId;
+    } else if (layout.collections?.length) {
+      activeCollectionId = layout.collections[0].id;
+    }
+
     grid = GridStack.init({
       column: 12,
       cellHeight: 60,
@@ -388,12 +499,32 @@
     <div class="datestamp">[ {formatDate(now)} ]</div>
   </div>
 
-  <div class="grid-wrap">
+  <div class="collections-bar">
+    <span class="collections-label">collections</span>
+    <div class="collection-pills">
+      {#each collections as c}
+        <button
+          class="ds-btn sm {activeCollectionId === c.id ? 'soft' : 'ghost'}"
+          onclick={() => switchCollection(c.id)}
+        >{c.name}<span class="pill-count">{collectionWidgetCount(c.id)}</span></button>
+      {/each}
+      <button class="ds-btn ghost sm icon-only" onclick={promptNewCollection} title="new collection">+</button>
+    </div>
+    <div class="collections-actions">
+      {#if arrangeMode}
+        <button class="ds-btn sm" onclick={() => drawerOpen = true}>+ widget</button>
+      {/if}
+      <button
+        class="ds-btn sm {arrangeMode ? 'primary' : ''}"
+        onclick={() => { arrangeMode = !arrangeMode; if (!arrangeMode) drawerOpen = false; }}
+      >{arrangeMode ? 'done' : 'arrange'}</button>
+    </div>
+  </div>
+
+  <div class="grid-wrap" class:arrange={arrangeMode}>
     <div class="grid-stack" bind:this={gridEl}></div>
   </div>
 </div>
-
-<button class="fab" onclick={() => drawerOpen = !drawerOpen} aria-label="Open widget drawer">+</button>
 
 <WidgetDrawer
   open={drawerOpen}
@@ -419,33 +550,33 @@
     justify-content: space-between;
     padding: var(--panel-padding);
     padding-bottom: var(--spacing-md);
-    border-bottom: 1px solid var(--color-border-primary);
+    border-bottom: 1px solid var(--border, var(--color-border-primary));
     flex-shrink: 0;
   }
 
   .brand {
     display: flex;
     align-items: center;
-    gap: var(--spacing-sm);
+    gap: 14px;
   }
 
   .os-badge {
     font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--color-accent);
-    border: 1px solid var(--color-accent);
-    border-radius: var(--radius-sm);
-    padding: 1px 6px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent, var(--color-accent));
+    border: 1.5px solid var(--accent, var(--color-accent));
+    border-radius: 6px;
+    padding: 3px 7px;
     letter-spacing: 0.05em;
   }
 
   .brand-name {
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: 22px;
     font-weight: 600;
-    letter-spacing: 0.12em;
-    color: var(--color-text-primary);
+    letter-spacing: 0.04em;
+    color: var(--text, var(--color-text-primary));
   }
 
   .refreshing {
@@ -461,43 +592,64 @@
     letter-spacing: 0.04em;
   }
 
+  .collections-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px var(--panel-padding);
+    border-bottom: 1px solid var(--border, var(--color-border-primary));
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  .collections-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-faint, var(--color-text-tertiary));
+    flex-shrink: 0;
+  }
+
+  .collection-pills {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    flex: 1;
+  }
+
+  .pill-count {
+    opacity: 0.55;
+    margin-left: 5px;
+  }
+
+  .ds-btn.icon-only {
+    padding: 3px 8px;
+  }
+
+  .collections-actions {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
   .grid-wrap {
     flex: 1;
     overflow-y: auto;
     padding: 8px;
   }
 
-  /* FAB */
-  .fab {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    background: var(--color-accent);
-    color: #000;
-    border: none;
-    font-size: 22px;
-    line-height: 1;
-    cursor: pointer;
-    z-index: 190;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: inherit;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
-    transition: opacity 120ms ease, transform 120ms ease;
-  }
-  .fab:hover { opacity: 0.85; transform: scale(1.05); }
+  /* In arrange mode, always show widget remove buttons */
+  .grid-wrap.arrange :global(.widget-remove-btn) { opacity: 1; }
 
   /* gridstack overrides */
   :global(.grid-stack-item-content) {
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
+    background: var(--bg-elev, var(--color-bg-secondary));
+    border: 1px solid var(--border, var(--color-border-secondary));
+    border-radius: var(--r-lg, var(--radius-lg));
     overflow: hidden;
-    box-shadow: var(--shadow-card);
+    box-shadow: var(--shadow-sm, var(--shadow-card));
   }
 
   :global(.grid-stack-item > .ui-resizable-se) {
@@ -535,6 +687,31 @@
     background: var(--color-error);
     border-color: var(--color-error);
     color: #fff;
+  }
+
+  /* Grip handle — header variant (flows inside .widget-header as first child) */
+  :global(.widget-grip) {
+    display: none;
+    align-items: center;
+    color: var(--text-faint);
+    cursor: grab;
+    flex-shrink: 0;
+    margin-right: 2px;
+    margin-left: -2px;
+    transition: color 120ms ease;
+    user-select: none;
+  }
+  :global(.widget-grip:active) { cursor: grabbing; }
+  :global(.widget-grip:hover) { color: var(--text-muted); }
+  .grid-wrap.arrange :global(.widget-grip) { display: flex; }
+
+  /* Grip handle — overlay variant (drag-strip widgets, no visible header) */
+  :global(.widget-grip-overlay) {
+    position: absolute;
+    top: 7px;
+    left: 7px;
+    z-index: 20;
+    margin: 0;
   }
 
   :global(.grid-stack) { background: transparent; }

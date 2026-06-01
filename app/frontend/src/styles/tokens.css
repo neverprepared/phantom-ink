@@ -1,57 +1,308 @@
-/* ==========================================================================
-   phantom-ink design tokens — Soft UI inspired
-   Supports light/dark via [data-theme="light"] on <html>
-   ========================================================================== */
+/* ============================================================
+   PhantomInk — theme tokens + base styles
+   Themes: paper (default), light, dark, muse, vision
+   SOURCE: styles.css from design handoff — copied verbatim.
+   ============================================================ */
 
 :root {
-  /* --- Dark theme (default) --- */
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "SFMono-Regular", Menlo, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --dur: .22s;
+  --ease: cubic-bezier(.22,.61,.36,1);
+}
 
-  /* Backgrounds — warm neutral zinc */
-  --color-bg-primary: #18181b;
-  --color-bg-secondary: #27272a;
-  --color-bg-tertiary: #303033;
-  --color-bg-card: linear-gradient(127.09deg, rgba(40, 40, 44, 0.94) 19.41%, rgba(35, 35, 39, 0.49) 76.65%);
-  --color-bg-sidebar: #1e1e21;
+/* -------- PAPER (default) -------- */
+:root,
+[data-theme="paper"] {
+  --bg:           #f3f1ec;
+  --bg-elev:      #ffffff;
+  --bg-sunken:    #ece9e2;
+  --bg-hover:     #f6f4ef;
+  --sidebar:      #fbfaf7;
+  --titlebar:     #f6f4ef;
+  --border:       #e5e2da;
+  --border-strong:#d7d3c8;
+  --text:         #2c2a26;
+  --text-muted:   #8d897f;
+  --text-faint:   #b8b3a8;
+  --accent:       #ec5a3f;
+  --accent-2:     #ec5a3f;
+  --accent-soft:  #fbe8e2;
+  --accent-line:  #f3c9bd;
+  --run:          #7bbf52;
+  --run-soft:     #eaf4e0;
+  --task:         #3bb4c6;
+  --task-soft:    #e2f3f6;
+  --fail:         #ef4444;
+  --fail-soft:    #fce8e8;
+  --sched:        #b09ae8;
+  --shadow-sm:    0 1px 2px rgba(40,36,28,.05);
+  --shadow-md:    0 4px 18px -6px rgba(40,36,28,.12);
+  --shadow-lg:    0 24px 60px -12px rgba(40,36,28,.28);
+  --grid-dot:     rgba(44,42,38,.04);
+  color-scheme: light;
+}
 
-  /* Borders */
-  --color-border-primary: rgba(255, 255, 255, 0.06);
-  --color-border-secondary: rgba(255, 255, 255, 0.1);
+/* -------- LIGHT (cool, neutral) -------- */
+[data-theme="light"] {
+  --bg:           #f6f7f9;
+  --bg-elev:      #ffffff;
+  --bg-sunken:    #eef0f3;
+  --bg-hover:     #f2f4f7;
+  --sidebar:      #ffffff;
+  --titlebar:     #fbfcfd;
+  --border:       #e6e8ec;
+  --border-strong:#d4d8df;
+  --text:         #1b2027;
+  --text-muted:   #8b9099;
+  --text-faint:   #b9bec6;
+  --accent:       #ec5a3f;
+  --accent-2:     #ec5a3f;
+  --accent-soft:  #fde9e5;
+  --accent-line:  #f6cabf;
+  --run:          #4caf6a;
+  --run-soft:     #e6f5ec;
+  --task:         #2ba3c4;
+  --task-soft:    #e1f2f7;
+  --fail:         #e5484d;
+  --fail-soft:    #fce9ea;
+  --sched:        #8b6fd6;
+  --shadow-sm:    0 1px 2px rgba(20,28,40,.05);
+  --shadow-md:    0 4px 18px -6px rgba(20,28,40,.12);
+  --shadow-lg:    0 24px 60px -12px rgba(20,28,40,.24);
+  --grid-dot:     rgba(20,28,40,.045);
+  color-scheme: light;
+}
 
-  /* Text */
-  --color-text-primary: #f4f4f5;
-  --color-text-secondary: #a1a1aa;
-  --color-text-tertiary: #71717a;
-  --color-text-muted: #52525b;
+/* -------- DARK (warm ink) -------- */
+[data-theme="dark"] {
+  --bg:           #181715;
+  --bg-elev:      #232120;
+  --bg-sunken:    #121110;
+  --bg-hover:     #2b2826;
+  --sidebar:      #1c1b19;
+  --titlebar:     #1f1d1b;
+  --border:       #332f2b;
+  --border-strong:#433e38;
+  --text:         #ece8e0;
+  --text-muted:   #8f8a7f;
+  --text-faint:   #5e5950;
+  --accent:       #f4694d;
+  --accent-2:     #f4694d;
+  --accent-soft:  #3a241e;
+  --accent-line:  #5c3328;
+  --run:          #84cf5a;
+  --run-soft:     #21301a;
+  --task:         #45c3d6;
+  --task-soft:    #133036;
+  --fail:         #f4565b;
+  --fail-soft:    #391c1d;
+  --sched:        #a98ff0;
+  --shadow-sm:    0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:    0 6px 22px -8px rgba(0,0,0,.6);
+  --shadow-lg:    0 28px 70px -14px rgba(0,0,0,.75);
+  --grid-dot:     rgba(255,250,240,.035);
+  color-scheme: dark;
+}
 
-  /* Accent */
-  --color-accent: #f59e0b;
-  --color-accent-soft: rgba(245, 158, 11, 0.12);
-  --color-focus: #3b82f6;
+/* -------- MUSE (lavender, dreamy) -------- */
+[data-theme="muse"] {
+  --bg:           #f3f0fa;
+  --bg-elev:      #ffffff;
+  --bg-sunken:    #ebe6f6;
+  --bg-hover:     #f6f3fc;
+  --sidebar:      #fbfaff;
+  --titlebar:     #f6f2fc;
+  --border:       #e7e0f2;
+  --border-strong:#d8cdee;
+  --text:         #2a2438;
+  --text-muted:   #8f87a4;
+  --text-faint:   #bcb4d0;
+  --accent:       #9b6dd8;
+  --accent-2:     #c45ea6;
+  --accent-soft:  #f0e7fb;
+  --accent-line:  #ddc9f3;
+  --run:          #5fb98f;
+  --run-soft:     #e6f4ee;
+  --task:         #5b95e0;
+  --task-soft:    #e8f0fc;
+  --fail:         #e25b8a;
+  --fail-soft:    #fae6ef;
+  --sched:        #9b6dd8;
+  --shadow-sm:    0 1px 2px rgba(58,42,96,.06);
+  --shadow-md:    0 6px 22px -8px rgba(58,42,96,.16);
+  --shadow-lg:    0 26px 64px -14px rgba(58,42,96,.30);
+  --grid-dot:     rgba(58,42,96,.045);
+  color-scheme: light;
+}
 
-  /* Status */
-  --color-success: #22c55e;
-  --color-error: #ef4444;
-  --color-warning: #eab308;
-  --color-info: #0ea5e9;
-  --color-status-success-text: #6ee7b7;
-  --color-status-error-text: #fca5a5;
-  --color-status-warning-text: #fcd34d;
+/* -------- VISION (deep ink-blue, cyan) -------- */
+[data-theme="vision"] {
+  --bg:           #0e151f;
+  --bg-elev:      #16202d;
+  --bg-sunken:    #0a1019;
+  --bg-hover:     #1c2836;
+  --sidebar:      #111a26;
+  --titlebar:     #131d2a;
+  --border:       #243243;
+  --border-strong:#314357;
+  --text:         #dde7f2;
+  --text-muted:   #7c8da3;
+  --text-faint:   #4d5e72;
+  --accent:       #3fc0d6;
+  --accent-2:     #56a0f0;
+  --accent-soft:  #102a33;
+  --accent-line:  #1d4651;
+  --run:          #5fd09a;
+  --run-soft:     #11302a;
+  --task:         #45c3d6;
+  --task-soft:    #102b33;
+  --fail:         #f06478;
+  --fail-soft:    #36161f;
+  --sched:        #7e9cf0;
+  --shadow-sm:    0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:    0 6px 24px -8px rgba(0,0,0,.55);
+  --shadow-lg:    0 28px 72px -14px rgba(0,0,0,.7);
+  --grid-dot:     rgba(180,220,255,.04);
+  color-scheme: dark;
+}
 
-  /* Role colors */
-  --color-role-developer: #3b82f6;
-  --color-role-researcher: #a855f7;
-  --color-role-performer: #f97316;
-  --color-role-supervisor: #f59e0b;
-  --color-role-worker: #22c55e;
-  --color-role-reviewer: #ec4899;
-  --color-role-blue-bg: rgba(59, 130, 246, 0.15);
-  --color-role-blue-text: #60a5fa;
-  --color-role-orange-bg: rgba(234, 88, 12, 0.15);
-  --color-role-orange-text: #fb923c;
-  --color-role-purple-bg: rgba(139, 92, 246, 0.15);
-  --color-role-purple-text: #a78bfa;
+/* ============================================================
+   Base styles (from prototype styles.css)
+   ============================================================ */
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: var(--font-sans);
+  background:
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 45%),
+    var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+#root { height: 100vh; }
 
-  /* Spacing */
+::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* scrollbars */
+.scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 35%, transparent);
+  border-radius: 99px; border: 3px solid transparent; background-clip: padding-box;
+}
+.scroll::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--text-muted) 55%, transparent); background-clip: padding-box; }
+.scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* ============================================================
+   Prototype utility classes (used by ported components)
+   ============================================================ */
+.mono { font-family: var(--font-mono); }
+.page-title { font-size: 30px; font-weight: 800; color: var(--accent); letter-spacing: -.01em;
+  margin: 0; font-family: var(--font-sans); }
+.mono-head { font-family: var(--font-mono); font-size: 13px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
+.mono-head::before { content: "»"; color: var(--accent); font-weight: 700; }
+.section-row { display: flex; align-items: center; justify-content: space-between; margin: 0 0 18px; }
+
+.btn { font-family: var(--font-sans); font-size: 13.5px; font-weight: 600; cursor: pointer;
+  border-radius: var(--r-sm); padding: 9px 15px; border: 1px solid var(--border);
+  background: var(--bg-elev); color: var(--text); transition: var(--dur); display: inline-flex;
+  align-items: center; gap: 8px; white-space: nowrap; }
+.btn:hover { border-color: var(--border-strong); background: var(--bg-hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
+.btn.soft { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--text-muted); }
+.btn.ghost:hover { background: var(--bg-hover); color: var(--text); }
+.btn.sm { padding: 6px 11px; font-size: 12.5px; }
+.btn.danger:hover { color: var(--fail); border-color: color-mix(in srgb, var(--fail) 40%, var(--border)); }
+
+.tag { font-family: var(--font-mono); font-size: 11px; padding: 2px 9px; border-radius: 99px;
+  border: 1px solid var(--border); color: var(--text-faint); background: var(--bg); }
+
+.card { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm); }
+
+.iconbtn {
+  width: 30px; height: 30px; display: grid; place-items: center;
+  border-radius: var(--r-sm); border: 1px solid transparent;
+  background: transparent; color: var(--text-muted); cursor: pointer; transition: var(--dur);
+}
+.iconbtn:hover { background: var(--bg-hover); color: var(--text); }
+
+.filter {
+  display: flex; align-items: center; gap: 9px; padding: 9px 12px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--r-sm);
+  color: var(--text-faint);
+}
+.filter input { border: none; background: transparent; outline: none; color: var(--text);
+  font-family: var(--font-sans); font-size: 13.5px; width: 100%; }
+.filter input::placeholder { color: var(--text-faint); }
+
+/* block editor */
+.blk { position: relative; border-radius: 8px; background: var(--bg-elev); border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm); padding: 9px 12px; }
+.blk::before { content: ""; position: absolute; top: -5px; left: 18px; width: 16px; height: 6px;
+  background: var(--blk-c, var(--accent)); border-radius: 0 0 4px 4px; }
+.blk-cat { font-family: var(--font-mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--blk-c, var(--accent)); font-weight: 700; }
+.blk-stack { display: flex; flex-direction: column; gap: 10px; position: relative; }
+.blk-stack::before { content: ""; position: absolute; left: 26px; top: 6px; bottom: 6px; width: 2px;
+  background: var(--border); z-index: 0; }
+.blk-children { margin-left: 22px; padding-left: 14px; border-left: 2px dashed var(--border); margin-top: 10px;
+  display: flex; flex-direction: column; gap: 10px; }
+.blk-sel { font-family: var(--font-mono); font-size: 12px; padding: 3px 7px; border-radius: 5px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); outline: none; max-width: 100%; }
+.build-dot { width: 8px; height: 8px; border-radius: 99px; display: inline-block; }
+
+/* animations */
+@keyframes fadeUp { from { transform: translateY(8px); } to { transform: none; } }
+.fade-up { animation: fadeUp .35s var(--ease); }
+
+@keyframes edgeFlow { to { stroke-dashoffset: -22; } }
+.edge-anim { animation: edgeFlow .6s linear infinite; }
+
+@keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideIn { from { transform: translateX(100%); } to { transform: none; } }
+@keyframes popIn { from { transform: translateY(-6px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes pulse { 0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--run) 55%,transparent);} 70%{box-shadow:0 0 0 6px transparent;} 100%{box-shadow:0 0 0 0 transparent;} }
+
+/* ============================================================
+   Layout constants (referenced by shell components)
+   ============================================================ */
+:root {
+  --sidebar-width: 248px;
+  --sidebar-collapsed-width: 66px;
+  --titlebar-height: 52px;
+  --titlebar-pad-left: 80px;
+  --titlebar-pad-right: 16px;
+  --main-pad: 30px;
+  --w-gap: 16px;
+  --control-height: 28px;
+
+  /* Aliases for components that still use --font-ui or --font-mono without prefix */
+  --font-ui: var(--font-sans);
+
+  /* Sched soft (not in prototype :root, computed per theme above) */
+  --sched-soft: color-mix(in srgb, var(--sched) 16%, transparent);
+
+  /* Shadow aliases matching old names */
+  --shadow-card:       var(--shadow-sm);
+  --shadow-card-hover: var(--shadow-md);
+  --shadow-modal:      var(--shadow-lg);
+  --shadow-inset:      inset 0 1px 2px rgba(0,0,0,.06);
+  --shadow-button:     var(--shadow-sm);
+  --shadow-status-active: 0 0 4px rgba(16,185,129,.4);
+
+  /* Panel padding shorthand */
+  --panel-padding: var(--main-pad, 30px) 40px;
+
+  /* Spacing scale (still referenced by a few panels) */
   --spacing-xs: 4px;
   --spacing-sm: 8px;
   --spacing-md: 12px;
@@ -60,331 +311,81 @@
   --spacing-2xl: 24px;
   --spacing-3xl: 32px;
   --spacing-4xl: 48px;
-
-  /* Panel layout */
-  --panel-padding: 24px clamp(16px, 3vw, 28px);
-
-  /* Surface states */
-  --color-surface-subtle: rgba(255, 255, 255, 0.03);
-  --color-surface-hover: rgba(255, 255, 255, 0.05);
-  --color-surface-active: rgba(255, 255, 255, 0.09);
-  --color-overlay: rgba(0, 0, 0, 0.6);
-  --color-nav-active-bg: rgba(245, 158, 11, 0.08);
-  --color-nav-active-border: var(--color-accent);
-
-  /* Inactive status dot */
-  --color-dot-offline: #4b5563;
-
-  /* Border radius — soft, generous */
-  --radius-sm: 0.5rem;
-  --radius-md: 0.75rem;
-  --radius-lg: 1rem;
-  --radius-xl: 1.25rem;
-
-  /* Shadows — multi-layer soft */
-  --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -2px rgba(0, 0, 0, 0.15);
-  --shadow-card-hover: 0 10px 15px -3px rgba(0, 0, 0, 0.25), 0 4px 6px -4px rgba(0, 0, 0, 0.15);
-  --shadow-modal: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
-  --shadow-button: 0 4px 7px -1px rgba(0, 0, 0, 0.11), 0 2px 4px -1px rgba(0, 0, 0, 0.07);
-  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.15);
-  --shadow-status-active: 0 0 4px rgba(16, 185, 129, 0.4);
-
-  /* Sidebar */
-  --sidebar-width: 220px;
-  --sidebar-collapsed-width: 60px;
-
-  /* TitleBar */
-  --titlebar-height: 44px;
-  --titlebar-pad-left: 80px;
-  --titlebar-pad-right: 16px;
-
-  /* Controls */
-  --control-height: 28px;
-
-  /* Typography */
-  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --font-mono: 'SF Mono', 'Cascadia Code', 'Consolas', 'JetBrains Mono', monospace;
 }
 
-/* ==========================================================================
-   Light theme
-   ========================================================================== */
+/* ============================================================
+   Backward-compat aliases — existing panels reference
+   --color-* / --radius-* / --font-ui; map to prototype tokens.
+   Do NOT add per-theme overrides here — the prototype :root
+   and [data-theme] blocks above already carry every value.
+   ============================================================ */
+:root {
+  /* Backgrounds */
+  --color-bg-primary:   var(--bg);
+  --color-bg-secondary: var(--bg-elev);
+  --color-bg-tertiary:  var(--bg-sunken);
+  --color-bg-card:      var(--bg-elev);
+  --color-bg-sidebar:   var(--sidebar);
 
-[data-theme="light"] {
-  /* Backgrounds — clean white dashboard */
-  --color-bg-primary: #f0f0f5;
-  --color-bg-secondary: #ffffff;
-  --color-bg-tertiary: #e8e8ed;
-  --color-bg-card: #ffffff;
-  --color-bg-sidebar: linear-gradient(180deg, #3a416f 0%, #141727 100%);
-
-  /* Borders — very subtle, shadow-driven depth */
-  --color-border-primary: rgba(0, 0, 0, 0.05);
-  --color-border-secondary: rgba(0, 0, 0, 0.08);
+  /* Borders */
+  --color-border-primary:   var(--border);
+  --color-border-secondary: var(--border-strong);
 
   /* Text */
-  --color-text-primary: #344767;
-  --color-text-secondary: #67748e;
-  --color-text-tertiary: #8392ab;
-  --color-text-muted: #adb5bd;
+  --color-text-primary:   var(--text);
+  --color-text-secondary: var(--text-muted);
+  --color-text-tertiary:  var(--text-faint);
+  --color-text-muted:     var(--text-faint);
 
-  /* Accent — soft blue (LBD primary) */
-  --color-accent: #5e72e4;
-  --color-accent-soft: rgba(94, 114, 228, 0.1);
-  --color-focus: #5e72e4;
+  /* Accent */
+  --color-accent:      var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-focus:       var(--accent);
 
-  /* Status — LBD palette */
-  --color-success: #2dce89;
-  --color-error: #f5365c;
-  --color-warning: #fb6340;
-  --color-info: #11cdef;
+  /* Status */
+  --color-success: var(--run);
+  --color-error:   var(--fail);
+  --color-warning: var(--sched);
+  --color-info:    var(--task);
 
-  /* Sidebar — light text on dark gradient */
-  --color-sidebar-text: rgba(255, 255, 255, 0.8);
-  --color-sidebar-text-active: #ffffff;
-  --color-sidebar-hover: rgba(255, 255, 255, 0.08);
+  /* Radius */
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
 
-  /* Surface states */
-  --color-surface-subtle: rgba(0, 0, 0, 0.015);
-  --color-surface-hover: rgba(0, 0, 0, 0.03);
-  --color-surface-active: rgba(0, 0, 0, 0.06);
-  --color-overlay: rgba(0, 0, 0, 0.35);
-  --color-nav-active-bg: rgba(255, 255, 255, 0.12);
-  --color-nav-active-border: #ffffff;
-  --color-dot-offline: #adb5bd;
+  /* Surfaces */
+  --color-surface-subtle: var(--bg-sunken);
+  --color-surface-hover:  var(--bg-hover);
+  --color-surface-active: var(--bg-hover);
+  --color-overlay:        rgba(0,0,0,.45);
 
-  /* Shadows — softer, more diffused */
-  --shadow-card: 0 2px 12px 0 rgba(0, 0, 0, 0.06);
-  --shadow-card-hover: 0 8px 24px 0 rgba(0, 0, 0, 0.1);
-  --shadow-modal: 0 16px 48px -8px rgba(0, 0, 0, 0.15);
-  --shadow-button: 0 3px 5px -1px rgba(0, 0, 0, 0.08), 0 1px 3px -1px rgba(0, 0, 0, 0.05);
-  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.04);
+  /* Nav active */
+  --color-nav-active-bg:     var(--accent-soft);
+  --color-nav-active-border: var(--accent);
 
-  /* Radius — tighter, more professional */
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
-}
+  /* Sidebar text (light-mode sidebar has same bg, so text = normal text) */
+  --color-sidebar-text:        var(--text-muted);
+  --color-sidebar-text-active: var(--text);
+  --color-sidebar-hover:       var(--bg-hover);
+  --color-dot-offline:         var(--text-faint);
 
-/* ==========================================================================
-   Muse theme — inspired by Muse Vue Ant Design Dashboard
-   White sidebar, coral accent, airy spacing, soft rounded cards
-   ========================================================================== */
+  /* Status text variants (used by a few panels) */
+  --color-status-success-text: var(--run);
+  --color-status-error-text:   var(--fail);
+  --color-status-warning-text: var(--sched);
 
-[data-theme="muse"] {
-  /* Backgrounds — pure white and warm grays */
-  --color-bg-primary: #f8f9fa;
-  --color-bg-secondary: #ffffff;
-  --color-bg-tertiary: #f0f2f5;
-  --color-bg-card: #ffffff;
-  --color-bg-sidebar: #ffffff;
-
-  /* Borders — barely visible, let shadows do the work */
-  --color-border-primary: rgba(0, 0, 0, 0.04);
-  --color-border-secondary: rgba(0, 0, 0, 0.06);
-
-  /* Text — warm dark grays */
-  --color-text-primary: #141414;
-  --color-text-secondary: #595959;
-  --color-text-tertiary: #8c8c8c;
-  --color-text-muted: #bfbfbf;
-
-  /* Accent — coral orange (Muse primary) */
-  --color-accent: #ff6b6b;
-  --color-accent-soft: rgba(255, 107, 107, 0.08);
-  --color-focus: #1890ff;
-
-  /* Status — Ant Design palette */
-  --color-success: #52c41a;
-  --color-error: #ff4d4f;
-  --color-warning: #faad14;
-  --color-info: #1890ff;
-
-  /* Sidebar — light with colored active state */
-  --color-sidebar-text: #8c8c8c;
-  --color-sidebar-text-active: #141414;
-  --color-sidebar-hover: rgba(0, 0, 0, 0.03);
-
-  /* Surface states */
-  --color-surface-subtle: rgba(0, 0, 0, 0.01);
-  --color-surface-hover: rgba(0, 0, 0, 0.025);
-  --color-surface-active: rgba(0, 0, 0, 0.05);
-  --color-overlay: rgba(0, 0, 0, 0.3);
-  --color-nav-active-bg: rgba(255, 107, 107, 0.08);
-  --color-nav-active-border: #ff6b6b;
-  --color-dot-offline: #d9d9d9;
-
-  /* Shadows — very soft, almost flat */
-  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.02);
-  --shadow-card-hover: 0 4px 16px rgba(0, 0, 0, 0.08);
-  --shadow-modal: 0 12px 32px -4px rgba(0, 0, 0, 0.12);
-  --shadow-button: 0 2px 4px rgba(0, 0, 0, 0.04);
-  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.03);
-
-  /* Radius — generous, pill-like */
-  --radius-sm: 0.5rem;
-  --radius-md: 0.75rem;
-  --radius-lg: 1rem;
-  --radius-xl: 1.5rem;
-}
-
-/* ==========================================================================
-   Vision theme — inspired by Vision UI Dashboard React
-   Deep space dark with glass morphism, neon blue/purple accents, gradient cards
-   ========================================================================== */
-
-[data-theme="vision"] {
-  /* Backgrounds — deep navy/space */
-  --color-bg-primary: #0f1535;
-  --color-bg-secondary: #1a1f4e;
-  --color-bg-tertiary: #1a2038;
-  --color-bg-card: linear-gradient(127deg, rgba(24, 29, 60, 0.9) 0%, rgba(17, 20, 45, 0.7) 100%);
-  --color-bg-sidebar: linear-gradient(180deg, #1a1f4e 0%, #0f1535 100%);
-
-  /* Borders — glassy, semi-transparent */
-  --color-border-primary: rgba(255, 255, 255, 0.08);
-  --color-border-secondary: rgba(255, 255, 255, 0.12);
-
-  /* Text — cool white/gray */
-  --color-text-primary: #ffffff;
-  --color-text-secondary: #a0aec0;
-  --color-text-tertiary: #718096;
-  --color-text-muted: #4a5568;
-
-  /* Accent — electric cyan-blue gradient feel */
-  --color-accent: #0075ff;
-  --color-accent-soft: rgba(0, 117, 255, 0.15);
-  --color-focus: #0075ff;
-
-  /* Status — vivid neon */
-  --color-success: #01b574;
-  --color-error: #e31a1a;
-  --color-warning: #ffb547;
-  --color-info: #0075ff;
-
-  /* Sidebar */
-  --color-sidebar-text: rgba(255, 255, 255, 0.6);
-  --color-sidebar-text-active: #ffffff;
-  --color-sidebar-hover: rgba(255, 255, 255, 0.06);
-
-  /* Surface states — glass effect */
-  --color-surface-subtle: rgba(255, 255, 255, 0.02);
-  --color-surface-hover: rgba(255, 255, 255, 0.05);
-  --color-surface-active: rgba(255, 255, 255, 0.08);
-  --color-overlay: rgba(0, 0, 0, 0.7);
-  --color-nav-active-bg: rgba(0, 117, 255, 0.15);
-  --color-nav-active-border: #0075ff;
-  --color-dot-offline: #4a5568;
-
-  /* Shadows — deep, colored glow */
-  --shadow-card: 0 4px 24px 0 rgba(0, 0, 0, 0.4);
-  --shadow-card-hover: 0 8px 32px 0 rgba(0, 117, 255, 0.15), 0 4px 16px rgba(0, 0, 0, 0.3);
-  --shadow-modal: 0 24px 48px -12px rgba(0, 0, 0, 0.5);
-  --shadow-button: 0 4px 12px rgba(0, 117, 255, 0.2);
-  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-status-active: 0 0 8px rgba(1, 181, 116, 0.5);
-
-  /* Radius — generous, modern */
-  --radius-sm: 0.5rem;
-  --radius-md: 0.75rem;
-  --radius-lg: 1rem;
-  --radius-xl: 1.25rem;
-}
-
-/* ==========================================================================
-   Paper theme — inspired by Paper Dashboard (BS3)
-   Light gray sidebar, thin line borders, flat/minimal, muted pastels
-   ========================================================================== */
-
-[data-theme="paper"] {
-  /* Backgrounds — warm cream/off-white, exactly like Paper Dashboard */
-  --color-bg-primary: #f4f3ef;
-  --color-bg-secondary: #ffffff;
-  --color-bg-tertiary: #eeeeea;
-  --color-bg-card: #ffffff;
-  --color-bg-sidebar: #ffffff;
-
-  /* Borders — thin, crisp 1px lines */
-  --color-border-primary: #ddd;
-  --color-border-secondary: #e3e3e3;
-
-  /* Text — Paper Dashboard grays */
-  --color-text-primary: #333333;
-  --color-text-secondary: #666666;
-  --color-text-tertiary: #9a9a9a;
-  --color-text-muted: #c5c5c5;
-
-  /* Accent — Paper Dashboard orange-coral */
-  --color-accent: #f5593d;
-  --color-accent-soft: rgba(245, 89, 61, 0.08);
-  --color-focus: #51bcda;
-
-  /* Status — Paper Dashboard exact colors */
-  --color-success: #87cb16;
-  --color-error: #fb404b;
-  --color-warning: #ffa534;
-  --color-info: #68b3c8;
-
-  /* Role colors — Paper Dashboard icon palette */
-  --color-role-developer: #68b3c8;
-  --color-role-supervisor: #ffa534;
-  --color-role-worker: #87cb16;
-  --color-role-reviewer: #eb5e28;
-
-  /* Sidebar — white with gray text, colored icons */
-  --color-sidebar-text: #9a9a9a;
-  --color-sidebar-text-active: #333333;
-  --color-sidebar-hover: #f6f6f6;
-
-  /* Surface states */
-  --color-surface-subtle: rgba(0, 0, 0, 0.01);
-  --color-surface-hover: rgba(0, 0, 0, 0.02);
-  --color-surface-active: rgba(0, 0, 0, 0.04);
-  --color-overlay: rgba(0, 0, 0, 0.25);
-  --color-nav-active-bg: transparent;
-  --color-nav-active-border: #f5593d;
-  --color-dot-offline: #c5c5c5;
-
-  /* Shadows — very minimal, card border does the work */
-  --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.04);
-  --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.06);
-  --shadow-modal: 0 5px 15px rgba(0, 0, 0, 0.1);
-  --shadow-button: none;
-  --shadow-inset: none;
-
-  /* Radius — Paper Dashboard uses small, consistent radius */
-  --radius-sm: 4px;
-  --radius-md: 4px;
-  --radius-lg: 6px;
-  --radius-xl: 10px;
-
-  /* Typography — Muli / Helvetica Neue (Paper Dashboard) */
-  --font-ui: 'Muli', 'Helvetica Neue', Helvetica, Arial, sans-serif;
-}
-
-/* ==========================================================================
-   Platform overrides
-   ========================================================================== */
-
-[data-platform="windows"] {
-  --radius-sm: 0.25rem;
-  --radius-md: 0.375rem;
-  --radius-lg: 0.5rem;
-  --radius-xl: 0.75rem;
-  --titlebar-height: 32px;
-  --titlebar-pad-left: 12px;
-  --titlebar-pad-right: 140px;
-  --control-height: 26px;
-  --font-ui: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
-  --font-mono: 'Cascadia Code', 'Consolas', monospace;
-}
-
-[data-platform="linux"] {
-  --titlebar-height: 36px;
-  --titlebar-pad-left: 12px;
-  --titlebar-pad-right: 12px;
-  --control-height: 30px;
-  --font-ui: system-ui, 'Cantarell', 'Noto Sans', sans-serif;
-  --font-mono: 'JetBrains Mono', 'Noto Sans Mono', monospace;
+  /* Role colors — keep as-is, prototype doesn't define these */
+  --color-role-developer:  #3b82f6;
+  --color-role-researcher: #a855f7;
+  --color-role-performer:  #f97316;
+  --color-role-supervisor: #f59e0b;
+  --color-role-worker:     #22c55e;
+  --color-role-reviewer:   #ec4899;
+  --color-role-blue-bg:    rgba(59, 130, 246, 0.15);
+  --color-role-blue-text:  #60a5fa;
+  --color-role-orange-bg:  rgba(234, 88, 12, 0.15);
+  --color-role-orange-text: #fb923c;
+  --color-role-purple-bg:  rgba(139, 92, 246, 0.15);
+  --color-role-purple-text: #a78bfa;
 }

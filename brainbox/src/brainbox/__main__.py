@@ -44,7 +44,7 @@ def main() -> None:
 
     # api
     p_api = sub.add_parser("api")
-    p_api.add_argument("--host", default="127.0.0.1")
+    p_api.add_argument("--host", default="0.0.0.0")
     p_api.add_argument("--port", type=int, default=9999)
     p_api.add_argument("--reload", action="store_true", default=False)
     p_api.add_argument("--daemon", action="store_true", default=False)
@@ -59,7 +59,7 @@ def main() -> None:
 
     # restart
     p_restart = sub.add_parser("restart")
-    p_restart.add_argument("--host", default="127.0.0.1")
+    p_restart.add_argument("--host", default="0.0.0.0")
     p_restart.add_argument("--port", type=int, default=9999)
     p_restart.add_argument("--reload", action="store_true", default=False)
 

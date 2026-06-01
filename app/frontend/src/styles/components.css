@@ -2,6 +2,160 @@
    Shared component patterns — rows, cards, modals, badges, spinners
    ========================================================================== */
 
+/* --- Design-spec utility classes (from prototype style contract) --- */
+
+.ds-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+/* mono typography */
+.ds-mono { font-family: var(--font-mono); }
+.ds-mono-head {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ds-mono-head::before { content: "»"; color: var(--accent); font-weight: 700; }
+
+/* page layout */
+.ds-page-title {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--accent);
+  letter-spacing: -.01em;
+  margin: 0;
+}
+.ds-section-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 18px;
+}
+.ds-main-inner {
+  padding: var(--main-pad, 30px) 40px 80px;
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+/* buttons */
+.ds-btn {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text);
+  transition: border-color var(--dur), background var(--dur), color var(--dur);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.ds-btn:hover { border-color: var(--border-strong); background: var(--bg-hover); }
+.ds-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ds-btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
+.ds-btn.soft { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.ds-btn.ghost { background: transparent; border-color: transparent; color: var(--text-muted); }
+.ds-btn.ghost:hover { background: var(--bg-hover); color: var(--text); }
+.ds-btn.sm { padding: 5px 10px; font-size: 12px; }
+.ds-btn.danger:hover { color: var(--fail); border-color: color-mix(in srgb, var(--fail) 40%, var(--border)); }
+
+/* icon button */
+.ds-iconbtn {
+  width: 28px; height: 28px;
+  display: grid; place-items: center;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--dur), color var(--dur);
+}
+.ds-iconbtn:hover { background: var(--bg-hover); color: var(--text); }
+
+/* inline tags & type badges */
+.ds-tag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+  background: var(--bg);
+}
+.ds-badge-type {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  padding: 2px 7px;
+  border-radius: 5px;
+  text-transform: uppercase;
+}
+.ds-badge-type.local  { color: var(--run);   background: var(--run-soft);  }
+.ds-badge-type.docker { color: var(--task);  background: var(--task-soft); }
+.ds-badge-type.utm    { color: var(--sched); background: var(--sched-soft); }
+.ds-badge-type.container { color: var(--task); background: var(--task-soft); }
+.ds-badge-type.vm     { color: var(--sched); background: var(--sched-soft); }
+
+/* scope chip (profile label) */
+.ds-scope-chip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  padding: 2px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* widget state dot */
+.ds-state-dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.ds-state-dot.done       { background: var(--run);  }
+.ds-state-dot.running    { background: var(--task); }
+.ds-state-dot.pending    { border: 2px solid var(--text-faint); background: transparent; }
+.ds-state-dot.failed,
+.ds-state-dot.cancelled  { background: var(--fail); }
+.ds-state-dot.snoozed    { background: var(--sched); }
+
+/* animations */
+@keyframes ds-fade-up {
+  from { transform: translateY(8px); }
+  to   { transform: none; }
+}
+.ds-fade-up { animation: ds-fade-up .3s var(--ease, ease); }
+
+@keyframes ds-pop-in {
+  from { transform: translateY(-5px) scale(.98); opacity: .6; }
+  to   { transform: none; opacity: 1; }
+}
+.ds-pop-in { animation: ds-pop-in .16s ease both; }
+
+@keyframes ds-pulse {
+  0%   { box-shadow: 0 0 0 0 currentColor; }
+  70%  { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
 /* --- Panel header --- */
 .panel-header {
   display: flex;

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { dashboardDataStore, currentPanel } from '../stores.svelte';
+  import Icon from '../components/Icon.svelte';
 
   let data = $derived(dashboardDataStore.value);
   let fires = $derived(data?.fires ?? []);
@@ -18,6 +19,7 @@
 
 <div class="widget">
   <div class="widget-header widget-drag-handle">
+    <Icon name="chains" size={15} style="color: var(--text-muted); flex-shrink: 0;" />
     <span class="widget-title">» SCHEDULED CHAINS</span>
     <span class="badge">{fires.length}</span>
   </div>

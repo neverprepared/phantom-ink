@@ -1,6 +1,7 @@
 /** SSE event bus — receives brainbox events forwarded from the Go SSE listener. */
 
 import { connectionState } from './stores.svelte';
+import { notifications } from './notifications.svelte';
 
 export interface BrainboxEvent {
   type?: string;
@@ -21,6 +22,12 @@ function handleRaw(raw: string) {
   try {
     const data = JSON.parse(raw);
     parsed = { type: data?.type ?? raw, data, raw };
+
+    if (data?.action === 'runner.status') {
+      const runner = data.runner ?? 'runner';
+      const msg = data.message ?? '';
+      notifications.info(`${runner}: ${msg}`, 6000);
+    }
   } catch {
     parsed = { raw };
   }

@@ -740,6 +740,10 @@ async def _provision_via_runner(*, runner: str, **payload: Any) -> SessionContex
             f"runner {runner!r} is saturated ({info.in_flight}/{info.max_concurrent} in flight) — retry later"
         )
 
+    # Remote runners can't bind-mount from this host's filesystem, so credential
+    # delivery must always use the bundle path (keygen → seal → inject).
+    payload["delivery"] = "bundle"
+
     serializable = {
         k: (v.model_dump() if hasattr(v, "model_dump") else v)
         for k, v in payload.items()
@@ -766,6 +770,10 @@ async def _provision_via_runner(*, runner: str, **payload: Any) -> SessionContex
     ctx = SessionContext(**ctx_data)
     if not ctx.runner_name:
         ctx.runner_name = runner
+    # Backfill runner_host from the registry so URL construction works even if
+    # the runner didn't include it in the session.create response data.
+    if not ctx.runner_host and info is not None:
+        ctx.runner_host = info.host
     _sessions[ctx.session_name] = ctx
     return ctx
 
@@ -1481,6 +1489,48 @@ def get_session(session_name: str) -> SessionContext | None:
 
 def list_sessions() -> list[SessionContext]:
     return list(_sessions.values())
+
+
+def register_runner_session(ctx: SessionContext) -> None:
+    """Register a session built by a remote runner. Used for late result
+    delivery — when the runner couldn't reach the API during execution,
+    it queues the result and retries; this call reconciles the session
+    into _sessions once the result arrives."""
+    if ctx.session_name not in _sessions:
+        _sessions[ctx.session_name] = ctx
+
+
+async def _dispatch_runner_op(
+    session_name: str,
+    kind: str,
+    extra_payload: dict[str, Any] | None = None,
+    *,
+    timeout: float = 60.0,
+) -> dict[str, Any]:
+    """Dispatch a runner operation (stop/exec/query) and await its result.
+
+    Raises RuntimeError on timeout or if the runner reports failure."""
+    from .runners import get_registry
+
+    ctx = _sessions.get(session_name)
+    if ctx is None or not ctx.runner_name:
+        raise RuntimeError(f"no runner session for {session_name!r}")
+
+    reg = get_registry()
+    payload: dict[str, Any] = {"session_name": session_name, "container_name": ctx.container_name}
+    if extra_payload:
+        payload.update(extra_payload)
+
+    item = await reg.enqueue(runner=ctx.runner_name, kind=kind, payload=payload)
+    try:
+        result = await asyncio.wait_for(item.fut, timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        await reg.cancel(item.id, f"{kind} timed out")
+        raise RuntimeError(f"runner {ctx.runner_name!r} did not complete {kind} within {timeout}s") from exc
+
+    if not result.get("ok"):
+        raise RuntimeError(f"runner {ctx.runner_name!r} failed {kind}: {result.get('error', 'unknown')}")
+    return result.get("data") or {}
 
 
 def recover_sessions_from_docker() -> int:

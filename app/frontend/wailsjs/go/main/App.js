@@ -190,6 +190,10 @@ export function GetHubState() {
   return window['go']['main']['App']['GetHubState']();
 }
 
+export function GetLANIP() {
+  return window['go']['main']['App']['GetLANIP']();
+}
+
 export function GetLangfuseHealth() {
   return window['go']['main']['App']['GetLangfuseHealth']();
 }
@@ -470,8 +474,8 @@ export function SetTheme(arg1) {
   return window['go']['main']['App']['SetTheme'](arg1);
 }
 
-export function StartRunnerPairing(arg1, arg2) {
-  return window['go']['main']['App']['StartRunnerPairing'](arg1, arg2);
+export function StartRunnerPairing(arg1, arg2, arg3) {
+  return window['go']['main']['App']['StartRunnerPairing'](arg1, arg2, arg3);
 }
 
 export function StartService(arg1) {
@@ -496,6 +500,10 @@ export function SubmitTask(arg1) {
 
 export function UpdateAgent(arg1, arg2) {
   return window['go']['main']['App']['UpdateAgent'](arg1, arg2);
+}
+
+export function UpdatePlaybook(arg1, arg2) {
+  return window['go']['main']['App']['UpdatePlaybook'](arg1, arg2);
 }
 
 export function UpdateRepo(arg1, arg2) {

@@ -21,6 +21,7 @@
   let loadError: string | null = $state(null);
   let now = $state(Date.now());
   let showingPair = $state(false);
+  let confirmRemove: Runner | null = $state(null);
 
   let pollHandle: number | undefined;
   let tickerHandle: number | undefined;
@@ -53,12 +54,12 @@
   }
 
   async function removeRunner(r: Runner) {
-    if (!confirm(`Remove runner "${r.name}"? In-flight work it owns will not be touched, but it will stop receiving new dispatches.`)) return;
     const a = await getApi();
     if (!a) return;
     try {
       await a.DeleteRunner(r.name);
       notifications.success(`removed ${r.name}`);
+      confirmRemove = null;
       await refresh();
     } catch (err: any) {
       notifications.error(`delete failed: ${err?.message ?? err}`);
@@ -163,8 +164,16 @@
             </td>
             <td class="muted">{r.version || '—'}</td>
             <td>{relativeTime(r.last_seen)}</td>
-            <td>
-              <button class="link danger" onclick={() => removeRunner(r)} title="Remove">remove</button>
+            <td class="remove-cell">
+              {#if confirmRemove?.name === r.name}
+                <span class="confirm-inline">
+                  sure?
+                  <button class="link danger" onclick={() => removeRunner(r)}>yes</button>
+                  <button class="link" onclick={() => (confirmRemove = null)}>no</button>
+                </span>
+              {:else}
+                <button class="link danger" onclick={() => (confirmRemove = r)}>remove</button>
+              {/if}
             </td>
           </tr>
         {/each}
@@ -362,4 +371,12 @@
   }
   .link:hover { text-decoration: underline; }
   .link.danger { color: var(--color-danger, #e54); }
+  .remove-cell { white-space: nowrap; }
+  .confirm-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--color-text-tertiary);
+  }
 </style>

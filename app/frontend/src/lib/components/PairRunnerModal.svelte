@@ -8,6 +8,10 @@
 
   let token = $state('');
   let apiURL = $state('');
+  // networkURL is what gets embedded in the token — the address the remote
+  // runner uses to reach the API. Defaults to the Wails app's own API URL
+  // but must be changed to a LAN/public IP for remote runners.
+  let networkURL = $state('');
   let expiresAt = $state(0);
   let nameSuggestion = $state('');
   let loading = $state(true);
@@ -21,6 +25,23 @@
   const expired = $derived(expiresAt > 0 && secondsLeft === 0);
 
   onMount(async () => {
+    const a = await getApi();
+    if (a) {
+      try {
+        const cfg = await a.GetConfig();
+        let url = cfg.api_url ?? '';
+        // 0.0.0.0 and 127.0.0.1/localhost are not routable from a remote machine.
+        // Replace the host with the machine's LAN IP so the token works remotely.
+        const unroutable = /^https?:\/\/(0\.0\.0\.0|127\.0\.0\.1|localhost)(:\d+)?(\/.*)?$/;
+        if (unroutable.test(url)) {
+          const lanIP = await a.GetLANIP();
+          if (lanIP) {
+            url = url.replace(/^(https?:\/\/)[^/:]+/, `$1${lanIP}`);
+          }
+        }
+        networkURL = url;
+      } catch { /* ignore */ }
+    }
     await startPairing();
     ticker = window.setInterval(() => { now = Date.now() / 1000; }, 1000);
   });
@@ -35,7 +56,7 @@
     const a = await getApi();
     if (!a) { errorMsg = 'API bindings not available'; loading = false; return; }
     try {
-      const ticket = await a.StartRunnerPairing(nameSuggestion, 300);
+      const ticket = await a.StartRunnerPairing(nameSuggestion, 300, networkURL);
       token = ticket.token ?? '';
       apiURL = ticket.api_url ?? '';
       expiresAt = ticket.expires_at ?? 0;
@@ -62,6 +83,23 @@
   <div class="header">
     <h2>Pair a runner</h2>
     <p>Run <code>brainbox-runner</code> on another Mac, choose Pair, and enter this token. The runner pulls the API URL + key on its own.</p>
+  </div>
+
+  <div class="network-url-row">
+    <label class="field-label" for="network-url">Runner connects to</label>
+    <div class="network-url-input">
+      <input
+        id="network-url"
+        type="text"
+        bind:value={networkURL}
+        placeholder="http://192.168.1.42:9999"
+        spellcheck="false"
+      />
+      <button class="reissue" onclick={startPairing} disabled={loading || !networkURL}>
+        {loading ? '…' : 'Issue'}
+      </button>
+    </div>
+    <p class="field-hint">The address the remote runner will use to reach this API. Change from localhost to your LAN IP for remote Macs.</p>
   </div>
 
   {#if loading}
@@ -111,8 +149,56 @@
     font-weight: 600;
   }
   .header p {
-    margin: 0 0 16px 0;
+    margin: 0 0 10px 0;
     font-size: 12px;
+    color: var(--color-text-tertiary);
+    line-height: 1.4;
+  }
+  .network-url-row {
+    margin-bottom: 14px;
+  }
+  .field-label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .network-url-input {
+    display: flex;
+    gap: 6px;
+  }
+  .network-url-input input {
+    flex: 1;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    padding: 6px 10px;
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-primary);
+  }
+  .network-url-input input:focus {
+    outline: none;
+    border-color: var(--color-info);
+  }
+  .reissue {
+    border: 1px solid var(--color-border-secondary);
+    background: var(--color-surface-hover);
+    color: var(--color-text-secondary);
+    border-radius: var(--radius-sm);
+    padding: 6px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .reissue:hover:not(:disabled) { background: var(--color-surface-active); }
+  .reissue:disabled { opacity: 0.4; cursor: default; }
+  .field-hint {
+    margin: 4px 0 0 0;
+    font-size: 11px;
     color: var(--color-text-tertiary);
     line-height: 1.4;
   }

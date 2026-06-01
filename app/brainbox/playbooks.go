@@ -66,6 +66,21 @@ func (c *Client) CreatePlaybook(req CreatePlaybookRequest) (Playbook, error) {
 	return pb, nil
 }
 
+// UpdatePlaybookRequest is the payload for PATCH /api/hub/playbooks/{id}.
+type UpdatePlaybookRequest struct {
+	Name     *string `json:"name,omitempty"`
+	Markdown *string `json:"markdown,omitempty"`
+}
+
+// UpdatePlaybook updates a playbook's name and/or markdown instructions.
+func (c *Client) UpdatePlaybook(id string, req UpdatePlaybookRequest) (Playbook, error) {
+	var pb Playbook
+	if err := c.patch(fmt.Sprintf("/api/hub/playbooks/%s", id), req, &pb); err != nil {
+		return pb, err
+	}
+	return pb, nil
+}
+
 // DeletePlaybook deletes a playbook (cancels it first if running).
 func (c *Client) DeletePlaybook(id string) error {
 	return c.delete(fmt.Sprintf("/api/hub/playbooks/%s", id), nil)
