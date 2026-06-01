@@ -169,7 +169,7 @@ async def inject_claude_config(
                 {
                     "hasCompletedOnboarding": True,
                     "bypassPermissionsModeAccepted": True,
-                    "theme": "dark",
+                    "theme": "light",
                     "syntaxTheme": "monokai_extended",
                     "oauthAccount": oauth_account,
                 }
@@ -238,7 +238,7 @@ async def inject_claude_config(
     claude_json_patch: dict[str, Any] = {
         "hasCompletedOnboarding": True,
         "bypassPermissionsModeAccepted": True,
-        "theme": "dark",
+        "theme": "light",
         "syntaxTheme": "monokai_extended",
     }
     if oauth_account:
