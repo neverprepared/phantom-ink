@@ -138,6 +138,11 @@ async def inject_env_file(
             langfuse_line = f"export LANGFUSE_SESSION_ID={session_name}"
             await executor.exec_shell(f"echo {shlex.quote(langfuse_line)} >> {env_path}")
 
+            # Unset host-only vars that may leak in via profile env; container uses defaults.
+            await executor.exec_shell(
+                f"echo 'unset CLAUDE_CONFIG_DIR GEMINI_CONFIG_DIR' >> {env_path}"
+            )
+
         slog.info("configure.env_injected", metadata={"count": len(secrets)})
 
     except Exception as exc:
