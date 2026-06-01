@@ -589,6 +589,21 @@ def _resolve_oauth_account() -> dict[str, str] | None:
     return None
 
 
+def _resolve_image_for_session(workspace_profile: str | None) -> tuple[str, bool]:
+    """Return (image_tag, is_profile_image) for a session.
+
+    If a private registry is configured and the profile has a published image,
+    returns the registry-qualified tag and True.  Falls back to the configured
+    base image otherwise — no change to existing behaviour.
+    """
+    registry = settings.profile_image_tag  # None when CL_REGISTRY_URL is unset
+    if not registry or not workspace_profile:
+        return settings.resolved_image, False
+
+    tag = f"{registry}/brainbox-profile:{workspace_profile}"
+    return tag, True
+
+
 def _find_available_port(start: int = 7681) -> int:
     """Scan running containers to find a free host port."""
     client = _docker()
@@ -853,13 +868,15 @@ async def provision(
     resolved_workspace_home = workspace_home or os.environ.get("WORKSPACE_HOME")
 
     # Determine image/template based on backend
+    _is_profile_image = False
     if backend == "utm":
         image_or_template = vm_template or settings.utm.default_template
         # UTM uses SSH port, not web terminal port
         resolved_port = port or 0  # Will be assigned by backend
     else:
-        # Single unified image — role is injected as BRAINBOX_ROLE env var
-        image_or_template = settings.image or "brainbox"
+        # Use a pre-built profile image from the private registry when available,
+        # otherwise fall back to the configured base image.
+        image_or_template, _is_profile_image = _resolve_image_for_session(workspace_profile)
         global _port_lock
         if _port_lock is None:
             _port_lock = asyncio.Lock()
@@ -1009,6 +1026,11 @@ async def provision(
             hardening_kwargs = get_legacy_kwargs()
     else:
         hardening_kwargs = {}
+
+    # Mark context when using a pre-built profile image so configure() can skip
+    # credential injection (credentials are already baked into the image).
+    if backend == "docker":
+        ctx.profile_image = _is_profile_image
 
     # Create backend and provision
     backend_impl = create_backend(backend)

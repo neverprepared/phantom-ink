@@ -271,8 +271,8 @@ class DockerBackend:
         else:
             await inject_env_file(executor, secrets, ctx.session_name, slog=slog)
 
-        # Claude OAuth config: needed in non-hardened mode regardless of delivery.
-        if not ctx.hardened:
+        # Claude OAuth config: skip when credentials are baked into a profile image.
+        if not ctx.hardened and not ctx.profile_image:
             await inject_claude_config(executor, oauth_account, slog=slog)
 
         # Inject role prompt file for --append-system-prompt-file

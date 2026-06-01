@@ -275,6 +275,18 @@ class Settings(BaseSettings):
 
     op_vault: str = ""
 
+    # Private Docker registry for pre-built profile images.
+    # Set CL_REGISTRY_URL to enable (e.g. registry.internal:5000).
+    # Credentials via CL_REGISTRY_USERNAME / CL_REGISTRY_PASSWORD.
+    registry_url: str = ""
+    registry_username: str = ""
+    registry_password: SecretStr = SecretStr("")
+
+    @property
+    def profile_image_tag(self) -> str | None:
+        """Return None if registry is not configured."""
+        return self.registry_url.rstrip("/") if self.registry_url else None
+
     resources: ResourceSettings = Field(default_factory=ResourceSettings)
     hardening: HardeningSettings = Field(default_factory=HardeningSettings)
     cosign: CosignSettings = Field(default_factory=CosignSettings)

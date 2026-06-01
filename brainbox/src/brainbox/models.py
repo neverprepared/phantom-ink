@@ -117,6 +117,7 @@ class SessionContext(BaseModel):
     worktree_path: str | None = (
         None  # Host worktree path created for this session (worktree-mount mode)
     )
+    profile_image: bool = False  # True when session uses a pre-built profile image from the registry
 
 
 # ---------------------------------------------------------------------------

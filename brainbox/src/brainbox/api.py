@@ -3682,6 +3682,48 @@ async def api_info():
     }
 
 
+# ---------------------------------------------------------------------------
+# Profile image registry
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/profiles/{name}/image/status", dependencies=[Depends(require_api_key)])
+async def profile_image_status(name: str):
+    """Check whether a profile image exists in the configured registry.
+
+    Returns the image tag, digest, and whether the registry is configured.
+    The Wails app uses this to show image build status per profile.
+    """
+    registry = settings.profile_image_tag
+    if not registry:
+        return {"configured": False, "profile": name, "exists": False, "tag": None, "digest": None}
+
+    tag = f"{registry}/brainbox-profile:{name}"
+    try:
+        import httpx
+        # Query the registry v2 API for the manifest digest (HEAD request, no download)
+        auth = None
+        username = settings.registry_username
+        password = settings.registry_password.get_secret_value() if settings.registry_password else ""
+        if username:
+            auth = (username, password)
+
+        url = f"https://{registry}/v2/brainbox-profile/manifests/{name}"
+        async with httpx.AsyncClient(verify=False) as client:
+            resp = await client.head(
+                url,
+                auth=auth,
+                headers={"Accept": "application/vnd.docker.distribution.manifest.v2+json"},
+                timeout=5,
+            )
+        if resp.status_code == 200:
+            digest = resp.headers.get("Docker-Content-Digest", "")
+            return {"configured": True, "profile": name, "exists": True, "tag": tag, "digest": digest}
+        return {"configured": True, "profile": name, "exists": False, "tag": tag, "digest": None}
+    except Exception as exc:
+        return {"configured": True, "profile": name, "exists": False, "tag": tag, "digest": None, "error": str(exc)}
+
+
 if _dashboard_dist.is_dir():
     # Serve static assets (JS, CSS, etc.)
     app.mount("/assets", StaticFiles(directory=str(_dashboard_dist / "assets")), name="assets")
