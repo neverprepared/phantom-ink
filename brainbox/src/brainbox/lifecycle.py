@@ -1057,6 +1057,12 @@ async def configure(ctx_or_name: SessionContext | str) -> SessionContext:
         if ctx.llm_model:
             resolved["CLAUDE_MODEL"] = ctx.llm_model
 
+        # Forward OAuth token from host env if present — takes precedence over
+        # .claude.json oauthAccount for hosts that manage auth via env var.
+        oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+        if oauth_token:
+            resolved["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+
     # Always expose provider name so ttyd-wrapper.sh can detect which CLI to launch
     resolved["LLM_PROVIDER"] = ctx.llm_provider
 
