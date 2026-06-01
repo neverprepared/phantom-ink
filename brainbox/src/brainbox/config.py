@@ -241,6 +241,7 @@ class Settings(BaseSettings):
     health_check_retries: int = 3
 
     api_port: int = Field(default=9999, ge=1, le=65535)
+    public_host: str = "localhost"  # Advertised hostname/IP for ttyd URLs; set CL_PUBLIC_HOST on remote hosts
     op_vault: str = ""
 
     resources: ResourceSettings = Field(default_factory=ResourceSettings)

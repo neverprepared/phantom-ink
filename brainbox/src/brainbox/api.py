@@ -1469,7 +1469,8 @@ async def api_create_session(
         else:
             # Use the runner's advertised host if the session was provisioned
             # on a remote runner — ttyd is bound to 0.0.0.0 on that machine.
-            ttyd_host = ctx.runner_host or "localhost"
+            # Fall back to CL_PUBLIC_HOST (configurable per-host) then localhost.
+            ttyd_host = ctx.runner_host or settings.public_host
             return {
                 "success": True,
                 "backend": "docker",
