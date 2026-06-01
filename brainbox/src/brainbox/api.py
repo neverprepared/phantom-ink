@@ -415,6 +415,11 @@ def _session_port(session_name: str) -> int | None:
         ctx = _resolve(session_name)
         if ctx and ctx.port:
             return ctx.port
+        if ctx:
+            log.warning(
+                "terminal.port_missing",
+                metadata={"session": session_name, "ctx_port": ctx.port, "container": ctx.container_name},
+            )
     except Exception:
         pass
 
@@ -431,10 +436,20 @@ def _session_port(session_name: str) -> int | None:
                cname.endswith(f"-{session_name}"):
                 ports = container.ports.get("7681/tcp") or []
                 if ports:
-                    return int(ports[0]["HostPort"])
-    except Exception:
-        pass
+                    port = int(ports[0]["HostPort"])
+                    log.info(
+                        "terminal.docker_port_fallback",
+                        metadata={"session": session_name, "container": cname, "port": port},
+                    )
+                    return port
+                log.warning(
+                    "terminal.container_no_port",
+                    metadata={"session": session_name, "container": cname, "ports": str(container.ports)},
+                )
+    except Exception as exc:
+        log.warning("terminal.docker_scan_failed", metadata={"session": session_name, "error": str(exc)})
 
+    log.warning("terminal.session_not_found", metadata={"session": session_name})
     return None
 
 
@@ -1277,7 +1292,8 @@ async def api_stop_session(
     name = body.name
     session_name = _extract_session_name(name)
 
-    # Route to runner for remote sessions.
+    # Route to runner for remote sessions — but fall through to local handling
+    # if the runner is unreachable or deregistered so the container still stops.
     ctx = get_session(session_name)
     if ctx and ctx.runner_name:
         try:
@@ -1286,8 +1302,10 @@ async def api_stop_session(
             _broadcast_sse(json.dumps({"action": "session.stop", "session": session_name}))
             return {"success": True}
         except Exception as exc:
-            _audit_log(request, "session.stop", session_name=session_name, success=False, error=str(exc))
-            raise HTTPException(status_code=500, detail=f"Runner stop failed: {exc}")
+            log.warning(
+                "session.runner_stop_failed",
+                metadata={"session": session_name, "runner": ctx.runner_name, "error": str(exc), "fallback": "local"},
+            )
 
     try:
         await recycle(session_name, reason="dashboard_stop")
@@ -1302,12 +1320,16 @@ async def api_stop_session(
         )
         try:
             client = _docker()
-            container = client.containers.get(name)
-            container.stop(timeout=1)
-            _audit_log(request, "session.stop", session_name=session_name, success=True)
-            _broadcast_sse(json.dumps({"action": "session.stop", "session": session_name}))
-            return {"success": True}
-        except docker.errors.NotFound:
+            for candidate in [name, f"{settings.resolved_prefix}{session_name}"]:
+                try:
+                    container = client.containers.get(candidate)
+                    container.stop(timeout=1)
+                    container.remove(force=True)
+                    _audit_log(request, "session.stop", session_name=session_name, success=True)
+                    _broadcast_sse(json.dumps({"action": "session.stop", "session": session_name}))
+                    return {"success": True}
+                except docker.errors.NotFound:
+                    continue
             _audit_log(
                 request, "session.stop", session_name=session_name, success=False, error="not_found"
             )
@@ -1347,7 +1369,7 @@ async def api_delete_session(
     name = body.name
     session_name = _extract_session_name(name)
 
-    # Route to runner for remote sessions.
+    # Route to runner for remote sessions — fall through to local handling if unreachable.
     ctx = get_session(session_name)
     if ctx and ctx.runner_name:
         try:
@@ -1356,8 +1378,10 @@ async def api_delete_session(
             _broadcast_sse(json.dumps({"action": "session.delete", "session": session_name}))
             return {"success": True}
         except Exception as exc:
-            _audit_log(request, "session.delete", session_name=session_name, success=False, error=str(exc))
-            raise HTTPException(status_code=500, detail=f"Runner delete failed: {exc}")
+            log.warning(
+                "session.runner_delete_failed",
+                metadata={"session": session_name, "runner": ctx.runner_name, "error": str(exc), "fallback": "local"},
+            )
 
     try:
         await recycle(session_name, reason="dashboard_delete")
