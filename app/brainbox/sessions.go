@@ -87,7 +87,12 @@ func ReadProfileEnv(workspaceHome string) map[string]string {
 				continue
 			}
 			if k, v, ok := strings.Cut(line, "="); ok {
-				env[strings.TrimSpace(k)] = strings.TrimSpace(v)
+				v = strings.TrimSpace(v)
+				// Strip surrounding quotes (single or double)
+				if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
+					v = v[1 : len(v)-1]
+				}
+				env[strings.TrimSpace(k)] = v
 			}
 		}
 		f.Close()
