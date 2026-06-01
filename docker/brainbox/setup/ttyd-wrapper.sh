@@ -1,6 +1,9 @@
 #!/bin/bash
 # Start tmux session with the configured LLM agent
 
+# Docker exec_run provides a minimal environment; ensure standard bin dirs are present.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}
+
 # In hardened mode secrets land in /run/secrets/ rather than ~/.env.
 # Read the vars we need from there if not already in the environment.
 _secret() {
