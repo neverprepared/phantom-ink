@@ -114,6 +114,19 @@ class DaemonManager:
         if reload:
             cmd.append("--reload")
 
+        # Load optional env file from config dir — allows persistent env vars
+        # (CL_PUBLIC_HOST, BRAINBOX_CC_API_URL, etc.) without requiring the
+        # calling shell to have them exported.
+        daemon_env = os.environ.copy()
+        env_file = self.config_dir / "brainbox.env"
+        if env_file.exists():
+            for raw in env_file.read_text().splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                daemon_env[k.strip()] = v.strip().strip("'\"")
+
         # Start process in background
         try:
             with open(self.log_file, "a") as log:
@@ -129,6 +142,7 @@ class DaemonManager:
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
                     cwd=os.getcwd(),
+                    env=daemon_env,
                 )
         except Exception as e:
             raise DaemonError(f"Failed to start daemon: {e}") from e
