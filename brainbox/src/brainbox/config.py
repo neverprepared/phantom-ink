@@ -242,6 +242,16 @@ class Settings(BaseSettings):
 
     api_port: int = Field(default=9999, ge=1, le=65535)
     public_host: str = "localhost"  # Advertised hostname/IP for ttyd URLs; set CL_PUBLIC_HOST on remote hosts
+    bind_host: str = ""  # Host IP for container port bindings; auto-derived from public_host if unset
+
+    @property
+    def container_bind_ip(self) -> str:
+        """IP to bind container ports to. 0.0.0.0 when public_host is a remote address."""
+        if self.bind_host:
+            return self.bind_host
+        if self.public_host in ("localhost", "127.0.0.1", ""):
+            return "127.0.0.1"
+        return "0.0.0.0"
     op_vault: str = ""
 
     resources: ResourceSettings = Field(default_factory=ResourceSettings)

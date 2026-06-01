@@ -146,12 +146,14 @@ class DockerBackend:
             pass
 
         # Build create kwargs
-        port_bindings: dict[str, tuple[str, int]] = {"7681/tcp": ("127.0.0.1", ctx.port)}
+        from ...config import settings as _settings
+        bind_ip = _settings.container_bind_ip
+        port_bindings: dict[str, tuple[str, int]] = {"7681/tcp": (bind_ip, ctx.port)}
 
         # Add custom port mappings if specified
         if ctx.ports:
             for container_port, host_port in ctx.ports.items():
-                port_bindings[f"{container_port}/tcp"] = ("127.0.0.1", host_port)
+                port_bindings[f"{container_port}/tcp"] = (bind_ip, host_port)
 
         kwargs: dict[str, Any] = {
             "image": image_or_template,
