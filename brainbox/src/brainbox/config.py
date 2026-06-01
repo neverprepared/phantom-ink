@@ -258,7 +258,7 @@ class Settings(BaseSettings):
         """
         if self.bind_host:
             return self.bind_host
-        if self.sessions_url or self.nginx_config_dir:
+        if self.sessions_url or self.nginx_config_dir or self.public_url:
             return "127.0.0.1"
         if self.public_host in ("localhost", "127.0.0.1", ""):
             return "127.0.0.1"

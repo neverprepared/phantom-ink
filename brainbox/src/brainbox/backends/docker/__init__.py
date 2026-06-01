@@ -572,7 +572,7 @@ class DockerBackend:
                     "-t", f"titleFixed={title}",
                     "-p", "7681",
                 ]
-                if settings.sessions_url or settings.nginx_config_dir:
+                if settings.sessions_url or settings.nginx_config_dir or settings.public_url:
                     ttyd_cmd += ["--base-path", f"/t/{ctx.session_name}"]
                 ttyd_cmd.append("/home/developer/ttyd-wrapper.sh")
                 await _run(
@@ -914,7 +914,7 @@ class DockerBackend:
                         "port": port,
                         "url": (
                             f"{settings.session_base_url}/t/{session_name}"
-                            if (settings.sessions_url or settings.nginx_config_dir) and session_name
+                            if (settings.sessions_url or settings.nginx_config_dir or settings.public_url) and session_name
                             else (f"http://{settings.public_host}:{port}" if port else None)
                         ),
                         "volume": volume,
