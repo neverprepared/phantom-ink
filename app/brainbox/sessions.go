@@ -1,6 +1,10 @@
 package brainbox
 
-import "fmt"
+import (
+	"fmt"
+	"net/http"
+	"time"
+)
 
 // Session represents a brainbox container session.
 // Port and SSHPort use interface{} because the API returns them as strings
@@ -67,9 +71,12 @@ func (c *Client) ListSessions() ([]Session, error) {
 }
 
 // CreateSession creates a new container session.
+// Uses a long timeout because Docker image pulls and container provisioning
+// on remote hosts can take several minutes.
 func (c *Client) CreateSession(req CreateSessionRequest) (SessionActionResponse, error) {
+	longClient := &http.Client{Timeout: 10 * time.Minute}
 	var resp SessionActionResponse
-	if err := c.post("/api/create", req, &resp); err != nil {
+	if err := c.doWith(longClient, http.MethodPost, "/api/create", req, &resp); err != nil {
 		return resp, err
 	}
 	return resp, nil
