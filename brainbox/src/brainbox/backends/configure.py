@@ -169,6 +169,8 @@ async def inject_claude_config(
                 {
                     "hasCompletedOnboarding": True,
                     "bypassPermissionsModeAccepted": True,
+                    "theme": "dark",
+                    "syntaxTheme": "monokai_extended",
                     "oauthAccount": oauth_account,
                 }
             )
@@ -212,6 +214,8 @@ async def inject_claude_config(
             claude_json_patch: dict[str, Any] = {
                 "hasCompletedOnboarding": True,
                 "bypassPermissionsModeAccepted": True,
+                "theme": "dark",
+                "syntaxTheme": "monokai_extended",
             }
             patch_json = json.dumps(claude_json_patch)
             p_j = json.dumps(f"{home}/.claude.json").replace('"', '\\"')
@@ -234,6 +238,8 @@ async def inject_claude_config(
     claude_json_patch: dict[str, Any] = {
         "hasCompletedOnboarding": True,
         "bypassPermissionsModeAccepted": True,
+        "theme": "dark",
+        "syntaxTheme": "monokai_extended",
     }
     if oauth_account:
         claude_json_patch["oauthAccount"] = oauth_account
