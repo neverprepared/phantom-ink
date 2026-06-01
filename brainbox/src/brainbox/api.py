@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import docker
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
@@ -453,25 +453,38 @@ async def terminal_proxy_http(session_name: str, path: str, request: Request):
 
 
 @app.websocket("/t/{session_name}/ws")
-async def terminal_proxy_ws(session_name: str, websocket):
-    """Bidirectional WebSocket relay between client and session's ttyd."""
-    import websockets
+async def terminal_proxy_ws(session_name: str, websocket: WebSocket):
+    """Bidirectional WebSocket relay between client and session's ttyd.
+
+    Forwards the 'tty' subprotocol and handles both text and binary frames.
+    """
+    import websockets as ws_lib
 
     port = _session_port(session_name)
     if port is None:
         await websocket.close(1011)
         return
 
+    # Forward the subprotocol the browser requested (ttyd uses "tty")
+    raw_protocols = websocket.headers.get("sec-websocket-protocol", "")
+    subprotocols = [p.strip() for p in raw_protocols.split(",") if p.strip()] or ["tty"]
+
     backend_url = f"ws://127.0.0.1:{port}/t/{session_name}/ws"
     try:
-        async with websockets.connect(backend_url) as backend:
-            await websocket.accept()
+        async with ws_lib.connect(backend_url, subprotocols=subprotocols) as backend:
+            negotiated = getattr(backend, "subprotocol", None) or subprotocols[0]
+            await websocket.accept(subprotocol=negotiated)
 
             async def to_backend():
                 try:
                     while True:
-                        data = await websocket.receive_bytes()
-                        await backend.send(data)
+                        msg = await websocket.receive()
+                        if msg.get("type") == "websocket.disconnect":
+                            break
+                        if msg.get("bytes"):
+                            await backend.send(msg["bytes"])
+                        elif msg.get("text"):
+                            await backend.send(msg["text"])
                 except Exception:
                     pass
 
