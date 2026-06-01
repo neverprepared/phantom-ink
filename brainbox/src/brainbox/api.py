@@ -430,9 +430,11 @@ async def terminal_proxy_http(session_name: str, path: str, request: Request):
     if request.url.query:
         target_url += f"?{request.url.query}"
 
-    # Drop hop-by-hop headers before forwarding
+    # Drop hop-by-hop headers before forwarding; force identity encoding so
+    # httpx doesn't decompress the body while we forward the original headers.
     skip = {"host", "connection", "te", "trailers", "transfer-encoding", "upgrade"}
     fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in skip}
+    fwd_headers["accept-encoding"] = "identity"
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -442,11 +444,11 @@ async def terminal_proxy_http(session_name: str, path: str, request: Request):
                 headers=fwd_headers,
                 content=await request.body(),
             )
+        skip_resp = {"transfer-encoding", "connection", "content-encoding", "content-length"}
         return Response(
             content=rp.content,
             status_code=rp.status_code,
-            headers={k: v for k, v in rp.headers.items()
-                     if k.lower() not in ("transfer-encoding", "connection")},
+            headers={k: v for k, v in rp.headers.items() if k.lower() not in skip_resp},
         )
     except httpx.ConnectError:
         raise HTTPException(502, "Terminal not reachable — container may still be starting")
