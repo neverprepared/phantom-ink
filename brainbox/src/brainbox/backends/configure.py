@@ -482,6 +482,13 @@ async def inject_claude_config_copy(
     slog = slog or log
     home = executor.home_dir
 
+    # --- .credentials.json (OAuth tokens) ---
+    credentials_path = claude_config_dir / ".credentials.json"
+    try:
+        credentials_bytes: bytes | None = credentials_path.read_bytes() if credentials_path.exists() else None
+    except Exception:
+        credentials_bytes = None
+
     # --- .claude.json ---
     claude_json_path = claude_config_dir / ".claude.json"
     try:
@@ -536,10 +543,13 @@ async def inject_claude_config_copy(
 
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
-        for arcname, content in [
+        files: list[tuple[str, bytes]] = [
             (".claude.json", claude_json_bytes),        # ~/  .claude.json  (mcpServers, projects, etc.)
             (".claude/settings.json", settings_bytes),  # ~/.claude/settings.json (user prefs)
-        ]:
+        ]
+        if credentials_bytes is not None:
+            files.append((".claude/.credentials.json", credentials_bytes))
+        for arcname, content in files:
             info = tarfile.TarInfo(name=arcname)
             info.size = len(content)
             info.mode = 0o600
