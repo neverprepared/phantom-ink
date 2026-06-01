@@ -241,17 +241,35 @@ class Settings(BaseSettings):
     health_check_retries: int = 3
 
     api_port: int = Field(default=9999, ge=1, le=65535)
-    public_host: str = "localhost"  # Advertised hostname/IP for ttyd URLs; set CL_PUBLIC_HOST on remote hosts
-    bind_host: str = ""  # Host IP for container port bindings; auto-derived from public_host if unset
+    public_host: str = "localhost"  # Advertised hostname/IP; set CL_PUBLIC_HOST on remote hosts
+    public_url: str = ""  # Full base URL (e.g. https://phantom-api.example.com); enables nginx proxy mode
+    bind_host: str = ""  # Override for container port bind IP; auto-derived when unset
+    nginx_config_dir: str = ""  # Dir for per-session nginx .conf fragments (e.g. /opt/homebrew/etc/nginx/brainbox)
+    nginx_reload_cmd: str = "nginx -s reload"  # Command to reload nginx after config changes
 
     @property
     def container_bind_ip(self) -> str:
-        """IP to bind container ports to. 0.0.0.0 when public_host is a remote address."""
+        """IP to bind container ports to.
+
+        When nginx is fronting (nginx_config_dir set), always use 127.0.0.1.
+        When running direct (no nginx), use 0.0.0.0 for remote hosts so
+        container terminals are reachable from the network.
+        """
         if self.bind_host:
             return self.bind_host
+        if self.nginx_config_dir:
+            return "127.0.0.1"
         if self.public_host in ("localhost", "127.0.0.1", ""):
             return "127.0.0.1"
         return "0.0.0.0"
+
+    @property
+    def session_base_url(self) -> str:
+        """Base URL for constructing session terminal URLs."""
+        if self.public_url:
+            return self.public_url.rstrip("/")
+        scheme = "http"
+        return f"{scheme}://{self.public_host}"
     op_vault: str = ""
 
     resources: ResourceSettings = Field(default_factory=ResourceSettings)

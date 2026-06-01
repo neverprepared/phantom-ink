@@ -524,6 +524,7 @@ class DockerBackend:
 
     async def start(self, ctx: SessionContext) -> SessionContext:
         """Start Docker container and launch ttyd terminal."""
+        from ...config import settings
         from ...lifecycle import _resolve_profile_env
 
         slog = get_logger(session_name=ctx.session_name, container_name=ctx.container_name)
@@ -565,22 +566,31 @@ class DockerBackend:
 
             # Start ttyd — attaches to existing tmux session
             try:
+                ttyd_cmd = [
+                    "ttyd",
+                    "-W",
+                    "-t", f"titleFixed={title}",
+                    "-p", "7681",
+                ]
+                if settings.nginx_config_dir:
+                    ttyd_cmd += ["--base-path", f"/t/{ctx.session_name}"]
+                ttyd_cmd.append("/home/developer/ttyd-wrapper.sh")
                 await _run(
                     container.exec_run,
-                    [
-                        "ttyd",
-                        "-W",
-                        "-t",
-                        f"titleFixed={title}",
-                        "-p",
-                        "7681",
-                        "/home/developer/ttyd-wrapper.sh",
-                    ],
+                    ttyd_cmd,
                     detach=True,
                     user="developer",
                 )
             except Exception as exc:
                 slog.warning("container.ttyd_start_failed", metadata={"reason": str(exc)})
+
+            # Write nginx fragment for path-based proxy
+            if settings.nginx_config_dir:
+                from ..nginx import async_write_fragment
+                await async_write_fragment(
+                    ctx.session_name, ctx.port,
+                    settings.nginx_config_dir, settings.nginx_reload_cmd,
+                )
 
         ctx.state = SessionState.RUNNING
         slog.info("container.started", metadata={"port": ctx.port})
@@ -599,6 +609,8 @@ class DockerBackend:
 
     async def remove(self, ctx: SessionContext) -> SessionContext:
         """Remove Docker container."""
+        from ...config import settings
+
         slog = get_logger(session_name=ctx.session_name, container_name=ctx.container_name)
         client = _docker(ctx.docker_host)
 
@@ -608,6 +620,12 @@ class DockerBackend:
             slog.info("container.removed")
         except Exception as exc:
             slog.warning("container.remove_failed", metadata={"reason": str(exc)})
+
+        if settings.nginx_config_dir:
+            from ..nginx import async_remove_fragment
+            await async_remove_fragment(
+                ctx.session_name, settings.nginx_config_dir, settings.nginx_reload_cmd,
+            )
 
         return ctx
 
@@ -894,7 +912,11 @@ class DockerBackend:
                         "name": name,
                         "session_name": session_name,
                         "port": port,
-                        "url": f"http://{settings.public_host}:{port}" if port else None,
+                        "url": (
+                            f"{settings.session_base_url}/t/{session_name}"
+                            if settings.nginx_config_dir and session_name
+                            else (f"http://{settings.public_host}:{port}" if port else None)
+                        ),
                         "volume": volume,
                         "active": is_running,
                         "llm_provider": llm_provider,
