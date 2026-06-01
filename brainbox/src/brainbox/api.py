@@ -404,13 +404,38 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 
 def _session_port(session_name: str) -> int | None:
-    """Return the host port for a running session, or None."""
+    """Return the host port for a running session, or None.
+
+    Checks the in-memory session store first, then falls back to inspecting
+    Docker directly for runner-created sessions that were never provisioned
+    through the API's lifecycle.
+    """
     from .lifecycle import _resolve
     try:
         ctx = _resolve(session_name)
-        return ctx.port if ctx else None
+        if ctx and ctx.port:
+            return ctx.port
     except Exception:
-        return None
+        pass
+
+    # Fall back: scan Docker for a container whose session_name label or
+    # name matches, and return its mapped port for 7681/tcp.
+    try:
+        import docker as docker_sdk
+        client = docker_sdk.from_env()
+        for container in client.containers.list():
+            labels = container.labels or {}
+            cname = container.name or ""
+            if labels.get("brainbox.session_name") == session_name or \
+               cname == session_name or \
+               cname.endswith(f"-{session_name}"):
+                ports = container.ports.get("7681/tcp") or []
+                if ports:
+                    return int(ports[0]["HostPort"])
+    except Exception:
+        pass
+
+    return None
 
 
 @app.get("/t/{session_name}", include_in_schema=False)
