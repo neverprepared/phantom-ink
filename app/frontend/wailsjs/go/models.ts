@@ -394,6 +394,7 @@ export namespace brainbox {
 	    task?: string;
 	    ports?: Record<string, number>;
 	    docker_host?: string;
+	    runner?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CreateSessionRequest(source);
@@ -417,6 +418,7 @@ export namespace brainbox {
 	        this.task = source["task"];
 	        this.ports = source["ports"];
 	        this.docker_host = source["docker_host"];
+	        this.runner = source["runner"];
 	    }
 	}
 	export class CreateWorktreeRequest {
@@ -973,6 +975,20 @@ export namespace brainbox {
 	        this.claude_effort = source["claude_effort"];
 	        this.codex_model = source["codex_model"];
 	        this.ollama_model = source["ollama_model"];
+	    }
+	}
+	export class UpdatePlaybookRequest {
+	    name?: string;
+	    markdown?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdatePlaybookRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.markdown = source["markdown"];
 	    }
 	}
 	export class UpdateRepoRequest {

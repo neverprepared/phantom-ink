@@ -100,7 +100,7 @@
     height: var(--titlebar-height);
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 18px;
     padding: 0 var(--titlebar-pad-right) 0 var(--titlebar-pad-left);
     background: var(--titlebar, var(--color-bg-secondary));
     border-bottom: 1px solid var(--border, var(--color-border-primary));
@@ -116,10 +116,11 @@
   }
 
   .brand {
-    font-size: 13px;
+    font-size: 19px;
     font-weight: 800;
     color: var(--accent, var(--color-accent));
-    letter-spacing: -0.01em;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
   }
   .brand b {
     color: var(--text, var(--color-text-primary));
@@ -131,10 +132,10 @@
     display: flex;
     align-items: center;
     gap: 2px;
-    background: var(--color-surface-subtle);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-lg);
-    padding: 2px;
+    background: var(--bg-sunken, var(--color-surface-subtle));
+    border: 1px solid var(--border, var(--color-border-primary));
+    border-radius: 99px;
+    padding: 4px;
     flex-shrink: 1;
     min-width: 0;
     overflow-x: auto;
@@ -145,26 +146,29 @@
   .profile-tabs::-webkit-scrollbar { display: none; }
 
   .tab {
+    display: flex;
+    align-items: center;
+    gap: 7px;
     background: transparent;
     border: none;
-    border-radius: var(--radius-md);
-    color: var(--color-text-tertiary);
-    font-size: 11px;
-    font-weight: 500;
-    padding: 3px 10px;
+    border-radius: 99px;
+    color: var(--text-faint, var(--color-text-tertiary));
+    font-size: 13.5px;
+    font-weight: 600;
+    padding: 5px 13px;
     white-space: nowrap;
     transition: all 0.15s;
     flex-shrink: 0;
   }
 
   .tab:hover {
-    color: var(--color-text-secondary);
-    background: var(--color-surface-hover);
+    color: var(--text-muted, var(--color-text-secondary));
+    background: transparent;
   }
 
   .tab.active {
-    background: var(--color-accent-soft);
-    color: var(--color-accent);
+    background: var(--accent-soft, var(--color-accent-soft));
+    color: var(--accent, var(--color-accent));
     font-weight: 600;
   }
 
@@ -213,45 +217,53 @@
   .conn-status {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--color-text-tertiary);
+    gap: 7px;
+    font-size: 13px;
+    color: var(--text-faint, var(--color-text-tertiary));
   }
 
   .conn-dot {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
     background: var(--color-dot-offline);
     flex-shrink: 0;
   }
 
   .conn-status.connected .conn-dot {
-    background: var(--color-success);
-    box-shadow: var(--shadow-status-active);
+    background: var(--run, var(--color-success));
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--run, var(--color-success)) 60%, transparent);
+    animation: status-pulse 2.4s infinite;
   }
 
   .conn-status.connected {
-    color: var(--color-text-secondary);
+    color: var(--text-muted, var(--color-text-secondary));
+  }
+
+  @keyframes status-pulse {
+    0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run, var(--color-success)) 55%, transparent); }
+    70%  { box-shadow: 0 0 0 6px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
   }
 
   .palette-btn {
     display: flex;
     align-items: center;
-    gap: 6px;
-    background: var(--color-surface-hover);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    color: var(--color-text-tertiary);
-    padding: 4px 8px;
-    font-size: 11px;
+    gap: 9px;
+    background: var(--bg-elev, var(--color-surface-hover));
+    border: 1px solid var(--border, var(--color-border-secondary));
+    border-radius: var(--r-sm, var(--radius-sm));
+    color: var(--text-muted, var(--color-text-secondary));
+    padding: 6px 12px;
+    font-size: 13px;
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .palette-btn:hover {
-    background: var(--color-surface-active);
-    color: var(--color-text-secondary);
+    border-color: var(--border-strong, var(--color-border-primary));
+    background: var(--bg-elev, var(--color-surface-hover));
+    color: var(--text, var(--color-text-primary));
   }
 
   .restart-btn {

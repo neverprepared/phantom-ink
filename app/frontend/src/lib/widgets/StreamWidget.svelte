@@ -3,6 +3,7 @@
   import { getApi } from '../utils/api';
   import { profileState } from '../stores.svelte';
   import { brainboxEvents } from '../events.svelte';
+  import Icon from '../components/Icon.svelte';
   import type { StreamWidgetConfig } from './types';
 
   let { config }: { config: StreamWidgetConfig } = $props();
@@ -130,6 +131,7 @@
 
 <div class="stream-widget">
   <div class="widget-header">
+    <Icon name="spark" size={15} style="color: var(--text-muted); flex-shrink: 0;" />
     <span class="widget-label">» {config.label ?? 'stream'}</span>
     {#if config.profile}
       <span class="profile-badge">{config.profile}</span>

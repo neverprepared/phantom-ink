@@ -1,5 +1,6 @@
 <script lang="ts">
   import { dashboardDataStore, profileState } from '../stores.svelte';
+  import Icon from '../components/Icon.svelte';
 
   type FilterMode = 'open' | 'done' | 'all';
   let filter = $state<FilterMode>('open');
@@ -42,6 +43,7 @@
 
 <div class="tasks-widget">
   <div class="widget-header">
+    <Icon name="check" size={15} style="color: var(--text-muted); flex-shrink: 0;" />
     <span class="widget-title">» TASKS</span>
   </div>
 
@@ -88,6 +90,7 @@
   .widget-header {
     display: flex;
     align-items: center;
+    gap: 6px;
     padding: 12px 14px 10px;
     border-bottom: 1px solid var(--border, var(--color-border-primary));
     flex-shrink: 0;

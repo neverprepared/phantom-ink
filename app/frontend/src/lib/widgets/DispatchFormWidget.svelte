@@ -2,6 +2,7 @@
   import { getApi } from '../utils/api';
   import { profileState } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
+  import Icon from '../components/Icon.svelte';
 
   const AGENTS = ['supervisor','worker','reviewer','linter','qa','python','golang','typescript','assistant'];
 
@@ -35,6 +36,7 @@
 
 <div class="widget">
   <div class="widget-header widget-drag-handle">
+    <Icon name="bolt" size={15} style="color: var(--text-muted); flex-shrink: 0;" />
     <span class="widget-title">» DISPATCH AGENT</span>
   </div>
   <div class="widget-body">

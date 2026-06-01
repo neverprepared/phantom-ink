@@ -1,754 +1,363 @@
 <script lang="ts">
-  import { getApi } from '../utils/api';
   import { onMount } from 'svelte';
-  import { brainboxEvents } from '../events.svelte';
+  import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
-  import { profileState, profileColorStore } from '../stores.svelte';
-  import { getProfileColor, profileColorStyle } from '../utils/profileColors';
+  import { profileState } from '../stores.svelte';
   import Modal from '../components/Modal.svelte';
-  import EmptyState from '../components/EmptyState.svelte';
 
   interface PlaybookTask {
     id: string;
     index: number;
     content: string;
-    status: string; // "pending", "running", "completed", "failed"
-    session_name?: string;
+    status: string;
     output?: string;
     error?: string;
     started_at?: number;
     finished_at?: number;
   }
-
   interface Playbook {
     id: string;
     name: string;
     markdown: string;
     tasks: PlaybookTask[];
-    status: string; // "idle", "running", "completed", "failed", "cancelled"
+    status: string;
     workspace_profile: string;
     created_at: number;
     started_at?: number;
     finished_at?: number;
   }
 
-  // --- State ---
+  // ----- state -----
   let playbooks = $state<Playbook[]>([]);
-  let selected = $state<Playbook | null>(null);
   let loading = $state(true);
-  let expandedTasks = $state<Set<string>>(new Set());
-  let confirmingDelete = $state(false);
+  let query = $state('');
+  let activeId = $state<string | null>(null);
 
-  // Profile picker for run
-  let showProfilePicker = $state(false);
-  let profiles = $derived(profileState.profiles);
-
-  // Create modal
-  let showCreateModal = $state(false);
+  // create modal
+  let showCreate = $state(false);
   let newName = $state('');
-  let markdownDraft = $state(`- [ ] Step one: describe what to do\n- [ ] Step two: next action\n- [ ] Step three: final check`);
+  let newMarkdown = $state('- [ ] Step one\n- [ ] Step two');
   let newScope = $state<'profile' | 'global'>('profile');
-  let isCreating = $state(false);
+
+  // delete confirmation
+  let pendingDelete = $state<Playbook | null>(null);
 
   const activeProfileName = $derived(profileState.active?.name ?? '');
+  const scopeLabel = $derived(activeProfileName || 'all');
 
-  // --- SSE ---
-  $effect(() => {
-    const lastEvent = brainboxEvents.last;
-    if (!lastEvent) return;
-    try {
-      const evData = lastEvent.data as any;
-      const action = evData?.action ?? evData?.event ?? '';
-      if (
-        action === 'playbook.created' ||
-        action === 'playbook.deleted' ||
-        action === 'playbook.started' ||
-        action === 'playbook.completed' ||
-        action === 'playbook.failed' ||
-        action === 'playbook.cancelled'
-      ) {
-        loadPlaybooks();
-      } else if (action === 'playbook.task_started' || action === 'playbook.task_done') {
-        const pid = evData?.data?.playbook_id;
-        if (pid && selected?.id === pid) {
-          refreshSelected();
-        }
-      }
-    } catch {}
-  });
+  const active = $derived(activeId ? playbooks.find((p) => p.id === activeId) ?? null : null);
 
-  // --- API ---
-  async function loadPlaybooks() {
+  const filtered = $derived(
+    (() => {
+      const q = query.trim().toLowerCase();
+      if (!q) return playbooks;
+      return playbooks.filter(
+        (p) => (p.name + ' ' + (p.markdown ?? '') + ' ' + (p.workspace_profile ?? '')).toLowerCase().includes(q),
+      );
+    })(),
+  );
+
+  async function load() {
+    loading = true;
     try {
       const api = await getApi();
-      // Pass active profile so API returns profile's playbooks + global ones
       const result = await api.ListPlaybooks(activeProfileName);
-      playbooks = result ?? [];
-      // Refresh selected if it's in the list
-      if (selected) {
-        const updated = playbooks.find(p => p.id === selected!.id);
-        if (updated) selected = updated;
-      }
+      playbooks = (result ?? []) as Playbook[];
     } catch (e: any) {
-      notifications.add('error', `Failed to load playbooks: ${e.message ?? e}`);
+      notifications.error(`Failed to load playbooks: ${e?.message ?? e}`);
     } finally {
       loading = false;
     }
   }
 
-  async function refreshSelected() {
-    if (!selected) return;
-    try {
-      const api = await getApi();
-      selected = await api.GetPlaybook(selected.id);
-      // Sync into list
-      const idx = playbooks.findIndex(p => p.id === selected!.id);
-      if (idx >= 0) playbooks[idx] = selected;
-    } catch {}
-  }
+  $effect(() => {
+    const _ = activeProfileName;
+    load();
+  });
+
+  onMount(() => {});
 
   async function createPlaybook() {
-    if (!newName.trim() || !markdownDraft.trim()) return;
-    isCreating = true;
+    if (!newName.trim()) return;
     try {
       const api = await getApi();
-      const profile = newScope === 'global' ? 'global' : (activeProfileName || 'global');
+      const profile = newScope === 'global' ? 'global' : activeProfileName || 'global';
       const pb = await api.CreatePlaybook({
         name: newName.trim(),
-        markdown: markdownDraft,
+        markdown: newMarkdown,
         workspace_profile: profile,
       });
       playbooks = [pb, ...playbooks];
-      selected = pb;
-      showCreateModal = false;
+      showCreate = false;
       newName = '';
-      markdownDraft = `- [ ] Step one: describe what to do\n- [ ] Step two: next action\n- [ ] Step three: final check`;
+      newMarkdown = '- [ ] Step one\n- [ ] Step two';
+      activeId = pb.id;
     } catch (e: any) {
-      notifications.add('error', `Failed to create playbook: ${e.message ?? e}`);
-    } finally {
-      isCreating = false;
+      notifications.error(`Failed to create playbook: ${e?.message ?? e}`);
     }
   }
 
-  function handleRunClick() {
-    if (!selected) return;
-    // If the playbook is global and no profile filter is active, prompt the user to pick one
-    const needsPicker = selected.workspace_profile === 'global' && !activeProfileName;
-    if (needsPicker && profiles.length > 0) {
-      showProfilePicker = true;
-    } else {
-      runWithProfile(activeProfileName || '');
-    }
-  }
-
-  async function runWithProfile(profile: string) {
-    if (!selected) return;
-    showProfilePicker = false;
+  async function runPlaybook(pb: Playbook) {
     try {
       const api = await getApi();
-      selected = await api.RunPlaybook(selected.id, profile);
-      const idx = playbooks.findIndex(p => p.id === selected!.id);
-      if (idx >= 0) playbooks[idx] = selected;
+      const profile = pb.workspace_profile === 'global' ? activeProfileName || '' : pb.workspace_profile;
+      const updated = await api.RunPlaybook(pb.id, profile);
+      const idx = playbooks.findIndex((p) => p.id === pb.id);
+      if (idx >= 0) {
+        const next = [...playbooks];
+        next[idx] = updated;
+        playbooks = next;
+      }
+      notifications.success(`running · ${pb.name}`);
     } catch (e: any) {
-      notifications.add('error', `Failed to run playbook: ${e.message ?? e}`);
+      notifications.error(`Failed to run: ${e?.message ?? e}`);
     }
   }
 
-  async function cancelPlaybook() {
-    if (!selected) return;
+  async function confirmDelete() {
+    const pb = pendingDelete;
+    if (!pb) return;
+    pendingDelete = null;
     try {
       const api = await getApi();
-      await api.CancelPlaybook(selected.id);
-      await refreshSelected();
+      await api.DeletePlaybook(pb.id);
+      playbooks = playbooks.filter((p) => p.id !== pb.id);
+      if (activeId === pb.id) activeId = null;
+      notifications.success(`deleted · ${pb.name}`);
     } catch (e: any) {
-      notifications.add('error', `Failed to cancel playbook: ${e.message ?? e}`);
+      notifications.error(`Failed to delete: ${e?.message ?? e}`);
     }
   }
 
-  async function deleteSelected() {
-    if (!selected) return;
-    const id = selected.id;
-    confirmingDelete = false;
-    try {
-      const api = await getApi();
-      await api.DeletePlaybook(id);
-      playbooks = playbooks.filter(p => p.id !== id);
-      selected = null;
-    } catch (e: any) {
-      notifications.add('error', `Failed to delete playbook: ${e.message ?? e}`);
-    }
-  }
+  // ----- editor -----
+  let editMarkdown = $state('');
+  let saving = $state(false);
+  let lastEditorId: string | null = null;
 
-  function toggleTask(taskId: string) {
-    const next = new Set(expandedTasks);
-    if (next.has(taskId)) next.delete(taskId);
-    else next.add(taskId);
-    expandedTasks = next;
-  }
-
-  function statusIcon(status: string): string {
-    switch (status) {
-      case 'completed': return '✓';
-      case 'running': return '▶';
-      case 'failed': return '✗';
-      case 'cancelled': return '⊘';
-      default: return '○';
-    }
-  }
-
-  function statusClass(status: string): string {
-    switch (status) {
-      case 'completed': return 'status-completed';
-      case 'running': return 'status-running';
-      case 'failed': return 'status-failed';
-      case 'cancelled': return 'status-cancelled';
-      default: return 'status-pending';
-    }
-  }
-
-  function formatDuration(started?: number, finished?: number): string {
-    if (!started) return '';
-    const end = finished ?? Date.now();
-    const secs = Math.round((end - started) / 1000);
-    if (secs < 60) return `${secs}s`;
-    return `${Math.floor(secs / 60)}m ${secs % 60}s`;
-  }
-
-  // Reload when the active profile changes
   $effect(() => {
-    const _ = activeProfileName; // track
-    loadPlaybooks();
+    const pb = active;
+    if (!pb) { lastEditorId = null; return; }
+    if (lastEditorId === pb.id) return;
+    lastEditorId = pb.id;
+    editMarkdown = pb.markdown ?? '';
   });
 
-  onMount(() => {
-    // initial load handled by $effect above
-  });
+  async function saveInstructions() {
+    if (!active || saving) return;
+    saving = true;
+    try {
+      const api = await getApi();
+      const updated = await api.UpdatePlaybook(active.id, { markdown: editMarkdown });
+      const idx = playbooks.findIndex((p) => p.id === active!.id);
+      if (idx >= 0) {
+        const next = [...playbooks];
+        next[idx] = updated ?? { ...active, markdown: editMarkdown };
+        playbooks = next;
+      }
+      notifications.success('instructions saved');
+    } catch (e: any) {
+      notifications.error(`Failed to save: ${e?.message ?? e}`);
+    } finally {
+      saving = false;
+    }
+  }
+
+  function stepCount(pb: Playbook): number {
+    return pb.tasks?.length ?? 0;
+  }
+  const taskStatusColor: Record<string, string> = {
+    done: 'var(--run)',
+    running: 'var(--accent)',
+    failed: 'var(--fail)',
+    pending: 'var(--text-faint)',
+  };
 </script>
 
-<div class="panel">
-  <!-- Left sidebar: playbook list -->
-  <div class="sidebar">
-    <div class="sidebar-header">
-      <span class="sidebar-title">Playbooks</span>
-      <button class="icon-btn" onclick={() => { showCreateModal = true; newScope = activeProfileName ? 'profile' : 'global'; newName = ''; markdownDraft = `- [ ] Step one: describe what to do\n- [ ] Step two: next action\n- [ ] Step three: final check`; }} title="New playbook">+</button>
+{#if !active}
+  <!-- ===== LIBRARY ===== -->
+  <div class="pi-main-inner" style="padding: 22px 26px;">
+    <div class="section-row" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
+      <h1 class="page-title" style="display:flex;align-items:center;gap:10px;">
+        playbooks
+        <span class="scope-chip mono">{scopeLabel}</span>
+      </h1>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <div class="filter" style="margin:0;width:260px;">
+          <input bind:value={query} placeholder="search recipes…" />
+        </div>
+        <button class="btn primary" onclick={() => { showCreate = true; newScope = activeProfileName ? 'profile' : 'global'; }}>+ new playbook</button>
+      </div>
     </div>
+    <p style="color: var(--text-faint); font-size: 13px; margin: -4px 0 22px;">
+      Reusable recipes — one unit of work each. Compose several into a pipeline over in Chains.
+    </p>
 
     {#if loading}
-      <div class="sidebar-empty">Loading…</div>
-    {:else if playbooks.length === 0}
-      <div class="sidebar-empty">No playbooks yet</div>
-    {:else}
-      <ul class="playbook-list">
-        {#each playbooks as pb (pb.id)}
-          <li
-            class="playbook-item {selected?.id === pb.id ? 'selected' : ''}"
-            onclick={() => { selected = pb; expandedTasks = new Set(); confirmingDelete = false; }}
-          >
-            <div class="playbook-item-row">
-              <span class="playbook-name">{pb.name}</span>
-              <span class="playbook-status-badge {statusClass(pb.status)}">{pb.status}</span>
-            </div>
-            <div class="playbook-meta">
-              {pb.tasks.length} task{pb.tasks.length !== 1 ? 's' : ''}
-              · {pb.workspace_profile === 'global' ? 'global' : pb.workspace_profile}
-            </div>
-          </li>
-        {/each}
-      </ul>
-    {/if}
-  </div>
-
-  <!-- Right detail pane -->
-  <div class="detail">
-    {#if !selected}
-      <EmptyState message="Select a playbook or create a new one" />
-    {:else}
-      <div class="detail-header">
-        <div class="detail-title-row">
-          <h2 class="detail-title">{selected.name}</h2>
-          <span class="detail-status {statusClass(selected.status)}">{selected.status}</span>
-          {#if selected.workspace_profile !== 'global'}
-            {@const pbwp = selected.workspace_profile.toLowerCase()}
-            <span class="detail-profile" style={profileColorStyle(getProfileColor(pbwp, profileColorStore.getOverride(pbwp)))}>{pbwp}</span>
-          {/if}
-        </div>
-        <div class="detail-meta">
-          {selected.tasks.length} task{selected.tasks.length !== 1 ? 's' : ''}
-          {#if selected.started_at}
-            · {formatDuration(selected.started_at, selected.finished_at)}
-          {/if}
+      <p style="color: var(--text-faint);">loading…</p>
+    {:else if filtered.length === 0}
+      <div class="card" style="padding: 48px; text-align: center; color: var(--text-faint);">
+        <div style="margin-top: 12px; font-size: 14px; color: var(--text-muted);">
+          {query ? `no playbooks match "${query}"` : `no playbooks on ${scopeLabel} yet`}
         </div>
       </div>
-
-      <div class="task-list">
-        {#each selected.tasks as task (task.id)}
-          <div class="task-row {statusClass(task.status)}">
-            <div class="task-header" onclick={() => task.output || task.error ? toggleTask(task.id) : null}>
-              <span class="task-icon">{statusIcon(task.status)}</span>
-              <span class="task-content">{task.content}</span>
-              {#if task.started_at}
-                <span class="task-duration">{formatDuration(task.started_at, task.finished_at)}</span>
-              {/if}
-              {#if (task.output || task.error) && task.status !== 'running'}
-                <span class="task-expand">{expandedTasks.has(task.id) ? '▲' : '▼'}</span>
+    {:else}
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 380px)); gap: 16px;">
+        {#each filtered as pb (pb.id)}
+          <div
+            class="card"
+            onclick={() => (activeId = pb.id)}
+            role="button"
+            tabindex="0"
+            onkeydown={(e) => { if (e.key === 'Enter') activeId = pb.id; }}
+            style="padding:18px;display:flex;flex-direction:column;gap:12px;border-left:3px solid var(--task);cursor:pointer;max-height:260px;"
+          >
+            <div style="display:flex;flex-direction:column;gap:0;min-height:0;flex:1;">
+              <div style="display:flex;align-items:center;gap:9px;flex-shrink:0;">
+                <span style="color: var(--task); font-size:16px;">✓</span>
+                <span style="font-size:15.5px;font-weight:700;flex:1;color: var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{pb.name}</span>
+                <span class="mono tag" style="flex-shrink:0;">{stepCount(pb)} steps</span>
+              </div>
+              <div style="flex:1;overflow-y:auto;margin-top:8px;min-height:0;">
+                <p class="mono" style="font-size:11.5px;color: var(--text-muted);line-height:1.6;margin:0;white-space:pre-wrap;word-break:break-word;">{(pb.markdown ?? '').trim()}</p>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <span class="mono tag" style="color: var(--run); border-color: color-mix(in srgb, var(--run) 35%, var(--border));">{pb.status}</span>
+              {#if pb.workspace_profile && pb.workspace_profile !== 'global'}
+                <span class="mono tag" style="color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--bg));">{pb.workspace_profile}</span>
+              {:else}
+                <span class="mono tag">global</span>
               {/if}
             </div>
-            {#if expandedTasks.has(task.id)}
-              <div class="task-output">
-                {#if task.error}
-                  <pre class="task-error">{task.error}</pre>
-                {:else if task.output}
-                  <pre class="task-text">{task.output}</pre>
-                {/if}
+            <div style="display:flex;align-items:center;gap:10px;border-top:1px solid var(--border);padding-top:12px;">
+              <span class="mono" style="font-size:11px;color: var(--text-faint);">
+                {#if pb.started_at}last: {new Date(pb.started_at).toLocaleString()}{:else}never run{/if}
+              </span>
+              <div style="margin-left:auto;display:flex;gap:6px;">
+                <button class="btn ghost sm" onclick={(e) => { e.stopPropagation(); activeId = pb.id; }} title="edit">edit</button>
+                <button class="btn primary sm" onclick={(e) => { e.stopPropagation(); runPlaybook(pb); }}>▶ run</button>
+                <button class="btn ghost sm" onclick={(e) => { e.stopPropagation(); pendingDelete = pb; }} title="delete">×</button>
               </div>
-            {/if}
+            </div>
           </div>
         {/each}
       </div>
-
-      <div class="detail-actions">
-        {#if selected.status === 'running'}
-          <button class="btn btn-cancel" onclick={cancelPlaybook}>Cancel</button>
-        {:else if confirmingDelete}
-          <span class="confirm-label">Delete this playbook?</span>
-          <button class="btn btn-danger" onclick={deleteSelected}>Yes, delete</button>
-          <button class="btn" onclick={() => (confirmingDelete = false)}>No</button>
-        {:else}
-          <button
-            class="btn btn-run"
-            onclick={handleRunClick}
-          >
-            {selected.status === 'idle' ? 'Run' : 'Run Again'}
-          </button>
-          <button class="btn btn-danger" onclick={() => (confirmingDelete = true)}>Delete</button>
-        {/if}
-      </div>
     {/if}
   </div>
-</div>
+{:else}
+  <!-- ===== EDITOR ===== -->
+  <div class="pi-main-inner" style="padding: 22px 26px; max-width: 860px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+      <button class="btn ghost sm" onclick={() => (activeId = null)}>←</button>
+      <span style="color: var(--task);font-size:18px;">✓</span>
+      <h1 class="page-title" style="font-size:26px;">{active.name}</h1>
+      <span class="mono" style="font-size:11px;color: var(--text-faint);margin-left:8px;">{active.workspace_profile || 'global'}</span>
+      <div style="margin-left:auto;display:flex;gap:8px;">
+        <button class="btn ghost sm" onclick={() => (pendingDelete = active!)}>delete</button>
+        <button class="btn primary sm" onclick={() => runPlaybook(active!)}>▶ run</button>
+      </div>
+    </div>
+    <p style="color: var(--text-faint); font-size: 13px; margin: 0 0 22px;">
+      Write agent instructions as a markdown checklist. Each checked item becomes a task when the playbook runs.
+    </p>
 
-{#if showCreateModal}
-  <Modal onClose={() => (showCreateModal = false)}>
-    <div class="modal-body">
-      <h3 class="modal-title">New Playbook</h3>
-      <label class="form-label">
-        Name
-        <input
-          class="form-input"
-          type="text"
-          bind:value={newName}
-          placeholder="e.g. refactor-auth"
-        />
-      </label>
-      <label class="form-label">
-        Tasks (markdown checklist)
-        <textarea
-          class="form-textarea"
-          bind:value={markdownDraft}
-          rows="8"
-          placeholder="- [ ] First task&#10;- [ ] Second task"
-        ></textarea>
-      </label>
-      <label class="form-label">
-        Scope
-        <div class="scope-toggle">
-          <button
-            class="scope-btn {newScope === 'profile' ? 'active' : ''}"
-            onclick={() => (newScope = 'profile')}
-            disabled={!activeProfileName}
-          >
-            {activeProfileName || 'No profile active'}
-          </button>
-          <button
-            class="scope-btn {newScope === 'global' ? 'active' : ''}"
-            onclick={() => (newScope = 'global')}
-          >
-            Global (all profiles)
-          </button>
+    <div style="display:flex;flex-direction:column;gap:18px;">
+      <!-- instructions editor -->
+      <div class="card" style="padding:0;overflow:hidden;">
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);">
+          <span class="mono-head">» agent instructions</span>
+          <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+            <button class="btn sm primary" onclick={saveInstructions} disabled={saving}>
+              {saving ? 'saving…' : 'save'}
+            </button>
+          </div>
         </div>
-      </label>
-      <div class="modal-footer">
-        <button class="btn" onclick={() => (showCreateModal = false)}>Cancel</button>
-        <button
-          class="btn btn-primary"
-          onclick={createPlaybook}
-          disabled={isCreating || !newName.trim() || !markdownDraft.trim()}
-        >
-          {isCreating ? 'Creating…' : 'Create'}
-        </button>
+        <textarea
+          bind:value={editMarkdown}
+          rows="16"
+          class="mono"
+          placeholder="- [ ] Step one&#10;- [ ] Step two"
+          style="width:100%;resize:vertical;font-size:12.5px;padding:16px;border:none;background:var(--bg-sunken);color:var(--text);outline:none;line-height:1.65;box-sizing:border-box;display:block;"
+        ></textarea>
+      </div>
+
+      <!-- task run history -->
+      {#if active.tasks && active.tasks.length > 0}
+        <div class="card" style="padding:0;overflow:hidden;">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border);">
+            <span class="mono-head">» last run · {active.tasks.length} tasks</span>
+          </div>
+          <div style="display:flex;flex-direction:column;">
+            {#each active.tasks as t (t.id)}
+              <div style="padding:11px 16px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:10px;">
+                <span class="mono" style="font-size:11px;min-width:18px;color: var(--text-faint);">{t.index + 1}</span>
+                <span
+                  class="mono"
+                  style="font-size:10px;padding:2px 7px;border-radius:99px;background: color-mix(in srgb, {taskStatusColor[t.status] ?? 'var(--text-faint)'} 15%, var(--bg-elev));color:{taskStatusColor[t.status] ?? 'var(--text-faint)'};white-space:nowrap;"
+                >{t.status}</span>
+                <span style="font-size:13px;color:var(--text);flex:1;">{t.content}</span>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
+
+{#if pendingDelete}
+  <Modal onClose={() => (pendingDelete = null)}>
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <h3 style="font-size:15px;font-weight:600;color:var(--text);margin:0;">Delete playbook?</h3>
+      <p style="font-size:13px;color:var(--text-muted);margin:0;">
+        <strong style="color:var(--text);">{pendingDelete.name}</strong> will be permanently removed.
+      </p>
+      <div style="display:flex;justify-content:flex-end;gap:8px;">
+        <button class="btn ghost" onclick={() => (pendingDelete = null)}>cancel</button>
+        <button class="btn danger" onclick={confirmDelete}>delete</button>
       </div>
     </div>
   </Modal>
 {/if}
 
-{#if showProfilePicker}
-  <Modal onClose={() => (showProfilePicker = false)}>
-    <div class="profile-picker-modal">
-      <h3>Select a profile</h3>
-      <p class="picker-hint">This global playbook needs a profile context for credentials and vault access.</p>
-      <div class="picker-list">
-        {#each profiles as p (p.name)}
-          <button class="picker-item" onclick={() => runWithProfile(p.name)}>
-            <span class="picker-name">{p.name}</span>
-            <span class="picker-path">{p.workspace_home}</span>
-          </button>
-        {/each}
+{#if showCreate}
+  <Modal onClose={() => (showCreate = false)}>
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <h3 style="font-size:15px;font-weight:600;color:var(--text);margin:0;">New Playbook</h3>
+      <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--text-muted);">
+        Name
+        <input class="filter-input" type="text" bind:value={newName} placeholder="e.g. nightly-triage" style="padding:7px 10px;border:1px solid var(--border);border-radius:var(--r-md);background:var(--bg);color:var(--text);font-size:13px;" />
+      </label>
+      <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--text-muted);">
+        Instructions (markdown checklist)
+        <textarea
+          bind:value={newMarkdown}
+          rows="6"
+          style="padding:7px 10px;border:1px solid var(--border);border-radius:var(--r-md);background:var(--bg);color:var(--text);font-size:12px;font-family:var(--font-mono);resize:vertical;"
+        ></textarea>
+      </label>
+      <div style="display:flex;gap:6px;">
+        <button class="btn sm {newScope === 'profile' ? 'primary' : ''}" onclick={() => (newScope = 'profile')} disabled={!activeProfileName}>{activeProfileName || 'no profile'}</button>
+        <button class="btn sm {newScope === 'global' ? 'primary' : ''}" onclick={() => (newScope = 'global')}>global</button>
       </div>
-      <div class="picker-actions">
-        <button class="btn" onclick={() => (showProfilePicker = false)}>Cancel</button>
+      <div style="display:flex;justify-content:flex-end;gap:8px;">
+        <button class="btn ghost" onclick={() => (showCreate = false)}>cancel</button>
+        <button class="btn primary" onclick={createPlaybook} disabled={!newName.trim()}>create</button>
       </div>
     </div>
   </Modal>
 {/if}
 
 <style>
-  .panel {
-    display: flex;
-    height: 100%;
-    overflow: hidden;
-  }
-
-  /* Sidebar */
-  .sidebar {
-    width: 220px;
-    flex-shrink: 0;
-    border-right: 1px solid var(--color-border-primary);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .sidebar-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--color-border-primary);
-    flex-shrink: 0;
-  }
-
-  .sidebar-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--color-text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .icon-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--color-text-secondary);
-    font-size: 18px;
-    line-height: 1;
-    padding: 2px 4px;
-    border-radius: var(--radius-sm);
-  }
-  .icon-btn:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
-
-  .sidebar-empty {
-    padding: 24px 14px;
-    color: var(--color-text-muted);
-    font-size: 13px;
-  }
-
-  .playbook-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    overflow-y: auto;
-    flex: 1;
-  }
-
-  .playbook-item {
-    padding: 10px 14px;
-    cursor: pointer;
-    border-bottom: 1px solid var(--color-border-primary);
-  }
-  .playbook-item:hover { background: var(--color-surface-hover); }
-  .playbook-item.selected { background: var(--color-nav-active-bg); }
-
-  .playbook-item-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-  }
-
-  .playbook-name {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--color-text-primary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .playbook-status-badge {
-    font-size: 10px;
-    padding: 1px 5px;
-    border-radius: var(--radius-sm);
-    flex-shrink: 0;
-  }
-
-  .playbook-meta {
+  .pi-main-inner { max-width: 1280px; margin: 0 auto; }
+  .scope-chip {
     font-size: 11px;
-    color: var(--color-text-muted);
-    margin-top: 2px;
+    color: var(--text-faint);
+    border: 1px solid var(--border);
+    background: var(--bg-elev);
+    padding: 2px 9px;
+    border-radius: 99px;
+    text-transform: lowercase;
+    letter-spacing: .04em;
   }
-
-  .confirm-label {
-    font-size: 13px;
-    color: var(--color-text-secondary);
-    flex: 1;
-  }
-
-  /* Detail pane */
-  .detail {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .detail-header {
-    padding: 16px 20px 12px;
-    border-bottom: 1px solid var(--color-border-primary);
-    flex-shrink: 0;
-  }
-
-  .detail-title-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .detail-title {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--color-text-primary);
-    margin: 0;
-  }
-
-  .detail-status {
-    font-size: 11px;
-    padding: 2px 7px;
-    border-radius: var(--radius-sm);
-  }
-
-  .detail-profile {
-    font-size: 11px;
-    padding: 2px 7px;
-    border-radius: var(--radius-sm);
-    border: 1px solid transparent;
-  }
-
-  .detail-meta {
-    font-size: 12px;
-    color: var(--color-text-muted);
-    margin-top: 4px;
-  }
-
-  /* Task list */
-  .task-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .task-row {
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-md);
-    overflow: hidden;
-  }
-
-  .task-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    cursor: default;
-  }
-  .task-header:has(.task-expand) { cursor: pointer; }
-
-  .task-icon {
-    font-size: 14px;
-    flex-shrink: 0;
-    width: 16px;
-    text-align: center;
-  }
-
-  .task-content {
-    flex: 1;
-    font-size: 13px;
-    color: var(--color-text-primary);
-  }
-
-  .task-duration {
-    font-size: 11px;
-    color: var(--color-text-muted);
-    flex-shrink: 0;
-  }
-
-  .task-expand {
-    font-size: 10px;
-    color: var(--color-text-muted);
-    flex-shrink: 0;
-  }
-
-  .task-output {
-    border-top: 1px solid var(--color-border-primary);
-    padding: 10px 12px;
-    background: var(--color-bg-tertiary);
-    max-height: 200px;
-    overflow-y: auto;
-  }
-
-  .task-text, .task-error {
-    margin: 0;
-    font-size: 12px;
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-family: var(--font-mono, monospace);
-  }
-
-  .task-error { color: var(--color-error); }
-
-  /* Status colours */
-  .status-completed { background: color-mix(in srgb, var(--color-success) 15%, transparent); border-color: color-mix(in srgb, var(--color-success) 40%, transparent); color: var(--color-success); }
-  .status-running   { background: color-mix(in srgb, var(--color-info) 15%, transparent); border-color: color-mix(in srgb, var(--color-info) 40%, transparent); color: var(--color-info); }
-  .status-failed    { background: color-mix(in srgb, var(--color-error) 15%, transparent); border-color: color-mix(in srgb, var(--color-error) 40%, transparent); color: var(--color-error); }
-  .status-cancelled { background: color-mix(in srgb, var(--color-warning) 15%, transparent); border-color: color-mix(in srgb, var(--color-warning) 40%, transparent); color: var(--color-warning); }
-  .status-pending   { color: var(--color-text-muted); }
-
-  /* Detail pane status badge (inline, not as border) */
-  .detail-status.status-completed { background: color-mix(in srgb, var(--color-success) 20%, transparent); color: var(--color-success); }
-  .detail-status.status-running   { background: color-mix(in srgb, var(--color-info) 20%, transparent); color: var(--color-info); }
-  .detail-status.status-failed    { background: color-mix(in srgb, var(--color-error) 20%, transparent); color: var(--color-error); }
-  .detail-status.status-cancelled { background: color-mix(in srgb, var(--color-warning) 20%, transparent); color: var(--color-warning); }
-  .detail-status.status-idle      { background: var(--color-surface-hover); color: var(--color-text-muted); }
-
-  /* Actions */
-  .detail-actions {
-    padding: 12px 20px;
-    border-top: 1px solid var(--color-border-primary);
-    display: flex;
-    gap: 8px;
-    flex-shrink: 0;
-  }
-
-  .btn {
-    padding: 6px 14px;
-    border-radius: var(--radius-md);
-    font-size: 13px;
-    cursor: pointer;
-    border: 1px solid var(--color-border-secondary);
-    background: var(--color-bg-tertiary);
-    color: var(--color-text-primary);
-    font-family: inherit;
-  }
-  .btn:hover { background: var(--color-surface-active); }
-  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  .btn-primary { background: var(--color-accent); color: #18181b; border-color: var(--color-accent); }
-  .btn-primary:hover { opacity: 0.9; }
-
-  .btn-run { background: rgba(245, 158, 11, 0.12); color: var(--color-accent); border-color: rgba(245, 158, 11, 0.3); }
-  .btn-run:hover { background: rgba(245, 158, 11, 0.2); }
-
-  .btn-cancel { border-color: rgba(234, 179, 8, 0.3); color: var(--color-warning); background: rgba(234, 179, 8, 0.08); }
-  .btn-cancel:hover { background: rgba(234, 179, 8, 0.15); }
-  .btn-danger { border-color: rgba(239, 68, 68, 0.3); color: var(--color-error); background: rgba(239, 68, 68, 0.08); }
-  .btn-danger:hover { background: rgba(239, 68, 68, 0.15); }
-
-  /* Modal */
-  .modal-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--color-text-primary);
-    margin: 0 0 4px;
-  }
-
-  .modal-body {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-
-  .form-label {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    font-size: 13px;
-    color: var(--color-text-secondary);
-  }
-
-  .form-input {
-    padding: 7px 10px;
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    background: var(--color-bg-tertiary);
-    color: var(--color-text-primary);
-    font-size: 13px;
-    font-family: inherit;
-  }
-
-  .form-textarea {
-    padding: 7px 10px;
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    background: var(--color-bg-tertiary);
-    color: var(--color-text-primary);
-    font-size: 12px;
-    font-family: var(--font-mono, monospace);
-    resize: vertical;
-  }
-
-  .modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding-top: 8px;
-  }
-
-  .scope-toggle {
-    display: flex;
-    gap: 6px;
-  }
-
-  .scope-btn {
-    flex: 1;
-    padding: 6px 10px;
-    border-radius: var(--radius-md);
-    font-size: 12px;
-    cursor: pointer;
-    border: 1px solid var(--color-border-secondary);
-    background: var(--color-bg-tertiary);
-    color: var(--color-text-secondary);
-    text-align: center;
-    font-family: inherit;
-  }
-  .scope-btn.active {
-    border-color: rgba(245, 158, 11, 0.4);
-    color: var(--color-accent);
-    background: rgba(245, 158, 11, 0.1);
-  }
-  .scope-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  /* Profile picker modal */
-  .profile-picker-modal h3 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
-  .picker-hint { font-size: 12px; color: var(--color-text-tertiary); margin-bottom: 14px; }
-  .picker-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px; }
-  .picker-item {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 10px 14px; background: transparent; border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-md); text-align: left; transition: all 0.15s; width: 100%;
-  }
-  .picker-item:hover { background: var(--color-surface-hover); border-color: var(--color-accent); }
-  .picker-name { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
-  .picker-path { font-size: 11px; color: var(--color-text-tertiary); font-family: var(--font-mono); }
-  .picker-actions { display: flex; justify-content: flex-end; }
 </style>

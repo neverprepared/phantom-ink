@@ -108,9 +108,9 @@ from .playbooks import (
     delete_playbook,
     get_playbook,
     list_playbooks,
-    load_builtins as load_builtin_playbooks,
     on_event as playbook_on_event,
     run_playbook,
+    update_playbook,
 )
 from .worktrees import (
     attach_session as worktree_attach_session,
@@ -121,7 +121,7 @@ from .worktrees import (
     on_event as worktree_on_event,
 )
 from .models import ChannelParticipant
-from .models_api import OllamaChatRequest, OllamaPullRequest, CreatePlaybookRequest, CreateWorktreeRequest
+from .models_api import OllamaChatRequest, OllamaPullRequest, CreatePlaybookRequest, UpdatePlaybookRequest, CreateWorktreeRequest
 from .ollama import (
     OllamaError,
     chat as ollama_chat,
@@ -298,11 +298,6 @@ async def lifespan(app: FastAPI):
     setup_logging()
     await hub_init()
     load_or_create_key()
-
-    # Load built-in playbook templates
-    n = load_builtin_playbooks()
-    if n:
-        log.info("api.builtin_playbooks_loaded", metadata={"count": n})
 
     # Forward hub events to SSE
     on_event(
@@ -853,13 +848,22 @@ async def runners_register(request: Request, _key=Depends(require_api_key)):
     reg = get_registry()
     in_flight = int(body.get("in_flight") or 0)
     max_concurrent = int(body.get("max_concurrent") or 4)
+    host = (body.get("host") or "").strip() or None
+    machine_id = (body.get("machine_id") or "").strip() or None
+    # If a stable machine_id is provided and a runner with that ID already
+    # exists under a different name, remove the old entry so the rename is
+    # seamless rather than creating a duplicate.
+    if machine_id:
+        await reg.deregister_by_machine_id(machine_id, except_name=name)
     info = await reg.register(
         name=name,
         capabilities={k: bool(v) for k, v in caps.items()},
         tags=body.get("tags") or [],
         version=body.get("version") or "",
+        host=host,
         in_flight=in_flight,
         max_concurrent=max_concurrent,
+        machine_id=machine_id,
     )
     return {
         "ok": True,
@@ -941,13 +945,49 @@ async def runners_result(
     name: str, work_id: str, request: Request, _key=Depends(require_api_key)
 ):
     from .runners import get_registry
+    from .lifecycle import register_runner_session
+    from .models import SessionContext
 
     body = await request.json()
     reg = get_registry()
     if await reg.get(name) is None:
         raise HTTPException(status_code=404, detail="runner not registered")
-    if not await reg.fulfill(work_id, body):
-        raise HTTPException(status_code=404, detail="work item not found or already fulfilled")
+
+    fulfilled = await reg.fulfill(work_id, body)
+    if not fulfilled:
+        # Late result — the original future timed out while the API was
+        # unreachable, but the runner completed the work and is delivering
+        # it now. Register the session so it's not lost.
+        if body.get("ok") and isinstance(body.get("data"), dict):
+            try:
+                ctx = SessionContext(**body["data"])
+                register_runner_session(ctx)
+                log.info(
+                    "runners.late_result_accepted",
+                    metadata={"runner": name, "work_id": work_id, "session": ctx.session_name},
+                )
+            except Exception as exc:
+                log.warning(
+                    "runners.late_result_parse_failed",
+                    metadata={"runner": name, "work_id": work_id, "reason": str(exc)},
+                )
+    return {"ok": True}
+
+
+@app.post("/api/runners/{name}/event")
+async def runners_event(name: str, request: Request, _key=Depends(require_api_key)):
+    """Runner posts a status event (e.g. image pull progress) to be broadcast to SSE clients."""
+    body = await request.json()
+    message = (body.get("message") or "").strip()
+    session = (body.get("session") or "").strip() or None
+    if not message:
+        raise HTTPException(status_code=422, detail="message required")
+    _broadcast_sse(json.dumps({
+        "action": "runner.status",
+        "runner": name,
+        "session": session,
+        "message": message,
+    }))
     return {"ok": True}
 
 
@@ -1050,8 +1090,22 @@ async def api_get_session(name: str = Depends(validated_session_name)):
 async def api_stop_session(
     request: Request, body: StopSessionRequest, _key=Depends(require_api_key)
 ):
+    from .lifecycle import get_session, _dispatch_runner_op
     name = body.name
     session_name = _extract_session_name(name)
+
+    # Route to runner for remote sessions.
+    ctx = get_session(session_name)
+    if ctx and ctx.runner_name:
+        try:
+            await _dispatch_runner_op(session_name, "session.stop")
+            _audit_log(request, "session.stop", session_name=session_name, success=True)
+            _broadcast_sse(json.dumps({"action": "session.stop", "session": session_name}))
+            return {"success": True}
+        except Exception as exc:
+            _audit_log(request, "session.stop", session_name=session_name, success=False, error=str(exc))
+            raise HTTPException(status_code=500, detail=f"Runner stop failed: {exc}")
+
     try:
         await recycle(session_name, reason="dashboard_stop")
         _audit_log(request, "session.stop", session_name=session_name, success=True)
@@ -1106,8 +1160,22 @@ async def api_stop_session(
 async def api_delete_session(
     request: Request, body: DeleteSessionRequest, _key=Depends(require_api_key)
 ):
+    from .lifecycle import get_session, _dispatch_runner_op
     name = body.name
     session_name = _extract_session_name(name)
+
+    # Route to runner for remote sessions.
+    ctx = get_session(session_name)
+    if ctx and ctx.runner_name:
+        try:
+            await _dispatch_runner_op(session_name, "session.delete")
+            _audit_log(request, "session.delete", session_name=session_name, success=True)
+            _broadcast_sse(json.dumps({"action": "session.delete", "session": session_name}))
+            return {"success": True}
+        except Exception as exc:
+            _audit_log(request, "session.delete", session_name=session_name, success=False, error=str(exc))
+            raise HTTPException(status_code=500, detail=f"Runner delete failed: {exc}")
+
     try:
         await recycle(session_name, reason="dashboard_delete")
         _audit_log(request, "session.delete", session_name=session_name, success=True)
@@ -1399,10 +1467,13 @@ async def api_create_session(
                 "url": None,
             }
         else:
+            # Use the runner's advertised host if the session was provisioned
+            # on a remote runner — ttyd is bound to 0.0.0.0 on that machine.
+            ttyd_host = ctx.runner_host or "localhost"
             return {
                 "success": True,
                 "backend": "docker",
-                "url": f"http://localhost:{ctx.port}",
+                "url": f"http://{ttyd_host}:{ctx.port}",
             }
     except RuntimeError as exc:
         _audit_log(request, "session.create", session_name=body.name, success=False, error=str(exc))
@@ -1431,6 +1502,8 @@ async def api_exec_session(
     _key=Depends(require_api_key),
 ):
     """Execute a command inside a running container."""
+    from .lifecycle import get_session, _dispatch_runner_op
+
     # Sanitize command input
     if not body.command or not body.command.strip():
         raise HTTPException(status_code=400, detail="Command cannot be empty")
@@ -1438,6 +1511,17 @@ async def api_exec_session(
         raise HTTPException(status_code=400, detail="Command cannot contain null bytes")
     if len(body.command) > 10_000:
         raise HTTPException(status_code=400, detail="Command too long (max 10000 chars)")
+
+    # Route to runner for remote sessions.
+    ctx = get_session(name)
+    if ctx and ctx.runner_name:
+        try:
+            data = await _dispatch_runner_op(name, "session.exec", {"command": body.command})
+            _audit_log(request, "session.exec", session_name=name, success=data.get("success", True))
+            return data
+        except Exception as exc:
+            _audit_log(request, "session.exec", session_name=name, success=False, error=str(exc))
+            raise HTTPException(status_code=500, detail=f"Runner exec failed: {exc}")
 
     client = _docker()
     try:
@@ -1505,6 +1589,23 @@ async def api_query_session(
     _key=Depends(require_api_key),
 ):
     """Send a prompt to Claude Code running in the container via tmux."""
+    from .lifecycle import get_session, _dispatch_runner_op
+
+    ctx = get_session(name)
+    if ctx and ctx.runner_name:
+        try:
+            data = await _dispatch_runner_op(
+                name,
+                "session.query",
+                {"prompt": body.prompt, "timeout": body.timeout, "working_dir": body.working_dir},
+                timeout=float(body.timeout) + 10,
+            )
+            _audit_log(request, "session.query", session_name=name, success=True)
+            return data
+        except Exception as exc:
+            _audit_log(request, "session.query", session_name=name, success=False, error=str(exc))
+            raise HTTPException(status_code=500, detail=f"Runner query failed: {exc}")
+
     return await _query_via_tmux(request, name, body)
 
 
@@ -2835,7 +2936,7 @@ def _broadcast_to_playbook(playbook_id: str, data: str) -> None:
 
 @app.post("/api/hub/playbooks")
 async def hub_create_playbook(body: CreatePlaybookRequest, _key=Depends(require_api_key)):
-    pb = create_playbook(name=body.name, markdown=body.markdown, workspace_profile=body.workspace_profile)
+    pb = create_playbook(name=body.name, markdown=body.markdown, workspace_profile=body.workspace_profile, runner=body.runner)
     return pb.model_dump()
 
 
@@ -2852,6 +2953,17 @@ async def hub_get_playbook(playbook_id: str, _key=Depends(require_api_key)):
     return pb.model_dump()
 
 
+@app.patch("/api/hub/playbooks/{playbook_id}")
+async def hub_update_playbook(playbook_id: str, body: UpdatePlaybookRequest, _key=Depends(require_api_key)):
+    try:
+        from .playbooks import _UNSET as _PB_UNSET
+        runner_arg = body.runner if body.model_fields_set and "runner" in body.model_fields_set else _PB_UNSET
+        pb = update_playbook(playbook_id, name=body.name, markdown=body.markdown, runner=runner_arg)
+        return pb.model_dump()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.delete("/api/hub/playbooks/{playbook_id}")
 async def hub_delete_playbook(playbook_id: str, _key=Depends(require_api_key)):
     try:
@@ -2866,12 +2978,15 @@ async def hub_delete_playbook(playbook_id: str, _key=Depends(require_api_key)):
 async def hub_run_playbook(playbook_id: str, request: Request, _key=Depends(require_api_key)):
     try:
         profile = None
+        runner = None
         try:
             body = await request.json()
-            profile = body.get("workspace_profile") if isinstance(body, dict) else None
+            if isinstance(body, dict):
+                profile = body.get("workspace_profile")
+                runner = body.get("runner")
         except Exception:
             pass
-        pb = await run_playbook(playbook_id, workspace_profile=profile)
+        pb = await run_playbook(playbook_id, workspace_profile=profile, runner=runner)
         return pb.model_dump()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

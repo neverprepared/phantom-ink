@@ -234,6 +234,34 @@
     btn.setAttribute('aria-label', 'Remove widget');
     btn.addEventListener('click', (e) => { e.stopPropagation(); handleRemoveWidget(w.id); });
     itemEl.appendChild(btn);
+
+    // Inject grip into the widget header if one exists, otherwise overlay top-left.
+    // Uses the verbatim `drag` glyph from icons.jsx (2 cols × 3 rows, cx=9/15, cy=6/12/18).
+    const dragSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+      <circle cx="9" cy="6" r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="9" cy="18" r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="15" cy="6" r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="15" cy="12" r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="15" cy="18" r="1.4" fill="currentColor" stroke="none"/>
+    </svg>`;
+
+    const header = contentEl.querySelector('.widget-header');
+    if (header) {
+      // Header widget: prepend grip span as first child of the header row
+      const grip = document.createElement('span');
+      grip.className = 'widget-grip widget-drag-handle';
+      grip.setAttribute('aria-hidden', 'true');
+      grip.innerHTML = dragSvg;
+      header.prepend(grip);
+    } else {
+      // Drag-strip widget: overlay grip at top-left of the card
+      const grip = document.createElement('div');
+      grip.className = 'widget-grip widget-grip-overlay widget-drag-handle';
+      grip.setAttribute('aria-hidden', 'true');
+      grip.innerHTML = dragSvg;
+      itemEl.appendChild(grip);
+    }
   }
 
   async function saveLayout(): Promise<void> {
@@ -529,26 +557,26 @@
   .brand {
     display: flex;
     align-items: center;
-    gap: var(--spacing-sm);
+    gap: 14px;
   }
 
   .os-badge {
     font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--color-accent);
-    border: 1px solid var(--color-accent);
-    border-radius: var(--radius-sm);
-    padding: 1px 6px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent, var(--color-accent));
+    border: 1.5px solid var(--accent, var(--color-accent));
+    border-radius: 6px;
+    padding: 3px 7px;
     letter-spacing: 0.05em;
   }
 
   .brand-name {
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: 22px;
     font-weight: 600;
-    letter-spacing: 0.12em;
-    color: var(--color-text-primary);
+    letter-spacing: 0.04em;
+    color: var(--text, var(--color-text-primary));
   }
 
   .refreshing {
@@ -619,7 +647,7 @@
   :global(.grid-stack-item-content) {
     background: var(--bg-elev, var(--color-bg-secondary));
     border: 1px solid var(--border, var(--color-border-secondary));
-    border-radius: var(--r-md, var(--radius-md));
+    border-radius: var(--r-lg, var(--radius-lg));
     overflow: hidden;
     box-shadow: var(--shadow-sm, var(--shadow-card));
   }
@@ -659,6 +687,31 @@
     background: var(--color-error);
     border-color: var(--color-error);
     color: #fff;
+  }
+
+  /* Grip handle — header variant (flows inside .widget-header as first child) */
+  :global(.widget-grip) {
+    display: none;
+    align-items: center;
+    color: var(--text-faint);
+    cursor: grab;
+    flex-shrink: 0;
+    margin-right: 2px;
+    margin-left: -2px;
+    transition: color 120ms ease;
+    user-select: none;
+  }
+  :global(.widget-grip:active) { cursor: grabbing; }
+  :global(.widget-grip:hover) { color: var(--text-muted); }
+  .grid-wrap.arrange :global(.widget-grip) { display: flex; }
+
+  /* Grip handle — overlay variant (drag-strip widgets, no visible header) */
+  :global(.widget-grip-overlay) {
+    position: absolute;
+    top: 7px;
+    left: 7px;
+    z-index: 20;
+    margin: 0;
   }
 
   :global(.grid-stack) { background: transparent; }

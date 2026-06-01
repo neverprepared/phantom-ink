@@ -1,5 +1,6 @@
 <script lang="ts">
   import { dashboardDataStore, profileState } from '../stores.svelte';
+  import Icon from '../components/Icon.svelte';
 
   const BUCKETS = [
     { id: 'today',   label: 'Today',     color: 'var(--task)' },
@@ -73,6 +74,7 @@
 
 <div class="cal-widget">
   <div class="widget-header">
+    <Icon name="calendar" size={15} style="color: var(--text-muted); flex-shrink: 0;" />
     <span class="widget-title">» CALENDAR</span>
   </div>
 
@@ -132,6 +134,7 @@
   .widget-header {
     display: flex;
     align-items: center;
+    gap: 6px;
     padding: 12px 14px 10px;
     border-bottom: 1px solid var(--border, var(--color-border-primary));
   }

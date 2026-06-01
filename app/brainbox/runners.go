@@ -38,15 +38,19 @@ func (c *Client) DeleteRunner(name string) error {
 	return c.do("DELETE", "/api/runners/"+url.PathEscape(name), nil, nil)
 }
 
-// StartRunnerPairing issues a one-time pairing token. The caller's apiURL is
-// echoed back so the runner knows where to claim. ttlSeconds <= 0 uses the
-// server default (300).
-func (c *Client) StartRunnerPairing(runnerNameSuggestion string, ttlSeconds int) (PairingTicket, error) {
+// StartRunnerPairing issues a one-time pairing token. networkAPIURL is the
+// URL the remote runner should use to reach the API (e.g. http://192.168.1.42:9999).
+// If empty, the client's own baseURL is used (fine for same-host setups).
+// ttlSeconds <= 0 uses the server default (300).
+func (c *Client) StartRunnerPairing(runnerNameSuggestion string, ttlSeconds int, networkAPIURL string) (PairingTicket, error) {
 	baseURL, apiKey := c.snapshot()
+	if networkAPIURL == "" {
+		networkAPIURL = baseURL
+	}
 	body := map[string]interface{}{
-		"api_url":                  baseURL,
-		"api_key":                  apiKey,
-		"runner_name_suggestion":   runnerNameSuggestion,
+		"api_url":                networkAPIURL,
+		"api_key":                apiKey,
+		"runner_name_suggestion": runnerNameSuggestion,
 	}
 	if ttlSeconds > 0 {
 		body["ttl"] = ttlSeconds

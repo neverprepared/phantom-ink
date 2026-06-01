@@ -480,7 +480,7 @@
 
   .status-dot {
     width: 8px; height: 8px; border-radius: 50%;
-    background: #374151; flex-shrink: 0;
+    background: var(--text-faint, var(--color-text-tertiary)); flex-shrink: 0;
   }
   .status-dot.running {
     background: var(--color-success);

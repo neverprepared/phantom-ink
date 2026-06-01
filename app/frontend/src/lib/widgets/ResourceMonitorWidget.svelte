@@ -1,5 +1,6 @@
 <script lang="ts">
   import { dashboardDataStore } from '../stores.svelte';
+  import Icon from '../components/Icon.svelte';
 
   let data = $derived(dashboardDataStore.value);
   let dockerStats  = $derived(data?.dockerStats ?? []);
@@ -30,6 +31,7 @@
 
 <div class="widget">
   <div class="widget-header widget-drag-handle">
+    <Icon name="server" size={15} style="color: var(--text-muted); flex-shrink: 0;" />
     <span class="widget-title">» RESOURCE USAGE</span>
     <span class="res-summary">
       {totalCPU.toFixed(1)}% cpu · {fmtMem(totalMem)} mem

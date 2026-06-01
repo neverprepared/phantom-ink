@@ -97,6 +97,8 @@ export function GetDockerStats():Promise<Array<main.ContainerStat>>;
 
 export function GetHubState():Promise<brainbox.HubState>;
 
+export function GetLANIP():Promise<string>;
+
 export function GetLangfuseHealth():Promise<brainbox.HealthStatus>;
 
 export function GetLatestCollectedEntry(arg1:string,arg2:string):Promise<main.CollectedEntry>;
@@ -237,7 +239,7 @@ export function SetServiceConfig(arg1:string,arg2:boolean,arg3:string,arg4:strin
 
 export function SetTheme(arg1:string):Promise<void>;
 
-export function StartRunnerPairing(arg1:string,arg2:number):Promise<brainbox.PairingTicket>;
+export function StartRunnerPairing(arg1:string,arg2:number,arg3:string):Promise<brainbox.PairingTicket>;
 
 export function StartService(arg1:string):Promise<void>;
 
@@ -250,6 +252,8 @@ export function StopSession(arg1:string):Promise<brainbox.SessionActionResponse>
 export function SubmitTask(arg1:brainbox.SubmitTaskRequest):Promise<brainbox.Task>;
 
 export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promise<brainbox.AgentDefinition>;
+
+export function UpdatePlaybook(arg1:string,arg2:brainbox.UpdatePlaybookRequest):Promise<brainbox.Playbook>;
 
 export function UpdateRepo(arg1:string,arg2:brainbox.UpdateRepoRequest):Promise<brainbox.Repo>;
 

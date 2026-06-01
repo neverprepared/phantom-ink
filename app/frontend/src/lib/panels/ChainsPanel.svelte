@@ -3,6 +3,7 @@
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
   import { panelFocus, profileState } from '../stores.svelte';
+  import Modal from '../components/Modal.svelte';
 
   interface UsableAgent {
     id: string;
@@ -34,42 +35,77 @@
     files: string[];
     created_at: string;
     updated_at: string;
+    workspace_profile?: string;
   }
 
-  interface ChainRunEvent {
-    run_id: string;
-    chain_id: string;
-    phase: 'run:start' | 'step:start' | 'step:output' | 'step:done' | 'run:done';
-    step_index: number;
-    agent_id: string;
-    output: string;
-    stderr: string;
-    exit_code: number;
-    error: string;
-    status: string;
-    at: string;
+  type NodeType = 'trigger' | 'agent' | 'tool' | 'playbook';
+  interface CanvasNode {
+    id: string;
+    type: NodeType;
+    x: number;
+    y: number;
+    title: string;
+    sub: string;
+    ref?: string;
+    state: 'idle' | 'run' | 'done';
+    stepIdx?: number; // index into chain.steps when type === 'agent'
+  }
+  interface CanvasEdge {
+    from: string;
+    to: string;
+    label: string;
+    on?: boolean;
   }
 
+  const NODE_META: Record<NodeType, { color: string; label: string }> = {
+    trigger:  { color: 'var(--accent)', label: 'trigger' },
+    agent:    { color: 'var(--run)',    label: 'agent' },
+    tool:     { color: 'var(--sched)',  label: 'tool' },
+    playbook: { color: 'var(--task)',   label: 'playbook' },
+  };
+  const NW = 200;
+  const NH = 72;
+
+  function edgePath(a: CanvasNode, b: CanvasNode) {
+    const x1 = a.x + NW, y1 = a.y + NH / 2, x2 = b.x, y2 = b.y + NH / 2;
+    const dx = Math.max(40, Math.abs(x2 - x1) * 0.5);
+    return {
+      d: `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`,
+      mx: (x1 + x2) / 2,
+      my: (y1 + y2) / 2,
+    };
+  }
+
+  // ----- shared state -----
   let chains = $state<Chain[]>([]);
   let chainable = $state<UsableAgent[]>([]);
   let loading = $state(true);
-
-  // Recent task outcomes per chain — shown as colored dots on each card so
-  // users can see "is this chain healthy?" at a glance without opening Tasks.
   let recentByChain = $state<Map<string, { status: string }[]>>(new Map());
+  let activeId = $state<string | null>(null);
+  let pendingDelete = $state<Chain | null>(null);
+  let query = $state('');
 
-  // Editor state
-  let editing = $state<Chain | null>(null);
-  let editorOpen = $state(false);
+  // search/filter
+  const filteredChains = $derived(
+    (() => {
+      const q = query.trim().toLowerCase();
+      if (!q) return chains;
+      return chains.filter((c) =>
+        (c.name + ' ' + (c.description ?? '') + ' ' + c.steps.map((s) => s.agent_id).join(' '))
+          .toLowerCase()
+          .includes(q),
+      );
+    })(),
+  );
 
-  // Runner state
-  let runnerOpen = $state(false);
-  let runningChain = $state<Chain | null>(null);
-  let runInput = $state('');
-  let runCwd = $state('');
-  let runEvents = $state<ChainRunEvent[]>([]);
-  let runActive = $state(false);
-  let unsubscribe: (() => void) | null = null;
+  const activeChain = $derived(activeId ? chains.find((c) => c.id === activeId) ?? null : null);
+
+  // scope label
+  const scopeLabel = $derived(profileState.active?.name ?? 'all');
+
+  function agentLabel(id: string): string {
+    return chainable.find((a) => a.id === id)?.label ?? id;
+  }
 
   async function load() {
     loading = true;
@@ -83,9 +119,6 @@
       ]);
       chains = (c ?? []) as Chain[];
       chainable = ((usable ?? []) as any[]).filter((u: any) => u.invocation?.prompt_mode);
-
-      // Bucket last 5 tasks per chain — ListTasks returns newest first, so
-      // taking the first 5 per chain gives the freshest outcomes.
       const next = new Map<string, { status: string }[]>();
       for (const t of (tasks ?? []) as any[]) {
         if (!t.chain_id) continue;
@@ -103,951 +136,562 @@
     }
   }
 
-  let highlightedChainID = $state<string>('');
-
   onMount(async () => {
     await load();
-    // If we got here via panelFocus.focusChain(), highlight that chain card.
     const id = panelFocus.consumeChainFocus();
     if (id) {
-      highlightedChainID = id;
-      await tick();
-      document.getElementById(`chain-card-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      // Fade highlight after a moment so it doesn't linger.
-      setTimeout(() => { if (highlightedChainID === id) highlightedChainID = ''; }, 2500);
+      activeId = id;
     }
   });
-  onDestroy(() => unsubscribe?.());
 
-  // ---------- Schedules ----------
-  interface Schedule {
-    id: string;
-    chain_id: string;
-    cron_expr: string;
-    input: string;
-    cwd: string;
-    enabled: boolean;
-    workspace_profile: string;
-    created_at: string;
-    updated_at: string;
-    last_fired_at: string;
-    next_fire_at: string;
-  }
-
-  let openSchedulesFor = $state<string | null>(null);
-  let schedulesByChain = $state<Map<string, Schedule[]>>(new Map());
-  let newCron = $state('*/15 * * * *');
-  let newSchedInput = $state('');
-
-  async function toggleSchedules(chainID: string) {
-    if (openSchedulesFor === chainID) {
-      openSchedulesFor = null;
-      return;
-    }
-    openSchedulesFor = chainID;
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const list = (await a.ListSchedules(chainID)) ?? [];
-      const next = new Map(schedulesByChain);
-      next.set(chainID, list);
-      schedulesByChain = next;
-    } catch (err: any) {
-      notifications.error(`Load schedules failed: ${err?.message ?? err}`);
-    }
-  }
-
-  async function addSchedule(chainID: string) {
-    if (!newCron.trim()) return;
-    const a = await getApi();
-    if (!a) return;
-    try {
-      await a.SaveSchedule({
-        id: '', chain_id: chainID, cron_expr: newCron.trim(),
-        input: newSchedInput, cwd: '', enabled: true,
-        workspace_profile: '', // backend snapshots active profile
-        created_at: '', updated_at: '', last_fired_at: '', next_fire_at: '',
+  // ----- gallery helpers: derive canvas-style nodes/edges from a chain -----
+  function nodesFromChain(c: Chain): { nodes: CanvasNode[]; edges: CanvasEdge[] } {
+    const positions = loadPositions(c.id);
+    const nodes: CanvasNode[] = [];
+    // trigger virtual node
+    nodes.push({
+      id: `t-${c.id}`,
+      type: 'trigger',
+      x: positions[`t-${c.id}`]?.x ?? 0,
+      y: positions[`t-${c.id}`]?.y ?? 0,
+      title: 'manual',
+      sub: 'trigger',
+      state: 'idle',
+    });
+    c.steps.forEach((s, i) => {
+      const nid = `s-${c.id}-${i}`;
+      nodes.push({
+        id: nid,
+        type: 'agent',
+        x: positions[nid]?.x ?? (i + 1) * 240,
+        y: positions[nid]?.y ?? 0,
+        title: agentLabel(s.agent_id),
+        sub: s.prompt_template?.slice(0, 40) ?? '',
+        state: 'idle',
+        stepIdx: i,
       });
-      notifications.success('Schedule added');
-      newCron = '*/15 * * * *';
-      newSchedInput = '';
-      const list = (await a.ListSchedules(chainID)) ?? [];
-      const next = new Map(schedulesByChain);
-      next.set(chainID, list);
-      schedulesByChain = next;
-    } catch (err: any) {
-      notifications.error(`Save failed: ${err?.message ?? err}`);
+    });
+    const edges: CanvasEdge[] = [];
+    for (let i = 0; i < nodes.length - 1; i++) {
+      edges.push({ from: nodes[i].id, to: nodes[i + 1].id, label: '' });
     }
+    return { nodes, edges };
   }
 
-  async function toggleScheduleEnabled(chainID: string, s: Schedule) {
+  function loadPositions(chainId: string): Record<string, { x: number; y: number }> {
+    try {
+      const raw = localStorage.getItem(`chain-pos-${chainId}`);
+      if (!raw) return {};
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+  function savePositions(chainId: string, nodes: CanvasNode[]) {
+    const out: Record<string, { x: number; y: number }> = {};
+    for (const n of nodes) out[n.id] = { x: n.x, y: n.y };
+    try { localStorage.setItem(`chain-pos-${chainId}`, JSON.stringify(out)); } catch {}
+  }
+
+  async function newChain() {
     const a = await getApi();
     if (!a) return;
-    try {
-      await a.SaveSchedule({ ...s, enabled: !s.enabled });
-      const list = (await a.ListSchedules(chainID)) ?? [];
-      const next = new Map(schedulesByChain);
-      next.set(chainID, list);
-      schedulesByChain = next;
-    } catch (err: any) {
-      notifications.error(`Toggle failed: ${err?.message ?? err}`);
+    if (chainable.length === 0) {
+      notifications.error('No usable agents — enable one to build a chain');
+      return;
     }
-  }
-
-  async function removeSchedule(chainID: string, s: Schedule) {
-    if (!confirm(`Delete schedule "${s.cron_expr}"?`)) return;
-    const a = await getApi();
-    if (!a) return;
-    try {
-      await a.DeleteSchedule(s.id);
-      const list = (await a.ListSchedules(chainID)) ?? [];
-      const next = new Map(schedulesByChain);
-      next.set(chainID, list);
-      schedulesByChain = next;
-    } catch (err: any) {
-      notifications.error(`Delete failed: ${err?.message ?? err}`);
-    }
-  }
-
-  function newChain() {
-    editing = {
-      id: '', name: '', description: '',
-      steps: [{ agent_id: chainable[0]?.id ?? '', prompt_template: '{{input}}', cwd: '' }],
-      cwd: '', on_success: [], files: [],
-      created_at: '', updated_at: '',
+    const draft: Chain = {
+      id: '', name: 'new-chain', description: '',
+      steps: [{ agent_id: chainable[0].id, prompt_template: '{{input}}', cwd: '' }],
+      cwd: '', on_success: [], files: [], created_at: '', updated_at: '',
     };
-    editorOpen = true;
-  }
-
-  async function pickFiles() {
-    if (!editing) return;
-    const a = await getApi();
-    if (!a) return;
     try {
-      const picked = (await a.BrowseProfileFiles('')) ?? [];
-      if (picked.length === 0) return;
-      const existing = new Set(editing.files ?? []);
-      for (const p of picked) existing.add(p);
-      editing.files = Array.from(existing).sort();
-    } catch (err: any) {
-      notifications.error(`Browse failed: ${err?.message ?? err}`);
-    }
-  }
-
-  function removeFile(path: string) {
-    if (!editing) return;
-    editing.files = (editing.files ?? []).filter(p => p !== path);
-  }
-
-  function addFollowup() {
-    if (!editing) return;
-    const firstOther = chains.find(c => c.id !== editing!.id);
-    editing.on_success = [
-      ...(editing.on_success ?? []),
-      { chain_id: firstOther?.id ?? '', input_from: 'stdout', input_literal: '', cwd: '' },
-    ];
-  }
-
-  function removeFollowup(i: number) {
-    if (!editing) return;
-    editing.on_success = (editing.on_success ?? []).filter((_, idx) => idx !== i);
-  }
-
-  function editChain(c: Chain) {
-    editing = JSON.parse(JSON.stringify(c));
-    editorOpen = true;
-  }
-
-  function addStep() {
-    if (!editing) return;
-    editing.steps = [
-      ...editing.steps,
-      { agent_id: chainable[0]?.id ?? '', prompt_template: '{{prev.output}}', cwd: '' },
-    ];
-  }
-
-  function removeStep(i: number) {
-    if (!editing) return;
-    editing.steps = editing.steps.filter((_, idx) => idx !== i);
-  }
-
-  function moveStep(i: number, delta: number) {
-    if (!editing) return;
-    const j = i + delta;
-    if (j < 0 || j >= editing.steps.length) return;
-    const next = [...editing.steps];
-    [next[i], next[j]] = [next[j], next[i]];
-    editing.steps = next;
-  }
-
-  async function saveChain() {
-    if (!editing) return;
-    if (!editing.name.trim()) {
-      notifications.error('Chain name is required');
-      return;
-    }
-    if (editing.steps.length === 0) {
-      notifications.error('Add at least one step');
-      return;
-    }
-    const a = await getApi();
-    if (!a) return;
-    try {
-      await a.SaveChain(editing);
-      notifications.success('Chain saved');
-      editorOpen = false;
-      editing = null;
+      await a.SaveChain(draft);
+      notifications.success('Chain created');
       await load();
     } catch (err: any) {
-      notifications.error(`Save failed: ${err?.message ?? err}`);
+      notifications.error(`Create failed: ${err?.message ?? err}`);
     }
   }
 
-  async function enqueueTask(c: Chain) {
-    const input = prompt(`Initial input for "${c.name}" task:`, '');
-    if (input === null) return;
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const id = await a.EnqueueTask({
-        chain_id: c.id,
-        input,
-        cwd: c.cwd ?? '',
-        priority: 0,
-        max_attempts: 1,
-        trigger: 'manual',
-      });
-      notifications.success(`Queued ${id} — see Tasks panel`);
-    } catch (err: any) {
-      notifications.error(`Queue failed: ${err?.message ?? err}`);
-    }
-  }
-
-  async function deleteChain(c: Chain) {
-    if (!confirm(`Delete chain "${c.name}"?`)) return;
+  async function confirmDeleteChain() {
+    const c = pendingDelete;
+    if (!c) return;
+    pendingDelete = null;
     const a = await getApi();
     if (!a) return;
     try {
       await a.DeleteChain(c.id);
-      notifications.success('Chain deleted');
+      notifications.success(`deleted · ${c.name}`);
+      if (activeId === c.id) activeId = null;
       await load();
     } catch (err: any) {
       notifications.error(`Delete failed: ${err?.message ?? err}`);
     }
   }
 
-  function openRunner(c: Chain) {
-    runningChain = c;
-    runInput = '';
-    runCwd = c.cwd ?? '';
-    runEvents = [];
-    runActive = false;
-    runnerOpen = true;
-  }
+  // ============== CANVAS VIEW ==============
+  let canvasNodes = $state<CanvasNode[]>([]);
+  let canvasEdges = $state<CanvasEdge[]>([]);
+  let panX = $state(30);
+  let panY = $state(10);
+  let zoom = $state(1);
+  let sel = $state<string | null>(null);
+  let running = $state(false);
+  let addOpen = $state(false);
 
-  function subscribeRunEvents(runID: string) {
-    unsubscribe?.();
-    const rt = (window as any).runtime;
-    if (!rt?.EventsOn) return;
-    const handler = (ev: ChainRunEvent) => {
-      if (ev.run_id !== runID) return;
-      runEvents = [...runEvents, ev];
-      if (ev.phase === 'run:done') {
-        runActive = false;
-        if (ev.status === 'success') notifications.success('Chain finished');
-        else if (ev.status === 'failed') notifications.error(`Chain failed: ${ev.error}`);
-      }
+  // drag-to-connect temp
+  let connecting = $state<{ from: string; x1: number; y1: number; x2: number; y2: number } | null>(null);
+
+  let canvasEl: HTMLDivElement | null = $state(null);
+
+  // when activeChain changes, hydrate canvas state
+  let lastHydratedId: string | null = null;
+  $effect(() => {
+    const c = activeChain;
+    if (!c) {
+      lastHydratedId = null;
+      return;
+    }
+    if (lastHydratedId === c.id) return;
+    lastHydratedId = c.id;
+    const { nodes, edges } = nodesFromChain(c);
+    canvasNodes = nodes;
+    canvasEdges = edges;
+    panX = 30; panY = 10; zoom = 1; sel = null;
+    running = false;
+  });
+
+  function onCanvasMouseDown(e: MouseEvent) {
+    const t = e.target as HTMLElement;
+    if (t.closest('.chain-node, .chain-toolbar, .chain-add, .chain-mini, .chain-handle')) return;
+    sel = null;
+    const sx = e.clientX, sy = e.clientY;
+    const ox = panX, oy = panY;
+    const move = (ev: MouseEvent) => { panX = ox + ev.clientX - sx; panY = oy + ev.clientY - sy; };
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
     };
-    rt.EventsOn('chain:run:event', handler);
-    unsubscribe = () => rt.EventsOff?.('chain:run:event');
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
   }
 
-  async function runChain() {
-    if (!runningChain) return;
-    runEvents = [];
-    runActive = true;
+  function onNodeMouseDown(e: MouseEvent, id: string) {
+    e.stopPropagation();
+    sel = id;
+    const n = canvasNodes.find((m) => m.id === id);
+    if (!n) return;
+    const sx = e.clientX, sy = e.clientY;
+    const ox = n.x, oy = n.y;
+    const move = (ev: MouseEvent) => {
+      const nx = ox + (ev.clientX - sx) / zoom;
+      const ny = oy + (ev.clientY - sy) / zoom;
+      canvasNodes = canvasNodes.map((m) => (m.id === id ? { ...m, x: nx, y: ny } : m));
+    };
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      if (activeChain) savePositions(activeChain.id, canvasNodes);
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  }
+
+  function worldPoint(clientX: number, clientY: number): { x: number; y: number } {
+    if (!canvasEl) return { x: 0, y: 0 };
+    const r = canvasEl.getBoundingClientRect();
+    return { x: (clientX - r.left - panX) / zoom, y: (clientY - r.top - panY) / zoom };
+  }
+
+  function onOutputHandleDown(e: MouseEvent, nodeId: string) {
+    e.stopPropagation();
+    e.preventDefault();
+    const n = canvasNodes.find((m) => m.id === nodeId);
+    if (!n) return;
+    const start = { x: n.x + NW, y: n.y + NH / 2 };
+    const cur = worldPoint(e.clientX, e.clientY);
+    connecting = { from: nodeId, x1: start.x, y1: start.y, x2: cur.x, y2: cur.y };
+    const move = (ev: MouseEvent) => {
+      const p = worldPoint(ev.clientX, ev.clientY);
+      if (connecting) connecting = { ...connecting, x2: p.x, y2: p.y };
+    };
+    const up = (ev: MouseEvent) => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      // hit-test input handles
+      const tgt = (ev.target as HTMLElement)?.closest('.chain-handle-in') as HTMLElement | null;
+      if (tgt && tgt.dataset.nodeId && tgt.dataset.nodeId !== nodeId) {
+        const toId = tgt.dataset.nodeId;
+        if (!canvasEdges.find((ed) => ed.from === nodeId && ed.to === toId)) {
+          canvasEdges = [...canvasEdges, { from: nodeId, to: toId, label: '' }];
+        }
+      }
+      connecting = null;
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  }
+
+  function addNode(type: NodeType, ref?: string, title?: string, sub?: string) {
+    const id = 'n' + Date.now();
+    const cx = (-panX + 380) / zoom;
+    const cy = (-panY + 230) / zoom;
+    canvasNodes = [
+      ...canvasNodes,
+      { id, type, x: cx, y: cy, title: title || NODE_META[type].label, sub: sub || '', ref, state: 'idle' },
+    ];
+    addOpen = false;
+    if (activeChain) savePositions(activeChain.id, canvasNodes);
+    notifications.info('node added');
+  }
+
+  function delNode(id: string) {
+    canvasNodes = canvasNodes.filter((n) => n.id !== id);
+    canvasEdges = canvasEdges.filter((e) => e.from !== id && e.to !== id);
+    sel = null;
+    if (activeChain) savePositions(activeChain.id, canvasNodes);
+  }
+
+  function runChainAnim() {
+    if (running) return;
+    running = true;
+    const order = [...canvasNodes].sort((a, b) => {
+      const ta = a.type === 'trigger' ? -1 : 0;
+      const tb = b.type === 'trigger' ? -1 : 0;
+      return ta - tb || a.x - b.x;
+    });
+    canvasNodes = canvasNodes.map((n) => ({ ...n, state: 'idle' }));
+    canvasEdges = canvasEdges.map((e) => ({ ...e, on: false }));
+    order.forEach((n, i) => {
+      setTimeout(() => {
+        canvasNodes = canvasNodes.map((m) => (m.id === n.id ? { ...m, state: 'run' } : m));
+        canvasEdges = canvasEdges.map((e) => (e.from === n.id ? { ...e, on: true } : e));
+        setTimeout(() => {
+          canvasNodes = canvasNodes.map((m) => (m.id === n.id ? { ...m, state: 'done' } : m));
+        }, 520);
+      }, i * 620);
+    });
+    setTimeout(() => {
+      running = false;
+      notifications.success('chain run complete');
+    }, order.length * 620 + 600);
+  }
+
+  async function runChainReal() {
+    if (!activeChain) return;
     const a = await getApi();
-    if (!a) { runActive = false; return; }
+    if (!a) return;
+    runChainAnim();
     try {
-      const runID = await a.RunChain(runningChain.id, runInput, runCwd);
-      subscribeRunEvents(runID);
+      await a.RunChain(activeChain.id, '', activeChain.cwd ?? '');
     } catch (err: any) {
-      runActive = false;
       notifications.error(`Run failed: ${err?.message ?? err}`);
     }
   }
 
-  function agentLabel(id: string): string {
-    return chainable.find(a => a.id === id)?.label ?? id;
+  // ----- minimap bounds -----
+  const mmBounds = $derived(
+    (() => {
+      if (canvasNodes.length === 0) return { bx: 0, by: 0, bw: 1, bh: 1, ms: 1 };
+      const bx = Math.min(...canvasNodes.map((n) => n.x), 0);
+      const by = Math.min(...canvasNodes.map((n) => n.y), 0);
+      const bw = Math.max(...canvasNodes.map((n) => n.x + NW)) - bx + 40;
+      const bh = Math.max(...canvasNodes.map((n) => n.y + NH)) - by + 40;
+      const ms = Math.min(150 / bw, 90 / bh);
+      return { bx, by, bw, bh, ms };
+    })(),
+  );
+
+  function nodeStateColor(s: CanvasNode['state']): string {
+    if (s === 'run') return 'var(--accent)';
+    if (s === 'done') return 'var(--run)';
+    return 'var(--text-faint)';
   }
 </script>
 
-<div class="panel">
-  <header class="panel-header">
-    <h1><span class="panel-accent">chains</span></h1>
-    <button class="btn-refresh" onclick={load} title="Refresh" aria-label="Refresh">
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
-    </button>
-  </header>
-
-  <section class="chains-section">
-    <div class="section-body">
-      <div class="profile-banner">
-        {#if profileState.active}
-          <span class="profile-label">workspace:</span>
-          <span class="profile-name">{profileState.active.name}</span>
-          <code class="profile-home">{profileState.active.workspace_home}</code>
-          <span class="profile-note">all cwd values resolve inside this directory</span>
-        {:else}
-          <span class="profile-warn">no active profile — chains can't run until you select one</span>
-        {/if}
+{#if !activeChain}
+  <!-- ===== GALLERY ===== -->
+  <div class="pi-main-inner" style="padding: 22px 26px;">
+    <div class="section-row" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
+      <h1 class="page-title" style="display:flex;align-items:center;gap:10px;">
+        chains
+        <span class="scope-chip mono">{scopeLabel}</span>
+      </h1>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <div class="filter" style="margin:0;width:240px;">
+          <input bind:value={query} placeholder="search chains…" />
+        </div>
+        <button class="btn primary" onclick={newChain}>+ new chain</button>
       </div>
-      <p class="hint">
-        Pipe one agent's output into the next. Only enabled, detected agents with a wired invocation are pickable as steps.
-      </p>
+    </div>
+    <p style="color: var(--text-faint); font-size: 13px; margin: -4px 0 22px;">
+      Orchestration graphs — each wires playbooks, agents and tools into a flow. Open one to edit on the canvas.
+    </p>
 
-      {#if chainable.length === 0}
-        <p class="warn">No usable agents — enable at least one detected agent above to start building chains.</p>
-      {/if}
-
-      <div class="chain-actions">
-        <button class="btn-primary btn-sm" onclick={newChain} disabled={chainable.length === 0}>
-          new chain
-        </button>
+    {#if loading}
+      <p style="color: var(--text-faint);">loading…</p>
+    {:else if filteredChains.length === 0}
+      <div class="card" style="padding: 48px; text-align: center; color: var(--text-faint);">
+        <div style="margin-top: 12px; font-size: 14px; color: var(--text-muted);">
+          {query ? `no chains match "${query}"` : `no chains on ${scopeLabel} yet`}
+        </div>
       </div>
-
-      {#if loading}
-        <p class="hint">loading...</p>
-      {:else if chains.length === 0}
-        <p class="hint">no chains yet</p>
-      {:else}
-        <div class="chain-list">
-          {#each chains as c (c.id)}
-            {@const recent = recentByChain.get(c.id) ?? []}
-            <div class="chain-card" id="chain-card-{c.id}" class:highlight={highlightedChainID === c.id}>
-              <div class="chain-head">
-                <div class="chain-identity">
-                  <span class="chain-name">{c.name}</span>
-                  {#if c.description}
-                    <span class="chain-desc">{c.description}</span>
-                  {/if}
-                  <div class="card-meta-row">
-                    {#if (c.files ?? []).length > 0}
-                      <span class="files-badge" title={c.files.join('\n')}>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                        {c.files.length} file{c.files.length === 1 ? '' : 's'}
-                      </span>
-                    {/if}
-                    {#if recent.length > 0}
-                      <div class="recent-runs" title="last {recent.length} runs (newest left)">
-                        {#each recent as r, i (i)}
-                          <span class="run-dot status-{r.status}"></span>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                </div>
-                <div class="chain-tools">
-                  <button class="btn-icon" onclick={() => openRunner(c)} title="Run chain (foreground)" aria-label="Run chain">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg>
-                  </button>
-                  <button class="btn-icon" onclick={() => enqueueTask(c)} title="Queue as task" aria-label="Queue as task">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg>
-                  </button>
-                  <button class="btn-icon" onclick={() => toggleSchedules(c.id)} title="Schedules" aria-label="Schedules">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                  </button>
-                  <button class="btn-icon" onclick={() => editChain(c)} title="Edit chain" aria-label="Edit chain">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="m18.5 2.5 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                  </button>
-                  <button class="btn-icon danger" onclick={() => deleteChain(c)} title="Delete chain" aria-label="Delete chain">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6 17.5 20a2 2 0 0 1-2 1.9H8.5a2 2 0 0 1-2-1.9L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-                  </button>
-                </div>
-              </div>
-              <div class="chain-steps">
-                {#each c.steps as s, i}
-                  <span class="step-pill">
-                    <span class="step-idx">{i + 1}</span>
-                    <span class="step-agent">{agentLabel(s.agent_id)}</span>
-                  </span>
-                  {#if i < c.steps.length - 1}
-                    <svg xmlns="http://www.w3.org/2000/svg" class="step-arrow" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" x2="19" y1="12" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+    {:else}
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px;">
+        {#each filteredChains as c (c.id)}
+          {@const preview = nodesFromChain(c)}
+          {@const recent = recentByChain.get(c.id) ?? []}
+          <div
+            class="card"
+            onclick={() => (activeId = c.id)}
+            role="button"
+            tabindex="0"
+            onkeydown={(e) => { if (e.key === 'Enter') activeId = c.id; }}
+            style="padding:0;overflow:hidden;text-align:left;cursor:pointer;display:flex;flex-direction:column;border-left:3px solid var(--task);"
+          >
+            <!-- thumb -->
+            <div style="background: var(--bg-sunken); background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px); background-size: 14px 14px; height: 132px; position: relative;">
+              <svg width="100%" height="132" viewBox="0 0 300 132" preserveAspectRatio="xMidYMid meet" style="display:block;">
+                {#each preview.edges as e, i (i)}
+                  {@const a = preview.nodes.find((n) => n.id === e.from)}
+                  {@const b = preview.nodes.find((n) => n.id === e.to)}
+                  {#if a && b}
+                    {@const bx = Math.min(...preview.nodes.map((n) => n.x))}
+                    {@const by = Math.min(...preview.nodes.map((n) => n.y))}
+                    {@const bw = Math.max(...preview.nodes.map((n) => n.x + NW)) - bx}
+                    {@const bh = Math.max(...preview.nodes.map((n) => n.y + NH)) - by}
+                    {@const s = Math.min((300 - 32) / Math.max(bw, 1), (132 - 32) / Math.max(bh, 1))}
+                    {@const ox = (300 - bw * s) / 2 - bx * s}
+                    {@const oy = (132 - bh * s) / 2 - by * s}
+                    {@const p = edgePath(a, b)}
+                    <path d={p.d} fill="none" stroke="var(--border-strong)" stroke-width="1.3" transform="translate({ox},{oy}) scale({s})" style="transform-origin: 0 0;" />
                   {/if}
                 {/each}
+                {#each preview.nodes as n (n.id)}
+                  {@const m = NODE_META[n.type]}
+                  {@const bx = Math.min(...preview.nodes.map((nn) => nn.x))}
+                  {@const by = Math.min(...preview.nodes.map((nn) => nn.y))}
+                  {@const bw = Math.max(...preview.nodes.map((nn) => nn.x + NW)) - bx}
+                  {@const bh = Math.max(...preview.nodes.map((nn) => nn.y + NH)) - by}
+                  {@const s = Math.min((300 - 32) / Math.max(bw, 1), (132 - 32) / Math.max(bh, 1))}
+                  {@const ox = (300 - bw * s) / 2 - bx * s}
+                  {@const oy = (132 - bh * s) / 2 - by * s}
+                  <rect x={ox + n.x * s} y={oy + n.y * s} width={NW * s} height={NH * s} rx="3" fill="var(--bg-elev)" stroke={m.color} stroke-width="1.4" />
+                  <rect x={ox + n.x * s} y={oy + n.y * s} width="3" height={NH * s} fill={m.color} />
+                {/each}
+              </svg>
+            </div>
+            <div style="padding: 14px 16px; border-top: 1px solid var(--border);">
+              <div style="display:flex;align-items:center;gap:9px;">
+                <span style="width:8px;height:8px;border-radius:99px;background: var(--accent);"></span>
+                <span style="font-size:15.5px;font-weight:700;flex:1;color: var(--text);">{c.name}</span>
+                <span style="color: var(--text-faint);">↗</span>
               </div>
-
-              {#if c.on_success && c.on_success.length > 0}
-                <div class="chain-followups">
-                  <span class="followup-arrow">↳ on success:</span>
-                  {#each c.on_success as fu (fu.chain_id + fu.input_from)}
-                    <span class="step-pill">
-                      <span class="step-agent">{chains.find(x => x.id === fu.chain_id)?.name ?? fu.chain_id}</span>
-                      <span class="followup-source">{fu.input_from || 'stdout'}</span>
-                    </span>
-                  {/each}
-                </div>
-              {/if}
-
-              {#if openSchedulesFor === c.id}
-                {@const schedules = schedulesByChain.get(c.id) ?? []}
-                <div class="schedules-block">
-                  <div class="schedules-head">
-                    <span class="field-label">schedules</span>
-                    <span class="hint-inline">cron expressions are 5-field (min hr dom mon dow) or @hourly/@daily/@weekly</span>
-                  </div>
-                  {#each schedules as s (s.id)}
-                    <div class="schedule-row">
-                      <button class="sched-toggle" onclick={() => toggleScheduleEnabled(c.id, s)} title={s.enabled ? 'Disable' : 'Enable'}>
-                        <span class="status-dot" class:on={s.enabled}></span>
-                      </button>
-                      <code class="sched-expr">{s.cron_expr}</code>
-                      {#if s.input}
-                        <span class="sched-input" title={s.input}>{s.input.slice(0, 40)}{s.input.length > 40 ? '…' : ''}</span>
-                      {/if}
-                      <span class="sched-meta">
-                        {#if s.workspace_profile}
-                          <span class="profile-badge" title="workspace profile">{s.workspace_profile}</span>
-                        {/if}
-                        {#if s.next_fire_at}
-                          next: {new Date(s.next_fire_at).toLocaleString()}
-                        {:else if !s.enabled}
-                          disabled
-                        {:else}
-                          —
-                        {/if}
-                        {#if s.last_fired_at}
-                          · last: {new Date(s.last_fired_at).toLocaleString()}
-                        {/if}
-                      </span>
-                      <button class="btn-icon danger" onclick={() => removeSchedule(c.id, s)} title="Delete schedule" aria-label="Delete schedule">×</button>
-                    </div>
-                  {/each}
-                  <div class="schedule-add">
-                    <input class="sched-input-field" type="text" bind:value={newCron} placeholder="*/15 * * * *" />
-                    <input class="sched-input-field" type="text" bind:value={newSchedInput} placeholder="optional input" />
-                    <button class="btn-sm btn-primary" onclick={() => addSchedule(c.id)}>add</button>
-                  </div>
-                </div>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </div>
-  </section>
-</div>
-
-<!-- Editor modal -->
-{#if editorOpen && editing}
-  <div class="modal-backdrop" onclick={() => editorOpen = false} role="presentation">
-    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-      <header class="modal-head">
-        <h2>{editing.id ? 'edit chain' : 'new chain'}</h2>
-        <button class="btn-icon" onclick={() => editorOpen = false} aria-label="Close">×</button>
-      </header>
-      <div class="modal-body">
-        <label class="field">
-          <span class="field-label">name</span>
-          <input type="text" bind:value={editing.name} placeholder="plan-then-implement" />
-        </label>
-        <label class="field">
-          <span class="field-label">description</span>
-          <input type="text" bind:value={editing.description} placeholder="optional" />
-        </label>
-        <label class="field">
-          <span class="field-label">working dir</span>
-          <input type="text" bind:value={editing.cwd} placeholder="relative to profile root (e.g. code/api) — applies to all steps" />
-        </label>
-
-        <div class="field">
-          <div class="files-head">
-            <span class="field-label">files</span>
-            <button class="btn-sm btn-secondary" onclick={pickFiles}>+ browse</button>
-          </div>
-          {#if (editing.files ?? []).length === 0}
-            <p class="hint">No files attached. Use <code>{'{{files}}'}</code> in any step prompt to embed the absolute paths at runtime.</p>
-          {:else}
-            <div class="file-chips">
-              {#each editing.files as f (f)}
-                <span class="file-chip">
-                  <code>{f}</code>
-                  <button class="chip-x" onclick={() => removeFile(f)} aria-label="Remove file">×</button>
-                </span>
-              {/each}
-            </div>
-            <p class="hint">Use <code>{'{{files}}'}</code> in any step prompt to embed these as absolute paths.</p>
-          {/if}
-        </div>
-
-        <div class="steps-block">
-          <div class="steps-head">
-            <span class="field-label">steps</span>
-            <button class="btn-sm btn-secondary" onclick={addStep}>+ add step</button>
-          </div>
-          {#each editing.steps as step, i}
-            <div class="step-editor">
-              <div class="step-editor-head">
-                <span class="step-idx">{i + 1}</span>
-                <select bind:value={step.agent_id}>
-                  {#each chainable as ag (ag.id)}
-                    <option value={ag.id}>{ag.label}</option>
-                  {/each}
-                </select>
-                <button class="btn-icon" onclick={() => moveStep(i, -1)} disabled={i === 0} aria-label="Move up" title="Move up">↑</button>
-                <button class="btn-icon" onclick={() => moveStep(i, 1)} disabled={i === editing.steps.length - 1} aria-label="Move down" title="Move down">↓</button>
-                <button class="btn-icon danger" onclick={() => removeStep(i)} disabled={editing.steps.length === 1} aria-label="Remove step" title="Remove">×</button>
+              <div class="mono" style="font-size:11px;color: var(--text-faint);margin-top:7px;display:flex;gap:10px;align-items:center;">
+                <span>{preview.nodes.length} nodes</span>
+                <span>{preview.edges.length} edges</span>
+                <span style="margin-left:auto;">{recent.length} runs</span>
+                {#if c.workspace_profile && c.workspace_profile !== 'global'}
+                  <span class="tag" style="color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--bg));">{c.workspace_profile}</span>
+                {:else}
+                  <span class="tag">global</span>
+                {/if}
               </div>
-              <textarea
-                bind:value={step.prompt_template}
-                rows="3"
-                placeholder="Prompt. Use {'{{input}}'} for initial input or {'{{prev.output}}'} for previous step output."
-              ></textarea>
-              <input class="step-cwd" type="text" bind:value={step.cwd} placeholder="step-specific cwd relative to profile (optional)" />
             </div>
-          {/each}
-        </div>
-
-        <div class="steps-block">
-          <div class="steps-head">
-            <span class="field-label">on success — follow-up tasks</span>
-            <button class="btn-sm btn-secondary" onclick={addFollowup} disabled={chains.filter(c => c.id !== editing.id).length === 0}>+ add follow-up</button>
+            <div style="display:flex;justify-content:flex-end;padding: 0 12px 10px;">
+              <button
+                class="btn ghost sm"
+                onclick={(e) => { e.stopPropagation(); pendingDelete = c; }}
+                title="delete"
+                aria-label="delete chain"
+              >delete</button>
+            </div>
           </div>
-          {#if !editing.on_success || editing.on_success.length === 0}
-            <p class="hint">No follow-ups. When this chain succeeds, downstream chains can be queued here.</p>
-          {/if}
-          {#each editing.on_success ?? [] as fu, i}
-            <div class="step-editor">
-              <div class="step-editor-head">
-                <span class="step-idx">↳</span>
-                <select bind:value={fu.chain_id}>
-                  {#each chains.filter(c => c.id !== editing.id) as c (c.id)}
-                    <option value={c.id}>{c.name}</option>
-                  {/each}
-                </select>
-                <select bind:value={fu.input_from}>
-                  <option value="stdout">from stdout</option>
-                  <option value="literal">literal input</option>
-                </select>
-                <button class="btn-icon danger" onclick={() => removeFollowup(i)} aria-label="Remove follow-up" title="Remove">×</button>
-              </div>
-              {#if fu.input_from === 'literal'}
-                <textarea
-                  bind:value={fu.input_literal}
-                  rows="2"
-                  placeholder="literal input passed to the follow-up chain"
-                ></textarea>
-              {/if}
-              <input class="step-cwd" type="text" bind:value={fu.cwd} placeholder="follow-up cwd (optional)" />
-            </div>
-          {/each}
+        {/each}
+      </div>
+    {/if}
+  </div>
+{:else}
+  <!-- ===== CANVAS ===== -->
+  <div
+    bind:this={canvasEl}
+    class="scroll"
+    onmousedown={onCanvasMouseDown}
+    role="presentation"
+    style="position: relative; height: calc(100vh - 86px); width: 100%; overflow: hidden; cursor: grab; background-image: radial-gradient(var(--grid-dot) 1.4px, transparent 1.4px); background-size: {22 * zoom}px {22 * zoom}px; background-position: {panX}px {panY}px;"
+  >
+    <!-- toolbar -->
+    <div class="chain-toolbar" style="position:absolute;top:18px;left:22px;right:22px;z-index:10;display:flex;align-items:center;gap:12px;pointer-events:none;">
+      <div style="pointer-events:auto;display:flex;align-items:center;gap:12px;">
+        <button class="btn ghost sm" onclick={() => (activeId = null)} title="all chains">←</button>
+        <div>
+          <div class="page-title" style="font-size:26px;color: var(--accent);">{activeChain.name}</div>
+          <div class="mono" style="font-size:11.5px;color: var(--text-faint);margin-top:2px;">
+            {scopeLabel} · {canvasNodes.length} nodes · {canvasEdges.length} edges
+          </div>
         </div>
       </div>
-      <footer class="modal-foot">
-        <button class="btn-secondary btn-sm" onclick={() => editorOpen = false}>cancel</button>
-        <button class="btn-primary btn-sm" onclick={saveChain}>save</button>
-      </footer>
+      <div style="margin-left:auto;display:flex;gap:8px;pointer-events:auto;position:relative;">
+        <button class="btn sm" onclick={() => (addOpen = !addOpen)}>+ node</button>
+        <button class="btn sm {running ? '' : 'primary'}" onclick={runChainReal} disabled={running}>
+          {running ? 'running…' : '▶ run chain'}
+        </button>
+        {#if addOpen}
+          <div class="chain-add" style="position:absolute;top:40px;right:0;width:280px;background: var(--bg-elev);border:1px solid var(--border);border-radius: var(--r-lg);box-shadow: var(--shadow-lg);padding:8px;z-index:20;">
+            <div style="display:flex;align-items:center;padding:6px 8px 8px;">
+              <span class="mono" style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color: var(--text-muted);flex:1;">» add node</span>
+              <button class="iconbtn" style="width:22px;height:22px;" onclick={() => (addOpen = false)}>×</button>
+            </div>
+            <div class="mono" style="font-size:9.5px;color: var(--text-faint);padding:2px 9px;letter-spacing:.08em;">PRIMITIVES</div>
+            <div style="display:flex;gap:6px;padding:4px 6px 8px;">
+              {#each ['trigger', 'agent', 'tool'] as t (t)}
+                <button class="btn sm ghost" onclick={() => addNode(t as NodeType)} style="flex:1;flex-direction:column;gap:4px;padding:9px 4px;">
+                  <span style="width:10px;height:10px;border-radius:99px;background: {NODE_META[t as NodeType].color};"></span>
+                  <span class="mono" style="font-size:10px;">{t}</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
+    </div>
+
+    <!-- world -->
+    <div style="position:absolute;left:0;top:0;transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: 0 0;">
+      <svg style="position:absolute;overflow:visible;pointer-events:none;left:0;top:0;" width="10" height="10">
+        {#each canvasEdges as e, i (i)}
+          {@const a = canvasNodes.find((n) => n.id === e.from)}
+          {@const b = canvasNodes.find((n) => n.id === e.to)}
+          {#if a && b}
+            {@const p = edgePath(a, b)}
+            <path
+              d={p.d}
+              fill="none"
+              stroke={e.on ? 'var(--accent)' : 'var(--border-strong)'}
+              stroke-width={e.on ? 2.4 : 1.6}
+              stroke-dasharray={e.on ? '6 5' : '0'}
+              class={e.on ? 'edge-anim' : ''}
+            />
+          {/if}
+        {/each}
+        {#if connecting}
+          {@const x1 = connecting.x1}
+          {@const y1 = connecting.y1}
+          {@const x2 = connecting.x2}
+          {@const y2 = connecting.y2}
+          {@const dx = Math.max(40, Math.abs(x2 - x1) * 0.5)}
+          <path d={`M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`} fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 4" />
+        {/if}
+      </svg>
+
+      {#each canvasEdges as e, i (i)}
+        {@const a = canvasNodes.find((n) => n.id === e.from)}
+        {@const b = canvasNodes.find((n) => n.id === e.to)}
+        {#if a && b && e.label}
+          {@const p = edgePath(a, b)}
+          <div class="mono" style="position:absolute;left:{p.mx}px;top:{p.my}px;transform: translate(-50%,-50%);font-size:9.5px;color: var(--text-muted);background: var(--bg);border:1px solid var(--border);padding:1px 6px;border-radius:99px;white-space:nowrap;pointer-events:none;">
+            {e.label}
+          </div>
+        {/if}
+      {/each}
+
+      {#each canvasNodes as n (n.id)}
+        {@const m = NODE_META[n.type]}
+        {@const ring = sel === n.id}
+        <div
+          class="chain-node"
+          onmousedown={(e) => onNodeMouseDown(e, n.id)}
+          role="presentation"
+          style="position:absolute;left:{n.x}px;top:{n.y}px;width:{NW}px;min-height:{NH}px;cursor:grab;background: var(--bg-elev);border: 1px solid {ring ? m.color : 'var(--border)'};border-left: 3px solid {m.color};border-radius: var(--r-md); box-shadow: {ring ? 'var(--shadow-md)' : 'var(--shadow-sm)'}; padding: 11px 13px; user-select: none; {n.state === 'run' ? `outline: 2px solid color-mix(in srgb, ${m.color} 50%, transparent); outline-offset: 2px;` : ''}"
+        >
+          {#if n.type !== 'trigger'}
+            <span
+              class="chain-handle chain-handle-in"
+              data-node-id={n.id}
+              style="position:absolute;left:-6px;top:{NH / 2 - 5}px;width:10px;height:10px;border-radius:99px;background: var(--bg-elev);border: 2px solid {m.color};"
+            ></span>
+          {/if}
+          <span
+            class="chain-handle chain-handle-out"
+            data-node-id={n.id}
+            onmousedown={(e) => onOutputHandleDown(e, n.id)}
+            role="presentation"
+            style="position:absolute;right:-6px;top:{NH / 2 - 5}px;width:10px;height:10px;border-radius:99px;background: var(--bg-elev);border: 2px solid {m.color};cursor:crosshair;"
+          ></span>
+          <div style="display:flex;align-items:center;gap:7px;">
+            <span class="mono" style="font-size:9px;letter-spacing:.1em;text-transform:uppercase;color: {m.color};flex:1;">{m.label}</span>
+            <span style="width:7px;height:7px;border-radius:99px;background: {nodeStateColor(n.state)};"></span>
+            {#if ring}
+              <button
+                onclick={(e) => { e.stopPropagation(); delNode(n.id); }}
+                class="iconbtn"
+                style="width:18px;height:18px;"
+                aria-label="delete node"
+              >×</button>
+            {/if}
+          </div>
+          <div style="font-size:13.5px;font-weight:700;margin-top:5px;color: var(--text);">{n.title}</div>
+          {#if n.sub}
+            <div class="mono" style="font-size:10.5px;color: var(--text-faint);margin-top:2px;">{n.sub}</div>
+          {/if}
+        </div>
+      {/each}
+    </div>
+
+    <!-- zoom controls -->
+    <div class="chain-mini" style="position:absolute;bottom:18px;left:22px;z-index:10;display:flex;gap:6px;">
+      <button class="btn sm" onclick={() => (zoom = Math.min(1.6, +(zoom + 0.15).toFixed(2)))}>+</button>
+      <button class="btn sm" onclick={() => (zoom = Math.max(0.5, +(zoom - 0.15).toFixed(2)))}>−</button>
+      <button class="btn sm" onclick={() => { zoom = 1; panX = 30; panY = 10; }}>fit</button>
+      <span class="mono" style="align-self:center;font-size:11px;color: var(--text-faint);margin-left:4px;">{Math.round(zoom * 100)}%</span>
+    </div>
+
+    <!-- minimap -->
+    <div class="chain-mini card" style="position:absolute;bottom:18px;right:22px;z-index:10;width:160px;height:100px;overflow:hidden;padding:0;">
+      <svg width="160" height="100">
+        {#each canvasNodes as n (n.id)}
+          {@const m = NODE_META[n.type]}
+          <rect
+            x={5 + (n.x - mmBounds.bx) * mmBounds.ms}
+            y={5 + (n.y - mmBounds.by) * mmBounds.ms}
+            width={NW * mmBounds.ms}
+            height={NH * mmBounds.ms}
+            rx="2"
+            fill={m.color}
+            opacity="0.85"
+          />
+        {/each}
+      </svg>
     </div>
   </div>
 {/if}
 
-<!-- Run drawer -->
-{#if runnerOpen && runningChain}
-  <div class="modal-backdrop" onclick={() => { if (!runActive) runnerOpen = false; }} role="presentation">
-    <div class="modal modal-wide" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-      <header class="modal-head">
-        <h2>run · {runningChain.name}</h2>
-        <button class="btn-icon" onclick={() => { if (!runActive) runnerOpen = false; }} aria-label="Close" disabled={runActive}>×</button>
-      </header>
-      <div class="modal-body">
-        <div class="run-context">
-          {#if profileState.active}
-            <span class="profile-label">running under:</span>
-            <span class="profile-badge">{profileState.active.name}</span>
-            <code class="profile-home">{profileState.active.workspace_home}</code>
-          {:else}
-            <span class="profile-warn">no active profile selected — run will fail</span>
-          {/if}
-        </div>
-        <label class="field">
-          <span class="field-label">initial input</span>
-          <textarea bind:value={runInput} rows="3" placeholder="{'{{input}}'} substitution for the first step"></textarea>
-        </label>
-        <label class="field">
-          <span class="field-label">working dir</span>
-          <input type="text" bind:value={runCwd} placeholder="relative to profile root (e.g. code/api)" />
-        </label>
-
-        <div class="run-actions">
-          <button class="btn-primary btn-sm" onclick={runChain} disabled={runActive || !profileState.active}>
-            {runActive ? 'running...' : 'start'}
-          </button>
-        </div>
-
-        {#if runEvents.length > 0}
-          <div class="run-log">
-            {#each runEvents as ev (ev.at + ev.phase + ev.step_index)}
-              {#if ev.phase === 'run:start'}
-                <div class="log-line meta">▶ run started</div>
-              {:else if ev.phase === 'step:start'}
-                <div class="log-line meta">▶ step {ev.step_index + 1} · {agentLabel(ev.agent_id)}</div>
-              {:else if ev.phase === 'step:done'}
-                <div class="log-line" class:err={ev.status === 'failed'}>
-                  <div class="log-head">
-                    <span>step {ev.step_index + 1} · {agentLabel(ev.agent_id)}</span>
-                    <span class="log-status" class:err={ev.status === 'failed'}>
-                      {ev.status} {ev.exit_code !== 0 ? `(exit ${ev.exit_code})` : ''}
-                    </span>
-                  </div>
-                  {#if ev.output}
-                    <pre class="log-output">{ev.output}</pre>
-                  {/if}
-                  {#if ev.stderr}
-                    <pre class="log-stderr">{ev.stderr}</pre>
-                  {/if}
-                  {#if ev.error}
-                    <pre class="log-stderr">{ev.error}</pre>
-                  {/if}
-                </div>
-              {:else if ev.phase === 'run:done'}
-                <div class="log-line meta" class:err={ev.status === 'failed'}>
-                  ● run {ev.status}{ev.error ? `: ${ev.error}` : ''}
-                </div>
-              {/if}
-            {/each}
-          </div>
-        {/if}
+{#if pendingDelete}
+  <Modal onClose={() => (pendingDelete = null)}>
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <h3 style="font-size:15px;font-weight:600;color:var(--text);margin:0;">Delete chain?</h3>
+      <p style="font-size:13px;color:var(--text-muted);margin:0;">
+        <strong style="color:var(--text);">{pendingDelete.name}</strong> will be permanently removed.
+      </p>
+      <div style="display:flex;justify-content:flex-end;gap:8px;">
+        <button class="btn ghost" onclick={() => (pendingDelete = null)}>cancel</button>
+        <button class="btn danger" onclick={confirmDeleteChain}>delete</button>
       </div>
     </div>
-  </div>
+  </Modal>
 {/if}
 
 <style>
-  .panel { padding: var(--panel-padding); }
-  .chains-section { /* legacy class kept so nested rules below match */ }
-  .section-body { padding-top: 0; }
-
-  /* Profile banner — reminds the user which workspace chains run under */
-  .profile-banner {
-    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-    padding: 8px 12px; margin-bottom: 12px;
-    background: rgba(59, 130, 246, 0.06);
-    border: 1px solid rgba(59, 130, 246, 0.18);
-    border-radius: var(--radius-md);
+  .pi-main-inner { max-width: 1280px; margin: 0 auto; }
+  .scope-chip {
     font-size: 11px;
+    color: var(--text-faint);
+    border: 1px solid var(--border);
+    background: var(--bg-elev);
+    padding: 2px 9px;
+    border-radius: 99px;
+    text-transform: lowercase;
+    letter-spacing: .04em;
   }
-  .profile-label {
-    font-size: 9px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.06em;
-    color: var(--color-text-tertiary);
-  }
-  .profile-name { font-weight: 500; color: var(--color-accent); }
-  .profile-home {
-    font-family: var(--font-mono); font-size: 10px;
-    color: var(--color-text-secondary);
-    background: rgba(255, 255, 255, 0.04);
-    padding: 1px 6px; border-radius: var(--radius-sm);
-  }
-  .profile-note { color: var(--color-text-tertiary); font-size: 10px; }
-  .profile-warn {
-    color: var(--color-warning, #d97706);
-    font-weight: 500;
-  }
-
-  /* Recent-runs dots — quick health glance on each chain card */
-  .recent-runs {
-    display: inline-flex; gap: 3px; margin-top: 4px;
-  }
-  .run-dot {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--color-text-tertiary);
-  }
-  .run-dot.status-succeeded { background: var(--color-success); }
-  .run-dot.status-failed { background: var(--color-error); }
-  .run-dot.status-cancelled { background: var(--color-warning, #d97706); }
-  .run-dot.status-running {
-    background: var(--color-info);
-    animation: pulse 1.2s ease-in-out infinite;
-  }
-  .run-dot.status-pending { background: var(--color-text-tertiary); opacity: 0.5; }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-  }
-
-  /* Highlight a card when navigated to from another panel */
-  .chain-card.highlight {
-    box-shadow: 0 0 0 2px var(--color-accent);
-    transition: box-shadow 0.4s ease-out;
-  }
-
-  /* Card meta row: file badge + recent-run dots */
-  .card-meta-row {
-    display: flex; align-items: center; gap: 8px; margin-top: 4px;
-  }
-  .files-badge {
-    display: inline-flex; align-items: center; gap: 4px;
-    font-size: 10px; color: var(--color-text-tertiary);
-    background: rgba(255, 255, 255, 0.04);
-    padding: 1px 6px; border-radius: var(--radius-sm);
-  }
-
-  /* Files block in chain editor modal */
-  .files-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
-  .file-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
-  .file-chip {
-    display: inline-flex; align-items: center; gap: 4px;
-    background: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-sm);
-    padding: 2px 4px 2px 8px;
-    font-size: 11px;
-  }
-  .file-chip code {
-    font-family: var(--font-mono); font-size: 10px;
-    color: var(--color-text-secondary);
-  }
-  .chip-x {
-    background: none; border: none; cursor: pointer;
-    color: var(--color-text-tertiary); font-size: 14px; line-height: 1;
-    padding: 0 4px;
-  }
-  .chip-x:hover { color: var(--color-error); }
-  .hint code {
-    background: rgba(255, 255, 255, 0.05);
-    padding: 1px 4px; border-radius: 2px;
-    font-family: var(--font-mono); font-size: 10px;
-  }
-  .hint { font-size: 12px; color: var(--color-text-tertiary); margin: 6px 0; }
-  .warn { font-size: 12px; color: var(--color-warning, #d97706); margin: 6px 0; }
-
-  .chain-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
-
-  .chain-list { display: flex; flex-direction: column; gap: 8px; }
-  .chain-card {
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-lg); padding: 10px 14px;
-  }
-  .chain-head { display: flex; align-items: center; justify-content: space-between; }
-  .chain-identity { display: flex; flex-direction: column; gap: 2px; }
-  .chain-name { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
-  .chain-desc { font-size: 11px; color: var(--color-text-tertiary); }
-  .chain-tools { display: flex; gap: 4px; }
-
-  .chain-steps {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-    margin-top: 8px;
-  }
-  .step-pill {
-    display: inline-flex; align-items: center; gap: 6px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: 9999px; padding: 2px 8px; font-size: 11px;
-  }
-  .step-idx {
-    background: var(--color-bg-tertiary); color: var(--color-text-secondary);
-    width: 16px; height: 16px; border-radius: 50%;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: 10px; font-weight: 600;
-  }
-  .step-agent { color: var(--color-text-primary); }
-  .step-arrow { color: var(--color-text-tertiary); }
-
-  .btn-icon {
-    background: none; border: none;
-    color: var(--color-text-tertiary); cursor: pointer;
-    padding: 3px; border-radius: var(--radius-sm); transition: all 0.15s;
-  }
-  .btn-icon:hover { color: var(--color-text-primary); background: rgba(255, 255, 255, 0.05); }
-  .btn-icon.danger:hover { color: var(--color-error); }
-  .btn-icon:disabled { opacity: 0.3; cursor: not-allowed; }
-
-  /* Modal */
-  .modal-backdrop {
-    position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5);
-    display: flex; align-items: center; justify-content: center;
-    z-index: 100;
-  }
-  .modal {
-    background: var(--color-bg-primary);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-xl);
-    width: 540px; max-width: 90vw; max-height: 85vh;
-    display: flex; flex-direction: column;
-  }
-  .modal-wide { width: 720px; }
-  .modal-head {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 14px 18px; border-bottom: 1px solid var(--color-border-primary);
-  }
-  .modal-head h2 {
-    margin: 0; font-size: 14px; font-weight: 500;
-    color: var(--color-text-primary); text-transform: lowercase;
-  }
-  .modal-body { padding: 14px 18px; overflow-y: auto; flex: 1; }
-  .modal-foot {
-    display: flex; justify-content: flex-end; gap: 8px;
-    padding: 12px 18px; border-top: 1px solid var(--color-border-primary);
-  }
-
-  .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
-  .field-label {
-    font-size: 10px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.06em;
-    color: var(--color-text-tertiary);
-  }
-  .field input, .field textarea {
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    color: var(--color-text-primary);
-    padding: 6px 10px; font-size: 13px; font-family: inherit;
-  }
-  .field textarea { font-family: var(--font-mono); font-size: 12px; }
-
-  .steps-block { margin-top: 10px; }
-  .steps-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-
-  .step-editor {
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    padding: 8px 10px; margin-bottom: 8px;
-  }
-  .step-editor-head {
-    display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
-  }
-  .step-editor-head select {
-    flex: 1;
-    background: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-sm);
-    color: var(--color-text-primary);
-    padding: 3px 6px; font-size: 12px; font-family: inherit;
-  }
-  .step-editor textarea {
-    width: 100%; box-sizing: border-box;
-    background: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-sm);
-    color: var(--color-text-primary);
-    padding: 6px 8px; font-size: 12px; font-family: var(--font-mono);
-    resize: vertical;
-  }
-  .step-cwd {
-    width: 100%; box-sizing: border-box; margin-top: 6px;
-    background: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-sm);
-    color: var(--color-text-primary);
-    padding: 4px 8px; font-size: 11px; font-family: var(--font-mono);
-  }
-
-  /* Follow-ups row under the steps row */
-  .chain-followups {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-    margin-top: 6px; font-size: 11px;
-  }
-  .followup-arrow { color: var(--color-text-tertiary); font-size: 10px; }
-  .followup-source {
-    color: var(--color-text-tertiary); font-size: 9px;
-    text-transform: uppercase; letter-spacing: 0.04em;
-  }
-
-  /* Schedules block (inline under chain card) */
-  .schedules-block {
-    margin-top: 10px; padding-top: 8px;
-    border-top: 1px solid var(--color-border-primary);
-    display: flex; flex-direction: column; gap: 4px;
-  }
-  .schedules-head { display: flex; align-items: baseline; gap: 8px; }
-  .hint-inline { font-size: 10px; color: var(--color-text-tertiary); }
-  .schedule-row {
-    display: flex; align-items: center; gap: 8px;
-    padding: 3px 4px; border-radius: var(--radius-sm);
-    font-size: 11px;
-  }
-  .schedule-row:hover { background: rgba(255, 255, 255, 0.02); }
-  .sched-toggle {
-    background: none; border: none; padding: 2px; cursor: pointer;
-  }
-  .sched-toggle .status-dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--color-text-tertiary);
-  }
-  .sched-toggle .status-dot.on {
-    background: var(--color-success);
-    box-shadow: 0 0 4px rgba(16, 185, 129, 0.4);
-  }
-  .sched-expr {
-    font-family: var(--font-mono); font-size: 11px;
-    color: var(--color-text-primary);
-    background: rgba(255, 255, 255, 0.04);
-    padding: 1px 6px; border-radius: var(--radius-sm);
-  }
-  .sched-input {
-    flex: 1; min-width: 0;
-    font-size: 10px; color: var(--color-text-secondary);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .sched-meta {
-    font-size: 10px; color: var(--color-text-tertiary);
-    margin-left: auto;
-    display: inline-flex; align-items: center; gap: 6px;
-  }
-  .profile-badge {
-    font-size: 9px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.04em;
-    color: var(--color-accent);
-    background: rgba(59, 130, 246, 0.08);
-    padding: 1px 5px; border-radius: var(--radius-sm);
-  }
-  .schedule-add {
-    display: flex; gap: 6px; margin-top: 6px;
-  }
-  .sched-input-field {
-    background: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-sm);
-    color: var(--color-text-primary);
-    padding: 3px 8px; font-size: 11px; font-family: var(--font-mono);
-  }
-  .sched-input-field:first-of-type { flex: 0 0 130px; }
-  .sched-input-field:last-of-type { flex: 1; }
-
-  /* Runner */
-  .run-context {
-    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-    padding: 8px 12px; margin-bottom: 12px;
-    background: rgba(59, 130, 246, 0.06);
-    border: 1px solid rgba(59, 130, 246, 0.18);
-    border-radius: var(--radius-md);
-    font-size: 11px;
-  }
-  .run-actions { display: flex; justify-content: flex-end; margin: 8px 0 12px; }
-  .run-log {
-    background: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    padding: 8px 10px; max-height: 380px; overflow-y: auto;
-    font-family: var(--font-mono); font-size: 11px;
-  }
-  .log-line { padding: 4px 0; }
-  .log-line.meta { color: var(--color-text-tertiary); }
-  .log-line.err { color: var(--color-error); }
-  .log-head {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 4px;
-  }
-  .log-status { font-size: 10px; color: var(--color-success); }
-  .log-status.err { color: var(--color-error); }
-  .log-output, .log-stderr {
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: var(--radius-sm);
-    padding: 6px 8px; margin: 4px 0;
-    white-space: pre-wrap; word-break: break-word;
-    max-height: 220px; overflow-y: auto;
-  }
-  .log-stderr { color: var(--color-warning, #d97706); }
 </style>

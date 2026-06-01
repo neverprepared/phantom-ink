@@ -5,9 +5,9 @@ can execute (docker, utm), and pulls work via long-poll. The central API
 treats runners as named compute targets — sessions created with a runner
 field are dispatched to that runner instead of executed in-process.
 
-In-memory only (same shape as credentials/queue.py). Persistence of runner
-identity belongs to hub_state.json later; the work queue is intentionally
-ephemeral so a restart drains in-flight work cleanly.
+Runner identity is persisted to hub_state.json so runners appear as offline
+after a restart until they heartbeat back. The work queue is intentionally
+ephemeral — a restart drains in-flight work cleanly.
 """
 
 from __future__ import annotations
@@ -30,6 +30,11 @@ class RunnerInfo:
     # Last successful credential seal (epoch ms). None if this runner has
     # never sealed — either it's not the secret_authority, or it's brand new.
     last_seal_at: int | None = None
+    # Advertised host/IP the runner is reachable at from the API server's
+    # network. Used to build the ttyd URL for remote sessions.
+    host: str | None = None
+    # Stable UUID from the runner's UserDefaults — survives name changes.
+    machine_id: str | None = None
     # Load metrics — reported by the runner on register / heartbeat.
     queue_depth: int = 0     # items queued but not yet picked up
     in_flight: int = 0       # sessions currently provisioning on this runner
@@ -59,6 +64,17 @@ class RunnerRegistry:
 
     # -- runner lifecycle -----------------------------------------------------
 
+    async def deregister_by_machine_id(self, machine_id: str, *, except_name: str) -> None:
+        """Remove any runner with the given machine_id whose name differs from
+        except_name. Called on register so renames don't leave ghost entries."""
+        async with self._lock:
+            stale = [
+                n for n, info in self._runners.items()
+                if info.machine_id == machine_id and n != except_name
+            ]
+        for name in stale:
+            await self.deregister(name)
+
     async def register(
         self,
         *,
@@ -66,8 +82,10 @@ class RunnerRegistry:
         capabilities: dict[str, bool],
         tags: list[str] | None = None,
         version: str = "",
+        host: str | None = None,
         in_flight: int = 0,
         max_concurrent: int = 4,
+        machine_id: str | None = None,
     ) -> RunnerInfo:
         now = int(time.time() * 1000)
         info = RunnerInfo(
@@ -75,10 +93,12 @@ class RunnerRegistry:
             capabilities=capabilities,
             tags=tags or [],
             version=version,
+            host=host,
             registered_at=now,
             last_seen=now,
             in_flight=max(0, in_flight),
             max_concurrent=max(1, max_concurrent),
+            machine_id=machine_id,
         )
         async with self._lock:
             self._runners[name] = info
@@ -164,9 +184,8 @@ class RunnerRegistry:
             return self._runners.get(name)
 
     async def deregister(self, name: str) -> bool:
-        """Remove a runner. Pending work for that runner is cancelled with a
-        clear reason so producers stop waiting. Returns True if the runner
-        existed and was removed."""
+        """Remove a runner. Pending work is rerouted to another eligible runner
+        if one exists; otherwise cancelled. Returns True if the runner existed."""
         async with self._lock:
             info = self._runners.pop(name, None)
             pending = self._pending.pop(name, [])
@@ -174,9 +193,27 @@ class RunnerRegistry:
         if info is None:
             return False
         for item in pending:
-            if not item.fut.done():
-                item.fut.set_exception(RuntimeError(f"runner {name!r} was removed"))
-            self._by_work_id.pop(item.id, None)
+            if item.fut.done():
+                self._by_work_id.pop(item.id, None)
+                continue
+            backend = item.payload.get("backend") or "docker"
+            tags = item.payload.get("runner_tags") or []
+            alt = await self.select_runner(backend=backend, preferred_tags=tags)
+            if alt:
+                item.runner = alt
+                async with self._lock:
+                    self._pending.setdefault(alt, []).append(item)
+                    ev = self._events.get(alt)
+                    r = self._runners.get(alt)
+                    if r is not None:
+                        r.queue_depth = len(self._pending[alt])
+                if ev:
+                    ev.set()
+            else:
+                item.fut.set_exception(
+                    RuntimeError(f"runner {name!r} was removed and no eligible replacement found")
+                )
+                self._by_work_id.pop(item.id, None)
         return True
 
     # -- work dispatch --------------------------------------------------------
@@ -261,6 +298,47 @@ def get_registry() -> RunnerRegistry:
 def reset_registry_for_tests() -> None:
     global _singleton
     _singleton = None
+
+
+# ---------------------------------------------------------------------------
+# Hub state persistence
+# ---------------------------------------------------------------------------
+
+
+def get_state() -> dict:
+    """Serialize registered runners for hub_state.json. Work queues are not
+    persisted — they are intentionally ephemeral."""
+    reg = get_registry()
+    return {
+        name: {
+            "name": info.name,
+            "capabilities": info.capabilities,
+            "tags": info.tags,
+            "version": info.version,
+            "host": info.host,
+            "registered_at": info.registered_at,
+            "last_seen": 0,  # force offline on restore; runner must heartbeat to go live
+            "last_seal_at": info.last_seal_at,
+            "max_concurrent": info.max_concurrent,
+        }
+        for name, info in reg._runners.items()
+    }
+
+
+def restore_state(data: dict | None) -> None:
+    """Restore runner registrations from hub_state.json. All runners are marked
+    offline (last_seen=0) until they reconnect and heartbeat."""
+    if not data:
+        return
+    reg = get_registry()
+    for entry in data.values():
+        try:
+            info = RunnerInfo(**entry)
+            reg._runners[info.name] = info
+            reg._pending.setdefault(info.name, [])
+            reg._events.setdefault(info.name, asyncio.Event())
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

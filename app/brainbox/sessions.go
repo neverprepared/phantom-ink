@@ -39,6 +39,7 @@ type CreateSessionRequest struct {
 	Task             string            `json:"task,omitempty"`
 	Ports            map[string]int    `json:"ports,omitempty"`
 	DockerHost       string            `json:"docker_host,omitempty"`
+	Runner           string            `json:"runner,omitempty"`
 }
 
 // QuerySessionRequest mirrors the POST /api/sessions/{name}/query payload.

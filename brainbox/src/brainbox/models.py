@@ -97,6 +97,9 @@ class SessionContext(BaseModel):
     # Runner that owns this session. None or "local" = executed in-process by
     # the API host; any other value routes through the runner work queue.
     runner_name: str | None = None
+    # Advertised host/IP of the runner machine. Used to construct the ttyd URL
+    # for remote sessions (e.g. "192.168.1.42" → "http://192.168.1.42:{port}").
+    runner_host: str | None = None
     # Backend-specific fields
     backend: Literal["docker", "utm"] = "docker"
     docker_host: str | None = None  # Docker daemon host (None = local socket)
@@ -336,6 +339,7 @@ class Playbook(BaseModel):
     tasks: list[PlaybookTask] = Field(default_factory=list)
     status: Literal["idle", "running", "completed", "failed", "cancelled"] = "idle"
     workspace_profile: str = "global"  # profile name or "global" for all profiles
+    runner: str | None = None  # runner to dispatch all tasks to; None = local execution
     created_at: int = Field(default_factory=_now_ms)
     started_at: int | None = None
     finished_at: int | None = None

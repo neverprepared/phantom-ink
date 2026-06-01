@@ -15,6 +15,7 @@
   import SettingsPanel from '../panels/SettingsPanel.svelte';
   import DashboardPanel from '../panels/DashboardPanel.svelte';
   import TimelinePanel from '../panels/TimelinePanel.svelte';
+  import RunnersPanel from '../panels/RunnersPanel.svelte';
 </script>
 
 <div class="shell">
@@ -26,6 +27,8 @@
         <TimelinePanel />
       {:else if currentPanel.value === 'sessions'}
         <SessionsPanel />
+      {:else if currentPanel.value === 'runners'}
+        <RunnersPanel />
       {:else if currentPanel.value === 'dashboard'}
         <DashboardPanel />
       {:else if currentPanel.value === 'repos'}

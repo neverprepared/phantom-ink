@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import Icon from '../components/Icon.svelte';
 
   let { config }: { config: { widgetId?: string } } = $props();
 
@@ -20,6 +21,7 @@
 
 <div class="notes-widget">
   <div class="widget-header">
+    <Icon name="note" size={15} style="color: var(--text-muted); flex-shrink: 0;" />
     <span class="widget-title">» SCRATCHPAD</span>
   </div>
   <textarea
@@ -41,6 +43,7 @@
   .widget-header {
     display: flex;
     align-items: center;
+    gap: 6px;
     padding: 12px 14px 10px;
     border-bottom: 1px solid var(--border, var(--color-border-primary));
     flex-shrink: 0;
