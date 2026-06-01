@@ -413,6 +413,14 @@ def _session_port(session_name: str) -> int | None:
         return None
 
 
+@app.get("/t/{session_name}", include_in_schema=False)
+async def terminal_proxy_redirect(session_name: str, request: Request):
+    """Redirect bare /t/{name} to /t/{name}/ preserving the correct scheme."""
+    from fastapi.responses import RedirectResponse
+    base = settings.session_base_url
+    return RedirectResponse(url=f"{base}/t/{session_name}/", status_code=301)
+
+
 @app.api_route(
     "/t/{session_name}/{path:path}",
     methods=["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
