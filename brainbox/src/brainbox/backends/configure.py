@@ -302,6 +302,20 @@ async def inject_claude_settings(
                 '$d | ConvertTo-Json -Depth 10 | Set-Content $p"'
             )
         else:
+            # Write user-level settings.json with theme so Claude Code doesn't prompt
+            # on first launch. Project-local settings.local.json carries bypass flags.
+            user_settings_json = (
+                '{"theme":"light",'
+                '"bypassPermissions":true,'
+                '"skipDangerousModePermissionPrompt":true,'
+                '"bypassPermissionsModeAccepted":true,'
+                '"enabledPlugins":{},'
+                '"attribution":{"commit":"","pr":""}}'
+            )
+            await executor.exec_shell(
+                f"mkdir -p {home}/.claude && "
+                f"echo {shlex.quote(user_settings_json)} > {home}/.claude/settings.json"
+            )
             # Write settings.local.json to all common container working directories.
             # Project-local settings override user settings and don't conflict with
             # the read-only mounted CLAUDE_CONFIG_DIR.
