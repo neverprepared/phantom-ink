@@ -457,53 +457,88 @@ async def terminal_proxy_ws(session_name: str, websocket: WebSocket):
     """Bidirectional WebSocket relay between client and session's ttyd.
 
     Forwards the 'tty' subprotocol and handles both text and binary frames.
+    Tries the base-path URL first (sessions started after --base-path was added),
+    then falls back to the root /ws path (legacy sessions).
     """
     import websockets as ws_lib
+    from fastapi.websockets import WebSocketState
+
+    async def _reject(code: int = 1011) -> None:
+        """Accept then immediately close — avoids sending an HTTP error response."""
+        try:
+            await websocket.accept()
+            await websocket.close(code)
+        except Exception:
+            pass
 
     port = _session_port(session_name)
     if port is None:
-        await websocket.close(1011)
+        await _reject(1011)
         return
 
     # Forward the subprotocol the browser requested (ttyd uses "tty")
     raw_protocols = websocket.headers.get("sec-websocket-protocol", "")
     subprotocols = [p.strip() for p in raw_protocols.split(",") if p.strip()] or ["tty"]
 
-    backend_url = f"ws://127.0.0.1:{port}/t/{session_name}/ws"
-    try:
-        async with ws_lib.connect(backend_url, subprotocols=subprotocols) as backend:
-            negotiated = getattr(backend, "subprotocol", None) or subprotocols[0]
-            await websocket.accept(subprotocol=negotiated)
+    # Try base-path URL first; fall back to root /ws for sessions started before
+    # --base-path was introduced.
+    candidate_urls = [
+        f"ws://127.0.0.1:{port}/t/{session_name}/ws",
+        f"ws://127.0.0.1:{port}/ws",
+    ]
 
-            async def to_backend():
-                try:
-                    while True:
-                        msg = await websocket.receive()
-                        if msg.get("type") == "websocket.disconnect":
-                            break
-                        if msg.get("bytes"):
-                            await backend.send(msg["bytes"])
-                        elif msg.get("text"):
-                            await backend.send(msg["text"])
-                except Exception:
-                    pass
-
-            async def to_client():
-                try:
-                    async for msg in backend:
-                        if isinstance(msg, bytes):
-                            await websocket.send_bytes(msg)
-                        else:
-                            await websocket.send_text(msg)
-                except Exception:
-                    pass
-
-            await asyncio.gather(to_backend(), to_client())
-    except Exception:
+    backend = None
+    for url in candidate_urls:
         try:
-            await websocket.close(1011)
+            backend = await ws_lib.connect(url, subprotocols=subprotocols, open_timeout=3)
+            break
+        except Exception:
+            continue
+
+    if backend is None:
+        await _reject(1011)
+        return
+
+    try:
+        negotiated = getattr(backend, "subprotocol", None) or subprotocols[0]
+        await websocket.accept(subprotocol=negotiated)
+
+        async def to_backend():
+            try:
+                while True:
+                    msg = await websocket.receive()
+                    if msg.get("type") == "websocket.disconnect":
+                        break
+                    if msg.get("bytes"):
+                        await backend.send(msg["bytes"])
+                    elif msg.get("text"):
+                        await backend.send(msg["text"])
+            except Exception:
+                pass
+
+        async def to_client():
+            try:
+                async for msg in backend:
+                    if isinstance(msg, bytes):
+                        await websocket.send_bytes(msg)
+                    else:
+                        await websocket.send_text(msg)
+            except Exception:
+                pass
+
+        await asyncio.gather(to_backend(), to_client())
+    except Exception:
+        pass
+    finally:
+        try:
+            await backend.close()
         except Exception:
             pass
+        if websocket.client_state != WebSocketState.DISCONNECTED:
+            try:
+                await websocket.close(1011)
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
