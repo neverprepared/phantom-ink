@@ -583,6 +583,7 @@ class DockerBackend:
                         "/home/developer/ttyd-wrapper.sh",
                     ],
                     detach=True,
+                    user="developer",
                 )
             except Exception as exc:
                 slog.warning("container.ttyd_start_failed", metadata={"reason": str(exc)})
