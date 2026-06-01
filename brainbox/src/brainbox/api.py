@@ -394,6 +394,106 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 
 # ---------------------------------------------------------------------------
+# Terminal proxy — /t/{session_name}/
+#
+# When CL_SESSIONS_URL is set, brainbox proxies ttyd HTTP and WebSocket
+# traffic so a single reverse-proxy entry (e.g. sessions.neverprepared.com
+# → 127.0.0.1:9999) serves all session terminals at /t/SESSION_NAME/.
+# ttyd is started with --base-path /t/SESSION_NAME so its assets resolve.
+# ---------------------------------------------------------------------------
+
+
+def _session_port(session_name: str) -> int | None:
+    """Return the host port for a running session, or None."""
+    from .lifecycle import _resolve
+    try:
+        ctx = _resolve(session_name)
+        return ctx.port if ctx else None
+    except Exception:
+        return None
+
+
+@app.api_route(
+    "/t/{session_name}/{path:path}",
+    methods=["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    include_in_schema=False,
+)
+async def terminal_proxy_http(session_name: str, path: str, request: Request):
+    """Reverse-proxy HTTP requests (ttyd assets) to the session's container port."""
+    import httpx
+
+    port = _session_port(session_name)
+    if port is None:
+        raise HTTPException(404, f"Session '{session_name}' not found or not running")
+
+    target_url = f"http://127.0.0.1:{port}/t/{session_name}/{path}"
+    if request.url.query:
+        target_url += f"?{request.url.query}"
+
+    # Drop hop-by-hop headers before forwarding
+    skip = {"host", "connection", "te", "trailers", "transfer-encoding", "upgrade"}
+    fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in skip}
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            rp = await client.request(
+                method=request.method,
+                url=target_url,
+                headers=fwd_headers,
+                content=await request.body(),
+            )
+        return Response(
+            content=rp.content,
+            status_code=rp.status_code,
+            headers={k: v for k, v in rp.headers.items()
+                     if k.lower() not in ("transfer-encoding", "connection")},
+        )
+    except httpx.ConnectError:
+        raise HTTPException(502, "Terminal not reachable — container may still be starting")
+
+
+@app.websocket("/t/{session_name}/ws")
+async def terminal_proxy_ws(session_name: str, websocket):
+    """Bidirectional WebSocket relay between client and session's ttyd."""
+    import websockets
+
+    port = _session_port(session_name)
+    if port is None:
+        await websocket.close(1011)
+        return
+
+    backend_url = f"ws://127.0.0.1:{port}/t/{session_name}/ws"
+    try:
+        async with websockets.connect(backend_url) as backend:
+            await websocket.accept()
+
+            async def to_backend():
+                try:
+                    while True:
+                        data = await websocket.receive_bytes()
+                        await backend.send(data)
+                except Exception:
+                    pass
+
+            async def to_client():
+                try:
+                    async for msg in backend:
+                        if isinstance(msg, bytes):
+                            await websocket.send_bytes(msg)
+                        else:
+                            await websocket.send_text(msg)
+                except Exception:
+                    pass
+
+            await asyncio.gather(to_backend(), to_client())
+    except Exception:
+        try:
+            await websocket.close(1011)
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # API key endpoint (loopback only)
 # ---------------------------------------------------------------------------
 

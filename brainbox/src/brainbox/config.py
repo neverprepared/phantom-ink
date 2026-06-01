@@ -241,23 +241,24 @@ class Settings(BaseSettings):
     health_check_retries: int = 3
 
     api_port: int = Field(default=9999, ge=1, le=65535)
-    public_host: str = "localhost"  # Advertised hostname/IP; set CL_PUBLIC_HOST on remote hosts
-    public_url: str = ""  # Full base URL (e.g. https://phantom-api.example.com); enables nginx proxy mode
-    bind_host: str = ""  # Override for container port bind IP; auto-derived when unset
-    nginx_config_dir: str = ""  # Dir for per-session nginx .conf fragments (e.g. /opt/homebrew/etc/nginx/brainbox)
-    nginx_reload_cmd: str = "nginx -s reload"  # Command to reload nginx after config changes
+    public_host: str = "localhost"  # Advertised hostname/IP for the API; set CL_PUBLIC_HOST on remote hosts
+    public_url: str = ""      # Full HTTPS base URL for the API (e.g. https://phantom-api.neverprepared.com)
+    sessions_url: str = ""    # Base URL for terminal sessions (e.g. https://sessions.neverprepared.com)
+    bind_host: str = ""       # Override for container port bind IP; auto-derived when unset
+    nginx_config_dir: str = ""        # Dir for per-session nginx .conf fragments
+    nginx_reload_cmd: str = "nginx -s reload"
 
     @property
     def container_bind_ip(self) -> str:
         """IP to bind container ports to.
 
-        When nginx is fronting (nginx_config_dir set), always use 127.0.0.1.
-        When running direct (no nginx), use 0.0.0.0 for remote hosts so
-        container terminals are reachable from the network.
+        When a reverse proxy fronts the terminals (sessions_url or
+        nginx_config_dir set), bind to 127.0.0.1 — the proxy handles
+        external access. Otherwise bind to 0.0.0.0 for direct remote access.
         """
         if self.bind_host:
             return self.bind_host
-        if self.nginx_config_dir:
+        if self.sessions_url or self.nginx_config_dir:
             return "127.0.0.1"
         if self.public_host in ("localhost", "127.0.0.1", ""):
             return "127.0.0.1"
@@ -265,11 +266,13 @@ class Settings(BaseSettings):
 
     @property
     def session_base_url(self) -> str:
-        """Base URL for constructing session terminal URLs."""
+        """Base URL used to construct terminal session URLs."""
+        if self.sessions_url:
+            return self.sessions_url.rstrip("/")
         if self.public_url:
             return self.public_url.rstrip("/")
-        scheme = "http"
-        return f"{scheme}://{self.public_host}"
+        return f"http://{self.public_host}"
+
     op_vault: str = ""
 
     resources: ResourceSettings = Field(default_factory=ResourceSettings)

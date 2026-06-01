@@ -572,7 +572,7 @@ class DockerBackend:
                     "-t", f"titleFixed={title}",
                     "-p", "7681",
                 ]
-                if settings.nginx_config_dir:
+                if settings.sessions_url or settings.nginx_config_dir:
                     ttyd_cmd += ["--base-path", f"/t/{ctx.session_name}"]
                 ttyd_cmd.append("/home/developer/ttyd-wrapper.sh")
                 await _run(
@@ -584,7 +584,7 @@ class DockerBackend:
             except Exception as exc:
                 slog.warning("container.ttyd_start_failed", metadata={"reason": str(exc)})
 
-            # Write nginx fragment for path-based proxy
+            # Write nginx fragment when using self-managed nginx (not needed for sessions_url proxy mode)
             if settings.nginx_config_dir:
                 from ..nginx import async_write_fragment
                 await async_write_fragment(
@@ -914,7 +914,7 @@ class DockerBackend:
                         "port": port,
                         "url": (
                             f"{settings.session_base_url}/t/{session_name}"
-                            if settings.nginx_config_dir and session_name
+                            if (settings.sessions_url or settings.nginx_config_dir) and session_name
                             else (f"http://{settings.public_host}:{port}" if port else None)
                         ),
                         "volume": volume,
