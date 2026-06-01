@@ -34,8 +34,6 @@ type BuildOptions struct {
 	// RegistryUsername and RegistryPassword are used for docker login.
 	RegistryUsername string
 	RegistryPassword string
-	// OPVault is the 1Password vault name for SSH key lookup (optional).
-	OPVault string
 	// Progress receives status messages during the build.
 	Progress func(string)
 }
@@ -96,18 +94,18 @@ func Build(opts BuildOptions) (BuildResult, error) {
 		return BuildResult{}, fmt.Errorf("inject Claude credentials: %w", err)
 	}
 
-	// 6. Stop container before commit (clean snapshot).
-	opts.progress("Stopping container…")
-	if err := run("docker", "stop", containerName); err != nil {
-		return BuildResult{}, fmt.Errorf("stop container: %w", err)
-	}
-
-	// 7. Commit to registry tag.
+	// 6. Commit while the container is still running — Docker Desktop's
+	// containerd storage driver fails to compute layer diffs on stopped
+	// containers that had directories created via exec.
 	tag := opts.imageTag()
 	opts.progress(fmt.Sprintf("Committing image as %s…", tag))
 	if err := run("docker", "commit", containerName, tag); err != nil {
 		return BuildResult{}, fmt.Errorf("commit image: %w", err)
 	}
+
+	// 7. Stop container after commit.
+	opts.progress("Stopping container…")
+	_ = run("docker", "stop", containerName)
 
 	// 8. Login and push.
 	opts.progress("Logging in to registry…")
@@ -135,38 +133,24 @@ func injectSSHKeys(container string, opts BuildOptions) error {
 		return err
 	}
 
-	if entries, err := os.ReadDir(sshDir); err == nil {
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(sshDir, e.Name()))
-			if err != nil {
-				continue
-			}
-			if err := writeFileToContainer(container, "/home/developer/.ssh/"+e.Name(), data, "600"); err != nil {
-				return fmt.Errorf("write SSH key %s: %w", e.Name(), err)
-			}
+	entries, err := os.ReadDir(sshDir)
+	if err != nil {
+		return nil // no .ssh dir, skip silently
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
 		}
-		return nil
-	}
-
-	// Fallback: try op read for canonical key names.
-	if opts.OPVault == "" {
-		return nil // no vault configured, skip silently
-	}
-	for _, keyName := range []string{"id_ed25519", "id_ed25519.pub", "id_rsa", "id_rsa.pub"} {
-		ref := fmt.Sprintf("op://%s/ssh-key/%s/%s", opts.OPVault, opts.Profile, keyName)
-		out, err := exec.Command("op", "read", ref).Output()
-		if err != nil || len(out) == 0 {
+		data, err := os.ReadFile(filepath.Join(sshDir, e.Name()))
+		if err != nil {
 			continue
 		}
 		mode := "644"
-		if !strings.HasSuffix(keyName, ".pub") {
+		if !strings.HasSuffix(e.Name(), ".pub") {
 			mode = "600"
 		}
-		if err := writeFileToContainer(container, "/home/developer/.ssh/"+keyName, out, mode); err != nil {
-			return fmt.Errorf("write op SSH key %s: %w", keyName, err)
+		if err := writeFileToContainer(container, "/home/developer/.ssh/"+e.Name(), data, mode); err != nil {
+			return fmt.Errorf("write SSH key %s: %w", e.Name(), err)
 		}
 	}
 	return nil
@@ -175,10 +159,6 @@ func injectSSHKeys(container string, opts BuildOptions) error {
 // injectClaudeCredentials writes Claude auth files from the local workspaceHome/.claude.
 func injectClaudeCredentials(container string, opts BuildOptions) error {
 	claudeConfigDir := filepath.Join(opts.WorkspaceHome, ".claude")
-	// Respect CLAUDE_CONFIG_DIR if explicitly set for this profile.
-	if v := os.Getenv("CLAUDE_CONFIG_DIR"); v != "" {
-		claudeConfigDir = v
-	}
 
 	if err := dockerExecSh(container, "mkdir -p /home/developer/.claude && chmod 700 /home/developer/.claude"); err != nil {
 		return err
@@ -249,14 +229,18 @@ func push(tag string) (string, error) {
 	return "", nil
 }
 
-// writeFileToContainer writes data into a container path via base64-piped docker exec.
+// writeFileToContainer writes data into a container path by piping base64
+// via stdin to avoid ARG_MAX limits on large files.
 func writeFileToContainer(container, destPath string, data []byte, mode string) error {
 	encoded := base64.StdEncoding.EncodeToString(data)
-	script := fmt.Sprintf(
-		"printf '%%s' '%s' | base64 -d > %s && chmod %s %s",
-		encoded, destPath, mode, destPath,
-	)
-	return dockerExecSh(container, script)
+	script := fmt.Sprintf("base64 -d > %s && chmod %s %s", destPath, mode, destPath)
+	cmd := exec.Command("docker", "exec", "-i", container, "sh", "-c", script)
+	cmd.Stdin = strings.NewReader(encoded)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("exec in container: %w — %s", err, string(out))
+	}
+	return nil
 }
 
 // dockerExecSh runs a shell command inside a running container.

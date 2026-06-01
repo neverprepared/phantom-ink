@@ -62,11 +62,6 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 		return fmt.Errorf("find profile: %w", err)
 	}
 
-	baseImage := req.BaseImage
-	if baseImage == "" {
-		baseImage = "brainbox"
-	}
-
 	// Resolve registry URL: use request override, then fall back to API info.
 	registryURL := req.RegistryURL
 	if registryURL == "" {
@@ -84,12 +79,16 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 		return fmt.Errorf("no registry URL configured — set CL_REGISTRY_URL on the brainbox server")
 	}
 
+	// Default base image to the registry-hosted brainbox image so the Mac
+	// never needs a local copy — it pulls from the same registry it pushes to.
+	baseImage := req.BaseImage
+	if baseImage == "" {
+		baseImage = registryURL + "/brainbox:latest"
+	}
+
 	// Resolve registry credentials from DB settings.
 	registryUsername := a.db.GetSetting(settingRegistryUsername, "")
 	registryPassword := a.db.GetSetting(settingRegistryPassword, "")
-
-	// Resolve 1Password vault from profile or global setting.
-	opVault := a.db.GetSetting(settingOPVault, "")
 
 	emit := func(step string, done bool, buildErr error, result *profileimage.BuildResult) {
 		status := ProfileImageBuildStatus{
@@ -116,7 +115,6 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 		RegistryURL:      registryURL,
 		RegistryUsername: registryUsername,
 		RegistryPassword: registryPassword,
-		OPVault:          opVault,
 		Progress: func(msg string) {
 			emit(msg, false, nil, nil)
 		},

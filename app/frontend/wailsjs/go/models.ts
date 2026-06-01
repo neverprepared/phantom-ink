@@ -395,6 +395,7 @@ export namespace brainbox {
 	    ports?: Record<string, number>;
 	    docker_host?: string;
 	    runner?: string;
+	    env?: Record<string, string>;
 	
 	    static createFrom(source: any = {}) {
 	        return new CreateSessionRequest(source);
@@ -419,6 +420,7 @@ export namespace brainbox {
 	        this.ports = source["ports"];
 	        this.docker_host = source["docker_host"];
 	        this.runner = source["runner"];
+	        this.env = source["env"];
 	    }
 	}
 	export class CreateWorktreeRequest {
@@ -1640,6 +1642,40 @@ export namespace main {
 	    }
 	}
 	
+	export class ProfileImageBuildRequest {
+	    profile: string;
+	    base_image: string;
+	    registry_url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProfileImageBuildRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.base_image = source["base_image"];
+	        this.registry_url = source["registry_url"];
+	    }
+	}
+	export class ProfileImageRow {
+	    profile: string;
+	    registry_url: string;
+	    last_pushed_at: string;
+	    last_digest: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProfileImageRow(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.registry_url = source["registry_url"];
+	        this.last_pushed_at = source["last_pushed_at"];
+	        this.last_digest = source["last_digest"];
+	    }
+	}
 	export class RepoBranch {
 	    name: string;
 	    protected: boolean;

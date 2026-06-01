@@ -16,7 +16,6 @@ const (
 	settingProfileColorPrefix = "profile_color:"
 	settingRegistryUsername   = "registry_username"
 	settingRegistryPassword   = "registry_password"
-	settingOPVault            = "op_vault"
 )
 
 // Config is the in-memory representation of app settings.

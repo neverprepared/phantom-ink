@@ -12,6 +12,11 @@
   // --- Workspace settings ---
   let workspacesRoot = $state('');
 
+  // --- Registry settings ---
+  let registryUsername = $state('');
+  let registryPassword = $state('');
+  let savingRegistry = $state(false);
+
   // --- General ---
   let platform = $state('');
   let saving = $state(false);
@@ -22,12 +27,14 @@
     const a = await getApi();
     if (!a) { loaded = true; return; }
     try {
-      const [cfg, plat] = await Promise.all([a.GetConfig(), a.GetPlatform()]);
+      const [cfg, plat, reg] = await Promise.all([a.GetConfig(), a.GetPlatform(), a.GetRegistrySettings()]);
       baseURL = cfg?.base_url ?? 'http://127.0.0.1:9999';
       apiKey = cfg?.api_key ?? '';
       workspacesRoot = cfg?.workspaces_root ?? '';
       theme = cfg?.theme ?? 'dark';
       platform = plat ?? 'unknown';
+      registryUsername = reg?.username ?? '';
+      registryPassword = reg?.password ?? '';
       applyTheme(theme);
     } catch (err: any) {
       notifications.error(`Failed to load settings: ${err?.message ?? err}`);
@@ -77,6 +84,20 @@
       notifications.error(`Failed to save: ${err}`);
     } finally {
       saving = false;
+    }
+  }
+
+  async function handleSaveRegistry() {
+    savingRegistry = true;
+    const a = await getApi();
+    if (!a) { savingRegistry = false; return; }
+    try {
+      await a.SetRegistrySettings(registryUsername, registryPassword);
+      notifications.success('Registry settings saved');
+    } catch (err: any) {
+      notifications.error(`Failed to save registry settings: ${err}`);
+    } finally {
+      savingRegistry = false;
     }
   }
 </script>
@@ -163,6 +184,28 @@
       </div>
 
 
+      <!-- Registry -->
+      <div class="section">
+        <h2>profile image registry</h2>
+        <p class="hint" style="margin-bottom: 14px;">private Docker registry for pre-built profile images — set <code>CL_REGISTRY_URL</code> on the brainbox server</p>
+
+        <div class="field">
+          <label for="reg-user">username</label>
+          <input id="reg-user" type="text" bind:value={registryUsername} placeholder="registry username" autocomplete="off" />
+        </div>
+
+        <div class="field">
+          <label for="reg-pass">password</label>
+          <input id="reg-pass" type="password" bind:value={registryPassword} placeholder="registry password" autocomplete="new-password" />
+        </div>
+
+        <div class="form-actions">
+          <button class="btn-save" onclick={handleSaveRegistry} disabled={savingRegistry}>
+            {savingRegistry ? 'saving...' : 'save registry settings'}
+          </button>
+        </div>
+      </div>
+
       <!-- About -->
       <div class="section info-section">
         <h2>about</h2>
@@ -220,6 +263,14 @@
     font-size: 11px;
     color: var(--color-text-tertiary);
     margin-top: 4px;
+  }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    background: var(--color-bg-tertiary);
+    border-radius: 3px;
+    padding: 1px 4px;
   }
 
   /* Theme toggle */

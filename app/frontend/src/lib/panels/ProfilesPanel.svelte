@@ -6,6 +6,13 @@
   import { getProfileColor, profileColorStyle, PROFILE_PALETTE } from '../utils/profileColors';
   import PieChart from '../components/PieChart.svelte';
 
+  // --- Profile image state ---
+  type ImageStatus = { configured: boolean; exists: boolean; tag: string; digest: string; error?: string };
+  let imageStatuses = $state<Record<string, ImageStatus>>({});
+  let imageBuilding = $state<Record<string, boolean>>({});
+  let imageLogs = $state<Record<string, string[]>>({});
+  let imageLogsOpen = $state<Record<string, boolean>>({});
+
   let profiles = $derived(profileState.profiles);
   let activeProfile = $derived(profileState.active);
   let scanning = $state(false);
@@ -28,6 +35,9 @@
 
   onMount(async () => {
     await Promise.all([refreshProfiles(), loadBackups(), refreshDisk(), loadProfileColors(), refreshNFS()]);
+    for (const p of profileState.profiles) {
+      checkImageStatus(p.name);
+    }
   });
 
   async function loadProfileColors() {
@@ -223,6 +233,54 @@
     }
   }
 
+  // --- Profile image functions ---
+
+  async function checkImageStatus(profile: string) {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const s = await a.GetRemoteProfileImageStatus(profile);
+      imageStatuses[profile] = s;
+    } catch {
+      imageStatuses[profile] = { configured: false, exists: false, tag: '', digest: '' };
+    }
+  }
+
+  async function buildImage(profile: string) {
+    const a = await getApi();
+    if (!a) return;
+    imageBuilding[profile] = true;
+    imageLogs[profile] = [];
+    imageLogsOpen[profile] = true;
+
+    const rt = (window as any).runtime;
+    let unsub: (() => void) | null = null;
+    if (rt?.EventsOn) {
+      rt.EventsOn('profile-image:progress', (evt: any) => {
+        if (evt?.profile !== profile) return;
+        imageLogs[profile] = [...(imageLogs[profile] ?? []), evt.step];
+        if (evt.done) {
+          imageBuilding[profile] = false;
+          if (evt.error) {
+            notifications.error(`Build failed: ${evt.error}`);
+          } else {
+            notifications.success(`Profile image built: ${evt.tag}`);
+            checkImageStatus(profile);
+          }
+          if (rt?.EventsOff) rt.EventsOff('profile-image:progress');
+        }
+      });
+    }
+
+    try {
+      await a.BuildProfileImage({ profile, base_image: '', registry_url: '' });
+    } catch (err: any) {
+      imageBuilding[profile] = false;
+      notifications.error(`Build error: ${err?.message ?? err}`);
+      if (rt?.EventsOff) rt.EventsOff('profile-image:progress');
+    }
+  }
+
   // Build pie slices from disk overview
   let pieSlices = $derived.by(() => {
     if (!diskOverview) return [];
@@ -392,6 +450,86 @@
           <span class="backup-name">{b}</span>
           <button class="btn-confirm backup" onclick={() => handleRestore(b)}>restore</button>
           <button class="btn-confirm danger" onclick={() => handlePurge(b)}>purge</button>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  <!-- Profile images -->
+  {#if profiles.length > 0}
+    <div class="images-section">
+      <div class="images-header">
+        <h3>profile images</h3>
+        <span class="images-hint">pre-built containers pushed to private registry</span>
+      </div>
+
+      {#each profiles as p}
+        {@const status = imageStatuses[p.name]}
+        {@const building = imageBuilding[p.name] ?? false}
+        {@const logs = imageLogs[p.name] ?? []}
+        {@const logsOpen = imageLogsOpen[p.name] ?? false}
+        <div class="image-row">
+          <div class="image-row-top">
+            <span class="image-profile">{p.name}</span>
+
+            {#if !status}
+              <span class="image-badge checking">checking…</span>
+            {:else if !status.configured}
+              <span class="image-badge unconfigured">registry not configured</span>
+            {:else if status.exists}
+              <span class="image-badge ok">
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                image ready
+              </span>
+            {:else}
+              <span class="image-badge missing">no image</span>
+            {/if}
+
+            <div class="image-actions">
+              {#if status?.configured}
+                <button
+                  class="btn-build"
+                  class:building
+                  onclick={() => buildImage(p.name)}
+                  disabled={building}
+                  title={building ? 'Building…' : status?.exists ? 'Rebuild image' : 'Build image'}
+                >
+                  {#if building}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+                    building…
+                  {:else if status?.exists}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+                    rebuild
+                  {:else}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    build
+                  {/if}
+                </button>
+              {/if}
+              {#if status?.configured}
+                <button class="btn-icon-sm" onclick={() => checkImageStatus(p.name)} title="Refresh status" aria-label="Refresh image status for {p.name}">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+                </button>
+              {/if}
+            </div>
+          </div>
+
+          {#if status?.exists && status.digest}
+            <div class="image-digest">{status.digest.slice(0, 19)}…</div>
+          {/if}
+
+          {#if logs.length > 0}
+            <button class="logs-toggle" onclick={() => imageLogsOpen[p.name] = !logsOpen}>
+              {logsOpen ? '▾' : '▸'} build log ({logs.length})
+            </button>
+            {#if logsOpen}
+              <div class="build-log">
+                {#each logs as line}
+                  <div class="log-line">{line}</div>
+                {/each}
+              </div>
+            {/if}
+          {/if}
         </div>
       {/each}
     </div>
@@ -674,4 +812,174 @@
     transition: all 0.15s;
   }
   .btn-nfs-remove:hover { color: var(--color-error); background: rgba(239, 68, 68, 0.1); }
+
+  /* Profile images */
+  .images-section {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--color-border-primary);
+  }
+
+  .images-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .images-header h3 {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-tertiary);
+    flex-shrink: 0;
+  }
+  .images-hint {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    font-style: italic;
+  }
+
+  .image-row {
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    margin-bottom: 2px;
+  }
+  .image-row:nth-child(odd) { background: rgba(255, 255, 255, 0.015); }
+
+  .image-row-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 26px;
+  }
+
+  .image-profile {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .image-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  .image-badge.checking {
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    color: var(--color-text-muted);
+    font-style: italic;
+  }
+  .image-badge.unconfigured {
+    background: rgba(245, 158, 11, 0.07);
+    border: 1px solid rgba(245, 158, 11, 0.18);
+    color: var(--color-accent);
+  }
+  .image-badge.ok {
+    background: rgba(16, 185, 129, 0.08);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    color: var(--color-success);
+  }
+  .image-badge.missing {
+    background: rgba(148, 163, 184, 0.05);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    color: var(--color-text-tertiary);
+  }
+
+  .image-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .btn-build {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 10px;
+    border-radius: var(--radius-md);
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    color: var(--color-info);
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn-build:hover:not(:disabled) {
+    background: rgba(99, 102, 241, 0.2);
+    border-color: rgba(99, 102, 241, 0.4);
+  }
+  .btn-build:disabled { opacity: 0.6; cursor: not-allowed; }
+  .btn-build.building {
+    background: rgba(99, 102, 241, 0.06);
+    border-color: rgba(99, 102, 241, 0.15);
+    color: var(--color-text-tertiary);
+  }
+
+  .btn-icon-sm {
+    background: transparent;
+    border: none;
+    color: var(--color-text-muted);
+    padding: 3px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+  }
+  .btn-icon-sm:hover { color: var(--color-text-secondary); background: rgba(255, 255, 255, 0.06); }
+
+  .image-digest {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--color-text-muted);
+    padding-top: 3px;
+    padding-left: 2px;
+  }
+
+  .logs-toggle {
+    background: none;
+    border: none;
+    font-size: 11px;
+    color: var(--color-text-tertiary);
+    padding: 4px 2px 2px;
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+  .logs-toggle:hover { color: var(--color-text-secondary); }
+
+  .build-log {
+    margin-top: 4px;
+    padding: 8px 10px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-sm);
+    max-height: 180px;
+    overflow-y: auto;
+  }
+
+  .log-line {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--color-text-tertiary);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { animation: spin 0.8s linear infinite; }
 </style>

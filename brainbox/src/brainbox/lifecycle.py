@@ -938,9 +938,18 @@ async def provision(
 
     slog = get_logger(session_name=session_name, container_name=container_name)
 
-    # Docker-only: cosign verification
+    # Docker-only: pull profile image if needed, then cosign verification
     if backend == "docker":
         client = _docker()
+        if _is_profile_image:
+            slog.info("container.pulling_profile_image", metadata={"image": image_or_template})
+            try:
+                username = settings.registry_username
+                password = settings.registry_password.get_secret_value() if settings.registry_password else ""
+                auth_config = {"username": username, "password": password} if username else None
+                await _run(client.images.pull, image_or_template, auth_config=auth_config)
+            except Exception as exc:
+                slog.warning("container.profile_image_pull_failed", metadata={"reason": str(exc)})
         try:
             image = await _run(client.images.get, image_or_template)
         except Exception as exc:

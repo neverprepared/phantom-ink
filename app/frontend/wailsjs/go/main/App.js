@@ -22,6 +22,10 @@ export function BrowseProfileFiles(arg1) {
   return window['go']['main']['App']['BrowseProfileFiles'](arg1);
 }
 
+export function BuildProfileImage(arg1) {
+  return window['go']['main']['App']['BuildProfileImage'](arg1);
+}
+
 export function CancelHubTask(arg1) {
   return window['go']['main']['App']['CancelHubTask'](arg1);
 }
@@ -92,6 +96,10 @@ export function DeletePlaybook(arg1) {
 
 export function DeleteProfile(arg1, arg2) {
   return window['go']['main']['App']['DeleteProfile'](arg1, arg2);
+}
+
+export function DeleteProfileImageRecord(arg1) {
+  return window['go']['main']['App']['DeleteProfileImageRecord'](arg1);
 }
 
 export function DeleteRepo(arg1) {
@@ -222,8 +230,20 @@ export function GetProfileColors() {
   return window['go']['main']['App']['GetProfileColors']();
 }
 
+export function GetProfileImageInfo(arg1) {
+  return window['go']['main']['App']['GetProfileImageInfo'](arg1);
+}
+
 export function GetProfileSecrets(arg1) {
   return window['go']['main']['App']['GetProfileSecrets'](arg1);
+}
+
+export function GetRegistrySettings() {
+  return window['go']['main']['App']['GetRegistrySettings']();
+}
+
+export function GetRemoteProfileImageStatus(arg1) {
+  return window['go']['main']['App']['GetRemoteProfileImageStatus'](arg1);
 }
 
 export function GetRepoActivity(arg1) {
@@ -336,6 +356,10 @@ export function ListPlaybooks(arg1) {
 
 export function ListProfileDirs(arg1) {
   return window['go']['main']['App']['ListProfileDirs'](arg1);
+}
+
+export function ListProfileImages() {
+  return window['go']['main']['App']['ListProfileImages']();
 }
 
 export function ListRepos(arg1) {
@@ -464,6 +488,10 @@ export function SetConfig(arg1, arg2, arg3) {
 
 export function SetProfileColor(arg1, arg2) {
   return window['go']['main']['App']['SetProfileColor'](arg1, arg2);
+}
+
+export function SetRegistrySettings(arg1, arg2) {
+  return window['go']['main']['App']['SetRegistrySettings'](arg1, arg2);
 }
 
 export function SetServiceConfig(arg1, arg2, arg3, arg4, arg5) {

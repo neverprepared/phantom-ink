@@ -361,6 +361,28 @@ func (a *App) GetPlatform() string {
 	return goruntime.GOOS
 }
 
+// GetRegistrySettings returns the stored registry credentials.
+func (a *App) GetRegistrySettings() map[string]string {
+	if a.db == nil {
+		return map[string]string{}
+	}
+	return map[string]string{
+		"username": a.db.GetSetting(settingRegistryUsername, ""),
+		"password": a.db.GetSetting(settingRegistryPassword, ""),
+	}
+}
+
+// SetRegistrySettings persists registry credentials.
+func (a *App) SetRegistrySettings(username, password string) error {
+	if a.db == nil {
+		return nil
+	}
+	if err := a.db.SetSetting(settingRegistryUsername, username); err != nil {
+		return err
+	}
+	return a.db.SetSetting(settingRegistryPassword, password)
+}
+
 // BrowseFolder opens a native folder selection dialog and returns the path.
 func (a *App) BrowseFolder() (string, error) {
 	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{

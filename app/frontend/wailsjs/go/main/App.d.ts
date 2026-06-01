@@ -13,6 +13,8 @@ export function BrowseFolder():Promise<string>;
 
 export function BrowseProfileFiles(arg1:string):Promise<Array<string>>;
 
+export function BuildProfileImage(arg1:main.ProfileImageBuildRequest):Promise<void>;
+
 export function CancelHubTask(arg1:string):Promise<void>;
 
 export function CancelPlaybook(arg1:string):Promise<void>;
@@ -48,6 +50,8 @@ export function DeleteOllamaModel(arg1:string):Promise<void>;
 export function DeletePlaybook(arg1:string):Promise<void>;
 
 export function DeleteProfile(arg1:string,arg2:boolean):Promise<void>;
+
+export function DeleteProfileImageRecord(arg1:string):Promise<void>;
 
 export function DeleteRepo(arg1:string):Promise<void>;
 
@@ -113,7 +117,13 @@ export function GetPlaybook(arg1:string):Promise<brainbox.Playbook>;
 
 export function GetProfileColors():Promise<Record<string, string>>;
 
+export function GetProfileImageInfo(arg1:string):Promise<main.ProfileImageRow|boolean>;
+
 export function GetProfileSecrets(arg1:string):Promise<Array<main.SecretKeyStatus>>;
+
+export function GetRegistrySettings():Promise<Record<string, string>>;
+
+export function GetRemoteProfileImageStatus(arg1:string):Promise<any>;
 
 export function GetRepoActivity(arg1:string):Promise<Array<main.RepoEvent>>;
 
@@ -170,6 +180,8 @@ export function ListOllamaModels():Promise<Array<brainbox.OllamaModel>>;
 export function ListPlaybooks(arg1:string):Promise<Array<brainbox.Playbook>>;
 
 export function ListProfileDirs(arg1:string):Promise<Array<string>>;
+
+export function ListProfileImages():Promise<Array<main.ProfileImageRow>>;
 
 export function ListRepos(arg1:string):Promise<Array<brainbox.Repo>>;
 
@@ -234,6 +246,8 @@ export function SetAgentEnabled(arg1:string,arg2:boolean):Promise<void>;
 export function SetConfig(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SetProfileColor(arg1:string,arg2:string):Promise<void>;
+
+export function SetRegistrySettings(arg1:string,arg2:string):Promise<void>;
 
 export function SetServiceConfig(arg1:string,arg2:boolean,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 

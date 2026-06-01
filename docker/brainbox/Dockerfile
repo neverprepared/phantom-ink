@@ -1,279 +1,193 @@
+# syntax=docker/dockerfile:1
 FROM ubuntu:24.04
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV LANG=en_US.UTF-8
-ENV LANGUAGE=en_US:en
-ENV LC_ALL=en_US.UTF-8
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    LC_ALL=en_US.UTF-8 \
+    HOMEBREW_NO_AUTO_UPDATE=1 \
+    NVM_DIR=/home/developer/.nvm \
+    GOENV_ROOT=/home/developer/.goenv \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    BASH_ENV=/home/developer/.env \
+    DISABLE_AUTOUPDATER=1 \
+    PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/home/developer/.local/bin:/home/developer/.nvm/default_bin:/home/developer/.goenv/bin:/home/developer/.goenv/shims:/home/developer/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-# Base system packages and developer essentials
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    ca-certificates \
-    curl \
-    file \
-    git \
-    jq \
-    less \
-    libssl-dev \
-    locales \
-    openssh-client \
-    pkg-config \
-    procps \
-    sudo \
-    unzip \
-    vim \
-    wget \
-    zip \
+# Build-time assets consumed in RUN layers (chown 1001 = developer, assigned after ubuntu:1000)
+COPY --chown=1001:1001 docker/brainbox/hooks-requirements.txt /tmp/hooks-requirements.txt
+COPY --chown=1001:1001 packages/brainbox-mcp/dist             /tmp/brainbox-mcp-dist
+
+# =============================================================================
+# Root: system packages, user, cloud CLIs, static binaries
+# One RUN keeps intermediate state out of layers; BuildKit cache mounts keep
+# apt download caches out of the image entirely.
+# =============================================================================
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+      build-essential ca-certificates curl file git jq less \
+      libssl-dev locales openssh-client pkg-config procps \
+      sudo tmux ttyd unzip vim wget zip \
     && locale-gen en_US.UTF-8 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create a non-root user for Homebrew (required) with passwordless sudo
-RUN useradd -m -s /bin/bash developer \
-    && echo 'developer ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/developer
-
-WORKDIR /home/developer
-
-# =============================================================================
-# Homebrew — pre-create prefix as root so the installer's sudo call is
-# unnecessary (required for QEMU cross-arch builds where sudo fails).
-# =============================================================================
-RUN mkdir -p /home/linuxbrew/.linuxbrew \
-    && chown -R developer:developer /home/linuxbrew
-
-USER developer
-
-RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
-ENV HOMEBREW_NO_AUTO_UPDATE=1
-
-RUN brew install \
-    fd \
-    fzf \
-    gh \
-    ripgrep \
-    tree \
-    yq
-
-# =============================================================================
-# Python — uv (manages Python versions, venvs, and packages)
-# =============================================================================
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/home/developer/.local/bin:${PATH}"
-
-# Install Python versions; default to 3.12
-RUN uv python install 3.12 3.11 \
-    && ln -sf "$(uv python find 3.12)" ~/.local/bin/python3 \
-    && ln -sf "$(uv python find 3.12)" ~/.local/bin/python
-
-# =============================================================================
-# Node.js — nvm (switch versions with: nvm install/use <version>)
-# =============================================================================
-ENV NVM_DIR="/home/developer/.nvm"
-
-RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-
-# Install Node versions; default to 22 LTS
-RUN bash -c '. "$NVM_DIR/nvm.sh" && nvm install 22 && nvm install 20 && nvm alias default 22'
-
-# Create a stable symlink so Node works in non-interactive shells
-RUN bash -c '. "$NVM_DIR/nvm.sh" && ln -sf "$(dirname "$(nvm which default)")" "$NVM_DIR/default_bin"'
-ENV PATH="/home/developer/.nvm/default_bin:${PATH}"
-
-# =============================================================================
-# Go — goenv (switch versions with: goenv install/global <version>)
-# =============================================================================
-ENV GOENV_ROOT="/home/developer/.goenv"
-
-RUN git clone https://github.com/go-nv/goenv.git "$GOENV_ROOT"
-ENV PATH="/home/developer/.goenv/bin:/home/developer/.goenv/shims:${PATH}"
-
-# Install Go versions; default to 1.22.5
-RUN goenv install 1.22.5 \
-    && goenv install 1.21.12 \
-    && goenv global 1.22.5 \
-    && goenv rehash
-
-# =============================================================================
-# Rust — rustup (switch versions with: rustup default stable/nightly/1.xx)
-# =============================================================================
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-ENV PATH="/home/developer/.cargo/bin:${PATH}"
-
-# =============================================================================
-# Cloud CLIs — AWS and Azure
-# =============================================================================
-USER root
-RUN ARCH=$(uname -m) \
-    && curl "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o /tmp/awscliv2.zip \
-    && unzip -q /tmp/awscliv2.zip -d /tmp \
-    && /tmp/aws/install \
-    && rm -rf /tmp/aws /tmp/awscliv2.zip
-
-RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
-    && rm -rf /var/lib/apt/lists/*
-USER developer
-
-RUN mkdir -p /home/developer/.azure
-
-# Kubernetes + Terraform (previously performer-only — now in unified image)
-USER developer
-RUN brew install hashicorp/tap/terraform kubectl
-
-# =============================================================================
-# Shell configuration — ensure version managers work in interactive sessions
-# =============================================================================
-RUN cat >> ~/.bashrc <<'BASHRC'
-
-# nvm
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
-[ -s "$NVM_DIR/bash_completion" ] && source "$NVM_DIR/bash_completion"
-
-# goenv
-export GOENV_ROOT="$HOME/.goenv"
-eval "$(goenv init -)"
-
-# uv shell completions
-eval "$(uv generate-shell-completion bash 2>/dev/null)"
-
-# rustup shell completions
-eval "$(rustup completions bash 2>/dev/null)"
-BASHRC
-
-# =============================================================================
-# Workspace
-# =============================================================================
-RUN mkdir -p /home/developer/workspace
-WORKDIR /home/developer/workspace
-
-# =============================================================================
-# Web terminal — ttyd + tmux (for containerized Claude Code sessions)
-# =============================================================================
-USER root
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    tmux \
-    ttyd \
-    && rm -rf /var/lib/apt/lists/*
-USER developer
-
-# =============================================================================
-# Claude Code — installed via official installer (latest at build time)
-# =============================================================================
-RUN curl -fsSL https://claude.ai/install.sh | bash
-
-# =============================================================================
-# OpenAI Codex CLI — installed via npm (for codex LLM provider support)
-# =============================================================================
-RUN bash -c '. "$NVM_DIR/nvm.sh" && npm install -g @openai/codex || true'
-
-# =============================================================================
-# Playwright browsers — pre-download (heavy; separate layer so it caches well)
-# npm install of @playwright/mcp is in the MCP bulk install below
-# =============================================================================
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-
-USER root
-RUN mkdir -p /ms-playwright && \
-    bash -c '. "$NVM_DIR/nvm.sh" && npx --yes playwright install chromium --with-deps' && \
-    chmod -R 777 /ms-playwright && \
-    rm -rf /var/lib/apt/lists/*
-USER developer
-
-# =============================================================================
-# websocat — SSH agent WebSocket relay for remote Docker mode
-# =============================================================================
-USER root
-RUN ARCH=$(uname -m) \
-    && case "$ARCH" in \
-        x86_64)  WSARCH="x86_64-unknown-linux-musl" ;; \
-        aarch64) WSARCH="aarch64-unknown-linux-musl" ;; \
-        *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
-    esac \
-    && curl -sL "https://github.com/vi/websocat/releases/latest/download/websocat.${WSARCH}" \
+    # Drop docs/man pages installed by apt — not needed in a container image
+    && rm -rf /usr/share/doc /usr/share/man /usr/share/info \
+    # developer user
+    && useradd -m -s /bin/bash developer \
+    && echo 'developer ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/developer \
+    # Homebrew prefix — must be owned by developer before the installer runs
+    && mkdir -p /home/linuxbrew/.linuxbrew \
+    && chown -R developer:developer /home/linuxbrew \
+    # Pre-create dirs that BuildKit cache mounts would otherwise create as root
+    && mkdir -p /home/developer/.cache /home/developer/.local/bin \
+    && chown -R developer:developer /home/developer/.cache /home/developer/.local \
+    # Playwright browser dir (writable by developer via npx playwright install)
+    && mkdir -p /ms-playwright && chmod 777 /ms-playwright \
+    # AWS CLI
+    && ARCH=$(uname -m) \
+    && curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o /tmp/awscliv2.zip \
+    && unzip -q /tmp/awscliv2.zip -d /tmp/aws-install \
+    && /tmp/aws-install/aws/install \
+    && rm -rf /tmp/awscliv2.zip /tmp/aws-install \
+    # Azure CLI (adds Microsoft apt source and installs azure-cli)
+    && curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
+    # websocat — SSH agent WebSocket relay for remote Docker mode
+    && WSARCH=$(case "$(uname -m)" in \
+         x86_64)  echo x86_64-unknown-linux-musl ;; \
+         aarch64) echo aarch64-unknown-linux-musl ;; \
+         *) echo "Unsupported arch: $(uname -m)" >&2 && exit 1 ;; \
+       esac) \
+    && curl -fsSL "https://github.com/vi/websocat/releases/latest/download/websocat.${WSARCH}" \
        -o /usr/local/bin/websocat \
     && chmod +x /usr/local/bin/websocat
-USER developer
+
+# Developer-owned static assets (COPY after useradd so developer name resolves)
+COPY --chown=developer:developer docker/brainbox/setup/.bashrc         /tmp/.bashrc.extra
+COPY --chown=developer:developer docker/brainbox/setup/ttyd-wrapper.sh /home/developer/ttyd-wrapper.sh
+COPY --chown=developer:developer reflex/plugins/reflex                  /opt/reflex/share/reflex
 
 # =============================================================================
-# Hook Python dependencies — installed from requirements file so hook scripts
-# work out-of-the-box when delivered via config bundle at provision time
-# =============================================================================
-COPY docker/brainbox/hooks-requirements.txt /tmp/hooks-requirements.txt
-RUN uvx --python 3.12 --with-requirements /tmp/hooks-requirements.txt python -c "import langfuse; print('hook deps installed')"
-
-# =============================================================================
-# MCP servers — pre-install all packages
+# Developer: all language runtimes, tools, MCP servers, Claude Code
 #
-# Servers are enabled/disabled by the per-profile .claude directory mounted
-# at runtime (CLAUDE_CONFIG_DIR). The container pre-installs everything so
-# Claude can start any configured server without a network fetch.
-# No hardcoded "claude mcp add" — configuration lives in the profile.
+# BuildKit cache mounts prevent download caches from landing in the image:
+#   - /var/cache/apt + /var/lib/apt  → apt (for playwright --with-deps)
+#   - ~/.cache/Homebrew              → brew downloads
+#   - ~/.cache/uv                    → uv package downloads
+#   - ~/.npm                         → npm package downloads
+#   - ~/.nvm/cache                   → nvm Node tarballs
+#   - ~/.goenv/cache                 → goenv Go distributions
+#   - ~/.rustup/downloads            → rustup toolchain downloads
 # =============================================================================
+USER developer
+WORKDIR /home/developer
 
-# npm-based MCP servers — global install for zero-latency startup
-# Includes: MCP core servers, cloud/infra, collaboration, and all @neverprepared servers
-RUN bash -c '. "$NVM_DIR/nvm.sh" && npm install -g \
-    @playwright/mcp \
-    @modelcontextprotocol/server-memory \
-    @modelcontextprotocol/server-filesystem \
-    @modelcontextprotocol/server-github \
-    chrome-devtools-mcp \
-    mcp-remote \
-    @azure/mcp@2.0.0-beta.10 \
-    @azure-devops/mcp@2.2.2 \
-    mssql-mcp@2.1.1 \
-    @microsoft/devbox-mcp@0.0.3-alpha.4 \
-    kubernetes-mcp-server@0.0.56 \
-    argocd-mcp@0.5.0 \
-    @neverprepared/mcp-markdown-to-confluence \
-    @neverprepared/mcp-obsidian-second-brain \
-    @neverprepared/mcp-cloudflare-dns \
-    @neverprepared/mcp-uptime-kuma \
-    @neverprepared/mcp-new-relic'
-
-# Python MCP servers — uv tool install pre-downloads packages and puts tools on PATH
-RUN uv tool install --python 3.12 'mcp-atlassian==0.13.0' \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    --mount=type=cache,target=/home/developer/.cache/Homebrew,uid=1001,gid=1001,sharing=locked \
+    --mount=type=cache,target=/home/developer/.cache/uv,uid=1001,gid=1001,sharing=locked \
+    --mount=type=cache,target=/home/developer/.npm,uid=1001,gid=1001 \
+    --mount=type=cache,target=/home/developer/.rustup/downloads,uid=1001,gid=1001 \
+    # ---- Homebrew ----------------------------------------------------------
+    NONINTERACTIVE=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+    && brew install fd fzf gh ripgrep tree yq kubectl hashicorp/tap/terraform \
+    # ---- Python (uv) -------------------------------------------------------
+    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && uv python install 3.12 3.11 \
+    && ln -sf "$(uv python find 3.12)" ~/.local/bin/python3 \
+    && ln -sf "$(uv python find 3.12)" ~/.local/bin/python \
+    # ---- Node.js (nvm) -----------------------------------------------------
+    && curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash \
+    && bash -c '. "$NVM_DIR/nvm.sh" && nvm install 22 && nvm install 20 && nvm alias default 22' \
+    && bash -c '. "$NVM_DIR/nvm.sh" && ln -sf "$(dirname "$(nvm which default)")" "$NVM_DIR/default_bin"' \
+    # ---- Go (goenv — shallow clone strips ~45 MB of history) ---------------
+    && git clone --depth=1 https://github.com/go-nv/goenv.git "$GOENV_ROOT" \
+    && goenv install 1.22.5 && goenv install 1.21.12 && goenv global 1.22.5 && goenv rehash \
+    # ---- Rust (rustup — drop docs to save ~500 MB) -------------------------
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+       | sh -s -- -y --default-toolchain stable \
+    && rustup component remove rust-docs 2>/dev/null || true \
+    # ---- Azure credential dir ----------------------------------------------
+    && mkdir -p ~/.azure \
+    # ---- Shell config ------------------------------------------------------
+    && cat /tmp/.bashrc.extra >> ~/.bashrc && rm /tmp/.bashrc.extra \
+    && printf '%s\n' \
+       '' \
+       '# nvm' \
+       'export NVM_DIR="$HOME/.nvm"' \
+       '[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"' \
+       '[ -s "$NVM_DIR/bash_completion" ] && source "$NVM_DIR/bash_completion"' \
+       '' \
+       '# goenv' \
+       'export GOENV_ROOT="$HOME/.goenv"' \
+       'eval "$(goenv init -)"' \
+       '' \
+       '# uv shell completions' \
+       'eval "$(uv generate-shell-completion bash 2>/dev/null)"' \
+       '' \
+       '# rustup shell completions' \
+       'eval "$(rustup completions bash 2>/dev/null)"' \
+       >> ~/.bashrc \
+    && chmod +x ~/ttyd-wrapper.sh \
+    && find /opt/reflex/share/reflex/scripts -name "*.sh" -o -name "*.py" 2>/dev/null \
+       | xargs chmod 0755 2>/dev/null || true \
+    # ---- Claude Code -------------------------------------------------------
+    && curl -fsSL https://claude.ai/install.sh | bash \
+    # ---- OpenAI Codex CLI (best-effort) ------------------------------------
+    && (bash -c '. "$NVM_DIR/nvm.sh" && npm install -g @openai/codex' || true) \
+    # ---- Playwright chromium (--with-deps uses passwordless sudo for apt) --
+    && bash -c '. "$NVM_DIR/nvm.sh" && npx --yes playwright install chromium --with-deps' \
+    # ---- npm MCP servers ---------------------------------------------------
+    && bash -c '. "$NVM_DIR/nvm.sh" && npm install -g \
+        @playwright/mcp \
+        @modelcontextprotocol/server-memory \
+        @modelcontextprotocol/server-filesystem \
+        @modelcontextprotocol/server-github \
+        chrome-devtools-mcp \
+        mcp-remote \
+        "@azure/mcp@2.0.0-beta.10" \
+        "@azure-devops/mcp@2.2.2" \
+        "mssql-mcp@2.1.1" \
+        "@microsoft/devbox-mcp@0.0.3-alpha.4" \
+        "kubernetes-mcp-server@0.0.56" \
+        "argocd-mcp@0.5.0" \
+        @neverprepared/mcp-markdown-to-confluence \
+        @neverprepared/mcp-obsidian-second-brain \
+        @neverprepared/mcp-cloudflare-dns \
+        @neverprepared/mcp-uptime-kuma \
+        @neverprepared/mcp-new-relic' \
+    # ---- Python MCP servers + hook deps + brainbox-mcp --------------------
+    && uvx --python 3.12 --with-requirements /tmp/hooks-requirements.txt \
+         python -c "import langfuse; print('hook deps ok')" \
+    && uv tool install --python 3.12 'mcp-atlassian==0.13.0' \
     && uv tool install --python 3.12 'mcp-server-git==2025.12.18' \
     && uv tool install --python 3.12 markitdown-mcp \
     && uv tool install --python 3.12 'workspace-mcp==1.7.1' \
     && uv tool install --python 3.12 \
-        --from 'git+https://github.com/neverprepared/kuma_uptime_mcp.git' \
-        mcp-uptime-kuma
+         --from 'git+https://github.com/neverprepared/kuma_uptime_mcp.git' mcp-uptime-kuma \
+    && uv tool install --python 3.12 /tmp/brainbox-mcp-dist/brainbox_mcp-*.whl \
+    && rm -rf /tmp/brainbox-mcp-dist /tmp/hooks-requirements.txt \
+    # ---- Pre-trust common working directories ------------------------------
+    && if [ -f ~/.claude.json ]; then \
+         jq '. + {hasCompletedOnboarding:true,bypassPermissionsModeAccepted:true} \
+             | .projects["/home/developer/workspace"] = \
+                 (.projects["/home/developer/workspace"] // {} | . + {hasTrustDialogAccepted:true}) \
+             | .projects["/home/developer/task-repo"] = \
+                 {allowedTools:[],mcpContextUris:[],hasTrustDialogAccepted:true,projectOnboardingSeenCount:0} \
+             | .projects["/home/developer"] = \
+                 {allowedTools:[],mcpContextUris:[],hasTrustDialogAccepted:true,projectOnboardingSeenCount:0}' \
+             ~/.claude.json > /tmp/.claude.json.tmp \
+         && mv /tmp/.claude.json.tmp ~/.claude.json ; \
+       else \
+         printf '%s' \
+           '{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true,"projects":{' \
+           '"/home/developer/workspace":{"allowedTools":[],"mcpContextUris":[],"hasTrustDialogAccepted":true,"projectOnboardingSeenCount":0},' \
+           '"/home/developer/task-repo":{"allowedTools":[],"mcpContextUris":[],"hasTrustDialogAccepted":true,"projectOnboardingSeenCount":0},' \
+           '"/home/developer":{"allowedTools":[],"mcpContextUris":[],"hasTrustDialogAccepted":true,"projectOnboardingSeenCount":0}}}' \
+           > ~/.claude.json ; \
+       fi
 
-# Brainbox MCP server (+ brainbox-init for credential bundle delivery).
-# Wheel is built on the host before docker build so the _credentials symlink
-# is resolved into real files; see brainbox/scripts/build.sh.
-COPY --chown=developer:developer packages/brainbox-mcp/dist /tmp/brainbox-mcp-dist
-RUN uv tool install --python 3.12 /tmp/brainbox-mcp-dist/brainbox_mcp-*.whl \
-    && rm -rf /tmp/brainbox-mcp-dist
-
-# Skip onboarding and pre-trust common working directories
-RUN bash -c 'if [ -f /home/developer/.claude.json ]; then \
-      jq ". + {hasCompletedOnboarding: true, bypassPermissionsModeAccepted: true} | .projects[\"/home/developer/workspace\"] = (.projects[\"/home/developer/workspace\"] // {} | . + {hasTrustDialogAccepted: true}) | .projects[\"/home/developer/task-repo\"] = {allowedTools:[],mcpContextUris:[],hasTrustDialogAccepted:true,projectOnboardingSeenCount:0} | .projects[\"/home/developer\"] = {allowedTools:[],mcpContextUris:[],hasTrustDialogAccepted:true,projectOnboardingSeenCount:0}" /home/developer/.claude.json > /tmp/.claude.json.tmp && \
-      mv /tmp/.claude.json.tmp /home/developer/.claude.json; \
-    else \
-      echo "{\"hasCompletedOnboarding\":true,\"bypassPermissionsModeAccepted\":true,\"projects\":{\"/home/developer/workspace\":{\"allowedTools\":[],\"mcpContextUris\":[],\"hasTrustDialogAccepted\":true,\"projectOnboardingSeenCount\":0},\"/home/developer/task-repo\":{\"allowedTools\":[],\"mcpContextUris\":[],\"hasTrustDialogAccepted\":true,\"projectOnboardingSeenCount\":0},\"/home/developer\":{\"allowedTools\":[],\"mcpContextUris\":[],\"hasTrustDialogAccepted\":true,\"projectOnboardingSeenCount\":0}}}" > /home/developer/.claude.json; \
-    fi'
-
-# Reflex plugin — install at /opt/reflex/share/reflex so Claude can be
-# launched with --plugin-dir /opt/reflex/share/reflex (same convention as
-# the host wrapper: claude --plugin-dir /opt/homebrew/opt/reflex/share/reflex)
-COPY --chown=developer:developer reflex/plugins/reflex /opt/reflex/share/reflex
-RUN find /opt/reflex/share/reflex/scripts -name "*.sh" -exec chmod 0755 {} \; 2>/dev/null || true \
-    && find /opt/reflex/share/reflex/scripts -name "*.py" -exec chmod 0755 {} \; 2>/dev/null || true
-
-# Shell config + ttyd wrapper
-COPY --chown=developer:developer docker/brainbox/setup/.bashrc /tmp/.bashrc.extra
-RUN cat /tmp/.bashrc.extra >> /home/developer/.bashrc && rm /tmp/.bashrc.extra
-
-COPY --chown=developer:developer docker/brainbox/setup/ttyd-wrapper.sh /home/developer/ttyd-wrapper.sh
-RUN chmod +x /home/developer/ttyd-wrapper.sh
+WORKDIR /home/developer/workspace
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD pgrep -x "claude" > /dev/null || pgrep -x "codex" > /dev/null || pgrep -x "ollama" > /dev/null || exit 1
 
 CMD ["/bin/bash", "-l"]
-
-ENV BASH_ENV=/home/developer/.env
-ENV DISABLE_AUTOUPDATER=1
