@@ -482,7 +482,7 @@
                 image ready
               </span>
             {:else}
-              <span class="image-badge missing">no image</span>
+              <span class="image-badge missing" title={status?.error ?? ''}>no image{status?.error ? ' ⚠' : ''}</span>
             {/if}
 
             <div class="image-actions">

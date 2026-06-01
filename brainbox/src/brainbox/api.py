@@ -3701,25 +3701,33 @@ async def profile_image_status(name: str):
     tag = f"{registry}/brainbox-profile:{name}"
     try:
         import httpx
-        # Query the registry v2 API for the manifest digest (HEAD request, no download)
         auth = None
         username = settings.registry_username
         password = settings.registry_password.get_secret_value() if settings.registry_password else ""
         if username:
             auth = (username, password)
 
-        url = f"https://{registry}/v2/brainbox-profile/manifests/{name}"
-        async with httpx.AsyncClient(verify=False) as client:
-            resp = await client.head(
-                url,
-                auth=auth,
-                headers={"Accept": "application/vnd.docker.distribution.manifest.v2+json"},
-                timeout=5,
-            )
-        if resp.status_code == 200:
-            digest = resp.headers.get("Docker-Content-Digest", "")
-            return {"configured": True, "profile": name, "exists": True, "tag": tag, "digest": digest}
-        return {"configured": True, "profile": name, "exists": False, "tag": tag, "digest": None}
+        # Try HTTPS first, fall back to HTTP (registry may be http-only behind a proxy)
+        last_error = ""
+        for scheme in ("https", "http"):
+            url = f"{scheme}://{registry}/v2/brainbox-profile/manifests/{name}"
+            try:
+                async with httpx.AsyncClient(verify=False) as client:
+                    resp = await client.head(
+                        url,
+                        auth=auth,
+                        headers={"Accept": "application/vnd.docker.distribution.manifest.v2+json"},
+                        timeout=5,
+                    )
+                if resp.status_code == 200:
+                    digest = resp.headers.get("Docker-Content-Digest", "")
+                    return {"configured": True, "profile": name, "exists": True, "tag": tag, "digest": digest}
+                last_error = f"HTTP {resp.status_code}"
+                break  # got a response, no need to try http fallback
+            except Exception as exc:
+                last_error = str(exc)
+                continue
+        return {"configured": True, "profile": name, "exists": False, "tag": tag, "digest": None, "error": last_error}
     except Exception as exc:
         return {"configured": True, "profile": name, "exists": False, "tag": tag, "digest": None, "error": str(exc)}
 
