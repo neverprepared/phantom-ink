@@ -15,6 +15,11 @@ func (a *App) GetSessions() ([]brainbox.Session, error) {
 }
 
 func (a *App) CreateSession(req brainbox.CreateSessionRequest) (brainbox.SessionActionResponse, error) {
+	// Forward the calling profile's env vars to the remote brainbox host so
+	// secrets like CLAUDE_CODE_OAUTH_TOKEN reach the container.
+	if req.WorkspaceHome != "" && len(req.Env) == 0 {
+		req.Env = brainbox.ReadProfileEnv(req.WorkspaceHome)
+	}
 	return a.client.CreateSession(req)
 }
 

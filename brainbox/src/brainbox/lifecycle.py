@@ -810,6 +810,7 @@ async def provision(
     docker_host: str | None = None,
     delivery: str | None = None,
     runner: str | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> SessionContext:
     from .backends import create_backend
 
@@ -915,6 +916,7 @@ async def provision(
         job_id=job_id,
         docker_host=docker_host,
         delivery=delivery if delivery in ("bind", "bundle") else "bind",
+        extra_env=extra_env or {},
     )
 
     slog = get_logger(session_name=session_name, container_name=container_name)
@@ -1036,6 +1038,12 @@ async def configure(ctx_or_name: SessionContext | str) -> SessionContext:
     from .secrets import resolve_secrets, has_op_integration
 
     resolved = resolve_secrets()
+
+    # Merge caller-supplied env vars — these come from the originating host's
+    # profile (e.g. CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY) and win over
+    # anything resolved locally on the brainbox host.
+    if ctx.extra_env:
+        resolved.update(ctx.extra_env)
 
     # Inject provider-specific env vars
     if ctx.llm_provider == "ollama":
@@ -1364,6 +1372,7 @@ async def run_pipeline(
     repo: Any = None,  # RepoConfig | None — avoid circular import
     delivery: str | None = None,
     runner: str | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> SessionContext:
     # Pre-provision: ci-ratchet sets defaults (branch, role, task_description).
     # "Brownian ratchet" concept from multiclaude by Dan Lorenc et al.:
@@ -1409,6 +1418,7 @@ async def run_pipeline(
         docker_host=docker_host,
         delivery=delivery,
         runner=runner,
+        extra_env=extra_env or {},
     )
 
     # If the session was dispatched to a remote runner, the runner has already

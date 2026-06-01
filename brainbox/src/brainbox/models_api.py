@@ -62,6 +62,7 @@ class CreateSessionRequest(BaseModel):
     repo: RepoConfig | None = None  # Repo access mode (worktree-mount, clone, clone-worktree)
     delivery: str | None = None  # "bind" (default) or "bundle"
     runner: str | None = None  # Runner name to dispatch this session to (None = local execution)
+    env: dict[str, str] | None = None  # Caller-supplied env vars from originating host profile
 
     @field_validator("name")
     @classmethod

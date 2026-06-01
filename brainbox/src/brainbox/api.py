@@ -1454,6 +1454,7 @@ async def api_create_session(
             task_id=task_id,
             delivery=body.delivery,
             runner=body.runner,
+            extra_env=body.env or {},
         )
         _audit_log(request, "session.create", session_name=body.name, success=True)
         _broadcast_sse(json.dumps({"action": "session.create", "session": body.name, "profile": body.workspace_profile or ""}))

@@ -100,6 +100,9 @@ class SessionContext(BaseModel):
     # Advertised host/IP of the runner machine. Used to construct the ttyd URL
     # for remote sessions (e.g. "192.168.1.42" → "http://192.168.1.42:{port}").
     runner_host: str | None = None
+    # Caller-supplied env vars forwarded from the originating host's profile.
+    # Merged into resolved secrets during configure(); caller values win.
+    extra_env: dict[str, str] = Field(default_factory=dict)
     # Backend-specific fields
     backend: Literal["docker", "utm"] = "docker"
     docker_host: str | None = None  # Docker daemon host (None = local socket)

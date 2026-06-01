@@ -1,8 +1,12 @@
 package brainbox
 
 import (
+	"bufio"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -44,6 +48,7 @@ type CreateSessionRequest struct {
 	Ports            map[string]int    `json:"ports,omitempty"`
 	DockerHost       string            `json:"docker_host,omitempty"`
 	Runner           string            `json:"runner,omitempty"`
+	Env              map[string]string `json:"env,omitempty"`
 }
 
 // QuerySessionRequest mirrors the POST /api/sessions/{name}/query payload.
@@ -59,6 +64,35 @@ type SessionActionResponse struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error"`
 	URL     string `json:"url"`
+}
+
+// ReadProfileEnv reads KEY=VALUE pairs from .env and .env.secrets files under
+// workspaceHome and returns them as a map. Used to forward profile secrets to
+// a remote brainbox host when creating sessions.
+func ReadProfileEnv(workspaceHome string) map[string]string {
+	env := make(map[string]string)
+	if workspaceHome == "" {
+		return env
+	}
+	for _, name := range []string{".env", ".env.secrets"} {
+		path := filepath.Join(workspaceHome, name)
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if k, v, ok := strings.Cut(line, "="); ok {
+				env[strings.TrimSpace(k)] = strings.TrimSpace(v)
+			}
+		}
+		f.Close()
+	}
+	return env
 }
 
 // ListSessions fetches all container sessions.
