@@ -29,7 +29,7 @@ def wf(path, content, mode):
 if 'credentials_json' in d:
     wf(home + '/.claude/.credentials.json', d['credentials_json'], 0o600)
 if 'claude_json' in d:
-    wf(home + '/.claude.json', d['claude_json'], 0o600)
+    wf(home + '/.claude/.claude.json', d['claude_json'], 0o600)
 if 'settings_json' in d:
     wf(home + '/.claude/settings.json', d['settings_json'], 0o644)
 " 2>/dev/null
