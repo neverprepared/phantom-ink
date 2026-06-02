@@ -37,7 +37,8 @@ from .router import (
     list_tasks,
     restore_state as router_restore_state,
 )
-from .lifecycle import recover_sessions_from_docker
+from .lifecycle import recover_sessions_from_docker, load_runner_sessions_from_db
+from .store import init_db
 
 log = get_logger()
 
@@ -53,6 +54,7 @@ _ollama_watcher_task: asyncio.Task[None] | None = None
 
 async def init() -> None:
     """Initialize the hub: load agents, restore state, start background tasks."""
+    init_db()
     load_agents()
     await _restore_state()
 
@@ -60,6 +62,7 @@ async def init() -> None:
     # Without this, _sessions is empty after restart and check_running_tasks()
     # immediately fails all RUNNING tasks without being able to recycle them.
     recover_sessions_from_docker()
+    load_runner_sessions_from_db()
 
     loop = asyncio.get_running_loop()
     global _flush_task, _check_task, _ollama_watcher_task

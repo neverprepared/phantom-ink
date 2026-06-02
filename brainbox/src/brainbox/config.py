@@ -330,6 +330,10 @@ class Settings(BaseSettings):
         return self.config_dir / "hub-state.json"
 
     @property
+    def db_file(self) -> Path:
+        return self.config_dir / "brainbox.db"
+
+    @property
     def api_key_file(self) -> Path:
         return self.config_dir / ".api-key"
 

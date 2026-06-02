@@ -795,6 +795,8 @@ async def _provision_via_runner(*, runner: str, **payload: Any) -> SessionContex
     if not ctx.runner_host and info is not None:
         ctx.runner_host = info.host
     _sessions[ctx.session_name] = ctx
+    from .store import async_upsert_session
+    await async_upsert_session(ctx)
     return ctx
 
 
@@ -1259,6 +1261,9 @@ async def recycle(ctx_or_name: SessionContext | str, reason: str = "manual") -> 
     ctx.state = SessionState.RECYCLED
     _sessions.pop(ctx.session_name, None)
     slog.info("container.recycled", metadata={"reason": reason, "backend": ctx.backend})
+    from .store import async_mark_session_inactive
+    from .utils import now_ms
+    await async_mark_session_inactive(ctx.session_name, now_ms())
 
     # Clean up host worktree if one was created for this session
     if ctx.worktree_path:
@@ -1551,6 +1556,24 @@ def register_runner_session(ctx: SessionContext) -> None:
     into _sessions once the result arrives."""
     if ctx.session_name not in _sessions:
         _sessions[ctx.session_name] = ctx
+
+
+def load_runner_sessions_from_db() -> int:
+    """Restore runner sessions from DB into _sessions on startup.
+    Skips sessions already present (e.g. recovered via Docker labels).
+    Returns the number of sessions loaded."""
+    from .store import load_active_runner_sessions
+    rows = load_active_runner_sessions()
+    loaded = 0
+    for data in rows:
+        try:
+            ctx = SessionContext.model_validate(data)
+            if ctx.session_name not in _sessions:
+                _sessions[ctx.session_name] = ctx
+                loaded += 1
+        except Exception:
+            pass
+    return loaded
 
 
 async def _dispatch_runner_op(

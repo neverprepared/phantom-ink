@@ -1205,6 +1205,7 @@ async def runners_result(
     from .runners import get_registry
     from .lifecycle import register_runner_session
     from .models import SessionContext
+    from .store import async_upsert_session
 
     body = await request.json()
     reg = get_registry()
@@ -1220,6 +1221,7 @@ async def runners_result(
             try:
                 ctx = SessionContext(**body["data"])
                 register_runner_session(ctx)
+                await async_upsert_session(ctx)
                 log.info(
                     "runners.late_result_accepted",
                     metadata={"runner": name, "work_id": work_id, "session": ctx.session_name},
