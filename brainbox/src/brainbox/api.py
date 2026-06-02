@@ -470,6 +470,7 @@ async def terminal_proxy_http(session_name: str, path: str, request: Request):
     """Reverse-proxy HTTP requests (ttyd assets) to the session's container port."""
     import httpx
 
+    log.info("terminal.proxy_request", metadata={"session": session_name, "path": path, "method": request.method})
     port = _session_port(session_name)
     if port is None:
         raise HTTPException(404, f"Session '{session_name}' not found or not running")
@@ -1297,7 +1298,7 @@ async def api_stop_session(
     ctx = get_session(session_name)
     if ctx and ctx.runner_name:
         try:
-            await _dispatch_runner_op(session_name, "session.stop")
+            await _dispatch_runner_op(session_name, "session.stop", timeout=10.0)
             _audit_log(request, "session.stop", session_name=session_name, success=True)
             _broadcast_sse(json.dumps({"action": "session.stop", "session": session_name}))
             return {"success": True}
@@ -1373,7 +1374,7 @@ async def api_delete_session(
     ctx = get_session(session_name)
     if ctx and ctx.runner_name:
         try:
-            await _dispatch_runner_op(session_name, "session.delete")
+            await _dispatch_runner_op(session_name, "session.delete", timeout=10.0)
             _audit_log(request, "session.delete", session_name=session_name, success=True)
             _broadcast_sse(json.dumps({"action": "session.delete", "session": session_name}))
             return {"success": True}
