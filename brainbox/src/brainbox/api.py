@@ -416,8 +416,7 @@ def _session_endpoint(session_name: str) -> tuple[str, int, bool] | None:
     ctx = get_session(session_name)
     if ctx and ctx.port:
         host = ctx.runner_host or "127.0.0.1"
-        # Swift runner sessions don't use --base-path; Python lifecycle sessions do
-        has_base_path = not bool(ctx.runner_name)
+        has_base_path = True
         log.info(
             "terminal.endpoint_resolved",
             metadata={"session": session_name, "host": host, "port": ctx.port, "has_base_path": has_base_path},
