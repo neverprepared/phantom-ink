@@ -46,6 +46,21 @@ def init_db() -> None:
                 ON sessions(active);
             CREATE INDEX IF NOT EXISTS idx_sessions_runner
                 ON sessions(runner_name, active);
+
+            CREATE TABLE IF NOT EXISTS runners (
+                name           TEXT    PRIMARY KEY,
+                capabilities   TEXT    NOT NULL,
+                tags           TEXT    NOT NULL,
+                version        TEXT    NOT NULL DEFAULT '',
+                host           TEXT,
+                machine_id     TEXT,
+                max_concurrent INTEGER NOT NULL DEFAULT 4,
+                last_seal_at   INTEGER,
+                registered_at  INTEGER NOT NULL,
+                updated_at     INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_runners_machine_id
+                ON runners(machine_id);
         """)
 
 
@@ -105,6 +120,78 @@ def load_active_runner_sessions() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Runners
+# ---------------------------------------------------------------------------
+
+
+def upsert_runner(info: "RunnerInfo") -> None:  # type: ignore[name-defined]
+    import json as _json
+    now = int(__import__("time").time() * 1000)
+    with _lock:
+        _db().execute(
+            """
+            INSERT INTO runners
+                (name, capabilities, tags, version, host, machine_id,
+                 max_concurrent, last_seal_at, registered_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                capabilities   = excluded.capabilities,
+                tags           = excluded.tags,
+                version        = excluded.version,
+                host           = excluded.host,
+                machine_id     = excluded.machine_id,
+                max_concurrent = excluded.max_concurrent,
+                last_seal_at   = excluded.last_seal_at,
+                registered_at  = excluded.registered_at,
+                updated_at     = excluded.updated_at
+            """,
+            (
+                info.name,
+                _json.dumps(info.capabilities),
+                _json.dumps(info.tags),
+                info.version or "",
+                info.host,
+                info.machine_id,
+                info.max_concurrent,
+                info.last_seal_at,
+                info.registered_at,
+                now,
+            ),
+        )
+
+
+def delete_runner(name: str) -> None:
+    with _lock:
+        _db().execute("DELETE FROM runners WHERE name = ?", (name,))
+
+
+def load_all_runners() -> list[dict]:
+    import json as _json
+    rows = _db().execute(
+        "SELECT name, capabilities, tags, version, host, machine_id, "
+        "max_concurrent, last_seal_at, registered_at FROM runners"
+    ).fetchall()
+    result = []
+    for row in rows:
+        try:
+            result.append({
+                "name": row["name"],
+                "capabilities": _json.loads(row["capabilities"]),
+                "tags": _json.loads(row["tags"]),
+                "version": row["version"],
+                "host": row["host"],
+                "machine_id": row["machine_id"],
+                "max_concurrent": row["max_concurrent"],
+                "last_seal_at": row["last_seal_at"],
+                "registered_at": row["registered_at"],
+                "last_seen": 0,  # force offline; runner must heartbeat to go live
+            })
+        except Exception:
+            pass
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Async wrappers
 # ---------------------------------------------------------------------------
 
@@ -114,3 +201,11 @@ async def async_upsert_session(ctx: "SessionContext") -> None:  # type: ignore[n
 
 async def async_mark_session_inactive(session_name: str, stopped_at_ms: int) -> None:
     await asyncio.to_thread(mark_session_inactive, session_name, stopped_at_ms)
+
+
+async def async_upsert_runner(info: "RunnerInfo") -> None:  # type: ignore[name-defined]
+    await asyncio.to_thread(upsert_runner, info)
+
+
+async def async_delete_runner(name: str) -> None:
+    await asyncio.to_thread(delete_runner, name)

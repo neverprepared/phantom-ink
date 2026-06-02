@@ -104,6 +104,8 @@ class RunnerRegistry:
             self._runners[name] = info
             self._pending.setdefault(name, [])
             self._events.setdefault(name, asyncio.Event())
+        from .store import async_upsert_runner
+        await async_upsert_runner(info)
         return info
 
     async def touch(self, name: str) -> None:
@@ -192,6 +194,8 @@ class RunnerRegistry:
             self._events.pop(name, None)
         if info is None:
             return False
+        from .store import async_delete_runner
+        await async_delete_runner(name)
         for item in pending:
             if item.fut.done():
                 self._by_work_id.pop(item.id, None)
@@ -326,11 +330,28 @@ def get_state() -> dict:
 
 
 def restore_state(data: dict | None) -> None:
-    """Restore runner registrations from hub_state.json. All runners are marked
-    offline (last_seen=0) until they reconnect and heartbeat."""
+    """Restore runner registrations on startup. Tries DB first; falls back to
+    hub_state.json blob for the first boot after Phase 2 is deployed.
+    All runners are marked offline (last_seen=0) until they heartbeat."""
+    from .store import load_all_runners
+    reg = get_registry()
+
+    db_rows = load_all_runners()
+    if db_rows:
+        for entry in db_rows:
+            try:
+                info = RunnerInfo(**entry)
+                reg._runners[info.name] = info
+                reg._pending.setdefault(info.name, [])
+                reg._events.setdefault(info.name, asyncio.Event())
+            except Exception:
+                pass
+        return
+
+    # DB empty — first boot with Phase 2. Fall back to JSON blob so we don't
+    # lose the runner list on the transition restart.
     if not data:
         return
-    reg = get_registry()
     for entry in data.values():
         try:
             info = RunnerInfo(**entry)
