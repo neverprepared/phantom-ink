@@ -24,13 +24,6 @@ func (a *App) StartRunnerPairing(runnerNameSuggestion string, ttlSeconds int, ne
 	return a.client.StartRunnerPairing(runnerNameSuggestion, ttlSeconds, networkAPIURL)
 }
 
-// GetAuthorityStatus returns the credential-authority health snapshot used by
-// the status-bar dot and the Credentials modal. Returns the zero value with
-// an error if the API is unreachable so the frontend can render "unknown".
-func (a *App) GetAuthorityStatus() (brainbox.AuthorityStatus, error) {
-	return a.client.GetAuthorityStatus()
-}
-
 // GetLANIP returns the first non-loopback IPv4 address on this machine —
 // the address a remote runner should use to reach the local API.
 // Returns empty string if none can be found.

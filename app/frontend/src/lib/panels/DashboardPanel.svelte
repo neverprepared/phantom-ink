@@ -5,7 +5,6 @@
   import { mount, unmount, onMount } from 'svelte';
   import { getApi } from '../utils/api';
   import { brainboxEvents } from '../events.svelte';
-  import { authorityState } from '../authority.svelte';
   import { profileState, dashboardState, dashboardDataStore } from '../stores.svelte';
   import { DEFAULT_LAYOUT } from '../widgets/defaultLayout';
   import type { WidgetInstance, WidgetKind, ActionItem } from '../widgets/types';
@@ -73,25 +72,7 @@
 
   let actionItems = $derived.by((): ActionItem[] => {
     const items: ActionItem[] = [];
-    const auth = authorityState.status;
     const now = Date.now();
-
-    if (auth) {
-      if (auth.authorities.length > 0 && !auth.any_online) {
-        items.push({
-          kind: 'auth', title: 'credential authority offline',
-          desc: 'all registered runners are stale — credential sealing will fail',
-          severity: 'urgent',
-        });
-      } else if (auth.recent_failures.length > 0) {
-        items.push({
-          kind: 'auth_failure',
-          title: `${auth.recent_failures.length} credential seal failure(s)`,
-          desc: auth.recent_failures[0]?.error?.slice(0, 100) ?? '',
-          severity: 'warning',
-        });
-      }
-    }
 
     for (const t of runningHubTasks) {
       const created = typeof t.created_at === 'number'

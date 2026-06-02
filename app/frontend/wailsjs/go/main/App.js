@@ -150,10 +150,6 @@ export function GetAgentRole(arg1) {
   return window['go']['main']['App']['GetAgentRole'](arg1);
 }
 
-export function GetAuthorityStatus() {
-  return window['go']['main']['App']['GetAuthorityStatus']();
-}
-
 export function GetChannel(arg1) {
   return window['go']['main']['App']['GetChannel'](arg1);
 }

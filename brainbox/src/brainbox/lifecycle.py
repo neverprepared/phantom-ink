@@ -415,54 +415,6 @@ def _build_volume_map(env_vars: dict) -> dict[str, dict[str, str]]:
     return mounts
 
 
-# Container bind paths that brainbox-init delivers via sealed bundle when
-# ctx.delivery == "bundle". Anything else in the profile mount set (live
-# sockets, reflex share, obsidian vault) stays as a bind mount.
-_BUNDLE_DELIVERED_BINDS: frozenset[str] = frozenset(
-    {
-        "/home/developer/.aws",
-        "/home/developer/.aws/sso/cache",
-        "/home/developer/.azure",
-        "/home/developer/.kube",
-        "/home/developer/.ssh",
-        "/home/developer/.gnupg/pubring.kbx",
-        "/home/developer/.gnupg/trustdb.gpg",
-        "/home/developer/.gitconfig",
-        "/home/developer/.gcloud",
-        "/home/developer/.terraform.d",
-        "/home/developer/.codex",
-    }
-)
-
-
-def _is_credential_bind(bind: str) -> bool:
-    return bind in _BUNDLE_DELIVERED_BINDS
-
-
-def _resolve_credential_sources(
-    workspace_profile: str | None,
-    workspace_home: str | None,
-) -> list[tuple[Path, str, int | None]]:
-    """Return (host_path, target_relative_to_home, mode_override) for every
-    credential bind that would have been mounted under bind delivery.
-
-    Used by the bundle delivery path: same source-of-truth as the bind mounts,
-    different mechanism for getting the bytes into the container.
-    """
-    mounts = _resolve_profile_mounts(
-        workspace_profile=workspace_profile, workspace_home=workspace_home
-    )
-    sources: list[tuple[Path, str, int | None]] = []
-    for host_path, spec in mounts.items():
-        if not _is_credential_bind(spec["bind"]):
-            continue
-        target = spec["bind"].removeprefix("/home/developer/").lstrip("/")
-        if not target:
-            continue
-        sources.append((Path(host_path), target, None))
-    return sources
-
-
 def _resolve_profile_mounts(
     workspace_profile: str | None = None,
     workspace_home: str | None = None,
@@ -755,10 +707,6 @@ async def _provision_via_runner(*, runner: str, **payload: Any) -> SessionContex
             f"runner {runner!r} is saturated ({info.in_flight}/{info.max_concurrent} in flight) — retry later"
         )
 
-    # Remote runners can't bind-mount from this host's filesystem, so credential
-    # delivery must always use the bundle path (keygen → seal → inject).
-    payload["delivery"] = "bundle"
-
     # Resolve the profile image server-side so the runner doesn't need to
     # replicate the registry lookup logic. The runner uses this image directly.
     resolved_image, _ = _resolve_image_for_session(payload.get("workspace_profile"))
@@ -940,7 +888,7 @@ async def provision(
         task_id=task_id,
         job_id=job_id,
         docker_host=docker_host,
-        delivery=delivery if delivery in ("bind", "bundle") else "bind",
+        delivery=delivery or "image",
         extra_env=extra_env or {},
     )
 
@@ -1009,15 +957,6 @@ async def provision(
             workspace_profile=resolved_workspace_profile,
             workspace_home=resolved_workspace_home,
         )
-        if ctx.delivery == "bundle":
-            # Cred bind-mounts are dropped; brainbox-init will lay them down inside
-            # the container from a sealed bundle. Non-cred mounts (sockets, runtime
-            # code, vaults) stay as bind mounts because they can't ride in a tar.
-            profile_mounts = {
-                host: spec
-                for host, spec in profile_mounts.items()
-                if not _is_credential_bind(spec["bind"])
-            }
         volumes.update(profile_mounts)
         # Track which mounts were actually resolved
         _bind_to_name = {

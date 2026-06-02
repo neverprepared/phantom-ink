@@ -115,7 +115,7 @@ class DaemonManager:
             cmd.append("--reload")
 
         # Load optional env file from config dir — allows persistent env vars
-        # (CL_PUBLIC_HOST, BRAINBOX_CC_API_URL, etc.) without requiring the
+        # (CL_PUBLIC_HOST, CL_PUBLIC_URL, etc.) without requiring the
         # calling shell to have them exported.
         daemon_env = os.environ.copy()
         env_file = self.config_dir / "brainbox.env"

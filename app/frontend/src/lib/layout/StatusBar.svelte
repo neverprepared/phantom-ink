@@ -1,24 +1,10 @@
 <script lang="ts">
   import { connectionState, profileState } from '../stores.svelte';
   import { brainboxEvents } from '../events.svelte';
-  import { authorityState } from '../authority.svelte';
-  import CredentialsModal from '../components/CredentialsModal.svelte';
 
   let connected     = $derived(connectionState.connected);
   let activeProfile = $derived(profileState.active);
   let eventCount    = $derived(brainboxEvents.log.length);
-  let authHealth    = $derived(authorityState.health);
-  let showingCredentials = $state(false);
-
-  function authTitle(h: string): string {
-    switch (h) {
-      case 'green':  return 'credential authority live — click for detail';
-      case 'yellow': return 'credential authority live, recent failures — click for detail';
-      case 'red':    return 'credential authority offline — click for detail';
-      case 'none':   return 'no credential authority registered — click for detail';
-      default:       return 'credential authority status unknown — click for detail';
-    }
-  }
 </script>
 
 <div class="statusbar">
@@ -30,23 +16,10 @@
     <span class="dot"></span>
     {activeProfile ? activeProfile.name : 'all profiles'}
   </span>
-  <button
-    type="button"
-    class="auth-btn chip"
-    title={authTitle(authHealth)}
-    onclick={() => (showingCredentials = true)}
-  >
-    <span class="dot dot-{authHealth}"></span>
-    cred-auth
-  </button>
   <div class="right">
     <span class="chip">{eventCount} events</span>
   </div>
 </div>
-
-{#if showingCredentials}
-  <CredentialsModal onClose={() => (showingCredentials = false)} />
-{/if}
 
 <style>
   .statusbar {
@@ -107,21 +80,4 @@
     100% { box-shadow: 0 0 0 0 transparent; }
   }
 
-  .dot-green  { background: var(--run,  var(--color-success)); }
-  .dot-yellow { background: var(--sched, #e0a64a); }
-  .dot-red    { background: var(--fail, var(--color-error)); }
-  .dot-none, .dot-unknown { background: var(--text-faint, var(--color-text-tertiary)); }
-
-  .auth-btn {
-    background: transparent;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    color: inherit;
-    font-family: inherit;
-    font-size: inherit;
-  }
-  .auth-btn:hover {
-    color: var(--text, var(--color-text-primary));
-  }
 </style>

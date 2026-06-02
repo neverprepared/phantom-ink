@@ -27,9 +27,6 @@ class RunnerInfo:
     version: str
     registered_at: int
     last_seen: int
-    # Last successful credential seal (epoch ms). None if this runner has
-    # never sealed — either it's not the secret_authority, or it's brand new.
-    last_seal_at: int | None = None
     # Advertised host/IP the runner is reachable at from the API server's
     # network. Used to build the ttyd URL for remote sessions.
     host: str | None = None
@@ -113,16 +110,6 @@ class RunnerRegistry:
             r = self._runners.get(name)
             if r is not None:
                 r.last_seen = int(time.time() * 1000)
-
-    async def mark_seal(self, name: str) -> None:
-        """Record that this runner just successfully sealed a credential bundle.
-        Also bumps last_seen — sealing is implicit liveness proof."""
-        async with self._lock:
-            r = self._runners.get(name)
-            if r is not None:
-                now = int(time.time() * 1000)
-                r.last_seen = now
-                r.last_seal_at = now
 
     async def update_load(
         self,
@@ -322,7 +309,6 @@ def get_state() -> dict:
             "host": info.host,
             "registered_at": info.registered_at,
             "last_seen": 0,  # force offline on restore; runner must heartbeat to go live
-            "last_seal_at": info.last_seal_at,
             "max_concurrent": info.max_concurrent,
         }
         for name, info in reg._runners.items()

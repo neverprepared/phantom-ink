@@ -183,8 +183,8 @@ def upsert_runner(info: "RunnerInfo") -> None:  # type: ignore[name-defined]
             """
             INSERT INTO runners
                 (name, capabilities, tags, version, host, machine_id,
-                 max_concurrent, last_seal_at, registered_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 max_concurrent, registered_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(name) DO UPDATE SET
                 capabilities   = excluded.capabilities,
                 tags           = excluded.tags,
@@ -192,7 +192,6 @@ def upsert_runner(info: "RunnerInfo") -> None:  # type: ignore[name-defined]
                 host           = excluded.host,
                 machine_id     = excluded.machine_id,
                 max_concurrent = excluded.max_concurrent,
-                last_seal_at   = excluded.last_seal_at,
                 registered_at  = excluded.registered_at,
                 updated_at     = excluded.updated_at
             """,
@@ -204,7 +203,6 @@ def upsert_runner(info: "RunnerInfo") -> None:  # type: ignore[name-defined]
                 info.host,
                 info.machine_id,
                 info.max_concurrent,
-                info.last_seal_at,
                 info.registered_at,
                 now,
             ),
@@ -220,7 +218,7 @@ def load_all_runners() -> list[dict]:
     import json as _json
     rows = _db().execute(
         "SELECT name, capabilities, tags, version, host, machine_id, "
-        "max_concurrent, last_seal_at, registered_at FROM runners"
+        "max_concurrent, registered_at FROM runners"
     ).fetchall()
     result = []
     for row in rows:
@@ -233,7 +231,6 @@ def load_all_runners() -> list[dict]:
                 "host": row["host"],
                 "machine_id": row["machine_id"],
                 "max_concurrent": row["max_concurrent"],
-                "last_seal_at": row["last_seal_at"],
                 "registered_at": row["registered_at"],
                 "last_seen": 0,  # force offline; runner must heartbeat to go live
             })

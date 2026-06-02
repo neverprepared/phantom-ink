@@ -6,8 +6,6 @@
   import { commandPalette, currentPanel, profileState, profileColorStore, featureFlags } from './lib/stores.svelte';
   import { notifications } from './lib/notifications.svelte';
   import { startEventListener } from './lib/events.svelte';
-  import { startAuthorityPolling, stopAuthorityPolling } from './lib/authority.svelte';
-
   import './styles/tokens.css';
   import './styles/base.css';
   import './styles/buttons.css';
@@ -57,7 +55,6 @@
     }
 
     const cleanup = startEventListener();
-    startAuthorityPolling();
 
     function handleKeydown(e: KeyboardEvent) {
       const meta = e.metaKey || e.ctrlKey;
@@ -91,7 +88,6 @@
 
     return () => {
       cleanup();
-      stopAuthorityPolling();
       window.removeEventListener('keydown', handleKeydown);
     };
   });

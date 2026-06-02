@@ -60,7 +60,7 @@ class CreateSessionRequest(BaseModel):
     ports: dict[str, int] | None = None  # Additional port mappings (container_port: host_port)
     docker_host: str | None = None  # Docker daemon host (None = local socket)
     repo: RepoConfig | None = None  # Repo access mode (worktree-mount, clone, clone-worktree)
-    delivery: str | None = None  # "bind" (default) or "bundle"
+    delivery: str | None = None  # passed through to runner
     runner: str | None = None  # Runner name to dispatch this session to (None = local execution)
     env: dict[str, str] | None = None  # Caller-supplied env vars from originating host profile
 
