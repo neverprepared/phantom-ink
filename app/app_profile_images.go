@@ -126,18 +126,33 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 		return buildErr
 	}
 
-	// Persist record locally.
+	// Persist record locally (including the env decryption key).
 	if a.db != nil {
 		_ = a.db.UpsertProfileImage(ProfileImageRow{
 			Profile:      req.Profile,
 			RegistryURL:  registryURL,
 			LastPushedAt: time.Now().UTC().Format(time.RFC3339),
 			LastDigest:   result.Digest,
+			EnvKey:       result.EnvKey,
 		})
 	}
 
 	emit("Build complete", true, nil, &result)
 	return nil
+}
+
+// GetProfileEnvKey returns the AES key for a profile's encrypted .env.enc,
+// or an empty string if none is stored. Used to pass PROFILE_ENV_KEY when
+// creating sessions so the container can decrypt its environment.
+func (a *App) GetProfileEnvKey(profileName string) string {
+	if a.db == nil {
+		return ""
+	}
+	row, ok := a.db.GetProfileImage(profileName)
+	if !ok {
+		return ""
+	}
+	return row.EnvKey
 }
 
 // DeleteProfileImageRecord removes the local DB record for a profile image.

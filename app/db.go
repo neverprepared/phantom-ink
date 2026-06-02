@@ -227,6 +227,9 @@ var migrations = []migration{
 			last_digest     TEXT NOT NULL DEFAULT ''
 		);
 	`},
+	{version: 13, sql: `
+		ALTER TABLE profile_images ADD COLUMN env_key TEXT NOT NULL DEFAULT '';
+	`},
 	{version: 11, sql: `
 		CREATE TABLE IF NOT EXISTS collect_jobs (
 			id              TEXT PRIMARY KEY,
@@ -895,22 +898,24 @@ func (db *DB) MarkScheduleFired(id, firedAt string) error {
 
 // ProfileImageRow stores registry metadata for a built profile image.
 type ProfileImageRow struct {
-	Profile       string `json:"profile"`
-	RegistryURL   string `json:"registry_url"`
-	LastPushedAt  string `json:"last_pushed_at"`
-	LastDigest    string `json:"last_digest"`
+	Profile      string `json:"profile"`
+	RegistryURL  string `json:"registry_url"`
+	LastPushedAt string `json:"last_pushed_at"`
+	LastDigest   string `json:"last_digest"`
+	EnvKey       string `json:"env_key,omitempty"` // AES key for decrypting .env.enc at runtime
 }
 
 // UpsertProfileImage inserts or replaces a profile image record.
 func (db *DB) UpsertProfileImage(r ProfileImageRow) error {
 	_, err := db.conn.Exec(
-		`INSERT INTO profile_images (profile, registry_url, last_pushed_at, last_digest)
-		 VALUES (?, ?, ?, ?)
+		`INSERT INTO profile_images (profile, registry_url, last_pushed_at, last_digest, env_key)
+		 VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT(profile) DO UPDATE SET
 		   registry_url   = excluded.registry_url,
 		   last_pushed_at = excluded.last_pushed_at,
-		   last_digest    = excluded.last_digest`,
-		r.Profile, r.RegistryURL, r.LastPushedAt, r.LastDigest,
+		   last_digest    = excluded.last_digest,
+		   env_key        = excluded.env_key`,
+		r.Profile, r.RegistryURL, r.LastPushedAt, r.LastDigest, r.EnvKey,
 	)
 	return err
 }
@@ -919,9 +924,9 @@ func (db *DB) UpsertProfileImage(r ProfileImageRow) error {
 func (db *DB) GetProfileImage(profile string) (ProfileImageRow, bool) {
 	var r ProfileImageRow
 	err := db.conn.QueryRow(
-		`SELECT profile, registry_url, last_pushed_at, last_digest FROM profile_images WHERE profile = ?`,
+		`SELECT profile, registry_url, last_pushed_at, last_digest, env_key FROM profile_images WHERE profile = ?`,
 		profile,
-	).Scan(&r.Profile, &r.RegistryURL, &r.LastPushedAt, &r.LastDigest)
+	).Scan(&r.Profile, &r.RegistryURL, &r.LastPushedAt, &r.LastDigest, &r.EnvKey)
 	if err != nil {
 		return ProfileImageRow{}, false
 	}
@@ -931,7 +936,7 @@ func (db *DB) GetProfileImage(profile string) (ProfileImageRow, bool) {
 // ListProfileImages returns all profile image records.
 func (db *DB) ListProfileImages() []ProfileImageRow {
 	rows, err := db.conn.Query(
-		`SELECT profile, registry_url, last_pushed_at, last_digest FROM profile_images ORDER BY profile`,
+		`SELECT profile, registry_url, last_pushed_at, last_digest, env_key FROM profile_images ORDER BY profile`,
 	)
 	if err != nil {
 		return nil
@@ -940,7 +945,7 @@ func (db *DB) ListProfileImages() []ProfileImageRow {
 	var out []ProfileImageRow
 	for rows.Next() {
 		var r ProfileImageRow
-		if err := rows.Scan(&r.Profile, &r.RegistryURL, &r.LastPushedAt, &r.LastDigest); err != nil {
+		if err := rows.Scan(&r.Profile, &r.RegistryURL, &r.LastPushedAt, &r.LastDigest, &r.EnvKey); err != nil {
 			continue
 		}
 		out = append(out, r)

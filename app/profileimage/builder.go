@@ -13,7 +13,9 @@ package profileimage
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -44,6 +46,9 @@ type BuildResult struct {
 	Tag string
 	// Digest is the image digest returned by docker push.
 	Digest string
+	// EnvKey is the AES-256 key (hex) used to encrypt .env.enc in the image.
+	// Must be stored by the caller and passed as PROFILE_ENV_KEY at container startup.
+	EnvKey string
 }
 
 func (o *BuildOptions) progress(msg string) {
@@ -94,9 +99,10 @@ func Build(opts BuildOptions) (BuildResult, error) {
 		return BuildResult{}, fmt.Errorf("inject Claude credentials: %w", err)
 	}
 
-	// 6. Inject profile env vars (.env + .env.secrets → /home/developer/.env).
+	// 6. Inject profile env vars encrypted as /home/developer/.env.enc.
 	opts.progress("Injecting profile environment…")
-	if err := injectEnvFile(containerName, opts); err != nil {
+	envKey, err := injectEnvFile(containerName, opts)
+	if err != nil {
 		return BuildResult{}, fmt.Errorf("inject env file: %w", err)
 	}
 
@@ -126,7 +132,7 @@ func Build(opts BuildOptions) (BuildResult, error) {
 	}
 
 	opts.progress("Done.")
-	return BuildResult{Tag: tag, Digest: digest}, nil
+	return BuildResult{Tag: tag, Digest: digest, EnvKey: envKey}, nil
 }
 
 // hostOnlyVars are stripped from the profile env before baking into the image.
@@ -140,14 +146,36 @@ var hostOnlyVars = map[string]bool{
 	"WORKSPACE_HOME": true, // rewritten to /home/developer below
 }
 
+// generateEnvKey returns a random 32-byte key as a 64-char hex string.
+func generateEnvKey() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// encryptEnv encrypts plaintext using openssl AES-256-CBC with PBKDF2 and
+// returns the ciphertext bytes. The same openssl invocation in the container
+// can decrypt it with the same key.
+func encryptEnv(plaintext, key string) ([]byte, error) {
+	cmd := exec.Command("openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-iter", "100000",
+		"-pass", "pass:"+key)
+	cmd.Stdin = strings.NewReader(plaintext)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("openssl enc: %w", err)
+	}
+	return out, nil
+}
+
 // injectEnvFile reads the profile's .env and .env.secrets, filters host-only
-// vars, rewrites WORKSPACE_HOME to /home/developer, and writes the result to
-// /home/developer/.env inside the container. BASH_ENV in the image points at
-// this file so every bash shell sources it automatically.
-func injectEnvFile(container string, opts BuildOptions) error {
+// vars, encrypts the result with a fresh random key, and writes the ciphertext
+// to /home/developer/.env.enc inside the container. Returns the hex key that
+// must be passed as PROFILE_ENV_KEY at container startup to decrypt.
+func injectEnvFile(container string, opts BuildOptions) (string, error) {
 	var lines []string
 
-	// Always set identity vars for the container environment.
 	lines = append(lines,
 		"WORKSPACE_PROFILE="+opts.Profile,
 		"WORKSPACE_HOME=/home/developer",
@@ -166,15 +194,14 @@ func injectEnvFile(container string, opts BuildOptions) error {
 			if strings.HasPrefix(line, "export ") {
 				line = line[7:]
 			}
-			key := line
+			varName := line
 			if idx := strings.IndexByte(line, '='); idx >= 0 {
-				key = line[:idx]
+				varName = line[:idx]
 			}
-			key = strings.TrimSpace(key)
-			if hostOnlyVars[key] || key == "WORKSPACE_PROFILE" || key == "WORKSPACE_HOME" {
+			varName = strings.TrimSpace(varName)
+			if hostOnlyVars[varName] || varName == "WORKSPACE_PROFILE" || varName == "WORKSPACE_HOME" {
 				continue
 			}
-			// Rewrite any $WORKSPACE_HOME references to the container path.
 			line = strings.ReplaceAll(line, opts.WorkspaceHome, "/home/developer")
 			lines = append(lines, line)
 		}
@@ -184,11 +211,24 @@ func injectEnvFile(container string, opts BuildOptions) error {
 	readEnvFile(filepath.Join(opts.WorkspaceHome, ".env.secrets"))
 
 	if len(lines) <= 2 {
-		return nil // nothing beyond identity vars — skip writing
+		return "", nil // nothing beyond identity vars
 	}
 
-	content := strings.Join(lines, "\n") + "\n"
-	return writeFileToContainer(container, "/home/developer/.env", []byte(content), "600")
+	key, err := generateEnvKey()
+	if err != nil {
+		return "", fmt.Errorf("generate env key: %w", err)
+	}
+
+	plaintext := strings.Join(lines, "\n") + "\n"
+	ciphertext, err := encryptEnv(plaintext, key)
+	if err != nil {
+		return "", err
+	}
+
+	if err := writeFileToContainer(container, "/home/developer/.env.enc", ciphertext, "600"); err != nil {
+		return "", fmt.Errorf("write .env.enc: %w", err)
+	}
+	return key, nil
 }
 
 // injectSSHKeys copies ~/.ssh from workspaceHome into the container.

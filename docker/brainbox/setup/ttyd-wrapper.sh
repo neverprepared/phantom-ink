@@ -4,6 +4,14 @@
 # Docker exec_run provides a minimal environment; ensure standard bin dirs are present.
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}
 
+# Decrypt profile env if the image contains an encrypted bundle and the key was injected.
+if [ -n "${PROFILE_ENV_KEY:-}" ] && [ -f "$HOME/.env.enc" ]; then
+    openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -d \
+        -pass "pass:${PROFILE_ENV_KEY}" \
+        -in "$HOME/.env.enc" \
+        -out "$HOME/.env" 2>/dev/null && chmod 600 "$HOME/.env"
+fi
+
 # In hardened mode secrets land in /run/secrets/ rather than ~/.env.
 # Read the vars we need from there if not already in the environment.
 _secret() {
