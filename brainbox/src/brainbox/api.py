@@ -403,28 +403,34 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 # ---------------------------------------------------------------------------
 
 
-def _session_port(session_name: str) -> int | None:
-    """Return the host port for a running session, or None.
+def _session_endpoint(session_name: str) -> tuple[str, int, bool] | None:
+    """Return (host, port, has_base_path) for a running session's ttyd, or None.
+
+    has_base_path is True when ttyd was started with --base-path /t/{session_name}
+    (Python lifecycle path), False when started without it (Swift runner path, serves at /).
 
     Checks the in-memory session store first, then falls back to inspecting
-    Docker directly for runner-created sessions that were never provisioned
-    through the API's lifecycle.
+    Docker directly for sessions not tracked in memory.
     """
-    from .lifecycle import _resolve
-    try:
-        ctx = _resolve(session_name)
-        if ctx and ctx.port:
-            return ctx.port
-        if ctx:
-            log.warning(
-                "terminal.port_missing",
-                metadata={"session": session_name, "ctx_port": ctx.port, "container": ctx.container_name},
-            )
-    except Exception:
-        pass
+    from .lifecycle import get_session
+    ctx = get_session(session_name)
+    if ctx and ctx.port:
+        host = ctx.runner_host or "127.0.0.1"
+        # Swift runner sessions don't use --base-path; Python lifecycle sessions do
+        has_base_path = not bool(ctx.runner_name)
+        log.info(
+            "terminal.endpoint_resolved",
+            metadata={"session": session_name, "host": host, "port": ctx.port, "has_base_path": has_base_path},
+        )
+        return (host, ctx.port, has_base_path)
+    if ctx:
+        log.warning(
+            "terminal.port_missing",
+            metadata={"session": session_name, "container": ctx.container_name},
+        )
 
-    # Fall back: scan Docker for a container whose session_name label or
-    # name matches, and return its mapped port for 7681/tcp.
+    # Fall back: scan Docker for a container whose session_name label or name
+    # matches. Recovered sessions have no runner_name so they use base-path.
     try:
         import docker as docker_sdk
         client = docker_sdk.from_env()
@@ -441,7 +447,7 @@ def _session_port(session_name: str) -> int | None:
                         "terminal.docker_port_fallback",
                         metadata={"session": session_name, "container": cname, "port": port},
                     )
-                    return port
+                    return ("127.0.0.1", port, True)
                 log.warning(
                     "terminal.container_no_port",
                     metadata={"session": session_name, "container": cname, "ports": str(container.ports)},
@@ -471,11 +477,15 @@ async def terminal_proxy_http(session_name: str, path: str, request: Request):
     import httpx
 
     log.info("terminal.proxy_request", metadata={"session": session_name, "path": path, "method": request.method})
-    port = _session_port(session_name)
-    if port is None:
+    endpoint = _session_endpoint(session_name)
+    if endpoint is None:
         raise HTTPException(404, f"Session '{session_name}' not found or not running")
+    host, port, has_base_path = endpoint
 
-    target_url = f"http://127.0.0.1:{port}/t/{session_name}/{path}"
+    if has_base_path:
+        target_url = f"http://{host}:{port}/t/{session_name}/{path}"
+    else:
+        target_url = f"http://{host}:{port}/{path}"
     if request.url.query:
         target_url += f"?{request.url.query}"
 
@@ -522,21 +532,28 @@ async def terminal_proxy_ws(session_name: str, websocket: WebSocket):
         except Exception:
             pass
 
-    port = _session_port(session_name)
-    if port is None:
+    endpoint = _session_endpoint(session_name)
+    if endpoint is None:
         await _reject(1011)
         return
+    host, port, has_base_path = endpoint
 
     # Forward the subprotocol the browser requested (ttyd uses "tty")
     raw_protocols = websocket.headers.get("sec-websocket-protocol", "")
     subprotocols = [p.strip() for p in raw_protocols.split(",") if p.strip()] or ["tty"]
 
-    # Try base-path URL first; fall back to root /ws for sessions started before
-    # --base-path was introduced.
-    candidate_urls = [
-        f"ws://127.0.0.1:{port}/t/{session_name}/ws",
-        f"ws://127.0.0.1:{port}/ws",
-    ]
+    # Use base-path URL for Python-lifecycle sessions; root /ws for Swift runner sessions.
+    # Always try both so old and new sessions work without reconfiguration.
+    if has_base_path:
+        candidate_urls = [
+            f"ws://{host}:{port}/t/{session_name}/ws",
+            f"ws://{host}:{port}/ws",
+        ]
+    else:
+        candidate_urls = [
+            f"ws://{host}:{port}/ws",
+            f"ws://{host}:{port}/t/{session_name}/ws",
+        ]
 
     backend = None
     for url in candidate_urls:
@@ -702,7 +719,40 @@ def _get_sessions_info() -> list[dict[str, Any]]:
     except Exception as exc:
         log.warning("utm.list_sessions_failed", metadata={"reason": str(exc)})
 
-    # Return sessions from all backends
+    # Merge in-memory runner sessions not visible in local Docker/UTM.
+    # Runner sessions on a remote host (e.g. BrainboxRunner on Mac) never
+    # appear in the server's Docker list; add them from _sessions so they
+    # show up in the UI with a usable terminal URL.
+    try:
+        from .lifecycle import list_sessions
+        from .models import SessionState
+        known_names = {s.get("session_name") for s in sessions}
+        for ctx in list_sessions():
+            if ctx.runner_name and ctx.session_name not in known_names:
+                host = ctx.runner_host or settings.public_host
+                port = ctx.port or 0
+                # Use the proxy URL when available; fall back to direct port URL
+                if settings.sessions_url or settings.nginx_config_dir or settings.public_url:
+                    url = f"{settings.session_base_url}/t/{ctx.session_name}"
+                else:
+                    url = f"http://{host}:{port}" if port else None
+                sessions.append({
+                    "backend": ctx.backend or "docker",
+                    "name": ctx.container_name,
+                    "session_name": ctx.session_name,
+                    "port": port,
+                    "url": url,
+                    "active": ctx.state == SessionState.RUNNING,
+                    "role": ctx.role or "developer",
+                    "llm_provider": ctx.llm_provider or "claude",
+                    "llm_model": ctx.llm_model or "",
+                    "workspace_profile": ctx.workspace_profile or "",
+                    "state": ctx.state.value if ctx.state else None,
+                    "runner_name": ctx.runner_name,
+                })
+    except Exception as exc:
+        log.warning("sessions.runner_merge_failed", metadata={"reason": str(exc)})
+
     return sessions
 
 
@@ -1289,7 +1339,7 @@ async def api_get_session(name: str = Depends(validated_session_name)):
 async def api_stop_session(
     request: Request, body: StopSessionRequest, _key=Depends(require_api_key)
 ):
-    from .lifecycle import get_session, _dispatch_runner_op
+    from .lifecycle import get_session, _dispatch_runner_op, _sessions
     name = body.name
     session_name = _extract_session_name(name)
 
@@ -1299,6 +1349,7 @@ async def api_stop_session(
     if ctx and ctx.runner_name:
         try:
             await _dispatch_runner_op(session_name, "session.stop", timeout=10.0)
+            _sessions.pop(session_name, None)
             _audit_log(request, "session.stop", session_name=session_name, success=True)
             _broadcast_sse(json.dumps({"action": "session.stop", "session": session_name}))
             return {"success": True}
@@ -1366,7 +1417,7 @@ async def api_stop_session(
 async def api_delete_session(
     request: Request, body: DeleteSessionRequest, _key=Depends(require_api_key)
 ):
-    from .lifecycle import get_session, _dispatch_runner_op
+    from .lifecycle import get_session, _dispatch_runner_op, _sessions
     name = body.name
     session_name = _extract_session_name(name)
 
@@ -1375,6 +1426,7 @@ async def api_delete_session(
     if ctx and ctx.runner_name:
         try:
             await _dispatch_runner_op(session_name, "session.delete", timeout=10.0)
+            _sessions.pop(session_name, None)
             _audit_log(request, "session.delete", session_name=session_name, success=True)
             _broadcast_sse(json.dumps({"action": "session.delete", "session": session_name}))
             return {"success": True}
