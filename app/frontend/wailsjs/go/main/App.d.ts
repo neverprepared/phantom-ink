@@ -117,6 +117,8 @@ export function GetPlaybook(arg1:string):Promise<brainbox.Playbook>;
 
 export function GetProfileColors():Promise<Record<string, string>>;
 
+export function GetProfileEnvKey(arg1:string):Promise<string>;
+
 export function GetProfileImageInfo(arg1:string):Promise<main.ProfileImageRow|boolean>;
 
 export function GetProfileSecrets(arg1:string):Promise<Array<main.SecretKeyStatus>>;
@@ -132,6 +134,8 @@ export function GetRepoBranches(arg1:string):Promise<Array<main.RepoBranch>>;
 export function GetRepoCIStatus(arg1:string,arg2:string):Promise<main.CIStatus>;
 
 export function GetRepoPRs(arg1:string):Promise<Array<main.RepoPR>>;
+
+export function GetSessionHistory(arg1:number,arg2:number):Promise<Array<brainbox.SessionHistoryEntry>>;
 
 export function GetSessionTraces(arg1:string,arg2:number):Promise<Array<brainbox.Trace>>;
 

@@ -14,6 +14,10 @@ func (a *App) GetSessions() ([]brainbox.Session, error) {
 	return a.client.ListSessions()
 }
 
+func (a *App) GetSessionHistory(limit, offset int) ([]brainbox.SessionHistoryEntry, error) {
+	return a.client.GetSessionHistory(limit, offset)
+}
+
 func (a *App) CreateSession(req brainbox.CreateSessionRequest) (brainbox.SessionActionResponse, error) {
 	// Forward the calling profile's env vars to the remote brainbox host so
 	// secrets like CLAUDE_CODE_OAUTH_TOKEN reach the container.

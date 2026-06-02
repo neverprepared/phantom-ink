@@ -21,6 +21,8 @@
   let diskBreakdown = $state<any | null>(null);
   let sessionHistory = $state<Record<string, any[]>>({});
   let history = $state<any[]>([]);
+  let pastSessions = $state<any[]>([]);
+  let showPastSessions = $state(false);
   let aggregateHoverIdx = $state<number | null>(null);
   let loading = $state(true);
   let showNewModal = $state(false);
@@ -187,6 +189,14 @@
   );
   let agentByName = $derived(new Map(agents.map((a: any) => [a.name, a])));
 
+  async function loadPastSessions() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      pastSessions = (await a.GetSessionHistory(200, 0)) ?? [];
+    } catch { /* non-critical */ }
+  }
+
   async function refresh() {
     const a = await getApi();
     if (!a) { loading = false; return; }
@@ -280,6 +290,36 @@
     } catch { /* non-critical */ }
   }
 
+  let filteredPast = $derived.by(() => {
+    const base = activeProfile
+      ? pastSessions.filter(s => (s.runner_name ?? '') === '' || true) // show all; profile filter below
+      : pastSessions;
+    if (!activeProfile) return base;
+    // No workspace_profile in history rows — show all when a profile filter is active
+    return base;
+  });
+
+  function groupByDate(entries: any[]): { label: string; items: any[] }[] {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+    const groups: Map<string, any[]> = new Map();
+    for (const e of entries) {
+      const d = new Date(e.stopped_at);
+      d.setHours(0, 0, 0, 0);
+      let label: string;
+      if (d.getTime() === today.getTime()) label = 'today';
+      else if (d.getTime() === yesterday.getTime()) label = 'yesterday';
+      else label = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: d.getFullYear() !== today.getFullYear() ? 'numeric' : undefined });
+      if (!groups.has(label)) groups.set(label, []);
+      groups.get(label)!.push(e);
+    }
+    return Array.from(groups.entries()).map(([label, items]) => ({ label, items }));
+  }
+
+  function fmtTime(ms: number): string {
+    return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+
   let agentData  = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.agent_count })));
   let cpuData    = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.total_cpu })));
   let memData    = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.total_mem / 1024 / 1024 })));
@@ -305,6 +345,10 @@
       ollamaModels = models.map((m: any) => m.name ?? m);
     } catch {}
   }
+
+  $effect(() => {
+    if (showPastSessions) loadPastSessions();
+  });
 
   onMount(() => {
     refresh();
@@ -499,6 +543,10 @@
           <svg class="toggle-chevron" class:open={showStopped} xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       {/if}
+      <button class="stat-toggle" class:active={showPastSessions} onclick={() => showPastSessions = !showPastSessions}>
+        history
+        <svg class="toggle-chevron" class:open={showPastSessions} xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
     </div>
   {/if}
 
@@ -700,6 +748,41 @@
           </div>
         </div>
       {/each}
+    </div>
+  {/if}
+
+  <!-- Session history -->
+  {#if showPastSessions}
+    <div class="history-section">
+      <h2 class="history-heading">history</h2>
+      {#if filteredPast.length === 0}
+        <p class="history-empty">no past sessions recorded yet</p>
+      {:else}
+        {#each groupByDate(filteredPast) as group (group.label)}
+          <div class="history-date-group">
+            <div class="history-date-label">{group.label}</div>
+            {#each group.items as entry (entry.id)}
+              <div class="history-row">
+                <span class="history-dot"></span>
+                <span class="history-name">{entry.session_name}</span>
+                {#if entry.role}
+                  <span class="history-badge">{entry.role}</span>
+                {/if}
+                {#if entry.backend && entry.backend !== 'docker'}
+                  <span class="history-badge">{entry.backend}</span>
+                {/if}
+                {#if entry.runner_name}
+                  <span class="history-badge history-badge-runner">{entry.runner_name}</span>
+                {/if}
+                {#if entry.reason && entry.reason !== 'manual'}
+                  <span class="history-reason">{entry.reason}</span>
+                {/if}
+                <span class="history-time">{fmtTime(entry.stopped_at)}</span>
+              </div>
+            {/each}
+          </div>
+        {/each}
+      {/if}
     </div>
   {/if}
 
@@ -1777,4 +1860,101 @@
 
   .disk-cat-name { font-weight: 500; }
   .disk-cat-size { font-family: var(--font-mono); font-size: 10px; }
+
+  /* === Session history === */
+  .history-section {
+    margin-top: 28px;
+  }
+
+  .history-heading {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-tertiary);
+    margin-bottom: 12px;
+  }
+
+  .history-empty {
+    font-size: 12px;
+    color: var(--color-text-tertiary);
+    padding: 8px 0;
+  }
+
+  .history-date-group {
+    margin-bottom: 16px;
+  }
+
+  .history-date-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-tertiary);
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--color-border-primary);
+  }
+
+  .history-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    font-size: 12px;
+  }
+
+  .history-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-text-muted);
+    flex-shrink: 0;
+    opacity: 0.5;
+  }
+
+  .history-name {
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .history-badge {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 5px;
+    border-radius: 9999px;
+    background: rgba(148, 163, 184, 0.1);
+    color: var(--color-text-tertiary);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    flex-shrink: 0;
+  }
+
+  .history-badge-runner {
+    background: rgba(168, 85, 247, 0.1);
+    color: #d8b4fe;
+    border-color: rgba(168, 85, 247, 0.2);
+  }
+
+  .history-reason {
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    font-style: italic;
+    flex-shrink: 0;
+  }
+
+  .history-time {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    flex-shrink: 0;
+    margin-left: auto;
+  }
 </style>

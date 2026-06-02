@@ -100,6 +100,32 @@ func ReadProfileEnv(workspaceHome string) map[string]string {
 	return env
 }
 
+// SessionHistoryEntry mirrors a row from GET /api/sessions/history.
+type SessionHistoryEntry struct {
+	ID          int64   `json:"id"`
+	SessionName string  `json:"session_name"`
+	RunnerName  *string `json:"runner_name"`
+	Backend     string  `json:"backend"`
+	Role        *string `json:"role"`
+	StateFinal  string  `json:"state_final"`
+	CreatedAt   int64   `json:"created_at"`
+	StoppedAt   int64   `json:"stopped_at"`
+	TaskID      *string `json:"task_id"`
+	JobID       *string `json:"job_id"`
+	RepoURL     *string `json:"repo_url"`
+	Reason      *string `json:"reason"`
+}
+
+// GetSessionHistory fetches stopped sessions from the history log.
+func (c *Client) GetSessionHistory(limit, offset int) ([]SessionHistoryEntry, error) {
+	var entries []SessionHistoryEntry
+	path := fmt.Sprintf("/api/sessions/history?limit=%d&offset=%d", limit, offset)
+	if err := c.get(path, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
 // ListSessions fetches all container sessions.
 func (c *Client) ListSessions() ([]Session, error) {
 	var sessions []Session

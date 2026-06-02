@@ -880,6 +880,40 @@ export namespace brainbox {
 	        this.url = source["url"];
 	    }
 	}
+	export class SessionHistoryEntry {
+	    id: number;
+	    session_name: string;
+	    runner_name?: string;
+	    backend: string;
+	    role?: string;
+	    state_final: string;
+	    created_at: number;
+	    stopped_at: number;
+	    task_id?: string;
+	    job_id?: string;
+	    repo_url?: string;
+	    reason?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionHistoryEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.session_name = source["session_name"];
+	        this.runner_name = source["runner_name"];
+	        this.backend = source["backend"];
+	        this.role = source["role"];
+	        this.state_final = source["state_final"];
+	        this.created_at = source["created_at"];
+	        this.stopped_at = source["stopped_at"];
+	        this.task_id = source["task_id"];
+	        this.job_id = source["job_id"];
+	        this.repo_url = source["repo_url"];
+	        this.reason = source["reason"];
+	    }
+	}
 	export class SubmitTaskRequest {
 	    description: string;
 	    agent_name: string;
@@ -1663,6 +1697,7 @@ export namespace main {
 	    registry_url: string;
 	    last_pushed_at: string;
 	    last_digest: string;
+	    env_key?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProfileImageRow(source);
@@ -1674,6 +1709,7 @@ export namespace main {
 	        this.registry_url = source["registry_url"];
 	        this.last_pushed_at = source["last_pushed_at"];
 	        this.last_digest = source["last_digest"];
+	        this.env_key = source["env_key"];
 	    }
 	}
 	export class RepoBranch {

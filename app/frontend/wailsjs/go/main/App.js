@@ -230,6 +230,10 @@ export function GetProfileColors() {
   return window['go']['main']['App']['GetProfileColors']();
 }
 
+export function GetProfileEnvKey(arg1) {
+  return window['go']['main']['App']['GetProfileEnvKey'](arg1);
+}
+
 export function GetProfileImageInfo(arg1) {
   return window['go']['main']['App']['GetProfileImageInfo'](arg1);
 }
@@ -260,6 +264,10 @@ export function GetRepoCIStatus(arg1, arg2) {
 
 export function GetRepoPRs(arg1) {
   return window['go']['main']['App']['GetRepoPRs'](arg1);
+}
+
+export function GetSessionHistory(arg1, arg2) {
+  return window['go']['main']['App']['GetSessionHistory'](arg1, arg2);
 }
 
 export function GetSessionTraces(arg1, arg2) {
