@@ -94,7 +94,13 @@ func Build(opts BuildOptions) (BuildResult, error) {
 		return BuildResult{}, fmt.Errorf("inject Claude credentials: %w", err)
 	}
 
-	// 6. Commit while the container is still running — Docker Desktop's
+	// 6. Inject profile env vars (.env + .env.secrets → /home/developer/.env).
+	opts.progress("Injecting profile environment…")
+	if err := injectEnvFile(containerName, opts); err != nil {
+		return BuildResult{}, fmt.Errorf("inject env file: %w", err)
+	}
+
+	// 7. Commit while the container is still running — Docker Desktop's
 	// containerd storage driver fails to compute layer diffs on stopped
 	// containers that had directories created via exec.
 	tag := opts.imageTag()
@@ -121,6 +127,68 @@ func Build(opts BuildOptions) (BuildResult, error) {
 
 	opts.progress("Done.")
 	return BuildResult{Tag: tag, Digest: digest}, nil
+}
+
+// hostOnlyVars are stripped from the profile env before baking into the image.
+// These are host-specific values that would be wrong or harmful inside a container.
+var hostOnlyVars = map[string]bool{
+	"SSH_AUTH_SOCK": true, "GIT_SSH_COMMAND": true, "TMPDIR": true,
+	"SHELL": true, "TERM_PROGRAM": true, "TERM_SESSION_ID": true,
+	"HOME": true, "USER": true, "LOGNAME": true,
+	"PATH": true, "PWD": true, "OLDPWD": true, "SHLVL": true,
+	"XDG_CONFIG_HOME": true, "CLAUDE_CONFIG_DIR": true, "GEMINI_CONFIG_DIR": true,
+	"WORKSPACE_HOME": true, // rewritten to /home/developer below
+}
+
+// injectEnvFile reads the profile's .env and .env.secrets, filters host-only
+// vars, rewrites WORKSPACE_HOME to /home/developer, and writes the result to
+// /home/developer/.env inside the container. BASH_ENV in the image points at
+// this file so every bash shell sources it automatically.
+func injectEnvFile(container string, opts BuildOptions) error {
+	var lines []string
+
+	// Always set identity vars for the container environment.
+	lines = append(lines,
+		"WORKSPACE_PROFILE="+opts.Profile,
+		"WORKSPACE_HOME=/home/developer",
+	)
+
+	readEnvFile := func(path string) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return
+		}
+		for _, raw := range strings.Split(string(data), "\n") {
+			line := strings.TrimSpace(raw)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.HasPrefix(line, "export ") {
+				line = line[7:]
+			}
+			key := line
+			if idx := strings.IndexByte(line, '='); idx >= 0 {
+				key = line[:idx]
+			}
+			key = strings.TrimSpace(key)
+			if hostOnlyVars[key] || key == "WORKSPACE_PROFILE" || key == "WORKSPACE_HOME" {
+				continue
+			}
+			// Rewrite any $WORKSPACE_HOME references to the container path.
+			line = strings.ReplaceAll(line, opts.WorkspaceHome, "/home/developer")
+			lines = append(lines, line)
+		}
+	}
+
+	readEnvFile(filepath.Join(opts.WorkspaceHome, ".env"))
+	readEnvFile(filepath.Join(opts.WorkspaceHome, ".env.secrets"))
+
+	if len(lines) <= 2 {
+		return nil // nothing beyond identity vars — skip writing
+	}
+
+	content := strings.Join(lines, "\n") + "\n"
+	return writeFileToContainer(container, "/home/developer/.env", []byte(content), "600")
 }
 
 // injectSSHKeys copies ~/.ssh from workspaceHome into the container.
