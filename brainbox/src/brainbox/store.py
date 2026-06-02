@@ -61,6 +61,39 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_runners_machine_id
                 ON runners(machine_id);
+
+            CREATE TABLE IF NOT EXISTS session_history (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_name TEXT    NOT NULL,
+                runner_name  TEXT,
+                backend      TEXT    NOT NULL DEFAULT 'docker',
+                role         TEXT,
+                state_final  TEXT    NOT NULL,
+                created_at   INTEGER NOT NULL,
+                stopped_at   INTEGER NOT NULL,
+                task_id      TEXT,
+                job_id       TEXT,
+                repo_url     TEXT,
+                reason       TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_history_stopped_at
+                ON session_history(stopped_at);
+            CREATE INDEX IF NOT EXISTS idx_history_runner
+                ON session_history(runner_name);
+
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts           INTEGER NOT NULL,
+                event        TEXT    NOT NULL,
+                session_name TEXT,
+                actor        TEXT,
+                success      INTEGER NOT NULL DEFAULT 1,
+                detail       TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_audit_ts
+                ON audit_log(ts);
+            CREATE INDEX IF NOT EXISTS idx_audit_event
+                ON audit_log(event);
         """)
 
 
@@ -209,3 +242,123 @@ async def async_upsert_runner(info: "RunnerInfo") -> None:  # type: ignore[name-
 
 async def async_delete_runner(name: str) -> None:
     await asyncio.to_thread(delete_runner, name)
+
+
+# ---------------------------------------------------------------------------
+# Session history
+# ---------------------------------------------------------------------------
+
+
+def insert_session_history(ctx: "SessionContext", reason: str) -> None:  # type: ignore[name-defined]
+    import time as _time
+    stopped_at = int(_time.time() * 1000)
+    with _lock:
+        _db().execute(
+            """
+            INSERT INTO session_history
+                (session_name, runner_name, backend, role, state_final,
+                 created_at, stopped_at, task_id, job_id, repo_url, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ctx.session_name,
+                ctx.runner_name,
+                ctx.backend or "docker",
+                ctx.role,
+                ctx.state.value if ctx.state else "recycled",
+                ctx.created_at,
+                stopped_at,
+                ctx.task_id,
+                ctx.job_id,
+                ctx.repo_url,
+                reason,
+            ),
+        )
+
+
+def query_session_history(
+    limit: int = 100,
+    offset: int = 0,
+    runner_name: str | None = None,
+) -> list[dict]:
+    if runner_name:
+        rows = _db().execute(
+            "SELECT * FROM session_history WHERE runner_name = ? "
+            "ORDER BY stopped_at DESC LIMIT ? OFFSET ?",
+            (runner_name, limit, offset),
+        ).fetchall()
+    else:
+        rows = _db().execute(
+            "SELECT * FROM session_history ORDER BY stopped_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+async def async_insert_session_history(ctx: "SessionContext", reason: str) -> None:  # type: ignore[name-defined]
+    await asyncio.to_thread(insert_session_history, ctx, reason)
+
+
+# ---------------------------------------------------------------------------
+# Audit log
+# ---------------------------------------------------------------------------
+
+
+def insert_audit(
+    event: str,
+    *,
+    session_name: str | None = None,
+    actor: str | None = None,
+    success: bool = True,
+    detail: dict | None = None,
+) -> None:
+    import json as _json
+    import time as _time
+    ts = int(_time.time() * 1000)
+    with _lock:
+        _db().execute(
+            """
+            INSERT INTO audit_log (ts, event, session_name, actor, success, detail)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ts,
+                event,
+                session_name,
+                actor,
+                1 if success else 0,
+                _json.dumps(detail) if detail else None,
+            ),
+        )
+
+
+def query_audit_log(
+    limit: int = 200,
+    offset: int = 0,
+    event: str | None = None,
+    session_name: str | None = None,
+) -> list[dict]:
+    import json as _json
+    clauses: list[str] = []
+    params: list = []
+    if event:
+        clauses.append("event = ?")
+        params.append(event)
+    if session_name:
+        clauses.append("session_name = ?")
+        params.append(session_name)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = _db().execute(
+        f"SELECT * FROM audit_log {where} ORDER BY ts DESC LIMIT ? OFFSET ?",
+        (*params, limit, offset),
+    ).fetchall()
+    result = []
+    for row in rows:
+        d = dict(row)
+        if d.get("detail"):
+            try:
+                d["detail"] = _json.loads(d["detail"])
+            except Exception:
+                pass
+        result.append(d)
+    return result

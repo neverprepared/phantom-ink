@@ -1261,9 +1261,11 @@ async def recycle(ctx_or_name: SessionContext | str, reason: str = "manual") -> 
     ctx.state = SessionState.RECYCLED
     _sessions.pop(ctx.session_name, None)
     slog.info("container.recycled", metadata={"reason": reason, "backend": ctx.backend})
-    from .store import async_mark_session_inactive
+    from .store import async_mark_session_inactive, async_insert_session_history
     from .utils import now_ms
-    await async_mark_session_inactive(ctx.session_name, now_ms())
+    stopped = now_ms()
+    await async_mark_session_inactive(ctx.session_name, stopped)
+    await async_insert_session_history(ctx, reason)
 
     # Clean up host worktree if one was created for this session
     if ctx.worktree_path:

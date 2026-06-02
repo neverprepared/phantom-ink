@@ -171,6 +171,21 @@ def _audit_log(
         },
     )
 
+    try:
+        from .store import insert_audit
+        detail: dict = {"client_ip": client_ip, "user_agent": user_agent, "request_id": request_id}
+        if error:
+            detail["error"] = error
+        insert_audit(
+            operation,
+            session_name=session_name,
+            actor=client_ip,
+            success=success,
+            detail=detail,
+        )
+    except Exception:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # SSE client management
@@ -3793,6 +3808,34 @@ async def api_info():
         "version": "0.10.2",
         "status": "ok",
     }
+
+
+# ---------------------------------------------------------------------------
+# History and audit
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/sessions/history", dependencies=[Depends(require_api_key)])
+async def api_session_history(
+    limit: int = 100,
+    offset: int = 0,
+    runner: str | None = None,
+):
+    """Return stopped/recycled sessions in reverse-chronological order."""
+    from .store import query_session_history
+    return await asyncio.to_thread(query_session_history, limit, offset, runner)
+
+
+@app.get("/api/audit", dependencies=[Depends(require_api_key)])
+async def api_audit_log(
+    limit: int = 200,
+    offset: int = 0,
+    event: str | None = None,
+    session: str | None = None,
+):
+    """Return audit log entries in reverse-chronological order."""
+    from .store import query_audit_log
+    return await asyncio.to_thread(query_audit_log, limit, offset, event, session)
 
 
 # ---------------------------------------------------------------------------
