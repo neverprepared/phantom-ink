@@ -863,6 +863,7 @@ async def provision(
             job_id=job_id,
             docker_host=docker_host,
             delivery=delivery,
+            extra_env=extra_env,
         )
 
     resolved_role = role or settings.role
