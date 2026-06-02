@@ -4,6 +4,10 @@
 # Docker exec_run provides a minimal environment; ensure standard bin dirs are present.
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}
 
+# Ensure WORKSPACE_HOME has a sensible default so vars like CLAUDE_CONFIG_DIR
+# that reference it expand correctly before the profile env is fully loaded.
+: "${WORKSPACE_HOME:=$HOME}"
+
 # Decrypt profile env if the image contains an encrypted bundle and the key was injected.
 if [ -n "${PROFILE_ENV_KEY:-}" ] && [ -f "$HOME/.env.enc" ]; then
     openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -d \

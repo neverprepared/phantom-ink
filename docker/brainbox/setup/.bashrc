@@ -1,4 +1,8 @@
 
+# Ensure WORKSPACE_HOME is set before sourcing env files so any vars that
+# reference it (e.g. CLAUDE_CONFIG_DIR="$WORKSPACE_HOME/.claude") expand correctly.
+: "${WORKSPACE_HOME:=$HOME}"
+
 # Load env vars from profile files (decrypted from .env.enc by ttyd-wrapper, or bind-mounted).
 # set +H disables history expansion so values containing ! don't trigger "event not found".
 if [ -f /home/developer/.env ]; then
