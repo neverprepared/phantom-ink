@@ -6,10 +6,6 @@ export function AddChannelParticipant(arg1, arg2) {
   return window['go']['main']['App']['AddChannelParticipant'](arg1, arg2);
 }
 
-export function AddNFSExport(arg1) {
-  return window['go']['main']['App']['AddNFSExport'](arg1);
-}
-
 export function AddRepo(arg1) {
   return window['go']['main']['App']['AddRepo'](arg1);
 }
@@ -350,10 +346,6 @@ export function ListHubTasks(arg1, arg2) {
   return window['go']['main']['App']['ListHubTasks'](arg1, arg2);
 }
 
-export function ListNFSExports() {
-  return window['go']['main']['App']['ListNFSExports']();
-}
-
 export function ListOllamaModels() {
   return window['go']['main']['App']['ListOllamaModels']();
 }
@@ -416,10 +408,6 @@ export function PurgeBackup(arg1) {
 
 export function RemoveChannelParticipant(arg1, arg2) {
   return window['go']['main']['App']['RemoveChannelParticipant'](arg1, arg2);
-}
-
-export function RemoveNFSExport(arg1) {
-  return window['go']['main']['App']['RemoveNFSExport'](arg1);
 }
 
 export function RescanAgents() {

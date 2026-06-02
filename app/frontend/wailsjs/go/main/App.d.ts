@@ -5,8 +5,6 @@ import {main} from '../models';
 
 export function AddChannelParticipant(arg1:string,arg2:brainbox.ChannelParticipantRequest):Promise<brainbox.Channel>;
 
-export function AddNFSExport(arg1:string):Promise<void>;
-
 export function AddRepo(arg1:brainbox.AddRepoRequest):Promise<brainbox.Repo>;
 
 export function BrowseFolder():Promise<string>;
@@ -177,8 +175,6 @@ export function ListCollectedEntries(arg1:string,arg2:string,arg3:string):Promis
 
 export function ListHubTasks(arg1:string,arg2:string):Promise<Array<brainbox.Task>>;
 
-export function ListNFSExports():Promise<Array<main.NFSExport>>;
-
 export function ListOllamaModels():Promise<Array<brainbox.OllamaModel>>;
 
 export function ListPlaybooks(arg1:string):Promise<Array<brainbox.Playbook>>;
@@ -210,8 +206,6 @@ export function PullOllamaModel(arg1:string):Promise<string>;
 export function PurgeBackup(arg1:string):Promise<void>;
 
 export function RemoveChannelParticipant(arg1:string,arg2:string):Promise<brainbox.Channel>;
-
-export function RemoveNFSExport(arg1:string):Promise<void>;
 
 export function RescanAgents():Promise<Array<main.DetectedAgent>>;
 

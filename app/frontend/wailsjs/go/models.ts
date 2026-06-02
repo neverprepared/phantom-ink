@@ -1621,20 +1621,6 @@ export namespace main {
 	        this.line = source["line"];
 	    }
 	}
-	export class NFSExport {
-	    path: string;
-	    options: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new NFSExport(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.path = source["path"];
-	        this.options = source["options"];
-	    }
-	}
 	export class PreflightCheck {
 	    name: string;
 	    status: string;

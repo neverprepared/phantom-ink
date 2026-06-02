@@ -3743,58 +3743,6 @@ async def api_push_config(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# ---------------------------------------------------------------------------
-# NFS export management (UTM volume mounts)
-# ---------------------------------------------------------------------------
-
-
-@app.get("/api/nfs/exports")
-async def api_list_nfs_exports(_key: str = Depends(require_api_key)):
-    """List current NFS exports from /etc/exports."""
-    from .backends.utm.nfs import list_nfs_exports
-
-    return list_nfs_exports()
-
-
-@app.post("/api/nfs/exports")
-async def api_add_nfs_export(request: Request, _key: str = Depends(require_api_key)):
-    """Add a directory to /etc/exports for UTM VM access."""
-    from .backends.utm.nfs import ensure_nfs_export
-
-    body = await request.json()
-    path = body.get("path", "").strip()
-    if not path:
-        raise HTTPException(status_code=400, detail="path is required")
-    if not Path(path).is_absolute():
-        raise HTTPException(status_code=400, detail="path must be absolute")
-    if not Path(path).exists():
-        raise HTTPException(status_code=400, detail=f"path does not exist: {path}")
-
-    try:
-        await ensure_nfs_export(path)
-        return {"success": True, "path": path}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-
-@app.delete("/api/nfs/exports")
-async def api_remove_nfs_export(
-    path: str = Query(..., description="Absolute path to remove from exports"),
-    _key: str = Depends(require_api_key),
-):
-    """Remove a directory from /etc/exports."""
-    from .backends.utm.nfs import remove_nfs_export
-
-    path = path.strip()
-    if not path:
-        raise HTTPException(status_code=400, detail="path is required")
-
-    try:
-        await remove_nfs_export(path)
-        return {"success": True, "path": path}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
 
 # ---------------------------------------------------------------------------
 # SPA: serve built dashboard (must be last)
