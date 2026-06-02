@@ -413,9 +413,19 @@ def _session_endpoint(session_name: str) -> tuple[str, int, bool] | None:
     Docker directly for sessions not tracked in memory.
     """
     from .lifecycle import get_session
+    from .runners import get_registry
     ctx = get_session(session_name)
     if ctx and ctx.port:
-        host = ctx.runner_host or "127.0.0.1"
+        runner_host = ctx.runner_host
+        if not runner_host and ctx.runner_name:
+            try:
+                info = get_registry()._runners.get(ctx.runner_name)
+                if info and info.host:
+                    runner_host = info.host
+                    ctx.runner_host = info.host
+            except Exception:
+                pass
+        host = runner_host or "127.0.0.1"
         has_base_path = True
         log.info(
             "terminal.endpoint_resolved",
