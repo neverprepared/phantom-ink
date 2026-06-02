@@ -181,6 +181,15 @@ jobs:
             -format UDZO \
             "$DMG_PATH"
 
+      # ── Release ──────────────────────────────────────────────────────────
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.RUNNER_DIR }}/${{ env.DMG_PATH }}
+          generate_release_notes: true
+          name: Brainbox Runner ${{ github.ref_name }}
+
       # ── Homebrew Cask update ────────────────────────────────────────────
 
       - name: Update Homebrew cask sha256
@@ -196,13 +205,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Casks/brainbox-runner.rb
           git commit -m "chore: update brainbox-runner cask to v$VERSION"
+          git pull --rebase origin main
           git push origin HEAD:main
-
-      # ── Release ──────────────────────────────────────────────────────────
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ env.RUNNER_DIR }}/${{ env.DMG_PATH }}
-          generate_release_notes: true
-          name: Brainbox Runner ${{ github.ref_name }}
