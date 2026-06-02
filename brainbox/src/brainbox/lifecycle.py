@@ -759,6 +759,11 @@ async def _provision_via_runner(*, runner: str, **payload: Any) -> SessionContex
     # delivery must always use the bundle path (keygen → seal → inject).
     payload["delivery"] = "bundle"
 
+    # Resolve the profile image server-side so the runner doesn't need to
+    # replicate the registry lookup logic. The runner uses this image directly.
+    resolved_image, _ = _resolve_image_for_session(payload.get("workspace_profile"))
+    payload["image"] = resolved_image
+
     serializable = {
         k: (v.model_dump() if hasattr(v, "model_dump") else v)
         for k, v in payload.items()
