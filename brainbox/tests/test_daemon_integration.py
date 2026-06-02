@@ -52,7 +52,7 @@ class TestDaemonCLI:
         port = 19999
 
         # Start daemon
-        result = run_cli("api", "--daemon", "--port", str(port))
+        result = run_cli("api", "--daemon", "--host", "127.0.0.1", "--port", str(port))
         assert result.returncode == 0
         assert "Daemon started successfully" in result.stdout
         assert f"http://127.0.0.1:{port}" in result.stdout
@@ -89,7 +89,7 @@ class TestDaemonCLI:
         port = 19998
 
         # Start daemon
-        result = run_cli("api", "--daemon", "--port", str(port))
+        result = run_cli("api", "--daemon", "--host", "127.0.0.1", "--port", str(port))
         assert result.returncode == 0
 
         try:

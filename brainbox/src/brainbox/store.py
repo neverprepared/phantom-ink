@@ -30,6 +30,24 @@ def _db() -> sqlite3.Connection:
     return _conn
 
 
+def reset_store_for_tests() -> None:
+    """Replace the DB connection with a fresh in-memory DB and create all tables.
+
+    Call this from test fixtures so tests never touch the real on-disk DB.
+    """
+    global _conn
+    with _lock:
+        if _conn is not None:
+            try:
+                _conn.close()
+            except Exception:
+                pass
+        _conn = sqlite3.connect(":memory:", check_same_thread=False)
+        _conn.execute("PRAGMA foreign_keys=ON")
+        _conn.row_factory = sqlite3.Row
+    init_db()
+
+
 def init_db() -> None:
     """Create tables if they don't exist. Safe to call on every startup."""
     db = _db()

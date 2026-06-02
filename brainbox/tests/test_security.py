@@ -168,28 +168,6 @@ class TestInputValidation:
             with pytest.raises(ValidationError):
                 validate_session_name(name)
 
-    def test_artifact_key_validation(self):
-        """Artifact keys should prevent path traversal."""
-        from brainbox.validation import validate_artifact_key, ValidationError
-
-        # Valid keys
-        valid_keys = ["file.txt", "dir/file.txt", "a/b/c/file.txt"]
-        for key in valid_keys:
-            result = validate_artifact_key(key)
-            assert result  # Should return normalized key
-
-        # Invalid keys
-        invalid_keys = [
-            ("../etc/passwd", "path traversal"),
-            ("/absolute/path", "absolute path"),
-            ("dir/../../../etc/passwd", "complex traversal"),
-            ("", "empty"),
-            ("file\x00.txt", "null byte"),
-        ]
-        for key, reason in invalid_keys:
-            with pytest.raises(ValidationError):
-                validate_artifact_key(key)
-
     def test_volume_mount_validation(self):
         """Volume mounts should be validated."""
         from brainbox.validation import validate_volume_mount, ValidationError

@@ -15,6 +15,7 @@ def reset_hub_state():
     import brainbox.registry as _reg
     import brainbox.router as _router
     from brainbox.runners import reset_registry_for_tests
+    from brainbox.store import reset_store_for_tests
 
     from brainbox.scheduler import reset_for_tests as _reset_scheduler
 
@@ -32,6 +33,7 @@ def reset_hub_state():
         _router._listeners.clear()
         _router._repos.clear()
         _reset_scheduler()
+        reset_store_for_tests()  # fresh in-memory DB per test
 
     _reset()
     yield
