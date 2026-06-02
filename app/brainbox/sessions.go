@@ -66,9 +66,25 @@ type SessionActionResponse struct {
 	URL     string `json:"url"`
 }
 
+// hostOnlyEnvVars are stripped from profile env before forwarding to a remote
+// brainbox host. These are host-specific and would be wrong or harmful inside
+// a container. Must stay in sync with the Python and Go builder equivalents.
+var hostOnlyEnvVars = map[string]bool{
+	"SSH_AUTH_SOCK": true, "GIT_SSH_COMMAND": true, "TMPDIR": true,
+	"SHELL": true, "TERM_PROGRAM": true, "TERM_SESSION_ID": true,
+	"HOME": true, "USER": true, "LOGNAME": true,
+	"PATH": true, "PWD": true, "OLDPWD": true, "SHLVL": true,
+	"XDG_CONFIG_HOME": true, "CLAUDE_CONFIG_DIR": true, "GEMINI_CONFIG_DIR": true,
+	"WORKSPACE_HOME": true, "WORKSPACE_PROFILE": true,
+}
+
 // ReadProfileEnv reads KEY=VALUE pairs from .env and .env.secrets files under
 // workspaceHome and returns them as a map. Used to forward profile secrets to
 // a remote brainbox host when creating sessions.
+//
+// Host-only vars (PATH, CLAUDE_CONFIG_DIR, etc.) are filtered. $WORKSPACE_HOME
+// references in values are expanded to workspaceHome so downstream consumers
+// receive resolved paths rather than unexpanded shell variables.
 func ReadProfileEnv(workspaceHome string) map[string]string {
 	env := make(map[string]string)
 	if workspaceHome == "" {
@@ -86,14 +102,27 @@ func ReadProfileEnv(workspaceHome string) map[string]string {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			if k, v, ok := strings.Cut(line, "="); ok {
-				v = strings.TrimSpace(v)
-				// Strip surrounding quotes (single or double)
-				if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
-					v = v[1 : len(v)-1]
-				}
-				env[strings.TrimSpace(k)] = v
+			if strings.HasPrefix(line, "export ") {
+				line = line[7:]
 			}
+			k, v, ok := strings.Cut(line, "=")
+			if !ok {
+				continue
+			}
+			k = strings.TrimSpace(k)
+			if hostOnlyEnvVars[k] {
+				continue
+			}
+			v = strings.TrimSpace(v)
+			// Strip surrounding quotes (single or double)
+			if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
+				v = v[1 : len(v)-1]
+			}
+			// Expand $WORKSPACE_HOME / ${WORKSPACE_HOME} so callers receive
+			// resolved paths rather than unexpanded shell variable references.
+			v = strings.ReplaceAll(v, "${WORKSPACE_HOME}", workspaceHome)
+			v = strings.ReplaceAll(v, "$WORKSPACE_HOME", workspaceHome)
+			env[k] = v
 		}
 		f.Close()
 	}
