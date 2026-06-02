@@ -1,6 +1,6 @@
 cask "brainbox-runner" do
-  version "0.1.7"
-  sha256 "ddaace173a552091429f5da79c05bb6a43fa02853fc4b18e914c7ef5f181a311"
+  version "0.1.8"
+  sha256 "13ad357830e8ad90c2c674f78653e6eb4fab7f33a0dbdbe1042f18c4db2896cc"
 
   url "https://github.com/neverprepared/phantom-ink/releases/download/runner/v#{version}/BrainboxRunner.dmg"
   name "Brainbox Runner"
