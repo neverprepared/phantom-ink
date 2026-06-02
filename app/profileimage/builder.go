@@ -16,6 +16,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -69,6 +70,13 @@ func Build(opts BuildOptions) (BuildResult, error) {
 	// Clean up any leftover container from a previous failed build.
 	_ = run("docker", "rm", "-f", containerName)
 
+	// Generate a single encryption key used for both .env.enc and .claude.enc.
+	// Always generated so both encrypted files can share the same PROFILE_ENV_KEY.
+	envKey, err := generateEnvKey()
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("generate env key: %w", err)
+	}
+
 	// 1. Pull base image.
 	opts.progress("Pulling base image…")
 	if err := run("docker", "pull", opts.BaseImage); err != nil {
@@ -93,16 +101,15 @@ func Build(opts BuildOptions) (BuildResult, error) {
 		return BuildResult{}, fmt.Errorf("inject SSH keys: %w", err)
 	}
 
-	// 5. Inject Claude credentials.
+	// 5. Inject Claude credentials (encrypted as .claude.enc).
 	opts.progress("Injecting Claude credentials…")
-	if err := injectClaudeCredentials(containerName, opts); err != nil {
+	if err := injectClaudeCredentials(containerName, opts, envKey); err != nil {
 		return BuildResult{}, fmt.Errorf("inject Claude credentials: %w", err)
 	}
 
 	// 6. Inject profile env vars encrypted as /home/developer/.env.enc.
 	opts.progress("Injecting profile environment…")
-	envKey, err := injectEnvFile(containerName, opts)
-	if err != nil {
+	if err := injectEnvFile(containerName, opts, envKey); err != nil {
 		return BuildResult{}, fmt.Errorf("inject env file: %w", err)
 	}
 
@@ -170,10 +177,10 @@ func encryptEnv(plaintext, key string) ([]byte, error) {
 }
 
 // injectEnvFile reads the profile's .env and .env.secrets, filters host-only
-// vars, encrypts the result with a fresh random key, and writes the ciphertext
-// to /home/developer/.env.enc inside the container. Returns the hex key that
-// must be passed as PROFILE_ENV_KEY at container startup to decrypt.
-func injectEnvFile(container string, opts BuildOptions) (string, error) {
+// vars, encrypts with the provided key, and writes the ciphertext to
+// /home/developer/.env.enc inside the container. Skips silently if there are
+// no vars beyond the identity pair (WORKSPACE_PROFILE / WORKSPACE_HOME).
+func injectEnvFile(container string, opts BuildOptions, key string) error {
 	var lines []string
 
 	lines = append(lines,
@@ -211,24 +218,19 @@ func injectEnvFile(container string, opts BuildOptions) (string, error) {
 	readEnvFile(filepath.Join(opts.WorkspaceHome, ".env.secrets"))
 
 	if len(lines) <= 2 {
-		return "", nil // nothing beyond identity vars
-	}
-
-	key, err := generateEnvKey()
-	if err != nil {
-		return "", fmt.Errorf("generate env key: %w", err)
+		return nil // nothing beyond identity vars
 	}
 
 	plaintext := strings.Join(lines, "\n") + "\n"
 	ciphertext, err := encryptEnv(plaintext, key)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	if err := writeFileToContainer(container, "/home/developer/.env.enc", ciphertext, "600"); err != nil {
-		return "", fmt.Errorf("write .env.enc: %w", err)
+		return fmt.Errorf("write .env.enc: %w", err)
 	}
-	return key, nil
+	return nil
 }
 
 // injectSSHKeys copies ~/.ssh from workspaceHome into the container.
@@ -264,38 +266,52 @@ func injectSSHKeys(container string, opts BuildOptions) error {
 	return nil
 }
 
-// injectClaudeCredentials writes Claude auth files from the local workspaceHome/.claude.
-func injectClaudeCredentials(container string, opts BuildOptions) error {
+// injectClaudeCredentials packs Claude auth files into a JSON bundle, encrypts
+// with the provided key, and writes the ciphertext to /home/developer/.claude.enc.
+// ttyd-wrapper.sh decrypts at container startup using the same PROFILE_ENV_KEY.
+// No plaintext credential files are written into the image layers.
+func injectClaudeCredentials(container string, opts BuildOptions, key string) error {
 	claudeConfigDir := filepath.Join(opts.WorkspaceHome, ".claude")
 
-	if err := dockerExecSh(container, "mkdir -p /home/developer/.claude && chmod 700 /home/developer/.claude"); err != nil {
-		return err
+	// Collect whichever files exist; skip silently if absent.
+	type entry struct {
+		field string
+		path  string
+	}
+	sources := []entry{
+		{"credentials_json", filepath.Join(claudeConfigDir, ".credentials.json")},
+		{"claude_json", filepath.Join(claudeConfigDir, ".claude.json")},
+		{"settings_json", filepath.Join(claudeConfigDir, "settings.json")},
 	}
 
-	// .credentials.json (OAuth tokens) → ~/.claude/.credentials.json
-	credsPath := filepath.Join(claudeConfigDir, ".credentials.json")
-	if data, err := os.ReadFile(credsPath); err == nil {
-		if err := writeFileToContainer(container, "/home/developer/.claude/.credentials.json", data, "600"); err != nil {
-			return fmt.Errorf("write .credentials.json: %w", err)
+	bundle := make(map[string]string, len(sources))
+	for _, s := range sources {
+		data, err := os.ReadFile(s.path)
+		if err != nil {
+			continue
 		}
+		bundle[s.field] = string(data)
 	}
 
-	// .claude.json (oauthAccount, theme) → ~/.claude.json
-	claudeJSONPath := filepath.Join(claudeConfigDir, ".claude.json")
-	if data, err := os.ReadFile(claudeJSONPath); err == nil {
-		if err := writeFileToContainer(container, "/home/developer/.claude.json", data, "600"); err != nil {
-			return fmt.Errorf("write .claude.json: %w", err)
-		}
+	if len(bundle) == 0 {
+		return nil // no Claude credentials found, skip
 	}
 
-	// settings.json (theme, bypass flags) → ~/.claude/settings.json
-	settingsPath := filepath.Join(claudeConfigDir, "settings.json")
-	if data, err := os.ReadFile(settingsPath); err == nil {
-		if err := writeFileToContainer(container, "/home/developer/.claude/settings.json", data, "644"); err != nil {
-			return fmt.Errorf("write settings.json: %w", err)
-		}
+	// Serialise to JSON then encrypt — same openssl cipher as .env.enc so
+	// ttyd-wrapper.sh can decrypt both with one key.
+	plaintext, err := marshalJSON(bundle)
+	if err != nil {
+		return fmt.Errorf("marshal claude bundle: %w", err)
 	}
 
+	ciphertext, err := encryptEnv(plaintext, key)
+	if err != nil {
+		return fmt.Errorf("encrypt claude bundle: %w", err)
+	}
+
+	if err := writeFileToContainer(container, "/home/developer/.claude.enc", ciphertext, "600"); err != nil {
+		return fmt.Errorf("write .claude.enc: %w", err)
+	}
 	return nil
 }
 
@@ -335,6 +351,15 @@ func push(tag string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// marshalJSON encodes v as a JSON string (newline-terminated).
+func marshalJSON(v any) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(b) + "\n", nil
 }
 
 // writeFileToContainer writes data into a container path by piping base64

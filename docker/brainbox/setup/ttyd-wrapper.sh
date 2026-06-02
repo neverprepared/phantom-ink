@@ -12,6 +12,29 @@ if [ -n "${PROFILE_ENV_KEY:-}" ] && [ -f "$HOME/.env.enc" ]; then
         -out "$HOME/.env" 2>/dev/null && chmod 600 "$HOME/.env"
 fi
 
+# Decrypt Claude credentials if the image contains an encrypted bundle.
+if [ -n "${PROFILE_ENV_KEY:-}" ] && [ -f "$HOME/.claude.enc" ]; then
+    openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -d \
+        -pass "pass:${PROFILE_ENV_KEY}" \
+        -in "$HOME/.claude.enc" \
+        2>/dev/null | python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+home = os.environ.get('HOME', '/home/developer')
+os.makedirs(home + '/.claude', mode=0o700, exist_ok=True)
+def wf(path, content, mode):
+    with open(path, 'w') as f:
+        f.write(content)
+    os.chmod(path, mode)
+if 'credentials_json' in d:
+    wf(home + '/.claude/.credentials.json', d['credentials_json'], 0o600)
+if 'claude_json' in d:
+    wf(home + '/.claude.json', d['claude_json'], 0o600)
+if 'settings_json' in d:
+    wf(home + '/.claude/settings.json', d['settings_json'], 0o644)
+" 2>/dev/null
+fi
+
 # In hardened mode secrets land in /run/secrets/ rather than ~/.env.
 # Read the vars we need from there if not already in the environment.
 _secret() {
