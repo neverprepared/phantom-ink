@@ -1,7 +1,12 @@
 
-# Load env vars from profile files (bind-mounted from host)
-[ -f /home/developer/.env ] && set -a && . /home/developer/.env && set +a
-[ -e /home/developer/.env.secrets ] && set -a && . /home/developer/.env.secrets && set +a
+# Load env vars from profile files (decrypted from .env.enc by ttyd-wrapper, or bind-mounted).
+# set +H disables history expansion so values containing ! don't trigger "event not found".
+if [ -f /home/developer/.env ]; then
+    set +H; set -a; . /home/developer/.env; set +a; set -H
+fi
+if [ -e /home/developer/.env.secrets ]; then
+    set +H; set -a; . /home/developer/.env.secrets; set +a; set -H
+fi
 
 # Claude Code aliases
 alias c='claude'

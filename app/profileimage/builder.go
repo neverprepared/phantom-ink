@@ -21,8 +21,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// validEnvKey matches only legal shell identifier names: [A-Za-z_][A-Za-z0-9_]*
+var validEnvKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // BuildOptions controls the profile image build.
 type BuildOptions struct {
@@ -201,11 +205,16 @@ func injectEnvFile(container string, opts BuildOptions, key string) error {
 			if strings.HasPrefix(line, "export ") {
 				line = line[7:]
 			}
-			varName := line
-			if idx := strings.IndexByte(line, '='); idx >= 0 {
-				varName = line[:idx]
+			// Require a valid KEY=value assignment; skip shell commands,
+			// function defs, unset calls, etc. that would fail when sourced.
+			idx := strings.IndexByte(line, '=')
+			if idx <= 0 {
+				continue
 			}
-			varName = strings.TrimSpace(varName)
+			varName := strings.TrimSpace(line[:idx])
+			if !validEnvKey.MatchString(varName) {
+				continue
+			}
 			if hostOnlyVars[varName] || varName == "WORKSPACE_PROFILE" || varName == "WORKSPACE_HOME" {
 				continue
 			}
