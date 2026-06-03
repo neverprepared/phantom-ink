@@ -735,6 +735,7 @@ export namespace brainbox {
 	    queue_depth: number;
 	    in_flight: number;
 	    max_concurrent: number;
+	    host: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Runner(source);
@@ -751,6 +752,7 @@ export namespace brainbox {
 	        this.queue_depth = source["queue_depth"];
 	        this.in_flight = source["in_flight"];
 	        this.max_concurrent = source["max_concurrent"];
+	        this.host = source["host"];
 	    }
 	}
 	export class Session {

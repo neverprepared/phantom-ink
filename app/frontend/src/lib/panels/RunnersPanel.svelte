@@ -14,6 +14,7 @@
     queue_depth: number;
     in_flight: number;
     max_concurrent: number;
+    host: string;
   }
 
   let runners = $state<Runner[]>([]);
@@ -146,10 +147,13 @@
               {/if}
             </td>
             <td class="tags">
+              {#if r.host}
+                <span class="tag-pill host-pill">{r.host}</span>
+              {/if}
               {#each r.tags ?? [] as tag (tag)}
                 <span class="tag-pill">{tag}</span>
               {/each}
-              {#if (r.tags ?? []).length === 0}
+              {#if !r.host && (r.tags ?? []).length === 0}
                 <span class="muted">—</span>
               {/if}
             </td>
@@ -318,6 +322,12 @@
     background: var(--color-accent-soft);
     color: var(--color-accent);
     text-transform: lowercase;
+  }
+  .host-pill {
+    background: rgba(16, 185, 129, 0.1);
+    color: var(--color-success, #10b981);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    font-family: var(--font-mono);
   }
   .capacity-cell {
     display: flex;

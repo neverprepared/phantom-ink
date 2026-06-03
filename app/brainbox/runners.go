@@ -13,6 +13,7 @@ type Runner struct {
 	QueueDepth    int             `json:"queue_depth"`
 	InFlight      int             `json:"in_flight"`
 	MaxConcurrent int             `json:"max_concurrent"`
+	Host          string          `json:"host"`
 }
 
 // PairingTicket is the response from POST /api/runners/pair/start.

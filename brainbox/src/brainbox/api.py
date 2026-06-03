@@ -996,6 +996,7 @@ async def runners_list(_key=Depends(require_api_key)):
             "queue_depth": r.queue_depth,
             "in_flight": r.in_flight,
             "max_concurrent": r.max_concurrent,
+            "host": r.host,
         }
         for r in runners
     ]
