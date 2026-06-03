@@ -5,8 +5,6 @@ import {main} from '../models';
 
 export function AddChannelParticipant(arg1:string,arg2:brainbox.ChannelParticipantRequest):Promise<brainbox.Channel>;
 
-export function AddRepo(arg1:brainbox.AddRepoRequest):Promise<brainbox.Repo>;
-
 export function BrowseFolder():Promise<string>;
 
 export function BrowseProfileFiles(arg1:string):Promise<Array<string>>;
@@ -31,10 +29,6 @@ export function CreateProfile(arg1:string):Promise<main.Profile>;
 
 export function CreateSession(arg1:brainbox.CreateSessionRequest):Promise<brainbox.SessionActionResponse>;
 
-export function CreateWorktree(arg1:brainbox.CreateWorktreeRequest):Promise<brainbox.Worktree>;
-
-export function CreateWorktreeSession(arg1:string):Promise<brainbox.WorktreeSessionResponse>;
-
 export function DeleteAgent(arg1:string):Promise<void>;
 
 export function DeleteChain(arg1:string):Promise<void>;
@@ -51,15 +45,11 @@ export function DeleteProfile(arg1:string,arg2:boolean):Promise<void>;
 
 export function DeleteProfileImageRecord(arg1:string):Promise<void>;
 
-export function DeleteRepo(arg1:string):Promise<void>;
-
 export function DeleteRunner(arg1:string):Promise<void>;
 
 export function DeleteSchedule(arg1:string):Promise<void>;
 
 export function DeleteSession(arg1:string):Promise<brainbox.SessionActionResponse>;
-
-export function DeleteWorktree(arg1:string):Promise<void>;
 
 export function EnqueueTask(arg1:main.EnqueueTaskRequest):Promise<string>;
 
@@ -125,14 +115,6 @@ export function GetRegistrySettings():Promise<Record<string, string>>;
 
 export function GetRemoteProfileImageStatus(arg1:string):Promise<any>;
 
-export function GetRepoActivity(arg1:string):Promise<Array<main.RepoEvent>>;
-
-export function GetRepoBranches(arg1:string):Promise<Array<main.RepoBranch>>;
-
-export function GetRepoCIStatus(arg1:string,arg2:string):Promise<main.CIStatus>;
-
-export function GetRepoPRs(arg1:string):Promise<Array<main.RepoPR>>;
-
 export function GetSessionHistory(arg1:number,arg2:number):Promise<Array<brainbox.SessionHistoryEntry>>;
 
 export function GetSessionTraces(arg1:string,arg2:number):Promise<Array<brainbox.Trace>>;
@@ -152,8 +134,6 @@ export function GetTaskStats(arg1:number):Promise<main.TaskStats>;
 export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;
 
 export function GetWidgetCount(arg1:string,arg2:string):Promise<number>;
-
-export function GetWorktree(arg1:string):Promise<brainbox.Worktree>;
 
 export function LaunchTeam(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<brainbox.SessionActionResponse>;
 
@@ -183,8 +163,6 @@ export function ListProfileDirs(arg1:string):Promise<Array<string>>;
 
 export function ListProfileImages():Promise<Array<main.ProfileImageRow>>;
 
-export function ListRepos(arg1:string):Promise<Array<brainbox.Repo>>;
-
 export function ListRunners():Promise<Array<brainbox.Runner>>;
 
 export function ListSchedules(arg1:string):Promise<Array<main.ScheduleRow>>;
@@ -194,8 +172,6 @@ export function ListServices():Promise<Array<main.ServiceStatus>>;
 export function ListTasks(arg1:string,arg2:number):Promise<Array<main.TaskRow>>;
 
 export function ListUpcomingFires(arg1:number):Promise<Array<main.UpcomingFire>>;
-
-export function ListWorktrees(arg1:string):Promise<Array<brainbox.Worktree>>;
 
 export function PostChannelMessage(arg1:string,arg2:brainbox.PostChannelMessageRequest):Promise<brainbox.ChannelMessage>;
 
@@ -268,7 +244,5 @@ export function SubmitTask(arg1:brainbox.SubmitTaskRequest):Promise<brainbox.Tas
 export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promise<brainbox.AgentDefinition>;
 
 export function UpdatePlaybook(arg1:string,arg2:brainbox.UpdatePlaybookRequest):Promise<brainbox.Playbook>;
-
-export function UpdateRepo(arg1:string,arg2:brainbox.UpdateRepoRequest):Promise<brainbox.Repo>;
 
 export function UsableAgents():Promise<Array<main.DetectedAgent>>;

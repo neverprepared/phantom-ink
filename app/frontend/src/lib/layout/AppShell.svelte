@@ -8,7 +8,6 @@
   import SessionsPanel from '../panels/SessionsPanel.svelte';
   import ChainsPanel from '../panels/ChainsPanel.svelte';
   import ConversationsPanel from '../panels/ConversationsPanel.svelte';
-  import ReposPanel from '../panels/ReposPanel.svelte';
   import ServicesPanel from '../panels/ServicesPanel.svelte';
   import PlaybooksPanel from '../panels/PlaybooksPanel.svelte';
   import ProfilesPanel from '../panels/ProfilesPanel.svelte';
@@ -31,8 +30,6 @@
         <RunnersPanel />
       {:else if currentPanel.value === 'dashboard'}
         <DashboardPanel />
-      {:else if currentPanel.value === 'repos'}
-        <ReposPanel />
       {:else if currentPanel.value === 'integrations'}
         <ServicesPanel />
       {:else if currentPanel.value === 'chains'}

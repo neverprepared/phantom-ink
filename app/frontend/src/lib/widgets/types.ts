@@ -22,7 +22,7 @@ export interface StatCounterConfig {
 
 export interface CustomCounterConfig {
   label: string;
-  api: 'sessions' | 'hub_tasks' | 'repos';
+  api: 'sessions' | 'hub_tasks';
   filter: { status?: string };
   color?: string;
 }

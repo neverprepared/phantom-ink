@@ -211,26 +211,6 @@ func (a *App) GetMessageLog() ([]brainbox.Message, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Repos
-// ---------------------------------------------------------------------------
-
-func (a *App) ListRepos(workspaceProfile string) ([]brainbox.Repo, error) {
-	return a.client.ListRepos(workspaceProfile)
-}
-
-func (a *App) AddRepo(req brainbox.AddRepoRequest) (brainbox.Repo, error) {
-	return a.client.AddRepo(req)
-}
-
-func (a *App) UpdateRepo(name string, req brainbox.UpdateRepoRequest) (brainbox.Repo, error) {
-	return a.client.UpdateRepo(name, req)
-}
-
-func (a *App) DeleteRepo(name string) error {
-	return a.client.DeleteRepo(name)
-}
-
-// ---------------------------------------------------------------------------
 // Observability
 // ---------------------------------------------------------------------------
 
@@ -341,27 +321,3 @@ func (a *App) CancelPlaybook(id string) error {
 	return a.client.CancelPlaybook(id)
 }
 
-// ListWorktrees returns all worktrees, optionally filtered by repo name.
-func (a *App) ListWorktrees(repo string) ([]brainbox.Worktree, error) {
-	return a.client.ListWorktrees(repo)
-}
-
-// GetWorktree returns a single worktree by ID.
-func (a *App) GetWorktree(id string) (brainbox.Worktree, error) {
-	return a.client.GetWorktree(id)
-}
-
-// CreateWorktree creates a new worktree for a repo branch.
-func (a *App) CreateWorktree(req brainbox.CreateWorktreeRequest) (brainbox.Worktree, error) {
-	return a.client.CreateWorktree(req)
-}
-
-// DeleteWorktree removes a worktree from disk and deregisters it.
-func (a *App) DeleteWorktree(id string) error {
-	return a.client.DeleteWorktree(id)
-}
-
-// CreateWorktreeSession starts a brainbox session mounted on the given worktree.
-func (a *App) CreateWorktreeSession(id string) (brainbox.WorktreeSessionResponse, error) {
-	return a.client.CreateWorktreeSession(id)
-}

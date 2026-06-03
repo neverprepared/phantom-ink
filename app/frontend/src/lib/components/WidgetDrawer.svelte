@@ -92,7 +92,7 @@
     { val: 'muted',   label: 'Muted' },
   ];
 
-  const NAV_TARGETS = ['', 'sessions', 'timeline', 'agents', 'repos', 'chains', 'conversations', 'playbooks'];
+  const NAV_TARGETS = ['', 'sessions', 'timeline', 'agents', 'chains', 'conversations', 'playbooks'];
 
   function handleAdd() {
     const id = crypto.randomUUID();
@@ -278,7 +278,6 @@
               <select bind:value={ccApi}>
                 <option value="hub_tasks">Hub Tasks</option>
                 <option value="sessions">Sessions</option>
-                <option value="repos">Repos</option>
               </select>
             </div>
             <div class="field">

@@ -34,7 +34,7 @@ func (a *App) SaveDashboardLayout(profile, layout string) error {
 }
 
 // GetWidgetCount returns a count of items in the given brainbox collection,
-// optionally filtered by status. api must be one of: "sessions", "hub_tasks", "repos".
+// optionally filtered by status. api must be one of: "sessions", "hub_tasks".
 func (a *App) GetWidgetCount(api, filterJSON string) (int, error) {
 	var filter struct {
 		Status string `json:"status"`
@@ -72,15 +72,8 @@ func (a *App) GetWidgetCount(api, filterJSON string) (int, error) {
 		}
 		return len(tasks), nil
 
-	case "repos":
-		repos, err := a.client.ListRepos("")
-		if err != nil {
-			return 0, err
-		}
-		return len(repos), nil
-
 	default:
-		return 0, fmt.Errorf("unknown api %q: must be sessions, hub_tasks, or repos", api)
+		return 0, fmt.Errorf("unknown api %q: must be sessions, hub_tasks", api)
 	}
 }
 

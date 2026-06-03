@@ -6,10 +6,6 @@ export function AddChannelParticipant(arg1, arg2) {
   return window['go']['main']['App']['AddChannelParticipant'](arg1, arg2);
 }
 
-export function AddRepo(arg1) {
-  return window['go']['main']['App']['AddRepo'](arg1);
-}
-
 export function BrowseFolder() {
   return window['go']['main']['App']['BrowseFolder']();
 }
@@ -58,14 +54,6 @@ export function CreateSession(arg1) {
   return window['go']['main']['App']['CreateSession'](arg1);
 }
 
-export function CreateWorktree(arg1) {
-  return window['go']['main']['App']['CreateWorktree'](arg1);
-}
-
-export function CreateWorktreeSession(arg1) {
-  return window['go']['main']['App']['CreateWorktreeSession'](arg1);
-}
-
 export function DeleteAgent(arg1) {
   return window['go']['main']['App']['DeleteAgent'](arg1);
 }
@@ -98,10 +86,6 @@ export function DeleteProfileImageRecord(arg1) {
   return window['go']['main']['App']['DeleteProfileImageRecord'](arg1);
 }
 
-export function DeleteRepo(arg1) {
-  return window['go']['main']['App']['DeleteRepo'](arg1);
-}
-
 export function DeleteRunner(arg1) {
   return window['go']['main']['App']['DeleteRunner'](arg1);
 }
@@ -112,10 +96,6 @@ export function DeleteSchedule(arg1) {
 
 export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
-}
-
-export function DeleteWorktree(arg1) {
-  return window['go']['main']['App']['DeleteWorktree'](arg1);
 }
 
 export function EnqueueTask(arg1) {
@@ -246,22 +226,6 @@ export function GetRemoteProfileImageStatus(arg1) {
   return window['go']['main']['App']['GetRemoteProfileImageStatus'](arg1);
 }
 
-export function GetRepoActivity(arg1) {
-  return window['go']['main']['App']['GetRepoActivity'](arg1);
-}
-
-export function GetRepoBranches(arg1) {
-  return window['go']['main']['App']['GetRepoBranches'](arg1);
-}
-
-export function GetRepoCIStatus(arg1, arg2) {
-  return window['go']['main']['App']['GetRepoCIStatus'](arg1, arg2);
-}
-
-export function GetRepoPRs(arg1) {
-  return window['go']['main']['App']['GetRepoPRs'](arg1);
-}
-
 export function GetSessionHistory(arg1, arg2) {
   return window['go']['main']['App']['GetSessionHistory'](arg1, arg2);
 }
@@ -300,10 +264,6 @@ export function GetTraceDetail(arg1) {
 
 export function GetWidgetCount(arg1, arg2) {
   return window['go']['main']['App']['GetWidgetCount'](arg1, arg2);
-}
-
-export function GetWorktree(arg1) {
-  return window['go']['main']['App']['GetWorktree'](arg1);
 }
 
 export function LaunchTeam(arg1, arg2, arg3, arg4, arg5, arg6) {
@@ -362,10 +322,6 @@ export function ListProfileImages() {
   return window['go']['main']['App']['ListProfileImages']();
 }
 
-export function ListRepos(arg1) {
-  return window['go']['main']['App']['ListRepos'](arg1);
-}
-
 export function ListRunners() {
   return window['go']['main']['App']['ListRunners']();
 }
@@ -384,10 +340,6 @@ export function ListTasks(arg1, arg2) {
 
 export function ListUpcomingFires(arg1) {
   return window['go']['main']['App']['ListUpcomingFires'](arg1);
-}
-
-export function ListWorktrees(arg1) {
-  return window['go']['main']['App']['ListWorktrees'](arg1);
 }
 
 export function PostChannelMessage(arg1, arg2) {
@@ -532,10 +484,6 @@ export function UpdateAgent(arg1, arg2) {
 
 export function UpdatePlaybook(arg1, arg2) {
   return window['go']['main']['App']['UpdatePlaybook'](arg1, arg2);
-}
-
-export function UpdateRepo(arg1, arg2) {
-  return window['go']['main']['App']['UpdateRepo'](arg1, arg2);
 }
 
 export function UsableAgents() {

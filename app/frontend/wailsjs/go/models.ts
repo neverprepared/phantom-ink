@@ -1,33 +1,5 @@
 export namespace brainbox {
 	
-	export class AddRepoRequest {
-	    url: string;
-	    name?: string;
-	    merge_queue?: boolean;
-	    pr_shepherd?: boolean;
-	    target_branch?: string;
-	    is_fork?: boolean;
-	    upstream_url?: string;
-	    workspace_profile?: string;
-	    workspace_home?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new AddRepoRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.url = source["url"];
-	        this.name = source["name"];
-	        this.merge_queue = source["merge_queue"];
-	        this.pr_shepherd = source["pr_shepherd"];
-	        this.target_branch = source["target_branch"];
-	        this.is_fork = source["is_fork"];
-	        this.upstream_url = source["upstream_url"];
-	        this.workspace_profile = source["workspace_profile"];
-	        this.workspace_home = source["workspace_home"];
-	    }
-	}
 	export class AgentDefinition {
 	    name: string;
 	    image: string;
@@ -347,20 +319,6 @@ export namespace brainbox {
 	        this.runner = source["runner"];
 	        this.delivery = source["delivery"];
 	        this.env = source["env"];
-	    }
-	}
-	export class CreateWorktreeRequest {
-	    repo_name: string;
-	    branch: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new CreateWorktreeRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.repo_name = source["repo_name"];
-	        this.branch = source["branch"];
 	    }
 	}
 	export class DispatchCandidate {
@@ -956,62 +914,6 @@ export namespace brainbox {
 	        this.markdown = source["markdown"];
 	    }
 	}
-	export class UpdateRepoRequest {
-	    merge_queue?: boolean;
-	    pr_shepherd?: boolean;
-	    target_branch?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new UpdateRepoRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.merge_queue = source["merge_queue"];
-	        this.pr_shepherd = source["pr_shepherd"];
-	        this.target_branch = source["target_branch"];
-	    }
-	}
-	export class Worktree {
-	    id: string;
-	    repo_name: string;
-	    branch: string;
-	    worktree_path: string;
-	    session_name?: string;
-	    status: string;
-	    created_at: number;
-	    error?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Worktree(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.repo_name = source["repo_name"];
-	        this.branch = source["branch"];
-	        this.worktree_path = source["worktree_path"];
-	        this.session_name = source["session_name"];
-	        this.status = source["status"];
-	        this.created_at = source["created_at"];
-	        this.error = source["error"];
-	    }
-	}
-	export class WorktreeSessionResponse {
-	    worktree_id: string;
-	    session: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new WorktreeSessionResponse(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.worktree_id = source["worktree_id"];
-	        this.session = source["session"];
-	    }
-	}
 
 }
 
@@ -1034,58 +936,6 @@ export namespace main {
 	        this.accepts_cwd = source["accepts_cwd"];
 	        this.output_mode = source["output_mode"];
 	    }
-	}
-	export class CIRun {
-	    name: string;
-	    status: string;
-	    conclusion: string;
-	    url: string;
-	    created_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new CIRun(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.status = source["status"];
-	        this.conclusion = source["conclusion"];
-	        this.url = source["url"];
-	        this.created_at = source["created_at"];
-	    }
-	}
-	export class CIStatus {
-	    branch: string;
-	    runs: CIRun[];
-	
-	    static createFrom(source: any = {}) {
-	        return new CIStatus(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.branch = source["branch"];
-	        this.runs = this.convertValues(source["runs"], CIRun);
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class ChainFollowup {
 	    chain_id: string;
@@ -1625,70 +1475,6 @@ export namespace main {
 	        this.last_pushed_at = source["last_pushed_at"];
 	        this.last_digest = source["last_digest"];
 	        this.env_key = source["env_key"];
-	    }
-	}
-	export class RepoBranch {
-	    name: string;
-	    protected: boolean;
-	    has_pr: boolean;
-	    pr_number: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new RepoBranch(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.protected = source["protected"];
-	        this.has_pr = source["has_pr"];
-	        this.pr_number = source["pr_number"];
-	    }
-	}
-	export class RepoEvent {
-	    type: string;
-	    actor: string;
-	    created_at: string;
-	    summary: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new RepoEvent(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.type = source["type"];
-	        this.actor = source["actor"];
-	        this.created_at = source["created_at"];
-	        this.summary = source["summary"];
-	    }
-	}
-	export class RepoPR {
-	    number: number;
-	    title: string;
-	    branch: string;
-	    author: string;
-	    url: string;
-	    is_draft: boolean;
-	    created_at: string;
-	    ci_status: string;
-	    labels: string[];
-	
-	    static createFrom(source: any = {}) {
-	        return new RepoPR(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.number = source["number"];
-	        this.title = source["title"];
-	        this.branch = source["branch"];
-	        this.author = source["author"];
-	        this.url = source["url"];
-	        this.is_draft = source["is_draft"];
-	        this.created_at = source["created_at"];
-	        this.ci_status = source["ci_status"];
-	        this.labels = source["labels"];
 	    }
 	}
 	export class ScheduleRow {

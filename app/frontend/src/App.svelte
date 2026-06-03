@@ -69,12 +69,9 @@
       const panelMap: Record<string, string> = {
         '1': 'dashboard',
         '2': 'sessions',
-        '3': 'repos',
-        '4': 'integrations',
-        '5': 'observability',
-        '6': 'channels',
-        '7': 'playbooks',
-        '8': 'events',
+        '3': 'integrations',
+        '4': 'chains',
+        '5': 'playbooks',
         ',': 'settings',
       };
 
