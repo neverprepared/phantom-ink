@@ -432,7 +432,7 @@ def _session_endpoint(session_name: str) -> tuple[str, int, bool] | None:
     ctx = get_session(session_name)
     if ctx and ctx.port:
         runner_host = ctx.runner_host
-        if not runner_host and ctx.runner_name:
+        if ctx.runner_name:
             try:
                 info = get_registry()._runners.get(ctx.runner_name)
                 if info and info.host:
