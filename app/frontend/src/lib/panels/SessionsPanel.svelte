@@ -685,6 +685,9 @@
               {@const wp = session.workspace_profile.toLowerCase()}
               <span class="profile-badge" style={profileColorStyle(getProfileColor(wp, profileColorStore.getOverride(wp)))}>{wp}</span>
             {/if}
+            {#if session.runner_name}
+              <span class="runner-badge">{session.runner_name}</span>
+            {/if}
           </div>
 
           <div class="card-meta">
@@ -1240,6 +1243,19 @@
     background: rgba(168, 85, 247, 0.1);
     color: #d8b4fe;
     border: 1px solid rgba(168, 85, 247, 0.2);
+    flex-shrink: 0;
+  }
+
+  .runner-badge {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 9999px;
+    background: rgba(99, 102, 241, 0.1);
+    color: #a5b4fc;
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    font-family: var(--font-mono);
     flex-shrink: 0;
   }
 

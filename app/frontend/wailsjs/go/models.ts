@@ -769,6 +769,7 @@ export namespace brainbox {
 	    backend: string;
 	    ssh_port: any;
 	    vm_state?: string;
+	    runner_name?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
@@ -789,6 +790,7 @@ export namespace brainbox {
 	        this.backend = source["backend"];
 	        this.ssh_port = source["ssh_port"];
 	        this.vm_state = source["vm_state"];
+	        this.runner_name = source["runner_name"];
 	    }
 	}
 	export class SessionActionResponse {

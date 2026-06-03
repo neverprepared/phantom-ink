@@ -27,6 +27,7 @@ type Session struct {
 	Backend          string      `json:"backend"`
 	SSHPort          interface{} `json:"ssh_port"`
 	VMState          string      `json:"vm_state,omitempty"`
+	RunnerName       string      `json:"runner_name,omitempty"`
 }
 
 // CreateSessionRequest mirrors the POST /api/create payload.
