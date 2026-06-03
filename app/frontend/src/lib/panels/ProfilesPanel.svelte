@@ -873,8 +873,8 @@
   .build-log {
     margin-top: 4px;
     padding: 8px 10px;
-    background: rgba(0, 0, 0, 0.25);
-    border: 1px solid var(--color-border-primary);
+    background: #1a1a1a;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: var(--radius-sm);
     max-height: 180px;
     overflow-y: auto;
@@ -883,7 +883,7 @@
   .log-line {
     font-size: 11px;
     font-family: var(--font-mono);
-    color: var(--color-text-tertiary);
+    color: #d4d4d4;
     line-height: 1.6;
     white-space: pre-wrap;
     word-break: break-all;
