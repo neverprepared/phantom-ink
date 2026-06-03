@@ -275,31 +275,210 @@ func injectSSHKeys(container string, opts BuildOptions) error {
 	return nil
 }
 
-// injectClaudeCredentials packs Claude auth files into a JSON bundle, encrypts
+// containerMCPCommand holds the container-native replacement command for an MCP server.
+type containerMCPCommand struct {
+	command string
+	args    []string
+}
+
+// containerMCPOverrides maps user-facing server names to pre-installed container commands.
+// These mirror _CONTAINER_MCP_OVERRIDES in brainbox/src/brainbox/backends/configure.py.
+var containerMCPOverrides = map[string]containerMCPCommand{
+	"brainbox":              {command: "brainbox-mcp", args: []string{}},
+	"obsidian-second-brain": {command: "mcp-obsidian-second-brain", args: []string{}},
+	"google-workspace":      {command: "workspace-mcp", args: []string{"--tool-tier", "core"}},
+	"cloudflare-dns":        {command: "mcp-cloudflare", args: []string{}},
+	"markdown-to-confluence": {command: "mcp-markdown-to-confluence", args: []string{}},
+	"uptime-kuma":           {command: "mcp-uptime-kuma", args: []string{}},
+}
+
+// macOSOnlyMCPServers are stripped from the container config — they require
+// macOS-specific system APIs or applications and cannot run in a Linux container.
+var macOSOnlyMCPServers = map[string]bool{
+	"macos-ecosystem": true,
+	"utm":             true,
+}
+
+// macOSOnlyPlugins are Claude Code IDE integrations that only work on macOS and
+// hang at startup inside a Linux container.
+var macOSOnlyPlugins = map[string]bool{
+	"gopls-lsp@claude-plugins-official":  true,
+	"swift-lsp@claude-plugins-official":  true,
+	"pylsp-lsp@claude-plugins-official":  true,
+	"rust-lsp@claude-plugins-official":   true,
+}
+
+// translateClaudeJSON applies container-safe translations to the raw .claude.json bytes:
+//   - Replaces workspaceHome paths with /home/developer
+//   - Applies containerMCPOverrides for known server names
+//   - Strips macOS-only MCP servers
+//   - Strips servers whose command is a Mac-specific absolute path
+func translateClaudeJSON(raw []byte, workspaceHome string) []byte {
+	var doc map[string]interface{}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return raw
+	}
+
+	pathReplacer := strings.NewReplacer(workspaceHome, "/home/developer")
+
+	servers, ok := doc["mcpServers"].(map[string]interface{})
+	if ok && len(servers) > 0 {
+		translated := make(map[string]interface{}, len(servers))
+		for name, val := range servers {
+			if macOSOnlyMCPServers[name] {
+				continue
+			}
+			srv, ok := val.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			// Apply known container override.
+			if override, found := containerMCPOverrides[name]; found {
+				args := make([]interface{}, len(override.args))
+				for i, a := range override.args {
+					args[i] = a
+				}
+				srv = cloneMap(srv)
+				srv["command"] = override.command
+				srv["args"] = args
+				translated[name] = srv
+				continue
+			}
+
+			// Strip servers with Mac-specific absolute paths that won't exist in the container.
+			cmd, _ := srv["command"].(string)
+			if isMacAbsolutePath(cmd) {
+				continue
+			}
+
+			// Translate any remaining Mac paths in the whole server definition.
+			translated[name] = translateMapPaths(srv, pathReplacer)
+		}
+		doc["mcpServers"] = translated
+	}
+
+	// Translate paths anywhere else in the document.
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return raw
+	}
+	return []byte(pathReplacer.Replace(string(out)))
+}
+
+// translateSettingsJSON applies container-safe translations to settings.json:
+//   - Removes macOS-only LSP plugins from enabledPlugins
+//   - Clears statusLine if it references a Mac-specific path
+//   - Replaces workspaceHome paths
+//   - Forces container-required settings (bypassPermissions, dark theme, no Mac LSPs)
+func translateSettingsJSON(raw []byte, workspaceHome string) []byte {
+	var doc map[string]interface{}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return raw
+	}
+
+	pathReplacer := strings.NewReplacer(workspaceHome, "/home/developer")
+
+	// Strip macOS-only LSP plugins.
+	if plugins, ok := doc["enabledPlugins"].(map[string]interface{}); ok {
+		for k := range plugins {
+			if macOSOnlyPlugins[k] {
+				delete(plugins, k)
+			}
+		}
+	}
+
+	// Clear statusLine if it references a Mac-specific path.
+	if sl, ok := doc["statusLine"].(map[string]interface{}); ok {
+		if cmd, _ := sl["command"].(string); isMacAbsolutePath(cmd) || strings.Contains(cmd, workspaceHome) {
+			delete(doc, "statusLine")
+		}
+	}
+
+	// Force container-required overrides.
+	doc["bypassPermissions"] = true
+	doc["skipDangerousModePermissionPrompt"] = true
+	doc["bypassPermissionsModeAccepted"] = true
+	doc["theme"] = "dark"
+
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return raw
+	}
+	return []byte(pathReplacer.Replace(string(out)))
+}
+
+// isMacAbsolutePath returns true for absolute paths that are macOS-specific
+// and won't exist inside a Linux container.
+func isMacAbsolutePath(cmd string) bool {
+	return strings.HasPrefix(cmd, "/Users/") ||
+		strings.HasPrefix(cmd, "/opt/homebrew/") ||
+		strings.HasPrefix(cmd, "/Library/") ||
+		strings.HasPrefix(cmd, "/Applications/")
+}
+
+// cloneMap makes a shallow copy of a map[string]interface{}.
+func cloneMap(m map[string]interface{}) map[string]interface{} {
+	c := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		c[k] = v
+	}
+	return c
+}
+
+// translateMapPaths recursively replaces Mac paths in string values.
+func translateMapPaths(v interface{}, r *strings.Replacer) interface{} {
+	switch t := v.(type) {
+	case string:
+		return r.Replace(t)
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(t))
+		for k, val := range t {
+			out[k] = translateMapPaths(val, r)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(t))
+		for i, val := range t {
+			out[i] = translateMapPaths(val, r)
+		}
+		return out
+	}
+	return v
+}
+
+// injectClaudeCredentials packs Claude auth + config into a JSON bundle, encrypts
 // with the provided key, and writes the ciphertext to /home/developer/.claude.enc.
 // ttyd-wrapper.sh decrypts at container startup using the same PROFILE_ENV_KEY.
-// No plaintext credential files are written into the image layers.
+//
+// Before packing, .claude.json and settings.json are sanitised for Linux containers:
+// Mac-specific MCP server commands are translated to container binaries, macOS-only
+// servers and plugins are stripped, and Mac absolute paths are replaced.
+// CLAUDE.md is included when present.
 func injectClaudeCredentials(container string, opts BuildOptions, key string) error {
 	claudeConfigDir := filepath.Join(opts.WorkspaceHome, ".claude")
 
-	// Collect whichever files exist; skip silently if absent.
-	type entry struct {
-		field string
-		path  string
-	}
-	sources := []entry{
-		{"credentials_json", filepath.Join(claudeConfigDir, ".credentials.json")},
-		{"claude_json", filepath.Join(claudeConfigDir, ".claude.json")},
-		{"settings_json", filepath.Join(claudeConfigDir, "settings.json")},
+	bundle := make(map[string]string)
+
+	// .credentials.json — auth tokens, copy verbatim.
+	if data, err := os.ReadFile(filepath.Join(claudeConfigDir, ".credentials.json")); err == nil {
+		bundle["credentials_json"] = string(data)
 	}
 
-	bundle := make(map[string]string, len(sources))
-	for _, s := range sources {
-		data, err := os.ReadFile(s.path)
-		if err != nil {
-			continue
-		}
-		bundle[s.field] = string(data)
+	// .claude.json — translate MCP server commands and paths for Linux.
+	if data, err := os.ReadFile(filepath.Join(claudeConfigDir, ".claude.json")); err == nil {
+		bundle["claude_json"] = string(translateClaudeJSON(data, opts.WorkspaceHome))
+	}
+
+	// settings.json — strip Mac plugins/statusLine, force container settings.
+	if data, err := os.ReadFile(filepath.Join(claudeConfigDir, "settings.json")); err == nil {
+		bundle["settings_json"] = string(translateSettingsJSON(data, opts.WorkspaceHome))
+	}
+
+	// CLAUDE.md — global instructions, translate any Mac paths.
+	if data, err := os.ReadFile(filepath.Join(claudeConfigDir, "CLAUDE.md")); err == nil {
+		translated := strings.ReplaceAll(string(data), opts.WorkspaceHome, "/home/developer")
+		bundle["claude_md"] = translated
 	}
 
 	if len(bundle) == 0 {

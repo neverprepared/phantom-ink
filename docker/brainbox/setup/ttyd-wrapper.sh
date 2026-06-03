@@ -36,6 +36,8 @@ if 'claude_json' in d:
     wf(home + '/.claude/.claude.json', d['claude_json'], 0o600)
 if 'settings_json' in d:
     wf(home + '/.claude/settings.json', d['settings_json'], 0o644)
+if 'claude_md' in d:
+    wf(home + '/.claude/CLAUDE.md', d['claude_md'], 0o644)
 " 2>/dev/null
 fi
 
