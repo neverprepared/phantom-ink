@@ -25,12 +25,17 @@ func (a *App) CreateSession(req brainbox.CreateSessionRequest) (brainbox.Session
 		req.Env = brainbox.ReadProfileEnv(req.WorkspaceHome)
 	}
 	// Inject the profile env decryption key so the container can decrypt .env.enc.
+	// Also signal "image" delivery so runners skip the bundle-injection step —
+	// credentials are already baked into the profile image.
 	if req.WorkspaceProfile != "" && a.db != nil {
 		if row, ok := a.db.GetProfileImage(req.WorkspaceProfile); ok && row.EnvKey != "" {
 			if req.Env == nil {
 				req.Env = make(map[string]string)
 			}
 			req.Env["PROFILE_ENV_KEY"] = row.EnvKey
+			if req.Delivery == "" {
+				req.Delivery = "image"
+			}
 		}
 	}
 	return a.client.CreateSession(req)

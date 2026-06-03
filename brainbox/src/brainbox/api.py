@@ -519,22 +519,30 @@ async def terminal_proxy_http(session_name: str, path: str, request: Request):
     fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in skip}
     fwd_headers["accept-encoding"] = "identity"
 
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            rp = await client.request(
-                method=request.method,
-                url=target_url,
-                headers=fwd_headers,
-                content=await request.body(),
+    import asyncio
+    # On the initial page load (empty path) retry for up to ~10 s so that
+    # runner-hosted sessions have time for ttyd to bind inside the container.
+    max_attempts = 15 if not path else 1
+    for attempt in range(max_attempts):
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                rp = await client.request(
+                    method=request.method,
+                    url=target_url,
+                    headers=fwd_headers,
+                    content=await request.body(),
+                )
+            skip_resp = {"transfer-encoding", "connection", "content-encoding", "content-length"}
+            return Response(
+                content=rp.content,
+                status_code=rp.status_code,
+                headers={k: v for k, v in rp.headers.items() if k.lower() not in skip_resp},
             )
-        skip_resp = {"transfer-encoding", "connection", "content-encoding", "content-length"}
-        return Response(
-            content=rp.content,
-            status_code=rp.status_code,
-            headers={k: v for k, v in rp.headers.items() if k.lower() not in skip_resp},
-        )
-    except httpx.ConnectError:
-        raise HTTPException(502, "Terminal not reachable — container may still be starting")
+        except httpx.ConnectError:
+            if attempt + 1 < max_attempts:
+                await asyncio.sleep(2)
+                continue
+            raise HTTPException(502, "Terminal not reachable — container may still be starting")
 
 
 @app.websocket("/t/{session_name}/ws")
@@ -753,13 +761,8 @@ def _get_sessions_info() -> list[dict[str, Any]]:
         known_names = {s.get("session_name") for s in sessions}
         for ctx in list_sessions():
             if ctx.runner_name and ctx.session_name not in known_names:
-                host = ctx.runner_host or settings.public_host
                 port = ctx.port or 0
-                # Use the proxy URL when available; fall back to direct port URL
-                if settings.sessions_url or settings.nginx_config_dir or settings.public_url:
-                    url = f"{settings.session_base_url}/t/{ctx.session_name}"
-                else:
-                    url = f"http://{host}:{port}" if port else None
+                url = f"{settings.session_base_url}/t/{ctx.session_name}"
                 sessions.append({
                     "backend": ctx.backend or "docker",
                     "name": ctx.container_name,
@@ -1358,7 +1361,7 @@ async def api_start_session(
         await lifecycle_monitor(ctx)
         _audit_log(request, "session.start", session_name=session_name, success=True)
         _broadcast_sse(json.dumps({"action": "session.start", "session": session_name}))
-        return {"success": True, "url": f"http://{settings.public_host}:{ctx.port}"}
+        return {"success": True, "url": f"{settings.session_base_url}/t/{session_name}"}
     except Exception as exc:
         log.error(
             "session.start_failed.lifecycle", metadata={"session": session_name, "error": str(exc)}
@@ -1368,21 +1371,9 @@ async def api_start_session(
             client = _docker()
             container = client.containers.get(name)
             container.start()
-
-            # Get port
-            container.reload()
-            ports = container.attrs.get("NetworkSettings", {}).get("Ports") or {}
-            port = "7681"
-            for bindings in ports.values():
-                if bindings:
-                    for b in bindings:
-                        if b.get("HostPort"):
-                            port = b["HostPort"]
-                            break
-
             _audit_log(request, "session.start", session_name=session_name, success=True)
             _broadcast_sse(json.dumps({"action": "session.start", "session": session_name}))
-            return {"success": True, "url": f"http://{settings.public_host}:{port}"}
+            return {"success": True, "url": f"{settings.session_base_url}/t/{session_name}"}
         except docker.errors.NotFound:
             _audit_log(
                 request,
@@ -1581,14 +1572,12 @@ async def api_create_session(
                 "url": None,
             }
         else:
-            # Use the runner's advertised host if the session was provisioned
-            # on a remote runner — ttyd is bound to 0.0.0.0 on that machine.
-            # Fall back to CL_PUBLIC_HOST (configurable per-host) then localhost.
-            ttyd_host = ctx.runner_host or settings.public_host
+            # Always return the proxy URL — clients route through the API,
+            # never directly to the runner host.
             return {
                 "success": True,
                 "backend": "docker",
-                "url": f"http://{ttyd_host}:{ctx.port}",
+                "url": f"{settings.session_base_url}/t/{ctx.session_name}",
             }
     except RuntimeError as exc:
         _audit_log(request, "session.create", session_name=body.name, success=False, error=str(exc))

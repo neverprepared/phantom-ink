@@ -319,6 +319,7 @@ export namespace brainbox {
 	    ports?: Record<string, number>;
 	    docker_host?: string;
 	    runner?: string;
+	    delivery?: string;
 	    env?: Record<string, string>;
 	
 	    static createFrom(source: any = {}) {
@@ -344,6 +345,7 @@ export namespace brainbox {
 	        this.ports = source["ports"];
 	        this.docker_host = source["docker_host"];
 	        this.runner = source["runner"];
+	        this.delivery = source["delivery"];
 	        this.env = source["env"];
 	    }
 	}
@@ -751,7 +753,6 @@ export namespace brainbox {
 	        this.max_concurrent = source["max_concurrent"];
 	    }
 	}
-	
 	export class Session {
 	    name: string;
 	    session_name: string;

@@ -679,11 +679,7 @@ class DockerBackend:
                         "name": name,
                         "session_name": session_name,
                         "port": port,
-                        "url": (
-                            f"{settings.session_base_url}/t/{session_name}"
-                            if (settings.sessions_url or settings.nginx_config_dir or settings.public_url) and session_name
-                            else (f"http://{settings.public_host}:{port}" if port else None)
-                        ),
+                        "url": (f"{settings.session_base_url}/t/{session_name}" if session_name else None),
                         "volume": volume,
                         "active": is_running,
                         "llm_provider": llm_provider,

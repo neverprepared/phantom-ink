@@ -48,6 +48,7 @@ type CreateSessionRequest struct {
 	Ports            map[string]int    `json:"ports,omitempty"`
 	DockerHost       string            `json:"docker_host,omitempty"`
 	Runner           string            `json:"runner,omitempty"`
+	Delivery         string            `json:"delivery,omitempty"`
 	Env              map[string]string `json:"env,omitempty"`
 }
 
