@@ -17,6 +17,10 @@
   let registryPassword = $state('');
   let savingRegistry = $state(false);
 
+  // --- Observability (OTLP / Data Prepper) ---
+  let otlpHost = $state('');
+  let savingOTLP = $state(false);
+
   // --- General ---
   let platform = $state('');
   let saving = $state(false);
@@ -27,7 +31,7 @@
     const a = await getApi();
     if (!a) { loaded = true; return; }
     try {
-      const [cfg, plat, reg] = await Promise.all([a.GetConfig(), a.GetPlatform(), a.GetRegistrySettings()]);
+      const [cfg, plat, reg, olh] = await Promise.all([a.GetConfig(), a.GetPlatform(), a.GetRegistrySettings(), a.GetOTLPHost()]);
       baseURL = cfg?.base_url ?? 'http://127.0.0.1:9999';
       apiKey = cfg?.api_key ?? '';
       workspacesRoot = cfg?.workspaces_root ?? '';
@@ -35,6 +39,7 @@
       platform = plat ?? 'unknown';
       registryUsername = reg?.username ?? '';
       registryPassword = reg?.password ?? '';
+      otlpHost = olh ?? '';
       applyTheme(theme);
     } catch (err: any) {
       notifications.error(`Failed to load settings: ${err?.message ?? err}`);
@@ -98,6 +103,20 @@
       notifications.error(`Failed to save registry settings: ${err}`);
     } finally {
       savingRegistry = false;
+    }
+  }
+
+  async function handleSaveOTLP() {
+    savingOTLP = true;
+    const a = await getApi();
+    if (!a) { savingOTLP = false; return; }
+    try {
+      await a.SetOTLPHost(otlpHost);
+      notifications.success('Observability settings saved');
+    } catch (err: any) {
+      notifications.error(`Failed to save observability settings: ${err}`);
+    } finally {
+      savingOTLP = false;
     }
   }
 </script>
@@ -202,6 +221,23 @@
         <div class="form-actions">
           <button class="btn-save" onclick={handleSaveRegistry} disabled={savingRegistry}>
             {savingRegistry ? 'saving...' : 'save registry settings'}
+          </button>
+        </div>
+      </div>
+
+      <!-- Observability -->
+      <div class="section">
+        <h2>observability</h2>
+        <p class="hint" style="margin-bottom: 14px;">Data Prepper host for OpenTelemetry ingest — baked into profile images at build time. Set <code>CLAUDE_CODE_ENABLE_TELEMETRY=1</code> in your profile <code>.env</code> to opt in.</p>
+
+        <div class="field">
+          <label for="otlp-host">OTLP host</label>
+          <input id="otlp-host" type="text" bind:value={otlpHost} placeholder="e.g. storage.example.com" autocomplete="off" />
+        </div>
+
+        <div class="form-actions">
+          <button class="btn-save" onclick={handleSaveOTLP} disabled={savingOTLP}>
+            {savingOTLP ? 'saving...' : 'save observability settings'}
           </button>
         </div>
       </div>

@@ -383,6 +383,22 @@ func (a *App) SetRegistrySettings(username, password string) error {
 	return a.db.SetSetting(settingRegistryPassword, password)
 }
 
+// GetOTLPHost returns the configured Data Prepper / OTLP host.
+func (a *App) GetOTLPHost() string {
+	if a.db == nil {
+		return ""
+	}
+	return a.db.GetSetting(settingOTLPHost, "")
+}
+
+// SetOTLPHost persists the Data Prepper / OTLP host.
+func (a *App) SetOTLPHost(host string) error {
+	if a.db == nil {
+		return nil
+	}
+	return a.db.SetSetting(settingOTLPHost, host)
+}
+
 // BrowseFolder opens a native folder selection dialog and returns the path.
 func (a *App) BrowseFolder() (string, error) {
 	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{

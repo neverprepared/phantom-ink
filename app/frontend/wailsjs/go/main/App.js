@@ -210,6 +210,10 @@ export function GetMetricsHistory() {
   return window['go']['main']['App']['GetMetricsHistory']();
 }
 
+export function GetOTLPHost() {
+  return window['go']['main']['App']['GetOTLPHost']();
+}
+
 export function GetPlatform() {
   return window['go']['main']['App']['GetPlatform']();
 }
@@ -476,6 +480,10 @@ export function SetAgentEnabled(arg1, arg2) {
 
 export function SetConfig(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetConfig'](arg1, arg2, arg3);
+}
+
+export function SetOTLPHost(arg1) {
+  return window['go']['main']['App']['SetOTLPHost'](arg1);
 }
 
 export function SetProfileColor(arg1, arg2) {

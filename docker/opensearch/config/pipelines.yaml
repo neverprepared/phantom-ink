@@ -1,0 +1,82 @@
+# Data Prepper pipelines — OTLP ingest for Claude Code / brainbox telemetry
+#
+# Three independent pipelines, one per OTel signal type.
+# Traces land in otel-v1-apm-span-* (OpenSearch Trace Analytics UI).
+# Metrics and logs use daily-rolling indices.
+
+otel-traces:
+  source:
+    otel_trace_source:
+      port: 21890
+      ssl: false
+  processor:
+    - otel_traces:
+  sink:
+    - opensearch:
+        hosts: ["http://opensearch:9200"]
+        index_type: trace-analytics-raw
+
+otel-service-map:
+  source:
+    otel_trace_source:
+      port: 21890
+      ssl: false
+  processor:
+    - service_map_stateful:
+  sink:
+    - opensearch:
+        hosts: ["http://opensearch:9200"]
+        index_type: trace-analytics-service-map
+
+otel-metrics:
+  source:
+    otel_metrics_source:
+      port: 21891
+      ssl: false
+  processor:
+    - otel_metrics:
+  sink:
+    - opensearch:
+        hosts: ["http://opensearch:9200"]
+        index_type: custom
+        index: metrics-otel-%{yyyy.MM.dd}
+        template_type: index-template
+        template_content: |
+          {
+            "template": {
+              "mappings": {
+                "properties": {
+                  "kind": { "type": "keyword" },
+                  "name": { "type": "keyword" },
+                  "unit": { "type": "keyword" },
+                  "startTime": { "type": "date", "format": "strict_date_time" },
+                  "time": { "type": "date", "format": "strict_date_time" }
+                }
+              }
+            }
+          }
+
+otel-logs:
+  source:
+    otel_logs_source:
+      port: 21892
+      ssl: false
+  sink:
+    - opensearch:
+        hosts: ["http://opensearch:9200"]
+        index_type: custom
+        index: logs-otel-%{yyyy.MM.dd}
+        template_type: index-template
+        template_content: |
+          {
+            "template": {
+              "mappings": {
+                "properties": {
+                  "time": { "type": "date", "format": "strict_date_time" },
+                  "observedTime": { "type": "date", "format": "strict_date_time" },
+                  "severityText": { "type": "keyword" },
+                  "body": { "type": "text" }
+                }
+              }
+            }
+          }

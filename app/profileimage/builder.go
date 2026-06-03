@@ -47,6 +47,13 @@ type BuildOptions struct {
 	// platform-agnostic (npx/uvx commands work on both macOS and Linux).
 	// Optional: if absent, falls back to .claude.json translation only.
 	MCPCatalogPath string
+	// OTLPHost is the hostname (or host:port base) of the Data Prepper /
+	// OpenTelemetry ingest endpoint, e.g. "storage.example.com".
+	// When set, the container's settings.json gets OTLP exporter env vars
+	// pointing at the three signal ports (21890/21891/21892).
+	// CLAUDE_CODE_ENABLE_TELEMETRY is intentionally excluded — that remains
+	// user opt-in, set in the profile .env or shell environment.
+	OTLPHost string
 	// Progress receives status messages during the build.
 	Progress func(string)
 }
@@ -374,7 +381,10 @@ func translateClaudeJSON(raw []byte, workspaceHome string, catalog map[string]in
 //   - Clears statusLine if it references a Mac-specific path
 //   - Replaces workspaceHome paths
 //   - Forces container-required settings (bypassPermissions, dark theme, no Mac LSPs)
-func translateSettingsJSON(raw []byte, workspaceHome string) []byte {
+//   - When otlpHost is non-empty, injects OTLP exporter env vars into the env block.
+//     CLAUDE_CODE_ENABLE_TELEMETRY is intentionally omitted — telemetry remains
+//     user opt-in, controlled via the profile .env or shell environment.
+func translateSettingsJSON(raw []byte, workspaceHome, otlpHost string) []byte {
 	var doc map[string]interface{}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return raw
@@ -403,6 +413,25 @@ func translateSettingsJSON(raw []byte, workspaceHome string) []byte {
 	doc["skipDangerousModePermissionPrompt"] = true
 	doc["bypassPermissionsModeAccepted"] = true
 	doc["theme"] = "dark"
+
+	// Inject OTLP exporter configuration when a host is configured.
+	// We set the exporter types and per-signal endpoints but deliberately
+	// omit CLAUDE_CODE_ENABLE_TELEMETRY so telemetry stays user opt-in.
+	if otlpHost != "" {
+		env, _ := doc["env"].(map[string]interface{})
+		if env == nil {
+			env = make(map[string]interface{})
+		}
+		env["OTEL_METRICS_EXPORTER"] = "otlp"
+		env["OTEL_LOGS_EXPORTER"] = "otlp"
+		env["OTEL_TRACES_EXPORTER"] = "otlp"
+		env["CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"] = "1"
+		env["OTEL_EXPORTER_OTLP_PROTOCOL"] = "grpc"
+		env["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = "http://" + otlpHost + ":21890"
+		env["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] = "http://" + otlpHost + ":21891"
+		env["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] = "http://" + otlpHost + ":21892"
+		doc["env"] = env
+	}
 
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
@@ -474,9 +503,10 @@ func injectClaudeCredentials(container string, opts BuildOptions, key string) er
 		bundle["claude_json"] = string(translateClaudeJSON(data, opts.WorkspaceHome, catalog))
 	}
 
-	// settings.json — strip Mac plugins/statusLine, force container settings.
+	// settings.json — strip Mac plugins/statusLine, force container settings,
+	// and inject OTLP endpoints when configured.
 	if data, err := os.ReadFile(filepath.Join(claudeConfigDir, "settings.json")); err == nil {
-		bundle["settings_json"] = string(translateSettingsJSON(data, opts.WorkspaceHome))
+		bundle["settings_json"] = string(translateSettingsJSON(data, opts.WorkspaceHome, opts.OTLPHost))
 	}
 
 	// CLAUDE.md — global instructions, translate any Mac paths.

@@ -107,6 +107,8 @@ export function GetMessageLog():Promise<Array<brainbox.Message>>;
 
 export function GetMetricsHistory():Promise<Array<brainbox.MetricsSample>>;
 
+export function GetOTLPHost():Promise<string>;
+
 export function GetPlatform():Promise<string>;
 
 export function GetPlaybook(arg1:string):Promise<brainbox.Playbook>;
@@ -240,6 +242,8 @@ export function SetActiveProfile(arg1:string):Promise<void>;
 export function SetAgentEnabled(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetConfig(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function SetOTLPHost(arg1:string):Promise<void>;
 
 export function SetProfileColor(arg1:string,arg2:string):Promise<void>;
 

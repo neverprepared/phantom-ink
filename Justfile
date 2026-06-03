@@ -81,6 +81,20 @@ reflex-dev:
 reflex-langfuse:
     cd docker/langfuse && docker compose up -d
 
+# === OpenSearch (observability stack) ===
+
+opensearch-start:
+    cd docker/opensearch && docker compose up -d
+
+opensearch-stop:
+    cd docker/opensearch && docker compose down
+
+opensearch-logs:
+    cd docker/opensearch && docker compose logs -f
+
+opensearch-status:
+    cd docker/opensearch && docker compose ps
+
 # === Cross-cutting ===
 
 test-all: bb-test sp-test

@@ -1,0 +1,83 @@
+# OpenSearch 2.x + Dashboards + Data Prepper (OTLP ingest)
+#
+# Start:      docker compose up -d
+# Stop:       docker compose down
+# Logs:       docker compose logs -f
+# Dashboards: http://localhost:5601
+#
+# OTLP endpoints (for Claude Code / brainbox containers):
+#   Traces:  grpc://localhost:21890
+#   Metrics: grpc://localhost:21891
+#   Logs:    grpc://localhost:21892
+
+services:
+  opensearch:
+    image: opensearchproject/opensearch:2
+    restart: always
+    environment:
+      - cluster.name=phantom-ink
+      - node.name=opensearch
+      - discovery.type=single-node
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - DISABLE_SECURITY_PLUGIN=true
+      - OPENSEARCH_JAVA_OPTS=${OPENSEARCH_JAVA_OPTS:--Xms512m -Xmx512m}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - 127.0.0.1:9200:9200
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -v '\"status\":\"red\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2
+    restart: always
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    environment:
+      - OPENSEARCH_HOSTS=http://opensearch:9200
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    ports:
+      - 5601:5601
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5601/api/status | grep -q 'available'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  data-prepper:
+    image: opensearchproject/data-prepper:2
+    restart: always
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    volumes:
+      - ./config/pipelines.yaml:/usr/share/data-prepper/pipelines/pipelines.yaml:ro
+      - ./config/data-prepper-config.yaml:/usr/share/data-prepper/config/data-prepper-config.yaml:ro
+    ports:
+      - 21890:21890  # OTLP/gRPC traces
+      - 21891:21891  # OTLP/gRPC metrics
+      - 21892:21892  # OTLP/gRPC logs
+      - 127.0.0.1:4900:4900  # Data Prepper API
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4900/list | grep -q 'pipelines'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  opensearch_data:
+    driver: local

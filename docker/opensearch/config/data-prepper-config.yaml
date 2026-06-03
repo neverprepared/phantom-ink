@@ -1,0 +1,11 @@
+# Data Prepper server configuration
+ssl: false
+
+peer_forwarder:
+  discovery_mode: local_node
+
+circuit_breakers:
+  heap:
+    usage: 85%
+    reset: 30s
+    check_interval: 5s
