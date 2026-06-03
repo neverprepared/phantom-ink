@@ -265,8 +265,6 @@ type SecretKeyStatus struct {
 var wellKnownSecrets = []string{
 	"LANGFUSE_API_PUBLIC_KEY",
 	"LANGFUSE_API_SECRET_KEY",
-	"QDRANT_API_KEY",
-	"OPENAI_API_KEY",
 }
 
 // GetProfileSecrets returns the status of well-known secret keys for a profile.

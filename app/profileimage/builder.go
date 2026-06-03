@@ -41,6 +41,12 @@ type BuildOptions struct {
 	// RegistryUsername and RegistryPassword are used for docker login.
 	RegistryUsername string
 	RegistryPassword string
+	// MCPCatalogPath is the path to mcp-catalog.json from the reflex plugin.
+	// When set, MCP server definitions are sourced from the catalog rather than
+	// translated from the host .claude.json — the catalog is already
+	// platform-agnostic (npx/uvx commands work on both macOS and Linux).
+	// Optional: if absent, falls back to .claude.json translation only.
+	MCPCatalogPath string
 	// Progress receives status messages during the build.
 	Progress func(string)
 }
@@ -275,45 +281,55 @@ func injectSSHKeys(container string, opts BuildOptions) error {
 	return nil
 }
 
-// containerMCPCommand holds the container-native replacement command for an MCP server.
-type containerMCPCommand struct {
-	command string
-	args    []string
-}
-
-// containerMCPOverrides maps user-facing server names to pre-installed container commands.
-// These mirror _CONTAINER_MCP_OVERRIDES in brainbox/src/brainbox/backends/configure.py.
-var containerMCPOverrides = map[string]containerMCPCommand{
-	"brainbox":              {command: "brainbox-mcp", args: []string{}},
-	"obsidian-second-brain": {command: "mcp-obsidian-second-brain", args: []string{}},
-	"google-workspace":      {command: "workspace-mcp", args: []string{"--tool-tier", "core"}},
-	"cloudflare-dns":        {command: "mcp-cloudflare", args: []string{}},
-	"markdown-to-confluence": {command: "mcp-markdown-to-confluence", args: []string{}},
-	"uptime-kuma":           {command: "mcp-uptime-kuma", args: []string{}},
-}
-
-// macOSOnlyMCPServers are stripped from the container config — they require
-// macOS-specific system APIs or applications and cannot run in a Linux container.
-var macOSOnlyMCPServers = map[string]bool{
-	"macos-ecosystem": true,
-	"utm":             true,
-}
-
 // macOSOnlyPlugins are Claude Code IDE integrations that only work on macOS and
 // hang at startup inside a Linux container.
 var macOSOnlyPlugins = map[string]bool{
-	"gopls-lsp@claude-plugins-official":  true,
-	"swift-lsp@claude-plugins-official":  true,
-	"pylsp-lsp@claude-plugins-official":  true,
-	"rust-lsp@claude-plugins-official":   true,
+	"gopls-lsp@claude-plugins-official": true,
+	"swift-lsp@claude-plugins-official": true,
+	"pylsp-lsp@claude-plugins-official": true,
+	"rust-lsp@claude-plugins-official":  true,
 }
 
-// translateClaudeJSON applies container-safe translations to the raw .claude.json bytes:
-//   - Replaces workspaceHome paths with /home/developer
-//   - Applies containerMCPOverrides for known server names
-//   - Strips macOS-only MCP servers
-//   - Strips servers whose command is a Mac-specific absolute path
-func translateClaudeJSON(raw []byte, workspaceHome string) []byte {
+// loadCatalog parses mcp-catalog.json and returns a map of server name →
+// definition object. Returns nil if the file is absent or unreadable.
+func loadCatalog(catalogPath string) map[string]interface{} {
+	if catalogPath == "" {
+		return nil
+	}
+	data, err := os.ReadFile(catalogPath)
+	if err != nil {
+		return nil
+	}
+	var cat struct {
+		Servers map[string]struct {
+			Definition interface{} `json:"definition"`
+			Platform   string      `json:"platform"`
+		} `json:"servers"`
+	}
+	if err := json.Unmarshal(data, &cat); err != nil {
+		return nil
+	}
+	defs := make(map[string]interface{}, len(cat.Servers))
+	for name, s := range cat.Servers {
+		if s.Platform == "macos" {
+			continue // skip macOS-only entries
+		}
+		if s.Definition != nil {
+			defs[name] = s.Definition
+		}
+	}
+	return defs
+}
+
+// translateClaudeJSON produces a container-safe mcpServers config:
+//
+//  1. For each enabled server, prefer the catalog definition (already
+//     platform-agnostic npx/uvx commands) over whatever is in .claude.json.
+//  2. For servers not in the catalog, keep the .claude.json definition only
+//     if the command is not a Mac-specific absolute path.
+//  3. Servers whose catalog entry is absent AND whose command is a Mac absolute
+//     path are stripped silently.
+func translateClaudeJSON(raw []byte, workspaceHome string, catalog map[string]interface{}) []byte {
 	var doc map[string]interface{}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return raw
@@ -323,47 +339,34 @@ func translateClaudeJSON(raw []byte, workspaceHome string) []byte {
 
 	servers, ok := doc["mcpServers"].(map[string]interface{})
 	if ok && len(servers) > 0 {
-		translated := make(map[string]interface{}, len(servers))
+		out := make(map[string]interface{}, len(servers))
 		for name, val := range servers {
-			if macOSOnlyMCPServers[name] {
+			// Catalog definition takes priority — it's already cross-platform.
+			if catDef, found := catalog[name]; found {
+				out[name] = catDef
 				continue
 			}
+
+			// No catalog entry: keep only if the command isn't Mac-specific.
 			srv, ok := val.(map[string]interface{})
 			if !ok {
 				continue
 			}
-
-			// Apply known container override.
-			if override, found := containerMCPOverrides[name]; found {
-				args := make([]interface{}, len(override.args))
-				for i, a := range override.args {
-					args[i] = a
-				}
-				srv = cloneMap(srv)
-				srv["command"] = override.command
-				srv["args"] = args
-				translated[name] = srv
-				continue
-			}
-
-			// Strip servers with Mac-specific absolute paths that won't exist in the container.
 			cmd, _ := srv["command"].(string)
 			if isMacAbsolutePath(cmd) {
 				continue
 			}
-
-			// Translate any remaining Mac paths in the whole server definition.
-			translated[name] = translateMapPaths(srv, pathReplacer)
+			out[name] = translateMapPaths(srv, pathReplacer)
 		}
-		doc["mcpServers"] = translated
+		doc["mcpServers"] = out
 	}
 
-	// Translate paths anywhere else in the document.
-	out, err := json.MarshalIndent(doc, "", "  ")
+	// Translate any remaining Mac paths elsewhere in the document.
+	result, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return raw
 	}
-	return []byte(pathReplacer.Replace(string(out)))
+	return []byte(pathReplacer.Replace(string(result)))
 }
 
 // translateSettingsJSON applies container-safe translations to settings.json:
@@ -457,6 +460,7 @@ func translateMapPaths(v interface{}, r *strings.Replacer) interface{} {
 // CLAUDE.md is included when present.
 func injectClaudeCredentials(container string, opts BuildOptions, key string) error {
 	claudeConfigDir := filepath.Join(opts.WorkspaceHome, ".claude")
+	catalog := loadCatalog(opts.MCPCatalogPath)
 
 	bundle := make(map[string]string)
 
@@ -467,7 +471,7 @@ func injectClaudeCredentials(container string, opts BuildOptions, key string) er
 
 	// .claude.json — translate MCP server commands and paths for Linux.
 	if data, err := os.ReadFile(filepath.Join(claudeConfigDir, ".claude.json")); err == nil {
-		bundle["claude_json"] = string(translateClaudeJSON(data, opts.WorkspaceHome))
+		bundle["claude_json"] = string(translateClaudeJSON(data, opts.WorkspaceHome, catalog))
 	}
 
 	// settings.json — strip Mac plugins/statusLine, force container settings.

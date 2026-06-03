@@ -115,6 +115,7 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 		RegistryURL:      registryURL,
 		RegistryUsername: registryUsername,
 		RegistryPassword: registryPassword,
+		MCPCatalogPath:   prof.WorkspaceHome + "/code/phantom-ink/reflex/plugins/reflex/mcp-catalog.json",
 		Progress: func(msg string) {
 			emit(msg, false, nil, nil)
 		},
