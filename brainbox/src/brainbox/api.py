@@ -48,7 +48,6 @@ from .models_api import (
     CompleteChannelRequest,
     CreateAgentRequest,
     CreateChannelRequest,
-    CreateRepoRequest,
     CreateSessionRequest,
     DeleteSessionRequest,
     ExecSessionRequest,
@@ -57,7 +56,6 @@ from .models_api import (
     StartSessionRequest,
     StopSessionRequest,
     UpdateAgentRequest,
-    UpdateRepoRequest,
 )
 from .registry import (
     create_agent,
@@ -69,18 +67,12 @@ from .registry import (
     validate_token,
 )
 from .router import (
-    add_repo,
     cancel_task,
     complete_task,
-    ensure_repo_agents,
-    get_repo,
     get_task,
-    list_repos,
     list_tasks,
     on_event,
-    remove_repo,
     submit_task,
-    update_repo,
 )
 from .langfuse_client import (
     LangfuseError,
@@ -112,16 +104,8 @@ from .playbooks import (
     run_playbook,
     update_playbook,
 )
-from .worktrees import (
-    attach_session as worktree_attach_session,
-    create_worktree,
-    delete_worktree,
-    get_worktree,
-    list_worktrees,
-    on_event as worktree_on_event,
-)
 from .models import ChannelParticipant
-from .models_api import OllamaChatRequest, OllamaPullRequest, CreatePlaybookRequest, UpdatePlaybookRequest, CreateWorktreeRequest
+from .models_api import OllamaChatRequest, OllamaPullRequest, CreatePlaybookRequest, UpdatePlaybookRequest
 from .ollama import (
     OllamaError,
     chat as ollama_chat,
@@ -349,16 +333,6 @@ async def lifespan(app: FastAPI):
 
     # Forward playbook events to global SSE
     playbook_on_event(
-        lambda event, data: _broadcast_sse(
-            json.dumps({
-                "action": event,
-                "data": data.model_dump() if hasattr(data, "model_dump") else data,
-            })
-        )
-    )
-
-    # Forward worktree events to global SSE
-    worktree_on_event(
         lambda event, data: _broadcast_sse(
             json.dumps({
                 "action": event,
@@ -1504,15 +1478,7 @@ async def api_create_session(
         # Register as a hub task when a task description is provided
         hub_token = None
         task_id = None
-        if body.repo and body.repo.mode == "ci-ratchet":
-            from .router import register_ci_ratchet_task
-            task_id_result, hub_token = register_ci_ratchet_task(
-                description=body.repo.task,
-                repo_url=body.repo.url,
-                session_name=body.name,
-            )
-            task_id = task_id_result.id
-        elif body.task:
+        if body.task:
             # Regular session with a task — register in hub so it shows in dashboard
             from .router import _tasks
             from .utils import now_ms as _now_ms
@@ -1554,7 +1520,6 @@ async def api_create_session(
             ports=body.ports,
             docker_host=body.docker_host,
             token=hub_token,
-            repo=body.repo,
             task_description=body.task,
             task_id=task_id,
             delivery=body.delivery,
@@ -2470,7 +2435,6 @@ async def hub_state(_key=Depends(require_api_key)):
         "tasks": [t.model_dump() for t in list_tasks()],
         "tokens": [t.model_dump() for t in list_tokens()],
         "messages": get_message_log(),
-        "repos": [r.model_dump() for r in list_repos()],
     }
 
 
@@ -2478,95 +2442,6 @@ async def hub_state(_key=Depends(require_api_key)):
 async def hub_message_log(_key=Depends(require_api_key)):
     """Return the hub message audit log (admin read-only, no agent token required)."""
     return get_message_log()
-
-
-# --- Repositories ---
-
-
-@app.get("/api/hub/repos")
-async def hub_list_repos(
-    workspace_profile: str | None = None,
-    _key=Depends(require_api_key),
-):
-    return [r.model_dump() for r in list_repos(workspace_profile=workspace_profile)]
-
-
-@app.post("/api/hub/repos", status_code=201)
-async def hub_add_repo(body: CreateRepoRequest, _key=Depends(require_api_key)):
-    try:
-        repo = add_repo(
-            body.url,
-            name=body.name,
-            merge_queue=body.merge_queue,
-            pr_shepherd=body.pr_shepherd,
-            target_branch=body.target_branch,
-            is_fork=body.is_fork,
-            upstream_url=body.upstream_url,
-            workspace_home=body.workspace_home,
-            workspace_profile=body.workspace_profile,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    # Launch persistent agents for this repo
-    launched = []
-    try:
-        launched = await ensure_repo_agents(repo.name)
-    except Exception as exc:
-        log.warning(
-            "hub.repo_agent_launch_failed",
-            metadata={"repo": repo.name, "reason": str(exc)},
-        )
-
-    _broadcast_sse(json.dumps({"action": "repo.add", "name": repo.name, "profile": body.workspace_profile or ""}))
-    return {
-        "repo": repo.model_dump(),
-        "launched_tasks": [t.model_dump() for t in launched],
-    }
-
-
-@app.get("/api/hub/repos/{name}")
-async def hub_get_repo(name: str, _key=Depends(require_api_key)):
-    repo = get_repo(name)
-    if not repo:
-        raise HTTPException(status_code=404, detail=f"Repository '{name}' not found")
-    return repo.model_dump()
-
-
-@app.patch("/api/hub/repos/{name}")
-async def hub_update_repo(name: str, body: UpdateRepoRequest, _key=Depends(require_api_key)):
-    try:
-        repo = update_repo(
-            name,
-            merge_queue=body.merge_queue,
-            pr_shepherd=body.pr_shepherd,
-            target_branch=body.target_branch,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    # Launch any newly enabled agents
-    launched = []
-    try:
-        launched = await ensure_repo_agents(repo.name)
-    except Exception as exc:
-        log.warning(
-            "hub.repo_agent_launch_failed",
-            metadata={"repo": repo.name, "reason": str(exc)},
-        )
-
-    return {
-        "repo": repo.model_dump(),
-        "launched_tasks": [t.model_dump() for t in launched],
-    }
-
-
-@app.delete("/api/hub/repos/{name}")
-async def hub_remove_repo(name: str, _key=Depends(require_api_key)):
-    if not remove_repo(name):
-        raise HTTPException(status_code=404, detail=f"Repository '{name}' not found")
-    _broadcast_sse(json.dumps({"action": "repo.delete", "name": name}))
-    return {"success": True}
 
 
 # ---------------------------------------------------------------------------
@@ -3144,79 +3019,6 @@ async def hub_playbook_stream(playbook_id: str, request: Request, _key=Depends(r
             _playbook_queues.get(playbook_id, set()).discard(q)
 
     return EventSourceResponse(event_generator())
-
-
-# ---------------------------------------------------------------------------
-# Worktrees
-# ---------------------------------------------------------------------------
-
-
-@app.post("/api/hub/worktrees")
-async def hub_create_worktree(body: CreateWorktreeRequest, _key=Depends(require_api_key)):
-    try:
-        wt = await asyncio.to_thread(create_worktree, body.repo_name, body.branch)
-        return wt.model_dump()
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@app.get("/api/hub/worktrees")
-async def hub_list_worktrees(repo: str | None = None, _key=Depends(require_api_key)):
-    return [wt.model_dump() for wt in list_worktrees(repo_name=repo)]
-
-
-@app.get("/api/hub/worktrees/{worktree_id}")
-async def hub_get_worktree(worktree_id: str, _key=Depends(require_api_key)):
-    wt = get_worktree(worktree_id)
-    if not wt:
-        raise HTTPException(status_code=404, detail=f"Worktree '{worktree_id}' not found")
-    return wt.model_dump()
-
-
-@app.delete("/api/hub/worktrees/{worktree_id}")
-async def hub_delete_worktree(worktree_id: str, _key=Depends(require_api_key)):
-    try:
-        await asyncio.to_thread(delete_worktree, worktree_id)
-        _broadcast_sse(json.dumps({"action": "worktree.deleted", "worktree_id": worktree_id}))
-        return {"ok": True}
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-
-
-@app.post("/api/hub/worktrees/{worktree_id}/session")
-async def hub_worktree_session(worktree_id: str, request: Request, _key=Depends(require_api_key)):
-    """Create a brainbox session mounted on the given worktree."""
-    from .lifecycle import run_pipeline
-    from .router import get_repo
-
-    wt = get_worktree(worktree_id)
-    if not wt:
-        raise HTTPException(status_code=404, detail=f"Worktree '{worktree_id}' not found")
-    if wt.status == "in_use":
-        raise HTTPException(status_code=409, detail=f"Worktree '{worktree_id}' already has an active session")
-
-    repo = get_repo(wt.repo_name)
-    if not repo:
-        raise HTTPException(status_code=404, detail=f"Repository '{wt.repo_name}' not found")
-
-    session_name = f"wt-{wt.id[:6]}"
-    volume = f"{wt.worktree_path}:/home/developer/workspace/repo:rw"
-
-    try:
-        ctx = await run_pipeline(
-            session_name=session_name,
-            role="developer",
-            workspace_profile=repo.workspace_profile,
-            workspace_home=repo.workspace_home,
-            volume_mounts=[volume],
-            repo_url=repo.url,
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-    worktree_attach_session(worktree_id, ctx.session_name)
-    _broadcast_sse(json.dumps({"action": "worktree.updated", "worktree_id": worktree_id}))
-    return {"worktree_id": worktree_id, "session": ctx.session_name}
 
 
 # ---------------------------------------------------------------------------

@@ -527,98 +527,6 @@ def get_langfuse_trace_detail(trace_id: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Repository management tools
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool()
-def list_repos() -> list[dict[str, Any]]:
-    """List all tracked repositories with their agent containers and settings."""
-    return _request("GET", "/api/hub/repos")
-
-
-@mcp.tool()
-def add_repo(
-    url: str,
-    name: str | None = None,
-    merge_queue_enabled: bool = False,
-    pr_shepherd_enabled: bool = False,
-    target_branch: str = "main",
-    is_fork: bool = False,
-    upstream_url: str | None = None,
-) -> dict[str, Any]:
-    """Register a GitHub repository for multi-agent management.
-
-    Persistent agents (merge-queue, PR shepherd) are auto-launched when enabled.
-
-    Args:
-        url: GitHub repository URL (e.g. https://github.com/org/repo)
-        name: Optional short name (derived from URL if omitted)
-        merge_queue_enabled: Auto-merge PRs when CI passes
-        pr_shepherd_enabled: Coordinate human code reviewers
-        target_branch: Branch for merge operations (default: main)
-        is_fork: Whether this repo is a fork
-        upstream_url: Upstream repo URL if this is a fork
-    """
-    body: dict[str, Any] = {
-        "url": url,
-        "merge_queue_enabled": merge_queue_enabled,
-        "pr_shepherd_enabled": pr_shepherd_enabled,
-        "target_branch": target_branch,
-        "is_fork": is_fork,
-    }
-    if name:
-        body["name"] = name
-    if upstream_url:
-        body["upstream_url"] = upstream_url
-    return _request("POST", "/api/hub/repos", body)
-
-
-@mcp.tool()
-def get_repo(name: str) -> dict[str, Any]:
-    """Get details for a tracked repository.
-
-    Args:
-        name: Repository short name
-    """
-    return _request("GET", f"/api/hub/repos/{name}")
-
-
-@mcp.tool()
-def update_repo(
-    name: str,
-    merge_queue_enabled: bool | None = None,
-    pr_shepherd_enabled: bool | None = None,
-    target_branch: str | None = None,
-) -> dict[str, Any]:
-    """Update settings for a tracked repository.
-
-    Args:
-        name: Repository short name
-        merge_queue_enabled: Toggle merge queue automation
-        pr_shepherd_enabled: Toggle PR shepherd coordination
-        target_branch: Change target branch for merge operations
-    """
-    body: dict[str, Any] = {}
-    if merge_queue_enabled is not None:
-        body["merge_queue_enabled"] = merge_queue_enabled
-    if pr_shepherd_enabled is not None:
-        body["pr_shepherd_enabled"] = pr_shepherd_enabled
-    if target_branch is not None:
-        body["target_branch"] = target_branch
-    return _request("PATCH", f"/api/hub/repos/{name}", body)
-
-
-@mcp.tool()
-def delete_repo(name: str) -> dict[str, Any]:
-    """Remove a tracked repository and stop its persistent agents.
-
-    Args:
-        name: Repository short name
-    """
-    return _request("DELETE", f"/api/hub/repos/{name}")
-
-
 @mcp.tool()
 def get_message_log(limit: int = 50) -> list[dict[str, Any]]:
     """Return the hub inter-agent message audit log.
@@ -668,19 +576,7 @@ def multiclaude_status() -> dict[str, Any]:
             }
         )
 
-    repos = [
-        {
-            "name": r.get("name"),
-            "url": r.get("url"),
-            "merge_queue": r.get("merge_queue_enabled"),
-            "pr_shepherd": r.get("pr_shepherd_enabled"),
-            "target_branch": r.get("target_branch"),
-        }
-        for r in state.get("repos", [])
-    ]
-
     return {
-        "repos": repos,
         "active_tasks": by_role,
         "active_task_count": len(active_tasks),
         "recent_messages": recent_messages,
@@ -857,67 +753,6 @@ def cancel_playbook(playbook_id: str) -> dict[str, Any]:
         playbook_id: The playbook ID to cancel
     """
     return _request("POST", f"/api/hub/playbooks/{playbook_id}/cancel", {})
-
-
-# ---------------------------------------------------------------------------
-# Worktree tools
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool()
-def list_worktrees(repo: str = "") -> list[dict[str, Any]]:
-    """List git worktrees, optionally filtered by repo name.
-
-    Args:
-        repo: Filter by registered repository name (omit for all worktrees)
-    """
-    path = "/api/hub/worktrees"
-    if repo:
-        path += f"?repo={repo}"
-    return _request("GET", path)
-
-
-@mcp.tool()
-def create_worktree(repo_name: str, branch: str) -> dict[str, Any]:
-    """Create a new git worktree for a registered repository branch.
-
-    Runs `git worktree add -B <branch> <path>` on the host. The worktree
-    persists independently of sessions — ideal for parallel agent work or
-    staged PR branches.
-
-    Args:
-        repo_name: Name of the registered repository
-        branch: Git branch name to create or checkout in the worktree
-    """
-    return _request("POST", "/api/hub/worktrees", {
-        "repo_name": repo_name,
-        "branch": branch,
-    })
-
-
-@mcp.tool()
-def delete_worktree(worktree_id: str) -> dict[str, Any]:
-    """Remove a git worktree from disk and deregister it.
-
-    Runs `git worktree remove --force`. The branch itself is not deleted.
-
-    Args:
-        worktree_id: The worktree ID to remove
-    """
-    return _request("DELETE", f"/api/hub/worktrees/{worktree_id}")
-
-
-@mcp.tool()
-def create_worktree_session(worktree_id: str) -> dict[str, Any]:
-    """Start a brainbox session mounted on a git worktree.
-
-    The worktree path is mounted at /home/developer/workspace/repo inside
-    the container. Session name is derived from the worktree ID.
-
-    Args:
-        worktree_id: The worktree ID to create a session for
-    """
-    return _request("POST", f"/api/hub/worktrees/{worktree_id}/session", {})
 
 
 def run() -> None:

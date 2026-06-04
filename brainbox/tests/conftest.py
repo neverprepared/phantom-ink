@@ -31,7 +31,6 @@ def reset_hub_state():
         _ch._ollama_last_read.clear()
         _router._tasks.clear()
         _router._listeners.clear()
-        _router._repos.clear()
         _reset_scheduler()
         reset_store_for_tests()  # fresh in-memory DB per test
 

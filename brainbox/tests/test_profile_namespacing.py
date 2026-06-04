@@ -1,4 +1,4 @@
-"""Tests for workspace_profile filtering across tasks, repos, and channels."""
+"""Tests for workspace_profile filtering across tasks and channels."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ import pytest
 
 import brainbox.router as router_module
 from brainbox.channels import create_channel
-from brainbox.models import AgentDefinition, ChannelParticipant, Repository, Task, TaskStatus
+from brainbox.models import AgentDefinition, ChannelParticipant, Task, TaskStatus
 import brainbox.registry as reg_module
-from brainbox.router import add_repo, list_repos, list_tasks
+from brainbox.router import list_tasks
 
 
 # ---------------------------------------------------------------------------
@@ -40,11 +40,6 @@ def _make_task(profile: str | None = None) -> Task:
     )
     router_module._tasks[task_id] = task
     return task
-
-
-def _make_repo(profile: str | None = None) -> Repository:
-    name = f"repo-{uuid.uuid4().hex[:6]}"
-    return add_repo(f"https://github.com/org/{name}", name=name, workspace_profile=profile)
 
 
 def _make_channel(profile: str | None = None):
@@ -94,31 +89,6 @@ class TestListTasksProfileFilter:
         result = list_tasks(workspace_profile="personal", status="pending", limit=None)
         assert len(result) == 1
         assert result[0].id == t1.id
-
-
-# ---------------------------------------------------------------------------
-# TestListReposProfileFilter
-# ---------------------------------------------------------------------------
-
-
-class TestListReposProfileFilter:
-    def test_no_filter_returns_all(self):
-        _make_repo("personal")
-        _make_repo("work")
-        assert len(list_repos()) == 2
-
-    def test_filter_returns_only_matching(self):
-        _make_repo("personal")
-        _make_repo("personal")
-        _make_repo("work")
-        result = list_repos(workspace_profile="personal")
-        assert len(result) == 2
-        assert all(r.workspace_profile == "personal" for r in result)
-
-    def test_filter_no_match_returns_empty(self):
-        _make_repo("personal")
-        result = list_repos(workspace_profile="nonexistent")
-        assert result == []
 
 
 # ---------------------------------------------------------------------------
@@ -177,15 +147,6 @@ class TestAPIEndpointsProfileFilter:
         resp = await client.get("/api/hub/tasks")
         assert resp.status_code == 200
         assert len(resp.json()) == 2
-
-    async def test_hub_list_repos_filters_by_profile(self, client):
-        _make_repo("personal")
-        _make_repo("work")
-        resp = await client.get("/api/hub/repos?workspace_profile=personal")
-        assert resp.status_code == 200
-        result = resp.json()
-        assert len(result) == 1
-        assert result[0]["workspace_profile"] == "personal"
 
     async def test_hub_list_channels_filters_by_profile(self, client):
         _make_channel("personal")

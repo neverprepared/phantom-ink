@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from .config import settings
 from .log import get_logger
-from .models import Repository, SessionState, Task, TaskStatus
+from .models import SessionState, Task, TaskStatus
 from .policy import evaluate_task_assignment
 from .registry import get_agent, issue_token, revoke_token
 from .utils import now_ms as _now_ms
@@ -24,7 +24,6 @@ log = get_logger()
 
 _tasks: dict[str, Task] = {}
 _listeners: list[Callable[[str, Task], None]] = []
-_repos: dict[str, Repository] = {}  # name -> Repository
 
 
 def _emit(event: str, task: Task) -> None:
@@ -353,127 +352,6 @@ async def _restart_persistent_task(task: Task) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Repository management
-# ---------------------------------------------------------------------------
-
-
-def _repo_name(url: str) -> str:
-    """Derive a short repo name from a GitHub URL."""
-    # https://github.com/owner/repo -> repo
-    return url.rstrip("/").rsplit("/", 1)[-1]
-
-
-def add_repo(
-    url: str,
-    *,
-    name: str | None = None,
-    merge_queue: bool = False,
-    pr_shepherd: bool = False,
-    target_branch: str = "main",
-    is_fork: bool = False,
-    upstream_url: str | None = None,
-    workspace_home: str | None = None,
-    workspace_profile: str | None = None,
-) -> Repository:
-    """Register a repository for multi-agent management."""
-    repo_name = name or _repo_name(url)
-    if repo_name in _repos:
-        raise ValueError(f"Repository '{repo_name}' already registered")
-
-    repo = Repository(
-        url=url,
-        name=repo_name,
-        merge_queue_enabled=merge_queue,
-        pr_shepherd_enabled=pr_shepherd,
-        target_branch=target_branch,
-        is_fork=is_fork,
-        upstream_url=upstream_url,
-        workspace_home=workspace_home,
-        workspace_profile=workspace_profile,
-    )
-    _repos[repo_name] = repo
-    log.info(
-        "router.repo_added",
-        metadata={
-            "name": repo_name,
-            "url": url,
-            "merge_queue": merge_queue,
-            "pr_shepherd": pr_shepherd,
-        },
-    )
-    return repo
-
-
-def get_repo(name: str) -> Repository | None:
-    return _repos.get(name)
-
-
-def list_repos(*, workspace_profile: str | None = None) -> list[Repository]:
-    result = list(_repos.values())
-    if workspace_profile is not None:
-        result = [r for r in result if r.workspace_profile == workspace_profile]
-    return result
-
-
-def remove_repo(name: str) -> bool:
-    existed = name in _repos
-    _repos.pop(name, None)
-    if existed:
-        log.info("router.repo_removed", metadata={"name": name})
-    return existed
-
-
-def update_repo(
-    name: str,
-    *,
-    merge_queue: bool | None = None,
-    pr_shepherd: bool | None = None,
-    target_branch: str | None = None,
-) -> Repository:
-    repo = _repos.get(name)
-    if not repo:
-        raise ValueError(f"Repository '{name}' not found")
-    if merge_queue is not None:
-        repo.merge_queue_enabled = merge_queue
-    if pr_shepherd is not None:
-        repo.pr_shepherd_enabled = pr_shepherd
-    if target_branch is not None:
-        repo.target_branch = target_branch
-    return repo
-
-
-async def ensure_repo_agents(repo_name: str) -> list[Task]:
-    """Ensure persistent agents (merge-queue, PR shepherd) are running for a repo."""
-    repo = _repos.get(repo_name)
-    if not repo:
-        raise ValueError(f"Repository '{repo_name}' not found")
-
-    launched: list[Task] = []
-
-    if repo.merge_queue_enabled and "merge-queue" not in repo.containers:
-        agent = get_agent("merge-queue")
-        if agent:
-            task = await submit_task(
-                f"Merge queue for {repo.name}",
-                "merge-queue",
-                repo_url=repo.url,
-            )
-            launched.append(task)
-
-    if repo.pr_shepherd_enabled and "pr-shepherd" not in repo.containers:
-        agent = get_agent("pr-shepherd")
-        if agent:
-            task = await submit_task(
-                f"PR shepherd for {repo.name}",
-                "pr-shepherd",
-                repo_url=repo.url,
-            )
-            launched.append(task)
-
-    return launched
-
-
-# ---------------------------------------------------------------------------
 # State serialization
 # ---------------------------------------------------------------------------
 
@@ -481,21 +359,15 @@ async def ensure_repo_agents(repo_name: str) -> list[Task]:
 def get_state() -> dict:
     return {
         "tasks": [(tid, t.model_dump()) for tid, t in _tasks.items()],
-        "repos": [(name, r.model_dump()) for name, r in _repos.items()],
     }
 
 
 def restore_state(state: dict | None) -> None:
     if not state:
         return
-    # Restore tasks
     if "tasks" in state:
         for tid, data in state["tasks"]:
             task = Task(**data)
             _tasks[tid] = task
-    # Restore repos
-    if "repos" in state:
-        for name, data in state["repos"]:
-            _repos[name] = Repository(**data)
 
 

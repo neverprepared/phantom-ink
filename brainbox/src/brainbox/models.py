@@ -177,29 +177,6 @@ class Task(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Repositories
-# ---------------------------------------------------------------------------
-
-
-class Repository(BaseModel):
-    """A tracked repository with associated agent containers.
-
-    Attribution: Multi-repo awareness originated from Dan Lorenc's multiclaude project.
-    """
-
-    url: str  # GitHub repo URL (e.g., "https://github.com/owner/repo")
-    name: str  # Short name derived from URL (e.g., "repo")
-    containers: dict[str, str] = Field(default_factory=dict)  # role -> session_name
-    merge_queue_enabled: bool = False
-    pr_shepherd_enabled: bool = False
-    target_branch: str = "main"
-    is_fork: bool = False
-    upstream_url: str | None = None
-    workspace_home: str | None = None  # Caller's workspace home (for credential mounts)
-    workspace_profile: str | None = None  # Caller's workspace profile name
-    local_path_override: str | None = None  # Override for local checkout path; default: {workspace_home}/code/{name}/
-
-
 # ---------------------------------------------------------------------------
 # Messages
 # ---------------------------------------------------------------------------
@@ -322,17 +299,6 @@ class PlaybookTask(BaseModel):
     error: str | None = None
     started_at: int | None = None
     finished_at: int | None = None
-
-
-class Worktree(BaseModel):
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
-    repo_name: str  # references Repository.name
-    branch: str  # git branch name
-    worktree_path: str  # absolute host path
-    session_name: str | None = None  # associated brainbox session (None = available)
-    status: Literal["ready", "in_use", "error"] = "ready"
-    created_at: int = Field(default_factory=_now_ms)
-    error: str | None = None
 
 
 class Playbook(BaseModel):

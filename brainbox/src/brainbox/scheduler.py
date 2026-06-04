@@ -145,14 +145,8 @@ async def _dispatch_pending(task: Task) -> None:
                 metadata={"task_id": task.id, "runner": resolved_runner},
             )
 
-    # Resolve workspace context from repo if not set on task
     workspace_home = task.workspace_home
     workspace_profile = task.workspace_profile
-    if not workspace_home and task.repo_url:
-        repo = router._repos.get(router._repo_name(task.repo_url))
-        if repo:
-            workspace_home = workspace_home or repo.workspace_home
-            workspace_profile = workspace_profile or repo.workspace_profile
 
     try:
         await lifecycle.run_pipeline(
@@ -204,12 +198,6 @@ async def _dispatch_pending(task: Task) -> None:
             )
             router._emit("task.failed", task)
         return
-
-    # Track container in repo if applicable
-    if task.repo_url:
-        repo = router._repos.get(router._repo_name(task.repo_url))
-        if repo:
-            repo.containers[task.agent_name] = task.session_name
 
     log.info(
         "scheduler.task_dispatched",

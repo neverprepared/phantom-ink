@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .validation import (
@@ -12,31 +10,6 @@ from .validation import (
     validate_role,
     validate_volume_mount,
 )
-
-
-class RepoConfig(BaseModel):
-    """Repo access configuration for container sessions.
-
-    The ``ci-ratchet`` mode implements the "Brownian ratchet" philosophy from
-    multiclaude (https://github.com/dlorenc/multiclaude) by Dan Lorenc et al.:
-    workers clone a remote repo, complete a task, and open a PR; CI is the
-    ratchet that only lets passing work merge — forward progress is permanent.
-    """
-
-    url: str  # local path (worktree-mount) or git remote URL (clone/clone-worktree/ci-ratchet)
-    mode: Literal["worktree-mount", "clone", "clone-worktree", "ci-ratchet"]
-    branch: str = ""  # branch to create or checkout; defaults to work/<session-name> for ci-ratchet
-    container_path: str = "/home/developer/workspace/repo"  # where to mount/clone inside container
-    task: str | None = None  # worker task description (required for ci-ratchet)
-    start_merge_queue: bool = True  # auto-start merge-queue container for this repo
-
-    @model_validator(mode="after")
-    def validate_ci_ratchet(self) -> "RepoConfig":
-        if self.mode == "ci-ratchet" and not self.task:
-            raise ValueError("task is required for ci-ratchet mode")
-        if self.mode != "ci-ratchet" and not self.branch:
-            raise ValueError("branch is required for non-ci-ratchet modes")
-        return self
 
 
 class CreateSessionRequest(BaseModel):
@@ -59,7 +32,6 @@ class CreateSessionRequest(BaseModel):
     task: str | None = None  # Initial task to send to Claude on first launch
     ports: dict[str, int] | None = None  # Additional port mappings (container_port: host_port)
     docker_host: str | None = None  # Docker daemon host (None = local socket)
-    repo: RepoConfig | None = None  # Repo access mode (worktree-mount, clone, clone-worktree)
     delivery: str | None = None  # passed through to runner
     runner: str | None = None  # Runner name to dispatch this session to (None = local execution)
     env: dict[str, str] | None = None  # Caller-supplied env vars from originating host profile
@@ -164,40 +136,6 @@ class QuerySessionRequest(BaseModel):
         return stripped
 
 
-class CreateRepoRequest(BaseModel):
-    """Request model for POST /api/hub/repos endpoint."""
-
-    url: str = Field(..., description="GitHub repo URL")
-    name: str | None = Field(None, description="Short name (derived from URL if omitted)")
-    merge_queue: bool = Field(False, description="Enable merge-queue agent")
-    pr_shepherd: bool = Field(False, description="Enable PR shepherd agent")
-    target_branch: str = Field("main", description="Target branch for merges")
-    is_fork: bool = Field(False, description="Whether this is a fork repo")
-    upstream_url: str | None = Field(None, description="Upstream repo URL (for forks)")
-    workspace_home: str | None = Field(
-        None, description="Workspace home path for credential mounts (SSH, git, cloud)"
-    )
-    workspace_profile: str | None = Field(None, description="Workspace profile name")
-
-    @field_validator("url")
-    @classmethod
-    def validate_repo_url(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("Repository URL is required")
-        if not v.startswith("https://github.com/"):
-            raise ValueError("Only GitHub URLs are supported (https://github.com/owner/repo)")
-        return v
-
-
-class UpdateRepoRequest(BaseModel):
-    """Request model for PATCH /api/hub/repos/{name} endpoint."""
-
-    merge_queue: bool | None = None
-    pr_shepherd: bool | None = None
-    target_branch: str | None = None
-
-
 class OllamaChatRequest(BaseModel):
     """Request model for POST /api/ollama/chat endpoint."""
 
@@ -268,13 +206,6 @@ class UpdatePlaybookRequest(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=128)
     markdown: str | None = Field(None, min_length=1)
     runner: str | None = Field(None, description="Runner to dispatch all tasks to (None = local, omit = no change)")
-
-
-class CreateWorktreeRequest(BaseModel):
-    """Request model for POST /api/hub/worktrees."""
-
-    repo_name: str = Field(..., min_length=1, description="Repository name (must be registered)")
-    branch: str = Field(..., min_length=1, max_length=128, description="Git branch name to create")
 
 
 class CreateAgentRequest(BaseModel):
