@@ -3432,21 +3432,28 @@ async def profile_image_status(name: str):
 
         # Try HTTPS first, fall back to HTTP (registry may be http-only behind a proxy)
         last_error = ""
+        manifest_accept = (
+            "application/vnd.docker.distribution.manifest.v2+json,"
+            "application/vnd.docker.distribution.manifest.list.v2+json,"
+            "application/vnd.oci.image.manifest.v1+json,"
+            "application/vnd.oci.image.index.v1+json,"
+            "*/*"
+        )
         for scheme in ("https", "http"):
             url = f"{scheme}://{registry}/v2/brainbox-profile/manifests/{name}"
             try:
-                async with httpx.AsyncClient(verify=False) as client:
+                async with httpx.AsyncClient(verify=False, follow_redirects=True) as client:
                     resp = await client.head(
                         url,
                         auth=auth,
-                        headers={"Accept": "*/*"},
+                        headers={"Accept": manifest_accept},
                         timeout=5,
                     )
-                if resp.status_code == 200:
+                if resp.status_code < 300:
                     digest = resp.headers.get("Docker-Content-Digest", "")
                     return {"configured": True, "profile": name, "exists": True, "tag": tag, "digest": digest}
                 last_error = f"HTTP {resp.status_code}"
-                break  # got a response, no need to try http fallback
+                break  # got a response from this scheme; no point trying http fallback
             except Exception as exc:
                 last_error = str(exc)
                 continue
