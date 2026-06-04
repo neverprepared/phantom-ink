@@ -430,7 +430,7 @@
           </div>
 
           {#if status?.exists && status.digest}
-            <div class="image-digest">{status.digest.slice(0, 19)}…</div>
+            <div class="image-digest" title={status.digest}>{status.digest.replace(/^sha256:/, '').slice(0, 12)}</div>
           {/if}
 
           {#if logs.length > 0}
