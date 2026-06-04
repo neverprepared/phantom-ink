@@ -3439,18 +3439,35 @@ async def profile_image_status(name: str):
             "application/vnd.docker.distribution.manifest.list.v2+json"
         )
         for scheme in ("https", "http"):
-            url = f"{scheme}://{registry}/v2/brainbox-profile/manifests/{name}"
+            manifest_url = f"{scheme}://{registry}/v2/brainbox-profile/manifests/{name}"
             try:
                 async with httpx.AsyncClient(verify=False, follow_redirects=True) as client:
                     resp = await client.head(
-                        url,
+                        manifest_url,
                         auth=auth,
                         headers={"Accept": manifest_accept},
                         timeout=5,
                     )
                 if resp.status_code < 300:
                     digest = resp.headers.get("Docker-Content-Digest", "")
-                    return {"configured": True, "profile": name, "exists": True, "tag": tag, "digest": digest}
+                    built_at: str | None = None
+                    try:
+                        async with httpx.AsyncClient(verify=False, follow_redirects=True) as client:
+                            mresp = await client.get(
+                                manifest_url,
+                                auth=auth,
+                                headers={"Accept": manifest_accept},
+                                timeout=5,
+                            )
+                            mdata = mresp.json()
+                            config_digest = mdata.get("config", {}).get("digest", "")
+                            if config_digest:
+                                blobs_url = f"{scheme}://{registry}/v2/brainbox-profile/blobs/{config_digest}"
+                                cresp = await client.get(blobs_url, auth=auth, timeout=5)
+                                built_at = cresp.json().get("created")
+                    except Exception:
+                        pass
+                    return {"configured": True, "profile": name, "exists": True, "tag": tag, "digest": digest, "built_at": built_at}
                 last_error = f"HTTP {resp.status_code}"
                 break  # got a response from this scheme; no point trying http fallback
             except Exception as exc:

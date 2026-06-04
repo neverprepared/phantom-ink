@@ -7,7 +7,20 @@
   import PieChart from '../components/PieChart.svelte';
 
   // --- Profile image state ---
-  type ImageStatus = { configured: boolean; exists: boolean; tag: string; digest: string; error?: string };
+  type ImageStatus = { configured: boolean; exists: boolean; tag: string; digest: string; error?: string; built_at?: string };
+
+  function fmtBuiltAt(iso: string | undefined): string {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const now = Date.now();
+    const diff = Math.floor((now - d.getTime()) / 1000);
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 7 * 86400) return `${Math.floor(diff / 86400)}d ago`;
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
   let imageStatuses = $state<Record<string, ImageStatus>>({});
   let imageBuilding = $state<Record<string, boolean>>({});
   let imageLogs = $state<Record<string, string[]>>({});
@@ -384,9 +397,9 @@
               {:else if !status.configured}
                 <span class="image-badge unconfigured">no registry</span>
               {:else if status.exists}
-                <span class="image-badge ok">
+                <span class="image-badge ok" title={status.built_at ? new Date(status.built_at).toLocaleString() : ''}>
                   <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-                  image ready
+                  image ready{status.built_at ? ` · ${fmtBuiltAt(status.built_at)}` : ''}
                 </span>
               {:else}
                 <span class="image-badge missing" title={status?.error ?? ''}>no image{status?.error ? ' ⚠' : ''}</span>
