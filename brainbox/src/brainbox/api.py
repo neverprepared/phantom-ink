@@ -3433,11 +3433,10 @@ async def profile_image_status(name: str):
         # Try HTTPS first, fall back to HTTP (registry may be http-only behind a proxy)
         last_error = ""
         manifest_accept = (
-            "application/vnd.docker.distribution.manifest.v2+json,"
-            "application/vnd.docker.distribution.manifest.list.v2+json,"
             "application/vnd.oci.image.manifest.v1+json,"
             "application/vnd.oci.image.index.v1+json,"
-            "*/*"
+            "application/vnd.docker.distribution.manifest.v2+json,"
+            "application/vnd.docker.distribution.manifest.list.v2+json"
         )
         for scheme in ("https", "http"):
             url = f"{scheme}://{registry}/v2/brainbox-profile/manifests/{name}"
