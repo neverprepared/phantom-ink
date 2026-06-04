@@ -246,3 +246,11 @@ export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promis
 export function UpdatePlaybook(arg1:string,arg2:brainbox.UpdatePlaybookRequest):Promise<brainbox.Playbook>;
 
 export function UsableAgents():Promise<Array<main.DetectedAgent>>;
+
+export function EnableLocalRunner(arg1:string,arg2:string):Promise<void>;
+
+export function DisableLocalRunner():Promise<void>;
+
+export function GetLocalRunnerStatus():Promise<main.LocalRunnerStatus>;
+
+export function OpenLocalSession(arg1:string):Promise<void>;

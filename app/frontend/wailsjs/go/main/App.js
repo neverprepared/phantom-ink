@@ -489,3 +489,19 @@ export function UpdatePlaybook(arg1, arg2) {
 export function UsableAgents() {
   return window['go']['main']['App']['UsableAgents']();
 }
+
+export function EnableLocalRunner(arg1, arg2) {
+  return window['go']['main']['App']['EnableLocalRunner'](arg1, arg2);
+}
+
+export function DisableLocalRunner() {
+  return window['go']['main']['App']['DisableLocalRunner']();
+}
+
+export function GetLocalRunnerStatus() {
+  return window['go']['main']['App']['GetLocalRunnerStatus']();
+}
+
+export function OpenLocalSession(arg1) {
+  return window['go']['main']['App']['OpenLocalSession'](arg1);
+}

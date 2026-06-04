@@ -918,7 +918,25 @@ export namespace brainbox {
 }
 
 export namespace main {
-	
+
+	export class LocalRunnerStatus {
+	    enabled: boolean;
+	    running: boolean;
+	    name: string;
+	    work_dir: string;
+
+	    static createFrom(source: any = {}) {
+	        return new LocalRunnerStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.running = source["running"];
+	        this.name = source["name"];
+	        this.work_dir = source["work_dir"];
+	    }
+	}
 	export class AgentInvocation {
 	    prompt_args: string[];
 	    prompt_mode: string;
