@@ -397,9 +397,9 @@
               {:else if !status.configured}
                 <span class="image-badge unconfigured">no registry</span>
               {:else if status.exists}
-                <span class="image-badge ok">
+                <span class="image-badge ok" title={status.built_at ? new Date(status.built_at).toLocaleString() : ''}>
                   <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-                  image ready
+                  image ready{status.built_at ? ` · ${fmtBuiltAt(status.built_at)}` : ''}
                 </span>
               {:else}
                 <span class="image-badge missing" title={status?.error ?? ''}>no image{status?.error ? ' ⚠' : ''}</span>
@@ -429,11 +429,8 @@
             </div>
           </div>
 
-          {#if status?.exists && (status.digest || status.built_at)}
-            <div class="image-meta">
-              {#if status.built_at}<span title={new Date(status.built_at).toLocaleString()}>{fmtBuiltAt(status.built_at)}</span>{/if}
-              {#if status.digest}<span class="image-sha" title={status.digest}>{status.digest.replace(/^sha256:/, '').slice(0, 12)}</span>{/if}
-            </div>
+          {#if status?.exists && status.digest}
+            <div class="image-digest" title={status.digest}>{status.digest.replace(/^sha256:/, '').slice(0, 12)}</div>
           {/if}
 
           {#if logs.length > 0}
@@ -815,18 +812,11 @@
   }
   .btn-icon-sm:hover { color: var(--color-text-secondary); background: rgba(255, 255, 255, 0.06); }
 
-  .image-meta {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    gap: 8px;
+  .image-digest {
     font-size: 10px;
-    color: var(--color-text-tertiary);
-    padding: 0 8px 4px;
-  }
-
-  .image-sha {
     font-family: var(--font-mono);
+    color: var(--color-text-muted);
+    padding: 0 6px 4px 16px;
   }
 
   .logs-toggle {
