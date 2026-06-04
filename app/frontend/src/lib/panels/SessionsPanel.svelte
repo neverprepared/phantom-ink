@@ -1111,7 +1111,7 @@
 
       <div class="modal-actions">
         <button class="btn-cancel" onclick={() => showNewModal = false} disabled={isCreating}>cancel</button>
-        <button class="btn-submit" onclick={handleCreate} disabled={isCreating || !newName.trim() || !newProfile}>
+        <button class="btn-submit" onclick={handleCreate} disabled={isCreating || (newBackend !== 'local' && !newName.trim()) || !newProfile}>
           {isCreating ? 'creating...' : 'create'}
         </button>
       </div>
