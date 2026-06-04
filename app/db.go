@@ -1036,17 +1036,19 @@ func (db *DB) ListAutomationRules(profile string) ([]AutomationRule, error) {
 
 func (db *DB) GetAutomationRule(id string) (AutomationRule, bool) {
 	var r AutomationRule
+	var enabled int
 	var lastTriggered sql.NullInt64
 	err := db.conn.QueryRow(`
 		SELECT id, profile, name, description, enabled, trigger_type, trigger_config,
 		       action_type, action_config, created_at, last_triggered_at, trigger_count
 		FROM automation_rules WHERE id = ?`, id).
-		Scan(&r.ID, &r.Profile, &r.Name, &r.Description, &r.Enabled,
+		Scan(&r.ID, &r.Profile, &r.Name, &r.Description, &enabled,
 			&r.TriggerType, &r.TriggerConfig, &r.ActionType, &r.ActionConfig,
 			&r.CreatedAt, &lastTriggered, &r.TriggerCount)
 	if err != nil {
 		return AutomationRule{}, false
 	}
+	r.Enabled = enabled != 0
 	if lastTriggered.Valid {
 		r.LastTriggeredAt = &lastTriggered.Int64
 	}
@@ -1097,12 +1099,14 @@ func scanAutomationRules(rows *sql.Rows) ([]AutomationRule, error) {
 	var out []AutomationRule
 	for rows.Next() {
 		var r AutomationRule
+		var enabled int
 		var lastTriggered sql.NullInt64
-		if err := rows.Scan(&r.ID, &r.Profile, &r.Name, &r.Description, &r.Enabled,
+		if err := rows.Scan(&r.ID, &r.Profile, &r.Name, &r.Description, &enabled,
 			&r.TriggerType, &r.TriggerConfig, &r.ActionType, &r.ActionConfig,
 			&r.CreatedAt, &lastTriggered, &r.TriggerCount); err != nil {
 			return nil, err
 		}
+		r.Enabled = enabled != 0
 		if lastTriggered.Valid {
 			r.LastTriggeredAt = &lastTriggered.Int64
 		}
