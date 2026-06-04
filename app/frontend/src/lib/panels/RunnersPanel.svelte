@@ -80,10 +80,14 @@
     return `${Math.floor(diff / 86_400_000)}d ago`;
   }
 
+  const CAP_LABELS: Record<string, string> = {
+    docker: 'application',
+  };
+
   function capabilities(r: Runner): string[] {
     return Object.entries(r.capabilities ?? {})
       .filter(([_, v]) => v)
-      .map(([k]) => k);
+      .map(([k]) => CAP_LABELS[k] ?? k);
   }
 
   function headroom(r: Runner): number {
