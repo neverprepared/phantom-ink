@@ -22,6 +22,7 @@
     tasks: PlaybookTask[];
     status: string;
     workspace_profile: string;
+    runner?: string;
     created_at: number;
     started_at?: number;
     finished_at?: number;
@@ -33,11 +34,15 @@
   let query = $state('');
   let activeId = $state<string | null>(null);
 
+  // available runners (loaded on mount)
+  let runners = $state<string[]>([]);
+
   // create modal
   let showCreate = $state(false);
   let newName = $state('');
   let newMarkdown = $state('- [ ] Step one\n- [ ] Step two');
   let newScope = $state<'profile' | 'global'>('profile');
+  let newRunner = $state('');
 
   // delete confirmation
   let pendingDelete = $state<Playbook | null>(null);
@@ -75,7 +80,14 @@
     load();
   });
 
-  onMount(() => {});
+  onMount(async () => {
+    const api = await getApi();
+    if (!api) return;
+    try {
+      const rs = await api.ListRunners();
+      runners = (rs ?? []).map((r: any) => r.name);
+    } catch {}
+  });
 
   async function createPlaybook() {
     if (!newName.trim()) return;
@@ -86,29 +98,32 @@
         name: newName.trim(),
         markdown: newMarkdown,
         workspace_profile: profile,
+        runner: newRunner || undefined,
       });
       playbooks = [pb, ...playbooks];
       showCreate = false;
       newName = '';
       newMarkdown = '- [ ] Step one\n- [ ] Step two';
+      newRunner = '';
       activeId = pb.id;
     } catch (e: any) {
       notifications.error(`Failed to create playbook: ${e?.message ?? e}`);
     }
   }
 
-  async function runPlaybook(pb: Playbook) {
+  async function runPlaybook(pb: Playbook, runnerOverride?: string) {
     try {
       const api = await getApi();
       const profile = pb.workspace_profile === 'global' ? activeProfileName || '' : pb.workspace_profile;
-      const updated = await api.RunPlaybook(pb.id, profile);
+      const runner = runnerOverride !== undefined ? runnerOverride : (pb.runner ?? '');
+      const updated = await api.RunPlaybook(pb.id, profile, runner);
       const idx = playbooks.findIndex((p) => p.id === pb.id);
       if (idx >= 0) {
         const next = [...playbooks];
         next[idx] = updated;
         playbooks = next;
       }
-      notifications.success(`running · ${pb.name}`);
+      notifications.success(`running · ${pb.name}${runner ? ` on ${runner}` : ''}`);
     } catch (e: any) {
       notifications.error(`Failed to run: ${e?.message ?? e}`);
     }
@@ -131,6 +146,7 @@
 
   // ----- editor -----
   let editMarkdown = $state('');
+  let editRunner = $state('');
   let saving = $state(false);
   let lastEditorId: string | null = null;
 
@@ -140,6 +156,7 @@
     if (lastEditorId === pb.id) return;
     lastEditorId = pb.id;
     editMarkdown = pb.markdown ?? '';
+    editRunner = pb.runner ?? '';
   });
 
   async function saveInstructions() {
@@ -147,14 +164,18 @@
     saving = true;
     try {
       const api = await getApi();
-      const updated = await api.UpdatePlaybook(active.id, { markdown: editMarkdown });
+      const runnerVal = editRunner || '';
+      const updated = await api.UpdatePlaybook(active.id, {
+        markdown: editMarkdown,
+        runner: runnerVal,
+      });
       const idx = playbooks.findIndex((p) => p.id === active!.id);
       if (idx >= 0) {
         const next = [...playbooks];
-        next[idx] = updated ?? { ...active, markdown: editMarkdown };
+        next[idx] = updated ?? { ...active, markdown: editMarkdown, runner: runnerVal };
         playbooks = next;
       }
-      notifications.success('instructions saved');
+      notifications.success('saved');
     } catch (e: any) {
       notifications.error(`Failed to save: ${e?.message ?? e}`);
     } finally {
@@ -228,6 +249,9 @@
               {:else}
                 <span class="mono tag">global</span>
               {/if}
+              {#if pb.runner}
+                <span class="mono tag" style="color: var(--text-muted); border-color: var(--border);" title="runs on {pb.runner}">⚙ {pb.runner}</span>
+              {/if}
             </div>
             <div style="display:flex;align-items:center;gap:10px;border-top:1px solid var(--border);padding-top:12px;">
               <span class="mono" style="font-size:11px;color: var(--text-faint);">
@@ -252,9 +276,22 @@
       <span style="color: var(--task);font-size:18px;">✓</span>
       <h1 class="page-title" style="font-size:26px;">{active.name}</h1>
       <span class="mono" style="font-size:11px;color: var(--text-faint);margin-left:8px;">{active.workspace_profile || 'global'}</span>
-      <div style="margin-left:auto;display:flex;gap:8px;">
+      {#if active.runner}
+        <span class="mono" style="font-size:11px;color:var(--text-faint);">⚙ {active.runner}</span>
+      {/if}
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+        <select
+          bind:value={editRunner}
+          style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:var(--r-md);background:var(--bg);color:var(--text);height:28px;"
+          title="run on"
+        >
+          <option value="">in-process (API host)</option>
+          {#each runners as r (r)}
+            <option value={r}>{r}</option>
+          {/each}
+        </select>
         <button class="btn ghost sm" onclick={() => (pendingDelete = active!)}>delete</button>
-        <button class="btn primary sm" onclick={() => runPlaybook(active!)}>▶ run</button>
+        <button class="btn primary sm" onclick={() => runPlaybook(active!, editRunner)}>▶ run</button>
       </div>
     </div>
     <p style="color: var(--text-faint); font-size: 13px; margin: 0 0 22px;">
@@ -340,6 +377,15 @@
         <button class="btn sm {newScope === 'profile' ? 'primary' : ''}" onclick={() => (newScope = 'profile')} disabled={!activeProfileName}>{activeProfileName || 'no profile'}</button>
         <button class="btn sm {newScope === 'global' ? 'primary' : ''}" onclick={() => (newScope = 'global')}>global</button>
       </div>
+      <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--text-muted);">
+        Run on
+        <select bind:value={newRunner} style="padding:7px 10px;border:1px solid var(--border);border-radius:var(--r-md);background:var(--bg);color:var(--text);font-size:13px;">
+          <option value="">in-process (API host)</option>
+          {#each runners as r (r)}
+            <option value={r}>{r}</option>
+          {/each}
+        </select>
+      </label>
       <div style="display:flex;justify-content:flex-end;gap:8px;">
         <button class="btn ghost" onclick={() => (showCreate = false)}>cancel</button>
         <button class="btn primary" onclick={createPlaybook} disabled={!newName.trim()}>create</button>

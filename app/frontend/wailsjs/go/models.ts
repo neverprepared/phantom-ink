@@ -261,6 +261,7 @@ export namespace brainbox {
 	    name: string;
 	    markdown: string;
 	    workspace_profile?: string;
+	    runner?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CreatePlaybookRequest(source);
@@ -271,6 +272,7 @@ export namespace brainbox {
 	        this.name = source["name"];
 	        this.markdown = source["markdown"];
 	        this.workspace_profile = source["workspace_profile"];
+	        this.runner = source["runner"];
 	    }
 	}
 	export class CreateSessionRequest {
@@ -624,6 +626,7 @@ export namespace brainbox {
 	    tasks: PlaybookTask[];
 	    status: string;
 	    workspace_profile: string;
+	    runner?: string;
 	    created_at: number;
 	    started_at?: number;
 	    finished_at?: number;
@@ -640,6 +643,7 @@ export namespace brainbox {
 	        this.tasks = this.convertValues(source["tasks"], PlaybookTask);
 	        this.status = source["status"];
 	        this.workspace_profile = source["workspace_profile"];
+	        this.runner = source["runner"];
 	        this.created_at = source["created_at"];
 	        this.started_at = source["started_at"];
 	        this.finished_at = source["finished_at"];
@@ -903,6 +907,7 @@ export namespace brainbox {
 	export class UpdatePlaybookRequest {
 	    name?: string;
 	    markdown?: string;
+	    runner?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new UpdatePlaybookRequest(source);
@@ -912,6 +917,7 @@ export namespace brainbox {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.markdown = source["markdown"];
+	        this.runner = source["runner"];
 	    }
 	}
 

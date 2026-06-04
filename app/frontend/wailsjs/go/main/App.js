@@ -354,6 +354,10 @@ export function ListUpcomingFires(arg1) {
   return window['go']['main']['App']['ListUpcomingFires'](arg1);
 }
 
+export function OpenLocalSession(arg1) {
+  return window['go']['main']['App']['OpenLocalSession'](arg1);
+}
+
 export function PostChannelMessage(arg1, arg2) {
   return window['go']['main']['App']['PostChannelMessage'](arg1, arg2);
 }
@@ -402,8 +406,8 @@ export function RunMetricScript(arg1, arg2) {
   return window['go']['main']['App']['RunMetricScript'](arg1, arg2);
 }
 
-export function RunPlaybook(arg1, arg2) {
-  return window['go']['main']['App']['RunPlaybook'](arg1, arg2);
+export function RunPlaybook(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RunPlaybook'](arg1, arg2, arg3);
 }
 
 export function RunPreflightChecks() {

@@ -519,10 +519,31 @@
   });
 
   async function handleCreate() {
-    if (!newName.trim() || !newProfile) return;
+    if (!newProfile) return;
+    if (newBackend !== 'local' && !newName.trim()) return;
     isCreating = true;
     const a = await getApi();
     if (!a) { isCreating = false; return; }
+
+    // Local backend: open iTerm2 directly — no brainbox session created.
+    // The process surfaces naturally in the local section via ps detection.
+    if (newBackend === 'local') {
+      try {
+        const profile = profiles.find(p => p.name === newProfile);
+        const dir = localWorkDir || profile?.workspace_home || '';
+        await a.OpenLocalSession(dir);
+        saveLocalRecent(dir);
+        notifications.success('Local session opened');
+        showNewModal = false;
+        localWorkDir = '';
+      } catch (err: any) {
+        notifications.error(`Failed to open local session: ${err}`);
+      } finally {
+        isCreating = false;
+      }
+      return;
+    }
+
     try {
       const profile = profiles.find(p => p.name === newProfile);
       const wsHome = profile?.workspace_home ?? '';
@@ -536,28 +557,21 @@
         llm_provider: newLLM,
         llm_model: newLLM === 'ollama' || newLLM === 'codex' ? newModel : '',
         workspace_profile: newProfile,
+        workspace_home: wsHome,
         task: newTask.trim() || undefined,
+        backend: newBackend,
+        runner: newRunner || undefined,
+        volumes: volumes.length > 0 ? volumes : undefined,
       };
-      if (newBackend === 'local') {
-        req.backend = 'docker';
-        req.runner = localRunnerName;
-        req.workspace_home = localWorkDir || wsHome;
-        saveLocalRecent(localWorkDir);
-      } else {
-        req.backend = newBackend;
-        req.workspace_home = wsHome;
-        req.runner = newRunner || undefined;
-        req.volumes = volumes.length > 0 ? volumes : undefined;
-        if (newBackend === 'utm') {
-          req.vm_template = newVMTemplate;
-          req.guest_os = newGuestOS;
-        }
+      if (newBackend === 'utm') {
+        req.vm_template = newVMTemplate;
+        req.guest_os = newGuestOS;
       }
       const resp = await a.CreateSession(req);
       if (resp.success ?? resp.Success) {
         notifications.success(`Created session: ${newName}`);
         showNewModal = false;
-        newName = ''; newVMTemplate = ''; mountPaths = []; newTask = ''; localWorkDir = '';
+        newName = ''; newVMTemplate = ''; mountPaths = []; newTask = '';
         refresh();
       } else {
         notifications.error(resp.error ?? resp.Error ?? 'Failed to create session');
@@ -917,10 +931,12 @@
       <h2>new session</h2>
       <p class="modal-sub">create an isolated environment for agentic work</p>
 
-      <div class="field">
-        <label for="sname">name</label>
-        <input id="sname" type="text" bind:value={newName} placeholder="my-session" />
-      </div>
+      {#if newBackend !== 'local'}
+        <div class="field">
+          <label for="sname">name</label>
+          <input id="sname" type="text" bind:value={newName} placeholder="my-session" />
+        </div>
+      {/if}
 
       <!-- Backend -->
       <div class="field">

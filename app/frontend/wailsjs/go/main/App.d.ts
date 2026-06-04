@@ -179,6 +179,8 @@ export function ListTasks(arg1:string,arg2:number):Promise<Array<main.TaskRow>>;
 
 export function ListUpcomingFires(arg1:number):Promise<Array<main.UpcomingFire>>;
 
+export function OpenLocalSession(arg1:string):Promise<void>;
+
 export function PostChannelMessage(arg1:string,arg2:brainbox.PostChannelMessageRequest):Promise<brainbox.ChannelMessage>;
 
 export function PreviewDispatch(arg1:brainbox.DispatchPreviewRequest):Promise<brainbox.DispatchPreview>;
@@ -203,7 +205,7 @@ export function RunCollectJobNow(arg1:string):Promise<void>;
 
 export function RunMetricScript(arg1:string,arg2:string):Promise<string>;
 
-export function RunPlaybook(arg1:string,arg2:string):Promise<brainbox.Playbook>;
+export function RunPlaybook(arg1:string,arg2:string,arg3:string):Promise<brainbox.Playbook>;
 
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
 

@@ -190,3 +190,10 @@ return "not_found"`, safeTTY)
 	return fmt.Errorf("could not find terminal tab for %s", safeTTY)
 }
 
+// OpenLocalSession opens a new iTerm2 (or Terminal.app) tab running
+// `claude --dangerously-skip-permissions` in workDir. Called directly from
+// the frontend for interactive local sessions — no brainbox session created.
+func (a *App) OpenLocalSession(workDir string) error {
+	return openLocalSessionTab(workDir)
+}
+
