@@ -3460,6 +3460,19 @@ async def profile_image_status(name: str):
                                 timeout=5,
                             )
                             mdata = mresp.json()
+                            # If registry returned an index/list, follow the first entry
+                            if "manifests" in mdata and "config" not in mdata:
+                                sub = mdata["manifests"][0] if mdata["manifests"] else {}
+                                sub_digest = sub.get("digest", "")
+                                if sub_digest:
+                                    sub_url = f"{scheme}://{registry}/v2/brainbox-profile/manifests/{sub_digest}"
+                                    sresp = await client.get(
+                                        sub_url,
+                                        auth=auth,
+                                        headers={"Accept": "application/vnd.oci.image.manifest.v1+json"},
+                                        timeout=5,
+                                    )
+                                    mdata = sresp.json()
                             config_digest = mdata.get("config", {}).get("digest", "")
                             if config_digest:
                                 blobs_url = f"{scheme}://{registry}/v2/brainbox-profile/blobs/{config_digest}"
