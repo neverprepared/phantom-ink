@@ -113,6 +113,7 @@ func (r *localRunner) registerWithBackoff(ctx context.Context) bool {
 	req := brainbox.RegisterRunnerRequest{
 		Name: r.name,
 		Capabilities: map[string]bool{
+			"docker":         true, // backend capability the API checks before routing
 			"session.create": true,
 			"session.query":  true,
 			"session.stop":   true,
