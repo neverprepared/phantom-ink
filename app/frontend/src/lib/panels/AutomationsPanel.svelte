@@ -20,7 +20,7 @@
     trigger_count: number;
   }
 
-  type TriggerType = 'entry_created' | 'entry_status_change' | 'job_complete';
+  type TriggerType = 'entry_created' | 'entry_status_change' | 'job_complete' | 'webhook';
   type ActionType  = 'fire_job' | 'run_playbook' | 'run_chain' | 'notify';
 
   interface JobItem      { id: string; name: string; profile: string; }
@@ -38,31 +38,34 @@
   let loading   = $state(false);
   let editingId = $state<string | null>(null);
   let statusMsg = $state('');
+  let baseURL   = $state('http://127.0.0.1:9999');
 
   // Draft form state
   let draft = $state({
-    name:          '',
-    description:   '',
-    profile:       '',
-    enabled:       true,
-    triggerType:   'entry_created' as TriggerType,
-    // trigger config
-    trigKind:      '',
-    trigTags:      '',        // comma-separated
-    trigStatus:    '',
-    trigJobID:     '',
+    name:             '',
+    description:      '',
+    profile:          '',
+    enabled:          true,
+    triggerType:      'entry_created' as TriggerType,
+    // trigger config — entry / job
+    trigKind:         '',
+    trigTags:         '',        // comma-separated
+    trigStatus:       '',
+    trigJobID:        '',
+    // trigger config — webhook
+    trigWebhookKey:   '',
     // action
-    actionType:    'notify' as ActionType,
+    actionType:       'notify' as ActionType,
     // action config — fire_job
-    actJobID:      '',
+    actJobID:         '',
     // action config — run_playbook
-    actPlaybookID: '',
+    actPlaybookID:    '',
     // action config — run_chain
-    actChainID:    '',
-    actChainInput: '',
+    actChainID:       '',
+    actChainInput:    '',
     // action config — notify
-    actTitle:      '{title}',
-    actBody:       '',
+    actTitle:         '{title}',
+    actBody:          '',
   });
 
   // ── Derived ────────────────────────────────────────────────────────────
@@ -85,6 +88,10 @@
   );
   let visibleChains = $derived(chains);
 
+  let webhookURL = $derived(
+    draft.trigWebhookKey ? `${baseURL}/api/webhooks/${draft.trigWebhookKey}` : ''
+  );
+
   // ── Loading ────────────────────────────────────────────────────────────
 
   async function load() {
@@ -92,19 +99,25 @@
     if (!a) return;
     loading = true;
     try {
-      const [r, j, p, c] = await Promise.all([
+      const [r, j, p, c, cfg] = await Promise.all([
         (a.ListAutomationRules as any)('').catch(() => []),
         (a.ListCollectJobs as any)('').catch(() => []),
         (a.ListPlaybooks as any)('').catch(() => []),
         (a.ListChains as any)().catch(() => []),
+        (a.GetConfig as any)().catch(() => null),
       ]);
       rules     = (r ?? []) as AutomationRule[];
       jobs      = ((j ?? []) as any[]).map((x: any): JobItem      => ({ id: x.id, name: x.name, profile:           x.profile           ?? '' }));
       playbooks = ((p ?? []) as any[]).map((x: any): PlaybookItem => ({ id: x.id, name: x.name, workspace_profile: x.workspace_profile  ?? '' }));
       chains    = ((c ?? []) as any[]).map((x: any): ChainItem    => ({ id: x.id, name: x.name }));
+      if (cfg?.base_url) baseURL = cfg.base_url;
     } finally {
       loading = false;
     }
+  }
+
+  function genWebhookKey(): string {
+    return crypto.randomUUID();
   }
 
   // ── CRUD ───────────────────────────────────────────────────────────────
@@ -141,6 +154,9 @@
   }
 
   function buildTriggerConfig(): Record<string, any> {
+    if (draft.triggerType === 'webhook') {
+      return { key: draft.trigWebhookKey };
+    }
     const cfg: Record<string, any> = {};
     if (draft.trigKind)   cfg.kind   = draft.trigKind;
     if (draft.trigStatus) cfg.status = draft.trigStatus;
@@ -184,6 +200,7 @@
     draft = {
       name: '', description: '', profile: profile, enabled: true,
       triggerType: 'entry_created', trigKind: '', trigTags: '', trigStatus: '', trigJobID: '',
+      trigWebhookKey: '',
       actionType: 'notify', actJobID: '', actPlaybookID: '', actChainID: '', actChainInput: '',
       actTitle: '{title}', actBody: '',
     };
@@ -197,21 +214,22 @@
     try { actCfg  = JSON.parse(rule.action_config);  } catch {}
 
     draft = {
-      name:          rule.name,
-      description:   rule.description,
-      profile:       rule.profile,
-      enabled:       rule.enabled,
-      triggerType:   (rule.trigger_type || 'entry_created') as TriggerType,
-      trigKind:      trigCfg.kind   ?? '',
-      trigTags:      (trigCfg.tags ?? []).join(', '),
-      trigStatus:    trigCfg.status ?? '',
-      trigJobID:     trigCfg.job_id ?? '',
-      actionType:    (rule.action_type || 'notify') as ActionType,
-      actJobID:      actCfg.job_id      ?? '',
-      actPlaybookID: actCfg.playbook_id ?? '',
-      actChainID:    actCfg.chain_id    ?? '',
-      actChainInput: actCfg.input       ?? '',
-      actTitle:      actCfg.title       ?? '{title}',
+      name:             rule.name,
+      description:      rule.description,
+      profile:          rule.profile,
+      enabled:          rule.enabled,
+      triggerType:      (rule.trigger_type || 'entry_created') as TriggerType,
+      trigKind:         trigCfg.kind   ?? '',
+      trigTags:         (trigCfg.tags ?? []).join(', '),
+      trigStatus:       trigCfg.status ?? '',
+      trigJobID:        trigCfg.job_id ?? '',
+      trigWebhookKey:   trigCfg.key    ?? '',
+      actionType:       (rule.action_type || 'notify') as ActionType,
+      actJobID:         actCfg.job_id      ?? '',
+      actPlaybookID:    actCfg.playbook_id ?? '',
+      actChainID:       actCfg.chain_id    ?? '',
+      actChainInput:    actCfg.input       ?? '',
+      actTitle:         actCfg.title       ?? '{title}',
       actBody:       actCfg.body        ?? '',
     };
   }
@@ -225,6 +243,7 @@
 
   function isFormValid(): boolean {
     if (!draft.name.trim()) return false;
+    if (draft.triggerType === 'webhook' && !draft.trigWebhookKey) return false;
     if (draft.actionType === 'fire_job' && !draft.actJobID) return false;
     if (draft.actionType === 'run_playbook' && !draft.actPlaybookID) return false;
     if (draft.actionType === 'run_chain' && !draft.actChainID) return false;
@@ -236,6 +255,9 @@
   function triggerLabel(rule: AutomationRule): string {
     let cfg: any = {};
     try { cfg = JSON.parse(rule.trigger_config); } catch {}
+    if (rule.trigger_type === 'webhook') {
+      return `webhook · key: ${cfg.key?.slice(0, 8) ?? '?'}…`;
+    }
     const parts: string[] = [triggerTypeLabel(rule.trigger_type)];
     if (cfg.kind)   parts.push(`kind: ${cfg.kind}`);
     if (cfg.tags?.length) parts.push(`tags: ${cfg.tags.join(', ')}`);
@@ -257,9 +279,10 @@
 
   function triggerTypeLabel(t: string): string {
     switch (t) {
-      case 'entry_created':      return 'entry created';
+      case 'entry_created':       return 'entry created';
       case 'entry_status_change': return 'status change';
-      case 'job_complete':       return 'job complete';
+      case 'job_complete':        return 'job complete';
+      case 'webhook':             return 'webhook';
       default: return t;
     }
   }
@@ -323,7 +346,7 @@
         <div class="form-row">
           <span class="form-label">trigger</span>
           <div class="seg-ctrl">
-            {#each (['entry_created', 'entry_status_change', 'job_complete'] as TriggerType[]) as t (t)}
+            {#each (['entry_created', 'entry_status_change', 'job_complete', 'webhook'] as TriggerType[]) as t (t)}
               <button class="seg-btn" class:active={draft.triggerType === t}
                 onclick={() => draft.triggerType = t}>{triggerTypeLabel(t)}</button>
             {/each}
@@ -332,7 +355,24 @@
 
         <!-- Trigger config -->
         <div class="form-section">
-          {#if draft.triggerType !== 'job_complete'}
+          {#if draft.triggerType === 'webhook'}
+            <div class="form-row">
+              <span class="form-label">webhook url</span>
+              <div class="webhook-url-row">
+                {#if draft.trigWebhookKey}
+                  <input class="form-input webhook-url-input" readonly value={webhookURL} />
+                  <button class="form-btn" onclick={() => navigator.clipboard.writeText(webhookURL)} title="copy">copy</button>
+                  <button class="form-btn" onclick={() => { draft.trigWebhookKey = genWebhookKey(); }} title="rotate key">rotate</button>
+                {:else}
+                  <button class="form-btn primary" onclick={() => { draft.trigWebhookKey = genWebhookKey(); }}>generate url</button>
+                {/if}
+              </div>
+            </div>
+            {#if draft.trigWebhookKey}
+              <p class="webhook-hint">POST any JSON to this URL to fire this rule. Use <code>{"{payload.field}"}</code> in action templates to reference the request body.</p>
+            {/if}
+          {/if}
+          {#if draft.triggerType !== 'job_complete' && draft.triggerType !== 'webhook'}
             <label class="form-row">
               <span class="form-label">tags</span>
               <input class="form-input" bind:value={draft.trigTags} placeholder="calendar, work (comma-separated)" />
@@ -471,14 +511,31 @@
               <div class="form-row">
                 <span class="form-label">trigger</span>
                 <div class="seg-ctrl">
-                  {#each (['entry_created', 'entry_status_change', 'job_complete'] as TriggerType[]) as t (t)}
+                  {#each (['entry_created', 'entry_status_change', 'job_complete', 'webhook'] as TriggerType[]) as t (t)}
                     <button class="seg-btn" class:active={draft.triggerType === t}
                       onclick={() => draft.triggerType = t}>{triggerTypeLabel(t)}</button>
                   {/each}
                 </div>
               </div>
               <div class="form-section">
-                {#if draft.triggerType !== 'job_complete'}
+                {#if draft.triggerType === 'webhook'}
+                  <div class="form-row">
+                    <span class="form-label">webhook url</span>
+                    <div class="webhook-url-row">
+                      {#if draft.trigWebhookKey}
+                        <input class="form-input webhook-url-input" readonly value={webhookURL} />
+                        <button class="form-btn" onclick={() => navigator.clipboard.writeText(webhookURL)} title="copy">copy</button>
+                        <button class="form-btn" onclick={() => { draft.trigWebhookKey = genWebhookKey(); }} title="rotate key">rotate</button>
+                      {:else}
+                        <button class="form-btn primary" onclick={() => { draft.trigWebhookKey = genWebhookKey(); }}>generate url</button>
+                      {/if}
+                    </div>
+                  </div>
+                  {#if draft.trigWebhookKey}
+                    <p class="webhook-hint">POST any JSON to this URL to fire this rule. Use <code>{"{payload.field}"}</code> in action templates.</p>
+                  {/if}
+                {/if}
+                {#if draft.triggerType !== 'job_complete' && draft.triggerType !== 'webhook'}
                   <label class="form-row">
                     <span class="form-label">tags</span>
                     <input class="form-input" bind:value={draft.trigTags} placeholder="calendar, work" />
@@ -714,6 +771,11 @@
     font-size: 12px; color: var(--color-text-primary); font-family: inherit; width: 100%;
   }
   .form-input:focus { outline: none; border-color: var(--color-accent); }
+
+  .webhook-url-row { display: flex; gap: var(--spacing-sm); align-items: center; }
+  .webhook-url-input { flex: 1; font-family: var(--font-mono); font-size: 11px; color: var(--color-text-secondary); }
+  .webhook-hint { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-tertiary); margin: 0; line-height: 1.5; }
+  .webhook-hint code { color: var(--color-text-secondary); background: var(--color-bg-tertiary); padding: 1px 4px; border-radius: 3px; }
 
   .form-select {
     background: var(--color-bg-primary); border: 1px solid var(--color-border-primary);
