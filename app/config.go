@@ -17,6 +17,10 @@ const (
 	settingRegistryUsername   = "registry_username"
 	settingRegistryPassword   = "registry_password"
 	settingOTLPHost           = "otlp_host"
+	settingLocalRunnerEnabled = "local_runner_enabled"
+	settingLocalRunnerName    = "local_runner_name"
+	settingLocalRunnerWorkDir = "local_runner_work_dir"
+	settingLocalRunnerMachineID = "local_runner_machine_id"
 )
 
 // Config is the in-memory representation of app settings.

@@ -1,6 +1,10 @@
 package brainbox
 
-import "net/url"
+import (
+	"net/http"
+	"net/url"
+	"time"
+)
 
 // Runner describes a registered remote runner returned by GET /api/runners.
 type Runner struct {
@@ -37,6 +41,74 @@ func (c *Client) ListRunners() ([]Runner, error) {
 // craft invalid request lines for the "Curtis's MacBook Pro (2)" case.
 func (c *Client) DeleteRunner(name string) error {
 	return c.do("DELETE", "/api/runners/"+url.PathEscape(name), nil, nil)
+}
+
+// RegisterRunnerRequest is the body sent to POST /api/runners/register.
+type RegisterRunnerRequest struct {
+	Name          string          `json:"name"`
+	Capabilities  map[string]bool `json:"capabilities"`
+	Host          string          `json:"host,omitempty"`
+	MachineID     string          `json:"machine_id,omitempty"`
+	MaxConcurrent int             `json:"max_concurrent,omitempty"`
+}
+
+// RunnerWorkItem is a single unit of work returned by GET /api/runners/{name}/pending.
+type RunnerWorkItem struct {
+	ID      string         `json:"id"`
+	Kind    string         `json:"kind"`
+	Payload map[string]any `json:"payload"`
+}
+
+// RunnerResult is posted back to POST /api/runners/{name}/result/{id}.
+type RunnerResult struct {
+	OK    bool           `json:"ok"`
+	Data  map[string]any `json:"data,omitempty"`
+	Error string         `json:"error,omitempty"`
+}
+
+// RegisterRunner registers (or re-registers) this runner with the API.
+func (c *Client) RegisterRunner(req RegisterRunnerRequest) error {
+	return c.post("/api/runners/register", req, nil)
+}
+
+// GetPendingWork long-polls for the next work item for the given runner.
+// The server holds the connection open for up to ~30 s; use a 35 s client.
+// Returns nil (no error) on HTTP 204 (no work available).
+func (c *Client) GetPendingWork(name string, longPollClient *http.Client) (*RunnerWorkItem, error) {
+	var item RunnerWorkItem
+	err := c.doWith(longPollClient, "GET", "/api/runners/"+url.PathEscape(name)+"/pending", nil, &item)
+	if err != nil {
+		// 204 No Content comes back as an unmarshal error on empty body — treat as no work.
+		if item.ID == "" {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if item.ID == "" {
+		return nil, nil
+	}
+	return &item, nil
+}
+
+// PostRunnerResult posts the result for a completed work item.
+func (c *Client) PostRunnerResult(name, workID string, result RunnerResult) error {
+	return c.post("/api/runners/"+url.PathEscape(name)+"/result/"+url.PathEscape(workID), result, nil)
+}
+
+// PostRunnerHeartbeat sends a heartbeat to keep the runner registration alive.
+func (c *Client) PostRunnerHeartbeat(name string) error {
+	return c.post("/api/runners/"+url.PathEscape(name)+"/heartbeat", nil, nil)
+}
+
+// PostRunnerEvent sends an incremental event (e.g. stdout chunk) for a work item.
+func (c *Client) PostRunnerEvent(name, workID string, event map[string]any) error {
+	return c.post("/api/runners/"+url.PathEscape(name)+"/event", event, nil)
+}
+
+// longPollHTTPClient returns an HTTP client with a 35-second timeout — slightly
+// longer than the server's 30-second long-poll hold so we don't race it.
+func LongPollHTTPClient() *http.Client {
+	return &http.Client{Timeout: 35 * time.Second}
 }
 
 // StartRunnerPairing issues a one-time pairing token. networkAPIURL is the

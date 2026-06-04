@@ -10,6 +10,7 @@
   import ConversationsPanel from '../panels/ConversationsPanel.svelte';
   import ServicesPanel from '../panels/ServicesPanel.svelte';
   import PlaybooksPanel from '../panels/PlaybooksPanel.svelte';
+  import JobsPanel from '../panels/JobsPanel.svelte';
   import ProfilesPanel from '../panels/ProfilesPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
   import DashboardPanel from '../panels/DashboardPanel.svelte';
@@ -38,6 +39,8 @@
         <ConversationsPanel />
       {:else if currentPanel.value === 'playbooks'}
         <PlaybooksPanel />
+      {:else if currentPanel.value === 'jobs'}
+        <JobsPanel />
       {:else if currentPanel.value === 'profiles'}
         <ProfilesPanel />
       {:else if currentPanel.value === 'settings'}

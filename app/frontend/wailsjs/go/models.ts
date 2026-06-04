@@ -261,6 +261,7 @@ export namespace brainbox {
 	    name: string;
 	    markdown: string;
 	    workspace_profile?: string;
+	    runner?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CreatePlaybookRequest(source);
@@ -271,6 +272,7 @@ export namespace brainbox {
 	        this.name = source["name"];
 	        this.markdown = source["markdown"];
 	        this.workspace_profile = source["workspace_profile"];
+	        this.runner = source["runner"];
 	    }
 	}
 	export class CreateSessionRequest {
@@ -624,6 +626,7 @@ export namespace brainbox {
 	    tasks: PlaybookTask[];
 	    status: string;
 	    workspace_profile: string;
+	    runner?: string;
 	    created_at: number;
 	    started_at?: number;
 	    finished_at?: number;
@@ -640,6 +643,7 @@ export namespace brainbox {
 	        this.tasks = this.convertValues(source["tasks"], PlaybookTask);
 	        this.status = source["status"];
 	        this.workspace_profile = source["workspace_profile"];
+	        this.runner = source["runner"];
 	        this.created_at = source["created_at"];
 	        this.started_at = source["started_at"];
 	        this.finished_at = source["finished_at"];
@@ -903,6 +907,7 @@ export namespace brainbox {
 	export class UpdatePlaybookRequest {
 	    name?: string;
 	    markdown?: string;
+	    runner?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new UpdatePlaybookRequest(source);
@@ -912,6 +917,7 @@ export namespace brainbox {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.markdown = source["markdown"];
+	        this.runner = source["runner"];
 	    }
 	}
 
@@ -1054,6 +1060,11 @@ export namespace main {
 	    last_run_at?: number;
 	    last_error: string;
 	    created_at: number;
+	    target_type: string;
+	    target_id: string;
+	    target_prompt: string;
+	    run_at: string;
+	    days: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CollectJob(source);
@@ -1071,6 +1082,11 @@ export namespace main {
 	        this.last_run_at = source["last_run_at"];
 	        this.last_error = source["last_error"];
 	        this.created_at = source["created_at"];
+	        this.target_type = source["target_type"];
+	        this.target_id = source["target_id"];
+	        this.target_prompt = source["target_prompt"];
+	        this.run_at = source["run_at"];
+	        this.days = source["days"];
 	    }
 	}
 	export class CollectedEntry {
@@ -1386,6 +1402,22 @@ export namespace main {
 	        this.mem_mb = source["mem_mb"];
 	        this.workspace_profile = source["workspace_profile"];
 	        this.workspace_home = source["workspace_home"];
+	    }
+	}
+	export class LocalRunnerStatus {
+	    enabled: boolean;
+	    running: boolean;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LocalRunnerStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.running = source["running"];
+	        this.name = source["name"];
 	    }
 	}
 	export class LogEntry {

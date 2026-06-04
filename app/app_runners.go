@@ -1,10 +1,95 @@
 package main
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"net"
 
 	"phantom-ink/brainbox"
 )
+
+// LocalRunnerStatus is returned by GetLocalRunnerStatus.
+type LocalRunnerStatus struct {
+	Enabled bool   `json:"enabled"`
+	Running bool   `json:"running"`
+	Name    string `json:"name"`
+}
+
+// GetLocalRunnerStatus returns the current local runner configuration and state.
+func (a *App) GetLocalRunnerStatus() LocalRunnerStatus {
+	if a.db == nil {
+		return LocalRunnerStatus{}
+	}
+	return LocalRunnerStatus{
+		Enabled: a.db.GetSetting(settingLocalRunnerEnabled, "") == "true",
+		Running: a.localRunner != nil,
+		Name:    a.db.GetSetting(settingLocalRunnerName, "local-mac"),
+	}
+}
+
+// EnableLocalRunner saves the local runner config and starts the goroutine.
+// workDir is no longer stored here — it is specified per-session at create time
+// via workspace_home in the session payload.
+func (a *App) EnableLocalRunner(name string) error {
+	if name == "" {
+		name = "local-mac"
+	}
+
+	// Generate a stable machine ID if we don't have one.
+	machineID := ""
+	if a.db != nil {
+		machineID = a.db.GetSetting(settingLocalRunnerMachineID, "")
+		if machineID == "" {
+			b := make([]byte, 8)
+			if _, err := rand.Read(b); err == nil {
+				machineID = hex.EncodeToString(b)
+			}
+		}
+	}
+
+	// Stop existing runner if running.
+	a.stopLocalRunner()
+
+	if a.db != nil {
+		_ = a.db.SetSetting(settingLocalRunnerEnabled, "true")
+		_ = a.db.SetSetting(settingLocalRunnerName, name)
+		if machineID != "" {
+			_ = a.db.SetSetting(settingLocalRunnerMachineID, machineID)
+		}
+	}
+
+	runnerCtx, cancel := context.WithCancel(a.ctx)
+	a.localRunnerStop = cancel
+	a.localRunner = newLocalRunner(a.client, name, machineID)
+	a.localRunner.Start(runnerCtx)
+	return nil
+}
+
+// DisableLocalRunner stops and deregisters the local runner.
+func (a *App) DisableLocalRunner() error {
+	if a.db != nil {
+		_ = a.db.SetSetting(settingLocalRunnerEnabled, "false")
+	}
+	a.stopLocalRunner()
+	// Best-effort deregister — ignore errors (runner may already be gone from API).
+	if a.db != nil {
+		name := a.db.GetSetting(settingLocalRunnerName, "local-mac")
+		_ = a.client.DeleteRunner(name)
+	}
+	return nil
+}
+
+func (a *App) stopLocalRunner() {
+	if a.localRunnerStop != nil {
+		a.localRunnerStop()
+		a.localRunnerStop = nil
+	}
+	if a.localRunner != nil {
+		a.localRunner.Wait()
+		a.localRunner = nil
+	}
+}
 
 // ListRunners returns all registered runners on the active API.
 func (a *App) ListRunners() ([]brainbox.Runner, error) {

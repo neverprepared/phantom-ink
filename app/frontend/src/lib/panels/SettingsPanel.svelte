@@ -21,6 +21,12 @@
   let otlpHost = $state('');
   let savingOTLP = $state(false);
 
+  // --- Local Runner ---
+  type LocalRunnerStatus = { enabled: boolean; running: boolean; name: string; work_dir: string };
+  let runnerStatus = $state<LocalRunnerStatus>({ enabled: false, running: false, name: 'local-mac', work_dir: '' });
+  let runnerName = $state('local-mac');
+  let savingRunner = $state(false);
+
   // --- General ---
   let platform = $state('');
   let saving = $state(false);
@@ -31,7 +37,7 @@
     const a = await getApi();
     if (!a) { loaded = true; return; }
     try {
-      const [cfg, plat, reg, olh] = await Promise.all([a.GetConfig(), a.GetPlatform(), a.GetRegistrySettings(), a.GetOTLPHost()]);
+      const [cfg, plat, reg, olh, rs] = await Promise.all([a.GetConfig(), a.GetPlatform(), a.GetRegistrySettings(), a.GetOTLPHost(), a.GetLocalRunnerStatus()]);
       baseURL = cfg?.base_url ?? 'http://127.0.0.1:9999';
       apiKey = cfg?.api_key ?? '';
       workspacesRoot = cfg?.workspaces_root ?? '';
@@ -40,6 +46,8 @@
       registryUsername = reg?.username ?? '';
       registryPassword = reg?.password ?? '';
       otlpHost = olh ?? '';
+      runnerStatus = rs ?? runnerStatus;
+      runnerName = rs?.name ?? 'local-mac';
       applyTheme(theme);
     } catch (err: any) {
       notifications.error(`Failed to load settings: ${err?.message ?? err}`);
@@ -117,6 +125,36 @@
       notifications.error(`Failed to save observability settings: ${err}`);
     } finally {
       savingOTLP = false;
+    }
+  }
+
+  async function handleEnableRunner() {
+    savingRunner = true;
+    const a = await getApi();
+    if (!a) { savingRunner = false; return; }
+    try {
+      await a.EnableLocalRunner(runnerName);
+      runnerStatus = await a.GetLocalRunnerStatus();
+      notifications.success('Local runner started');
+    } catch (err: any) {
+      notifications.error(`Failed to enable runner: ${err}`);
+    } finally {
+      savingRunner = false;
+    }
+  }
+
+  async function handleDisableRunner() {
+    savingRunner = true;
+    const a = await getApi();
+    if (!a) { savingRunner = false; return; }
+    try {
+      await a.DisableLocalRunner();
+      runnerStatus = await a.GetLocalRunnerStatus();
+      notifications.success('Local runner stopped');
+    } catch (err: any) {
+      notifications.error(`Failed to disable runner: ${err}`);
+    } finally {
+      savingRunner = false;
     }
   }
 </script>
@@ -239,6 +277,32 @@
           <button class="btn-save" onclick={handleSaveOTLP} disabled={savingOTLP}>
             {savingOTLP ? 'saving...' : 'save observability settings'}
           </button>
+        </div>
+      </div>
+
+      <!-- Local Runner -->
+      <div class="section">
+        <h2>local runner</h2>
+        <p class="hint" style="margin-bottom: 14px;">runs playbook and chain steps as one-shot <code>claude</code> invocations on this Mac — no Docker, no mounts required</p>
+
+        <div class="field">
+          <label for="runner-name">runner name</label>
+          <input id="runner-name" type="text" bind:value={runnerName} placeholder="local-mac" disabled={runnerStatus.running} />
+          <p class="hint">appears in the session dispatch dropdown as this name</p>
+        </div>
+
+        <div class="runner-status-row">
+          {#if runnerStatus.running}
+            <span class="badge badge-ok">running · {runnerStatus.name}</span>
+            <button class="btn-save" onclick={handleDisableRunner} disabled={savingRunner}>
+              {savingRunner ? 'stopping...' : 'stop runner'}
+            </button>
+          {:else}
+            <span class="badge badge-off">disabled</span>
+            <button class="btn-save" onclick={handleEnableRunner} disabled={savingRunner}>
+              {savingRunner ? 'starting...' : 'enable runner'}
+            </button>
+          {/if}
         </div>
       </div>
 
@@ -404,6 +468,48 @@
   .btn-add:hover {
     border-color: var(--color-accent);
     color: var(--color-accent);
+  }
+
+  /* Local runner */
+  .input-row {
+    display: flex;
+    gap: 8px;
+  }
+  .input-row input { flex: 1; }
+  .btn-browse {
+    background: transparent;
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-md);
+    color: var(--color-text-secondary);
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-browse:hover { border-color: var(--color-accent); color: var(--color-accent); }
+
+  .runner-status-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .badge {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    padding: 3px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid;
+  }
+  .badge-ok {
+    color: var(--color-success);
+    border-color: var(--color-success);
+    background: rgba(34, 197, 94, 0.08);
+  }
+  .badge-off {
+    color: var(--color-text-tertiary);
+    border-color: var(--color-border-secondary);
+    background: transparent;
   }
 
   /* About section */

@@ -23,6 +23,7 @@ type Playbook struct {
 	Tasks            []PlaybookTask `json:"tasks"`
 	Status           string         `json:"status"` // "idle", "running", "completed", "failed", "cancelled"
 	WorkspaceProfile string         `json:"workspace_profile"`
+	Runner           string         `json:"runner,omitempty"` // runner name; empty = in-process API host
 	CreatedAt        int64          `json:"created_at"`
 	StartedAt        *int64         `json:"started_at,omitempty"`
 	FinishedAt       *int64         `json:"finished_at,omitempty"`
@@ -33,6 +34,7 @@ type CreatePlaybookRequest struct {
 	Name             string `json:"name"`
 	Markdown         string `json:"markdown"`
 	WorkspaceProfile string `json:"workspace_profile,omitempty"`
+	Runner           string `json:"runner,omitempty"`
 }
 
 // ListPlaybooks returns playbooks, optionally filtered by profile.
@@ -70,6 +72,7 @@ func (c *Client) CreatePlaybook(req CreatePlaybookRequest) (Playbook, error) {
 type UpdatePlaybookRequest struct {
 	Name     *string `json:"name,omitempty"`
 	Markdown *string `json:"markdown,omitempty"`
+	Runner   *string `json:"runner,omitempty"` // nil = don't change; ptr to "" = clear runner
 }
 
 // UpdatePlaybook updates a playbook's name and/or markdown instructions.
@@ -89,16 +92,14 @@ func (c *Client) DeletePlaybook(id string) error {
 // RunPlaybookRequest is the optional body for POST /api/hub/playbooks/{id}/run.
 type RunPlaybookRequest struct {
 	WorkspaceProfile string `json:"workspace_profile,omitempty"`
+	Runner           string `json:"runner,omitempty"` // overrides playbook's saved runner for this run
 }
 
 // RunPlaybook starts sequential execution of a playbook.
-// workspaceProfile overrides the playbook's saved profile for this run.
-func (c *Client) RunPlaybook(id string, workspaceProfile string) (Playbook, error) {
+// workspaceProfile and runner override the playbook's saved values for this run.
+func (c *Client) RunPlaybook(id, workspaceProfile, runner string) (Playbook, error) {
 	var pb Playbook
-	var body interface{}
-	if workspaceProfile != "" {
-		body = RunPlaybookRequest{WorkspaceProfile: workspaceProfile}
-	}
+	body := RunPlaybookRequest{WorkspaceProfile: workspaceProfile, Runner: runner}
 	if err := c.post(fmt.Sprintf("/api/hub/playbooks/%s/run", id), body, &pb); err != nil {
 		return pb, err
 	}

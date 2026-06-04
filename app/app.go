@@ -29,6 +29,8 @@ type App struct {
 	schedulerStop    context.CancelFunc
 	collectScheduler *collectScheduler
 	collectStop      context.CancelFunc
+	localRunner      *localRunner
+	localRunnerStop  context.CancelFunc
 }
 
 // NewApp creates a new App instance.
@@ -96,6 +98,18 @@ func (a *App) startup(ctx context.Context) {
 		a.collectScheduler = newCollectScheduler(a)
 		a.collectScheduler.Start(collectCtx)
 	}
+
+	// Start local runner if enabled.
+	if a.db != nil {
+		if enabled := a.db.GetSetting(settingLocalRunnerEnabled, ""); enabled == "true" {
+			name := a.db.GetSetting(settingLocalRunnerName, "local-mac")
+			machineID := a.db.GetSetting(settingLocalRunnerMachineID, "")
+			runnerCtx, runnerCancel := context.WithCancel(ctx)
+			a.localRunnerStop = runnerCancel
+			a.localRunner = newLocalRunner(a.client, name, machineID)
+			a.localRunner.Start(runnerCtx)
+		}
+	}
 }
 
 // shutdown is called by Wails when the app closes.
@@ -111,6 +125,9 @@ func (a *App) shutdown(_ context.Context) {
 	if a.collectStop != nil {
 		a.collectStop()
 	}
+	if a.localRunnerStop != nil {
+		a.localRunnerStop()
+	}
 	if a.worker != nil {
 		a.worker.Wait()
 	}
@@ -119,6 +136,9 @@ func (a *App) shutdown(_ context.Context) {
 	}
 	if a.collectScheduler != nil {
 		a.collectScheduler.Wait()
+	}
+	if a.localRunner != nil {
+		a.localRunner.Wait()
 	}
 	if a.sse != nil {
 		a.sse.Stop()
