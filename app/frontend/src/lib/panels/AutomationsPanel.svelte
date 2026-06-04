@@ -65,16 +65,31 @@
 
   // ── Derived ────────────────────────────────────────────────────────────
 
-  // Profile-scoped items for dropdowns
-  let visibleJobs = $derived(jobs.filter(j => (j as any).profile === '' || (j as any).profile === draftProfile));
-  let visiblePlaybooks = $derived(playbooks.filter(p => (p as any).workspace_profile === '' || (p as any).workspace_profile === draftProfile));
-  let visibleChains    = $derived(chains.filter(c => (c as any).workspace_profile === '' || (c as any).workspace_profile === draftProfile));
+  const allProfiles = $derived(profileState.profiles.map(p => p.name));
 
+  // draftProfile must be declared before visible* so the closures resolve correctly
   let draftProfile = $derived.by(() => {
-    if (editingId === 'new') return draft.profile || profile;
+    if (editingId === 'new') return draft.profile;
     const rule = rules.find(r => r.id === editingId);
-    return rule?.profile ?? profile;
+    return rule?.profile ?? '';
   });
+
+  // When draftProfile is '' (global rule), show everything; otherwise show global + that profile
+  let visibleJobs = $derived(
+    !draftProfile
+      ? jobs
+      : jobs.filter(j => !(j as any).profile || (j as any).profile === draftProfile)
+  );
+  let visiblePlaybooks = $derived(
+    !draftProfile
+      ? playbooks
+      : playbooks.filter(p => !(p as any).workspace_profile || (p as any).workspace_profile === draftProfile)
+  );
+  let visibleChains = $derived(
+    !draftProfile
+      ? chains
+      : chains.filter(c => !(c as any).workspace_profile || (c as any).workspace_profile === draftProfile)
+  );
 
   // ── Loading ────────────────────────────────────────────────────────────
 
@@ -111,7 +126,7 @@
 
     const rule: Partial<AutomationRule> = {
       id:             isNew ? '' : (editingId ?? ''),
-      profile:        isNew ? (draft.profile || profile) : (existing?.profile ?? profile),
+      profile:        draft.profile,
       name:           draft.name.trim(),
       description:    draft.description.trim(),
       enabled:        draft.enabled,
@@ -300,6 +315,16 @@
           <input class="form-input" bind:value={draft.name} placeholder="Standup on calendar event" />
         </label>
 
+        <label class="form-row">
+          <span class="form-label">profile</span>
+          <select class="form-select narrow" bind:value={draft.profile}>
+            <option value="">global (all profiles)</option>
+            {#each allProfiles as p (p)}
+              <option value={p}>{p}</option>
+            {/each}
+          </select>
+        </label>
+
         <!-- Trigger type -->
         <div class="form-row">
           <span class="form-label">trigger</span>
@@ -439,6 +464,15 @@
               <label class="form-row">
                 <span class="form-label">name</span>
                 <input class="form-input" bind:value={draft.name} />
+              </label>
+              <label class="form-row">
+                <span class="form-label">profile</span>
+                <select class="form-select narrow" bind:value={draft.profile}>
+                  <option value="">global (all profiles)</option>
+                  {#each allProfiles as p (p)}
+                    <option value={p}>{p}</option>
+                  {/each}
+                </select>
               </label>
               <div class="form-row">
                 <span class="form-label">trigger</span>
