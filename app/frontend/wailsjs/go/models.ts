@@ -1060,6 +1060,11 @@ export namespace main {
 	    last_run_at?: number;
 	    last_error: string;
 	    created_at: number;
+	    target_type: string;
+	    target_id: string;
+	    target_prompt: string;
+	    run_at: string;
+	    days: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CollectJob(source);
@@ -1077,6 +1082,11 @@ export namespace main {
 	        this.last_run_at = source["last_run_at"];
 	        this.last_error = source["last_error"];
 	        this.created_at = source["created_at"];
+	        this.target_type = source["target_type"];
+	        this.target_id = source["target_id"];
+	        this.target_prompt = source["target_prompt"];
+	        this.run_at = source["run_at"];
+	        this.days = source["days"];
 	    }
 	}
 	export class CollectedEntry {

@@ -23,13 +23,20 @@ type CollectJob struct {
 	ID             string `json:"id"`
 	Profile        string `json:"profile"`
 	Name           string `json:"name"`
-	Command        string `json:"command"`
-	IntervalS      int    `json:"interval_s"`
+	Command        string `json:"command"`       // shell target only
+	IntervalS      int    `json:"interval_s"`    // interval scheduling
 	Enabled        bool   `json:"enabled"`
 	DefaultActions string `json:"default_actions"` // raw JSON array
 	LastRunAt      *int64 `json:"last_run_at"`
 	LastError      string `json:"last_error"`
 	CreatedAt      int64  `json:"created_at"`
+	// composable target
+	TargetType   string `json:"target_type"`   // "shell" | "playbook" | "chain" | "runner"
+	TargetID     string `json:"target_id"`     // playbook or chain ID
+	TargetPrompt string `json:"target_prompt"` // prompt text for runner target
+	// time-of-day scheduling (overrides interval_s when set)
+	RunAt string `json:"run_at"` // "HH:MM", e.g. "08:30"
+	Days  string `json:"days"`  // "daily" | "weekdays"
 }
 
 type CollectedEntry struct {
@@ -70,7 +77,8 @@ type scriptEntry struct {
 
 func (db *DB) ListCollectJobs(profile string) ([]CollectJob, error) {
 	q := `SELECT id, profile, name, command, interval_s, enabled, default_actions,
-	             last_run_at, last_error, created_at
+	             last_run_at, last_error, created_at,
+	             target_type, target_id, target_prompt, run_at, days
 	      FROM collect_jobs`
 	args := []any{}
 	if profile != "" {
@@ -88,7 +96,8 @@ func (db *DB) ListCollectJobs(profile string) ([]CollectJob, error) {
 		var j CollectJob
 		var lastRunAt sql.NullInt64
 		if err := rows.Scan(&j.ID, &j.Profile, &j.Name, &j.Command, &j.IntervalS,
-			&j.Enabled, &j.DefaultActions, &lastRunAt, &j.LastError, &j.CreatedAt); err != nil {
+			&j.Enabled, &j.DefaultActions, &lastRunAt, &j.LastError, &j.CreatedAt,
+			&j.TargetType, &j.TargetID, &j.TargetPrompt, &j.RunAt, &j.Days); err != nil {
 			return nil, err
 		}
 		if lastRunAt.Valid {
@@ -103,10 +112,12 @@ func (db *DB) GetCollectJob(id string) (CollectJob, bool) {
 	var j CollectJob
 	var lastRunAt sql.NullInt64
 	err := db.conn.QueryRow(`SELECT id, profile, name, command, interval_s, enabled,
-		default_actions, last_run_at, last_error, created_at
+		default_actions, last_run_at, last_error, created_at,
+		target_type, target_id, target_prompt, run_at, days
 		FROM collect_jobs WHERE id = ?`, id).
 		Scan(&j.ID, &j.Profile, &j.Name, &j.Command, &j.IntervalS, &j.Enabled,
-			&j.DefaultActions, &lastRunAt, &j.LastError, &j.CreatedAt)
+			&j.DefaultActions, &lastRunAt, &j.LastError, &j.CreatedAt,
+			&j.TargetType, &j.TargetID, &j.TargetPrompt, &j.RunAt, &j.Days)
 	if err != nil {
 		return CollectJob{}, false
 	}
@@ -120,18 +131,29 @@ func (db *DB) UpsertCollectJob(j CollectJob) error {
 	if j.DefaultActions == "" {
 		j.DefaultActions = "[]"
 	}
+	if j.TargetType == "" {
+		j.TargetType = "shell"
+	}
 	_, err := db.conn.Exec(`
-		INSERT INTO collect_jobs (id, profile, name, command, interval_s, enabled, default_actions, last_error, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, '', ?)
+		INSERT INTO collect_jobs
+			(id, profile, name, command, interval_s, enabled, default_actions, last_error, created_at,
+			 target_type, target_id, target_prompt, run_at, days)
+		VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			profile         = excluded.profile,
 			name            = excluded.name,
 			command         = excluded.command,
 			interval_s      = excluded.interval_s,
 			enabled         = excluded.enabled,
-			default_actions = excluded.default_actions`,
+			default_actions = excluded.default_actions,
+			target_type     = excluded.target_type,
+			target_id       = excluded.target_id,
+			target_prompt   = excluded.target_prompt,
+			run_at          = excluded.run_at,
+			days            = excluded.days`,
 		j.ID, j.Profile, j.Name, j.Command, j.IntervalS, boolToInt(j.Enabled),
-		j.DefaultActions, j.CreatedAt)
+		j.DefaultActions, j.CreatedAt,
+		j.TargetType, j.TargetID, j.TargetPrompt, j.RunAt, j.Days)
 	return err
 }
 
@@ -294,22 +316,58 @@ func (s *collectScheduler) tick() {
 		fmt.Fprintf(os.Stderr, "collect: list jobs: %v\n", err)
 		return
 	}
-	now := time.Now().UnixMilli()
+	now := time.Now()
 	for _, job := range jobs {
 		if !job.Enabled {
 			continue
 		}
-		intervalMs := int64(job.IntervalS) * 1000
-		if job.LastRunAt != nil && now-*job.LastRunAt < intervalMs {
+		if !collectJobIsDue(job, now) {
 			continue
 		}
 		go s.runJob(job)
 	}
 }
 
+// collectJobIsDue returns true when a job should fire at the given moment.
+// Time-of-day jobs (run_at != "") fire once per day within the matching minute.
+// Interval jobs (run_at == "") fire when enough time has passed since last run.
+func collectJobIsDue(job CollectJob, now time.Time) bool {
+	if job.RunAt != "" {
+		if job.Days == "weekdays" {
+			wd := now.Weekday()
+			if wd == time.Saturday || wd == time.Sunday {
+				return false
+			}
+		}
+		// Parse "HH:MM" and check if now is within that minute today.
+		var h, m int
+		if _, err := fmt.Sscanf(job.RunAt, "%d:%d", &h, &m); err != nil {
+			return false
+		}
+		target := time.Date(now.Year(), now.Month(), now.Day(), h, m, 0, 0, now.Location())
+		if now.Before(target) || now.After(target.Add(time.Minute)) {
+			return false
+		}
+		// Already ran today?
+		if job.LastRunAt != nil {
+			last := time.UnixMilli(*job.LastRunAt)
+			if last.Year() == now.Year() && last.YearDay() == now.YearDay() {
+				return false
+			}
+		}
+		return true
+	}
+	// Interval mode.
+	if job.LastRunAt == nil {
+		return true
+	}
+	elapsed := now.UnixMilli() - *job.LastRunAt
+	return elapsed >= int64(job.IntervalS)*1000
+}
+
 func (s *collectScheduler) runJob(job CollectJob) {
 	now := time.Now().UnixMilli()
-	entries, runErr := s.app.runCollectCommand(job)
+	entries, runErr := s.app.dispatchCollectJob(job)
 	errStr := ""
 	if runErr != nil {
 		errStr = runErr.Error()
@@ -325,6 +383,27 @@ func (s *collectScheduler) runJob(job CollectJob) {
 	}
 	if len(entries) > 0 {
 		s.app.emitCollectUpdate(job.Profile)
+	}
+}
+
+// dispatchCollectJob executes a job according to its target_type.
+// Shell jobs return timeline entries; playbook/chain/runner jobs manage their
+// own output and return nil entries (last_run_at is still recorded).
+func (a *App) dispatchCollectJob(job CollectJob) ([]CollectedEntry, error) {
+	switch job.TargetType {
+	case "playbook":
+		_, err := a.RunPlaybook(job.TargetID, job.Profile, "")
+		return nil, err
+	case "chain":
+		_, err := a.RunChain(job.TargetID, "", "")
+		return nil, err
+	case "runner":
+		// Fire as a one-shot shell command using the local claude binary.
+		runnerJob := job
+		runnerJob.Command = fmt.Sprintf("claude --dangerously-skip-permissions -p %q", job.TargetPrompt)
+		return a.runCollectCommand(runnerJob)
+	default: // "shell" or legacy empty
+		return a.runCollectCommand(job)
 	}
 }
 
@@ -419,7 +498,10 @@ func (a *App) SaveCollectJob(job CollectJob) (CollectJob, error) {
 		job.ID = newCollectJobID()
 		job.CreatedAt = time.Now().UnixMilli()
 	}
-	if job.IntervalS <= 0 {
+	if job.TargetType == "" {
+		job.TargetType = "shell"
+	}
+	if job.IntervalS <= 0 && job.RunAt == "" {
 		job.IntervalS = 300
 	}
 	if err := a.db.UpsertCollectJob(job); err != nil {

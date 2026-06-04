@@ -2,7 +2,7 @@
   import { getApi } from '../utils/api';
   import { onMount } from 'svelte';
   import { brainboxEvents } from '../events.svelte';
-  import { profileState, dashboardState, currentPanel } from '../stores.svelte';
+  import { profileState } from '../stores.svelte';
 
   // ── Types ──────────────────────────────────────────────────────────────
 
@@ -69,39 +69,17 @@
     raw: TaskNode | CollectedEntry;
   }
 
-  interface CollectJob {
-    id: string;
-    profile: string;
-    name: string;
-    command: string;
-    interval_s: number;
-    enabled: boolean;
-    default_actions: string;
-    last_run_at?: number;
-    last_error: string;
-    created_at: number;
-  }
-
   // ── State ──────────────────────────────────────────────────────────────
 
-  let tab        = $state<'stream' | 'tasks' | 'jobs'>('stream');
+  let tab        = $state<'stream' | 'tasks'>('stream');
   let allTasks   = $state<TaskNode[]>([]);
   let collectEntries = $state<CollectedEntry[]>([]);
-  let collectJobs    = $state<CollectJob[]>([]);
   let loading    = $state(true);
   let refreshing = $state(false);
   let expanded   = $state<Set<string>>(new Set());
   let selected   = $state<string | null>(null);
   let tagFilter  = $state('');
   let dispatchMsg = $state('');
-
-  // Jobs tab state
-  let jobsLoading  = $state(false);
-  let editingJobId = $state<string | null>(null);  // null = no edit, 'new' = create form
-  let runningJobId = $state<string | null>(null);
-  let editDraft    = $state({ name: '', command: '', interval_s: 300, enabled: true });
-  let jobsProfile  = $state('');
-  $effect(() => { jobsProfile = profile; });
 
   const profile = $derived(profileState.active?.name ?? '');
 
@@ -212,129 +190,9 @@
     }
   }
 
-  async function loadJobs() {
-    const a = await getApi();
-    if (!a) return;
-    jobsLoading = true;
-    try {
-      collectJobs = ((await (a.ListCollectJobs as any)('')) ?? []) as CollectJob[];
-    } finally {
-      jobsLoading = false;
-    }
-  }
-
-  async function saveJob() {
-    const a = await getApi();
-    if (!a) return;
-    const isNew = editingJobId === 'new';
-    const payload = {
-      id: isNew ? '' : (editingJobId ?? ''),
-      profile: isNew ? (jobsProfile || profile) : (collectJobs.find(j => j.id === editingJobId)?.profile ?? profile),
-      name: editDraft.name.trim(),
-      command: editDraft.command.trim(),
-      interval_s: editDraft.interval_s,
-      enabled: editDraft.enabled,
-      default_actions: '[]',
-      last_error: '',
-      created_at: 0,
-    };
-    if (!payload.name || !payload.command) return;
-    try {
-      await (a.SaveCollectJob as any)(payload);
-      editingJobId = null;
-      await loadJobs();
-    } catch (e: any) {
-      dispatchMsg = `Error: ${e?.message ?? 'save failed'}`;
-      setTimeout(() => { dispatchMsg = ''; }, 4000);
-    }
-  }
-
-  async function deleteJob(id: string) {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      await (a.DeleteCollectJob as any)(id);
-      await loadJobs();
-    } catch {}
-  }
-
-  async function runJobNow(id: string) {
-    const a = await getApi();
-    if (!a) return;
-    runningJobId = id;
-    try {
-      await (a.RunCollectJobNow as any)(id);
-      await loadJobs();
-    } finally {
-      runningJobId = null;
-    }
-  }
-
-  async function toggleJobEnabled(job: CollectJob) {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      await (a.SaveCollectJob as any)({ ...job, enabled: !job.enabled });
-      await loadJobs();
-    } catch {}
-  }
-
-  function startEdit(job: CollectJob) {
-    editingJobId = job.id;
-    editDraft = { name: job.name, command: job.command, interval_s: job.interval_s, enabled: job.enabled };
-  }
-
-  function startNew() {
-    editingJobId = 'new';
-    editDraft = { name: '', command: '', interval_s: 300, enabled: true };
-  }
-
-  function cancelEdit() { editingJobId = null; }
-
-  let addedJobId = $state<string | null>(null);
-
-  async function addJobToWidget(job: CollectJob) {
-    const a = await getApi();
-    if (!a) return;
-    const id = `w-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const widget = {
-      id,
-      kind: 'script-metric' as const,
-      config: {
-        label: job.name,
-        command: job.command,
-        interval: job.interval_s,
-        jobId: job.id,
-        valueType: 'number' as const,
-      },
-      x: 0, y: 0, w: 3, h: 2, minW: 2, minH: 2,
-    };
-    const updated = [...dashboardState.widgets, widget];
-    dashboardState.updateWidgets(updated);
-    try {
-      await a.SaveDashboardLayout(
-        profile,
-        JSON.stringify({ version: 1, widgets: updated }),
-      );
-      addedJobId = job.id;
-      setTimeout(() => { addedJobId = null; }, 2500);
-    } catch {}
-  }
-
-  function fmtLastRun(job: CollectJob): string {
-    if (!job.last_run_at) return 'never';
-    const ms = job.last_run_at;
-    const diff = Date.now() - ms;
-    if (diff < 60_000) return 'just now';
-    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-    return new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric' });
-  }
-
   onMount(() => {
     void load();
-    void loadJobs();
-    const handler = () => { void load(true); void loadJobs(); };
+    const handler = () => void load(true);
     window.runtime?.EventsOn('collect:update', handler);
     return () => window.runtime?.EventsOff('collect:update');
   });
@@ -513,16 +371,6 @@
     return [...set].sort();
   });
 
-  // Jobs tab: profiles + filtered view
-  let jobProfiles = $derived.by(() => {
-    const set = new Set<string>();
-    for (const j of collectJobs) if (j.profile) set.add(j.profile);
-    return [...set].sort();
-  });
-
-  let visibleJobs = $derived(
-    jobsProfile ? collectJobs.filter(j => j.profile === jobsProfile) : collectJobs
-  );
 </script>
 
 <div class="timeline">
@@ -538,7 +386,6 @@
       <div class="tabs">
         <button class="tab" class:active={tab === 'stream'} onclick={() => tab = 'stream'}>Stream</button>
         <button class="tab" class:active={tab === 'tasks'}  onclick={() => tab = 'tasks'}>Tasks</button>
-        <button class="tab" class:active={tab === 'jobs'}   onclick={() => { tab = 'jobs'; void loadJobs(); }}>Jobs</button>
       </div>
     </div>
   </div>
@@ -693,134 +540,6 @@
       </div>
     {/if}
 
-  {:else if tab === 'jobs'}
-    <!-- Collect jobs management -->
-    <!-- Profile filter -->
-    {#if jobProfiles.length > 1}
-      <div class="filter-row">
-        <span class="filter-label">profile</span>
-        <div class="tag-bar inline">
-          <button class="tag" class:active={jobsProfile === ''} onclick={() => jobsProfile = ''}>all</button>
-          {#each jobProfiles as p (p)}
-            <button class="tag" class:active={jobsProfile === p} onclick={() => jobsProfile = jobsProfile === p ? '' : p}>{p}</button>
-          {/each}
-        </div>
-      </div>
-    {/if}
-
-    <div class="jobs-header">
-      <span class="jobs-count">{visibleJobs.length} job{visibleJobs.length !== 1 ? 's' : ''}</span>
-      {#if editingJobId !== 'new'}
-        <button class="jobs-add-btn" onclick={startNew}>+ new job</button>
-      {/if}
-    </div>
-
-    {#if editingJobId === 'new'}
-      <div class="job-form">
-        <div class="form-title">new collect job</div>
-        <label class="form-row">
-          <span class="form-label">name</span>
-          <input class="form-input" bind:value={editDraft.name} placeholder="my calendar" />
-        </label>
-        <label class="form-row">
-          <span class="form-label">command</span>
-          <textarea class="form-textarea" bind:value={editDraft.command} placeholder="script that outputs JSON array" rows="4"></textarea>
-        </label>
-        <label class="form-row">
-          <span class="form-label">interval</span>
-          <div class="interval-row">
-            <input class="form-input short" type="number" min="30" bind:value={editDraft.interval_s} />
-            <span class="form-unit">seconds</span>
-          </div>
-        </label>
-        <div class="form-actions">
-          <button class="form-btn primary" onclick={saveJob} disabled={!editDraft.name || !editDraft.command}>save</button>
-          <button class="form-btn" onclick={cancelEdit}>cancel</button>
-        </div>
-      </div>
-    {/if}
-
-    {#if jobsLoading && collectJobs.length === 0}
-      <div class="empty">loading…</div>
-    {:else if collectJobs.length === 0 && editingJobId !== 'new'}
-      <div class="empty">no collect jobs yet — create one to schedule data collection</div>
-    {:else if visibleJobs.length === 0 && editingJobId !== 'new'}
-      <div class="empty">no jobs for this profile</div>
-    {:else}
-      <div class="job-list">
-        {#each visibleJobs as job (job.id)}
-          <div class="job-card" class:editing={editingJobId === job.id}>
-            {#if editingJobId === job.id}
-              <div class="job-form inline">
-                <label class="form-row">
-                  <span class="form-label">name</span>
-                  <input class="form-input" bind:value={editDraft.name} />
-                </label>
-                <label class="form-row">
-                  <span class="form-label">command</span>
-                  <textarea class="form-textarea" bind:value={editDraft.command} rows="4"></textarea>
-                </label>
-                <label class="form-row">
-                  <span class="form-label">interval</span>
-                  <div class="interval-row">
-                    <input class="form-input short" type="number" min="30" bind:value={editDraft.interval_s} />
-                    <span class="form-unit">seconds</span>
-                  </div>
-                </label>
-                <div class="form-actions">
-                  <button class="form-btn primary" onclick={saveJob} disabled={!editDraft.name || !editDraft.command}>save</button>
-                  <button class="form-btn" onclick={cancelEdit}>cancel</button>
-                </div>
-              </div>
-            {:else}
-              <div class="job-row">
-                <button
-                  class="job-toggle"
-                  class:on={job.enabled}
-                  onclick={() => toggleJobEnabled(job)}
-                  title={job.enabled ? 'disable' : 'enable'}
-                >
-                  {job.enabled ? '●' : '○'}
-                </button>
-                <div class="job-info" role="button" tabindex="0"
-                  onclick={() => startEdit(job)}
-                  onkeydown={(e) => e.key === 'Enter' && startEdit(job)}>
-                  <span class="job-name">{job.name}</span>
-                  <span class="job-cmd">{job.command.split('\n')[0].slice(0, 60)}{job.command.length > 60 ? '…' : ''}</span>
-                  <div class="job-meta-row">
-                    <span class="job-profile">{job.profile}</span>
-                    <span class="job-meta">every {job.interval_s >= 3600 ? `${job.interval_s / 3600}h` : job.interval_s >= 60 ? `${Math.floor(job.interval_s / 60)}m` : `${job.interval_s}s`}</span>
-                    <span class="job-meta">last run: {fmtLastRun(job)}</span>
-                    {#if job.last_error}
-                      <span class="job-err" title={job.last_error}>✗ error</span>
-                    {/if}
-                  </div>
-                </div>
-                <div class="job-btns">
-                  <button
-                    class="job-btn"
-                    onclick={() => addJobToWidget(job)}
-                    title="add to dashboard"
-                    class:added={addedJobId === job.id}
-                  >
-                    {addedJobId === job.id ? '✓' : '+'}
-                  </button>
-                  <button
-                    class="job-btn"
-                    onclick={() => runJobNow(job.id)}
-                    disabled={runningJobId === job.id}
-                    title="run now"
-                  >
-                    {runningJobId === job.id ? '…' : '▶'}
-                  </button>
-                  <button class="job-btn danger" onclick={() => deleteJob(job.id)} title="delete">✕</button>
-                </div>
-              </div>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    {/if}
   {/if}
 </div>
 
@@ -1037,118 +756,4 @@
   .error-row .dv { color: var(--color-error); }
 
   .mono { font-family: var(--font-mono); }
-
-  /* ── Jobs tab ── */
-  .jobs-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding-bottom: var(--spacing-sm);
-  }
-  .jobs-count { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-muted); }
-  .jobs-add-btn {
-    font-family: var(--font-mono); font-size: 11px;
-    padding: 3px 10px; border-radius: var(--radius-sm);
-    border: 1px solid var(--color-accent); background: rgba(234,179,8,0.06);
-    color: var(--color-accent); cursor: pointer;
-  }
-  .jobs-add-btn:hover { background: rgba(234,179,8,0.12); }
-
-  .job-list { display: flex; flex-direction: column; gap: var(--spacing-sm); }
-
-  .job-card {
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-md);
-    background: var(--color-bg-secondary);
-    overflow: hidden;
-    transition: border-color 100ms;
-  }
-  .job-card:hover { border-color: var(--color-border-secondary); }
-  .job-card.editing { border-color: var(--color-accent); }
-
-  .job-row {
-    display: grid; grid-template-columns: 24px 1fr auto;
-    align-items: center; gap: var(--spacing-md);
-    padding: var(--spacing-md) var(--spacing-lg);
-  }
-
-  .job-toggle {
-    background: none; border: none; cursor: pointer;
-    font-size: 14px; font-family: var(--font-mono);
-    color: var(--color-text-muted); padding: 0;
-    line-height: 1; transition: color 100ms;
-  }
-  .job-toggle.on { color: var(--color-success); }
-  .job-toggle:hover { opacity: 0.7; }
-
-  .job-info {
-    display: flex; flex-direction: column; gap: 3px;
-    min-width: 0; cursor: pointer;
-  }
-  .job-name { font-size: 13px; font-weight: 500; color: var(--color-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .job-cmd { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .job-meta-row { display: flex; gap: var(--spacing-md); align-items: center; }
-  .job-meta { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-tertiary); }
-  .job-profile { font-family: var(--font-mono); font-size: 10px; color: var(--color-accent); background: rgba(234,179,8,0.08); border: 1px solid rgba(234,179,8,0.2); border-radius: 999px; padding: 1px 6px; }
-  .job-err { font-family: var(--font-mono); font-size: 10px; color: var(--color-error); }
-
-  .job-btns { display: flex; gap: 4px; flex-shrink: 0; }
-  .job-btn {
-    background: none; border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-sm); padding: 3px 8px;
-    font-size: 11px; cursor: pointer; color: var(--color-text-muted);
-    transition: all 100ms; font-family: var(--font-mono);
-  }
-  .job-btn:hover:not(:disabled) { border-color: var(--color-accent); color: var(--color-accent); }
-  .job-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .job-btn.danger:hover:not(:disabled) { border-color: var(--color-error); color: var(--color-error); }
-  .job-btn.added { border-color: var(--color-success); color: var(--color-success); }
-
-  /* Job form */
-  .job-form {
-    display: flex; flex-direction: column; gap: var(--spacing-md);
-    padding: var(--spacing-lg);
-    border: 1px solid var(--color-accent);
-    border-radius: var(--radius-md);
-    background: var(--color-bg-secondary);
-  }
-  .job-form.inline { border: none; border-radius: 0; }
-
-  .form-title { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
-
-  .form-row { display: flex; flex-direction: column; gap: 4px; }
-  .form-label { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-muted); }
-
-  .form-input {
-    background: var(--color-bg-primary); border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-sm); padding: 6px 8px;
-    font-size: 12px; color: var(--color-text-primary); font-family: inherit;
-    width: 100%;
-  }
-  .form-input:focus { outline: none; border-color: var(--color-accent); }
-  .form-input.short { width: 80px; }
-
-  .form-textarea {
-    background: var(--color-bg-primary); border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-sm); padding: 6px 8px;
-    font-size: 11px; font-family: var(--font-mono);
-    color: var(--color-text-primary); width: 100%; resize: vertical;
-  }
-  .form-textarea:focus { outline: none; border-color: var(--color-accent); }
-
-  .interval-row { display: flex; align-items: center; gap: var(--spacing-sm); }
-  .form-unit { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-muted); }
-
-  .form-actions { display: flex; gap: var(--spacing-sm); }
-  .form-btn {
-    font-family: var(--font-mono); font-size: 11px;
-    padding: 4px 12px; border-radius: var(--radius-sm);
-    border: 1px solid var(--color-border-primary);
-    background: none; cursor: pointer; color: var(--color-text-secondary);
-    transition: all 100ms;
-  }
-  .form-btn:hover:not(:disabled) { border-color: var(--color-border-secondary); color: var(--color-text-primary); }
-  .form-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .form-btn.primary {
-    background: var(--color-accent); border-color: var(--color-accent); color: #000; font-weight: 600;
-  }
-  .form-btn.primary:hover:not(:disabled) { opacity: 0.85; }
 </style>

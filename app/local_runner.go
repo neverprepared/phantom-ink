@@ -29,7 +29,10 @@ type localRunner struct {
 	stopCh  chan struct{}
 	stopped chan struct{}
 
-	procs sync.Map // sessionName → *exec.Cmd (for session.stop/delete)
+	procs    sync.Map // sessionName → *exec.Cmd (for session.stop/delete)
+	workDirs sync.Map // sessionName → string (working dir from session.create)
+	tabs     sync.Map // playbookKey → tty string (reuse one tab per playbook run)
+	accums   sync.Map // playbookKey → *stepAccum (batch steps before sending)
 }
 
 func newLocalRunner(client *brainbox.Client, name, machineID string) *localRunner {
@@ -144,6 +147,11 @@ func (r *localRunner) handleWork(ctx context.Context, item *brainbox.RunnerWorkI
 	switch item.Kind {
 	case "session.create":
 		result = r.handleSessionCreate(item)
+	case "session.exec":
+		// _wait_for_session probes the container with exec before sending the
+		// real query. For local sessions there is no container, so we return
+		// the "claude_ready" sentinel immediately so the wait loop unblocks.
+		result = brainbox.RunnerResult{OK: true, Data: map[string]any{"output": "claude_ready", "success": true}}
 	case "session.query":
 		result = r.handleSessionQuery(ctx, item)
 	case "session.stop", "session.delete":
@@ -157,9 +165,9 @@ func (r *localRunner) handleWork(ctx context.Context, item *brainbox.RunnerWorkI
 	}
 }
 
-// handleSessionCreate opens an iTerm2 tab with `claude` running in the
-// session's working directory and immediately returns a SessionContext so the
-// API endpoint unblocks. The process runs interactively in the terminal.
+// handleSessionCreate registers a local session and returns a SessionContext
+// immediately. No terminal is opened here — the terminal opens during
+// session.query when the actual task runs visibly.
 func (r *localRunner) handleSessionCreate(item *brainbox.RunnerWorkItem) brainbox.RunnerResult {
 	sessionName, _ := item.Payload["session_name"].(string)
 	if sessionName == "" {
@@ -179,10 +187,20 @@ func (r *localRunner) handleSessionCreate(item *brainbox.RunnerWorkItem) brainbo
 	}
 	workspaceProfile, _ := item.Payload["workspace_profile"].(string)
 
-	// Open an iTerm2 tab so the user can interact with the session.
-	if err := openLocalSessionTab(workDir); err != nil {
-		fmt.Printf("local runner open terminal: %v\n", err)
-		// Non-fatal — session is still registered even if terminal open fails.
+	// Remember the working directory so session.query can use it.
+	if sessionName != "" {
+		r.workDirs.Store(sessionName, workDir)
+	}
+
+	// Open a terminal tab once per playbook run with Claude running interactively.
+	// cd first so direnv fires and exports env vars before Claude starts.
+	key := playbookKey(sessionName)
+	if _, exists := r.tabs.Load(key); !exists {
+		if tty, err := openTabGetTTY(); err == nil && tty != "" {
+			r.tabs.Store(key, tty)
+			time.Sleep(300 * time.Millisecond) // let the shell initialize
+			_ = writeToTab(tty, fmt.Sprintf("cd %q && claude --dangerously-skip-permissions", workDir))
+		}
 	}
 
 	// Return a SessionContext that satisfies the API's Pydantic model.
@@ -208,9 +226,59 @@ func (r *localRunner) handleSessionCreate(item *brainbox.RunnerWorkItem) brainbo
 	}
 }
 
-// handleSessionQuery runs a one-shot `claude -p` invocation and returns the output.
-// Used by playbook and chain steps.
-func (r *localRunner) handleSessionQuery(ctx context.Context, item *brainbox.RunnerWorkItem) brainbox.RunnerResult {
+// stepAccum batches playbook step prompts that arrive in a quick burst (now
+// that _wait_for_session is skipped for runner sessions) and fires a single
+// instruction to Claude once the burst settles.
+type stepAccum struct {
+	mu     sync.Mutex
+	steps  []string
+	timer  *time.Timer
+	runner *localRunner
+	key    string
+}
+
+// flushDelay is how long after the last step arrives before flushing. Must be
+// longer than the remote API round-trip time (create→query→stop→delete) so all
+// steps from a single playbook run land in the same batch before we fire.
+const flushDelay = 3 * time.Second
+
+func (a *stepAccum) add(step string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.steps = append(a.steps, step)
+	if a.timer != nil {
+		a.timer.Reset(flushDelay)
+	}
+}
+
+func (a *stepAccum) flush() {
+	a.mu.Lock()
+	steps := make([]string, len(a.steps))
+	copy(steps, a.steps)
+	a.mu.Unlock()
+
+	a.runner.accums.Delete(a.key)
+
+	tabTTY := ""
+	if v, ok := a.runner.tabs.Load(a.key); ok {
+		tabTTY, _ = v.(string)
+	}
+	if tabTTY == "" || len(steps) == 0 {
+		return
+	}
+
+	// Give Claude time to finish starting up before sending the prompt.
+	time.Sleep(2 * time.Second)
+	if err := writeToTab(tabTTY, strings.Join(steps, "\n\n")); err != nil {
+		fmt.Printf("local runner: write to tab: %v\n", err)
+		a.runner.tabs.Delete(a.key)
+	}
+}
+
+// handleSessionQuery accumulates the step prompt and returns immediately.
+// Once the burst of steps stops, stepAccum.flush writes one file and sends
+// a single instruction to Claude.
+func (r *localRunner) handleSessionQuery(_ context.Context, item *brainbox.RunnerWorkItem) brainbox.RunnerResult {
 	prompt, _ := item.Payload["prompt"].(string)
 	if prompt == "" {
 		prompt, _ = item.Payload["task_description"].(string)
@@ -219,20 +287,58 @@ func (r *localRunner) handleSessionQuery(ctx context.Context, item *brainbox.Run
 		return brainbox.RunnerResult{OK: false, Error: "missing prompt"}
 	}
 
-	workDir, _ := item.Payload["workspace_home"].(string)
-	if workDir == "" {
-		workDir = os.Getenv("HOME")
+	sessionName, _ := item.Payload["session_name"].(string)
+	key := playbookKey(sessionName)
+
+	tabTTY := ""
+	if v, ok := r.tabs.Load(key); ok {
+		tabTTY, _ = v.(string)
+	}
+	if tabTTY == "" {
+		workDir := r.resolveWorkDir(sessionName, item)
+		ttl := resolveTTL(item)
+		return r.runQuerySubprocess(context.Background(), prompt, workDir, sessionName, ttl)
 	}
 
-	ttl := 600 * time.Second
+	actual, _ := r.accums.LoadOrStore(key, &stepAccum{runner: r, key: key})
+	accum := actual.(*stepAccum)
+	accum.add(prompt)
+
+	accum.mu.Lock()
+	if accum.timer == nil {
+		accum.timer = time.AfterFunc(flushDelay, accum.flush)
+	}
+	accum.mu.Unlock()
+
+	return brainbox.RunnerResult{OK: true, Data: map[string]any{"output": ""}}
+}
+
+func (r *localRunner) resolveWorkDir(sessionName string, item *brainbox.RunnerWorkItem) string {
+	if sessionName != "" {
+		if v, ok := r.workDirs.Load(sessionName); ok {
+			if d, _ := v.(string); d != "" {
+				return d
+			}
+		}
+	}
+	if d, _ := item.Payload["workspace_home"].(string); d != "" {
+		return d
+	}
+	return os.Getenv("HOME")
+}
+
+func resolveTTL(item *brainbox.RunnerWorkItem) time.Duration {
 	if v, ok := item.Payload["ttl"].(float64); ok && v > 0 {
-		ttl = time.Duration(v) * time.Second
+		return time.Duration(v) * time.Second
 	}
+	return 600 * time.Second
+}
 
+// runQuerySubprocess is the fallback when no terminal app is available. Runs
+// claude -p as a background subprocess and captures output directly.
+func (r *localRunner) runQuerySubprocess(ctx context.Context, prompt, workDir, sessionName string, ttl time.Duration) brainbox.RunnerResult {
 	execCtx, cancel := context.WithTimeout(ctx, ttl)
 	defer cancel()
-
-	sessionName, _ := item.Payload["session_name"].(string)
 
 	cmd := exec.CommandContext(execCtx, "claude", "--dangerously-skip-permissions", "-p", prompt)
 	cmd.Dir = workDir
@@ -269,60 +375,165 @@ func (r *localRunner) handleSessionStop(item *brainbox.RunnerWorkItem) brainbox.
 			}
 			r.procs.Delete(sessionName)
 		}
+		r.workDirs.Delete(sessionName)
 	}
 	return brainbox.RunnerResult{OK: true}
 }
 
-// openLocalSessionTab opens a new terminal tab in iTerm2 (or Terminal.app as
-// fallback) running `claude --dangerously-skip-permissions` in workDir.
-func openLocalSessionTab(workDir string) error {
-	for _, c := range workDir {
-		if c == '"' || c == '\\' || c < 0x20 || c > 0x7e {
-			return fmt.Errorf("invalid character in workDir")
-		}
+// playbookKey extracts a group key from a session name so that all steps of
+// the same playbook run share a single terminal tab.
+// "pb-abc123-t0" → "pb-abc123", anything else → sessionName unchanged.
+func playbookKey(sessionName string) string {
+	parts := strings.Split(sessionName, "-")
+	if len(parts) >= 3 && parts[0] == "pb" {
+		return parts[0] + "-" + parts[1]
 	}
+	return sessionName
+}
+
+// openTabGetTTY opens a new iTerm2 tab and returns its TTY path.
+func openTabGetTTY() (string, error) {
+	script := `
+try
+	tell application "iTerm2"
+		activate
+		if (count of windows) = 0 then
+			create window with default profile
+		end if
+		tell current window
+			create tab with default profile
+			return tty of current session of current tab
+		end tell
+	end tell
+on error err
+	return ""
+end try`
+	out, err := exec.Command("osascript", "-e", script).Output()
+	if err != nil {
+		return "", err
+	}
+	tty := strings.TrimSpace(string(out))
+	if tty == "" {
+		return "", fmt.Errorf("empty TTY returned from iTerm2")
+	}
+	// Normalize: iTerm2 may return "ttys001" or "/dev/ttys001".
+	if !strings.HasPrefix(tty, "/dev/") {
+		tty = "/dev/" + tty
+	}
+	return tty, nil
+}
+
+// writeToTab sends a line of text (followed by Enter) to the iTerm2 session
+// identified by tty. The cmd must not contain newlines.
+func writeToTab(tty, cmd string) error {
+	// Escape backslashes and double-quotes for AppleScript string literal.
+	escaped := strings.ReplaceAll(cmd, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+
+	script := fmt.Sprintf(`
+try
+	tell application "iTerm2"
+		repeat with w in windows
+			repeat with t in tabs of w
+				repeat with s in sessions of t
+					if tty of s is "%s" then
+						tell s
+							write text "%s" newline NO
+							delay 0.05
+							write text "" newline YES
+						end tell
+						return "ok"
+					end if
+				end repeat
+			end repeat
+		end repeat
+	end tell
+	return "not_found"
+on error
+	return "err"
+end try`, tty, escaped)
+
+	out, err := exec.Command("osascript", "-e", script).Output()
+	if err != nil {
+		return err
+	}
+	result := strings.TrimSpace(string(out))
+	if result != "ok" {
+		return fmt.Errorf("writeToTab: %s (tty=%s)", result, tty)
+	}
+	return nil
+}
+
+// openLocalSessionTab opens a new terminal tab running `claude --dangerously-skip-permissions`
+// interactively in workDir. Called for user-initiated local sessions.
+func openLocalSessionTab(workDir string) error {
 	if workDir == "" {
 		workDir = "~"
 	}
+	// Write a tiny script so we don't embed workDir (which may contain
+	// double-quotes) directly in the AppleScript write text call.
+	f, err := os.CreateTemp("", "local-session-*.sh")
+	if err != nil {
+		return err
+	}
+	scriptPath := f.Name()
+	fmt.Fprintf(f, "#!/bin/bash\ncd %q\nexec claude --dangerously-skip-permissions\n", workDir)
+	f.Chmod(0755)
+	f.Close()
+	return runInNewTerminalTab("bash " + scriptPath)
+	// Script file is intentionally not removed — it lives until the session ends.
+}
 
+// runInNewTerminalTab opens a new iTerm2 (or Terminal.app) tab and runs cmd.
+// cmd must contain no double-quote characters (use a script file path instead).
+func runInNewTerminalTab(cmd string) error {
+	// Reject any double-quotes in cmd — callers must use a script file path.
+	if strings.ContainsRune(cmd, '"') {
+		return fmt.Errorf("runInNewTerminalTab: cmd must not contain double-quotes")
+	}
+
+	// Try iTerm2 first. Tell it directly — no System Events process-existence
+	// guard, which can silently fail when iTerm2 is running but not frontmost.
 	itermScript := fmt.Sprintf(`
-tell application "System Events"
-	if exists (process "iTerm2") then
-		tell application "iTerm2"
-			activate
-			tell current window
-				create tab with default profile
-				tell current session
-					write text "cd \"%s\" && claude --dangerously-skip-permissions"
-				end tell
+try
+	tell application "iTerm2"
+		activate
+		if (count of windows) = 0 then
+			create window with default profile
+		end if
+		tell current window
+			create tab with default profile
+			tell current session of current tab
+				write text "%s"
 			end tell
 		end tell
-		return "ok"
-	end if
-end tell
-return "not_found"`, workDir)
+	end tell
+	return "ok"
+on error
+	return "err"
+end try`, cmd)
 
 	out, err := exec.Command("osascript", "-e", itermScript).Output()
 	if err == nil && strings.TrimSpace(string(out)) == "ok" {
 		return nil
 	}
 
+	// Fall back to Terminal.app.
 	termScript := fmt.Sprintf(`
-tell application "System Events"
-	if exists (process "Terminal") then
-		tell application "Terminal"
-			activate
-			do script "cd \"%s\" && claude --dangerously-skip-permissions"
-		end tell
-		return "ok"
-	end if
-end tell
-return "not_found"`, workDir)
+try
+	tell application "Terminal"
+		activate
+		do script "%s"
+	end tell
+	return "ok"
+on error
+	return "err"
+end try`, cmd)
 
 	out, err = exec.Command("osascript", "-e", termScript).Output()
 	if err == nil && strings.TrimSpace(string(out)) == "ok" {
 		return nil
 	}
 
-	return fmt.Errorf("no iTerm2 or Terminal.app found")
+	return fmt.Errorf("no iTerm2 or Terminal.app available")
 }

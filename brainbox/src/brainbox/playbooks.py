@@ -245,8 +245,10 @@ async def _run_task(pb: Playbook, task: PlaybookTask, *, run_profile: str = "glo
             resp.raise_for_status()
 
             try:
-                # Wait for Claude Code to be ready inside the container
-                await _wait_for_session(client, session_name, api_key)
+                # Runner-backed sessions signal readiness via session.exec;
+                # no container tmux setup needed — skip the wait entirely.
+                if not run_runner:
+                    await _wait_for_session(client, session_name, api_key)
 
                 # Send the task prompt
                 resp = await client.post(

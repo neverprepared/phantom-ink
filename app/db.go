@@ -230,6 +230,26 @@ var migrations = []migration{
 	{version: 13, sql: `
 		ALTER TABLE profile_images ADD COLUMN env_key TEXT NOT NULL DEFAULT '';
 	`},
+	// v14: composable job targets and time-of-day scheduling.
+	// target_type: "shell" | "playbook" | "chain" | "runner"
+	// target_id: playbook or chain ID (target_type != shell)
+	// target_prompt: prompt text (target_type == runner)
+	// run_at: "HH:MM" — fire once per day at this time (overrides interval_s)
+	// days: "daily" | "weekdays" — applies when run_at is set
+	{version: 14, fn: func(conn *sql.DB) error {
+		for _, col := range []struct{ name, def string }{
+			{"target_type", "TEXT NOT NULL DEFAULT 'shell'"},
+			{"target_id", "TEXT NOT NULL DEFAULT ''"},
+			{"target_prompt", "TEXT NOT NULL DEFAULT ''"},
+			{"run_at", "TEXT NOT NULL DEFAULT ''"},
+			{"days", "TEXT NOT NULL DEFAULT ''"},
+		} {
+			if err := addColumnIfMissing(conn, "collect_jobs", col.name, col.def); err != nil {
+				return err
+			}
+		}
+		return nil
+	}},
 	{version: 11, sql: `
 		CREATE TABLE IF NOT EXISTS collect_jobs (
 			id              TEXT PRIMARY KEY,

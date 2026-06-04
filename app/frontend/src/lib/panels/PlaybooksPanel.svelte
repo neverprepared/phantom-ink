@@ -47,20 +47,33 @@
   // delete confirmation
   let pendingDelete = $state<Playbook | null>(null);
 
+  // list expansion
+  let expandedId = $state<string | null>(null);
+
+  // profile vs global tab — only meaningful when a profile is active
+  let scopeTab = $state<'profile' | 'global'>('profile');
+
   const activeProfileName = $derived(profileState.active?.name ?? '');
   const scopeLabel = $derived(activeProfileName || 'all');
+  const hasProfile = $derived(!!activeProfileName);
 
   const active = $derived(activeId ? playbooks.find((p) => p.id === activeId) ?? null : null);
 
   const filtered = $derived(
     (() => {
       const q = query.trim().toLowerCase();
-      if (!q) return playbooks;
-      return playbooks.filter(
+      const all = !q ? playbooks : playbooks.filter(
         (p) => (p.name + ' ' + (p.markdown ?? '') + ' ' + (p.workspace_profile ?? '')).toLowerCase().includes(q),
       );
+      if (!hasProfile) return all;
+      return scopeTab === 'global'
+        ? all.filter((p) => p.workspace_profile === 'global')
+        : all.filter((p) => p.workspace_profile !== 'global');
     })(),
   );
+
+  const profileCount = $derived(playbooks.filter((p) => p.workspace_profile !== 'global').length);
+  const globalCount = $derived(playbooks.filter((p) => p.workspace_profile === 'global').length);
 
   async function load() {
     loading = true;
@@ -126,6 +139,17 @@
       notifications.success(`running · ${pb.name}${runner ? ` on ${runner}` : ''}`);
     } catch (e: any) {
       notifications.error(`Failed to run: ${e?.message ?? e}`);
+    }
+  }
+
+  async function cancelPlaybook(pb: Playbook) {
+    try {
+      const api = await getApi();
+      await api.CancelPlaybook(pb.id);
+      await load();
+      notifications.success(`cancelled · ${pb.name}`);
+    } catch (e: any) {
+      notifications.error(`Failed to cancel: ${e?.message ?? e}`);
     }
   }
 
@@ -206,63 +230,76 @@
         <div class="filter" style="margin:0;width:260px;">
           <input bind:value={query} placeholder="search recipes…" />
         </div>
-        <button class="btn primary" onclick={() => { showCreate = true; newScope = activeProfileName ? 'profile' : 'global'; }}>+ new playbook</button>
+        <button class="btn primary" onclick={() => { showCreate = true; newScope = activeProfileName ? (scopeTab === 'global' ? 'global' : 'profile') : 'global'; }}>+ new playbook</button>
       </div>
     </div>
-    <p style="color: var(--text-faint); font-size: 13px; margin: -4px 0 22px;">
+    <p style="color: var(--text-faint); font-size: 13px; margin: -4px 0 16px;">
       Reusable recipes — one unit of work each. Compose several into a pipeline over in Chains.
     </p>
+
+    {#if hasProfile}
+      <div class="pb-tabs">
+        <button
+          class="pb-tab"
+          class:pb-tab--active={scopeTab === 'profile'}
+          onclick={() => { scopeTab = 'profile'; expandedId = null; }}
+        >{activeProfileName} <span class="pb-tab-count">{profileCount}</span></button>
+        <button
+          class="pb-tab"
+          class:pb-tab--active={scopeTab === 'global'}
+          onclick={() => { scopeTab = 'global'; expandedId = null; }}
+        >global <span class="pb-tab-count">{globalCount}</span></button>
+      </div>
+    {/if}
 
     {#if loading}
       <p style="color: var(--text-faint);">loading…</p>
     {:else if filtered.length === 0}
       <div class="card" style="padding: 48px; text-align: center; color: var(--text-faint);">
         <div style="margin-top: 12px; font-size: 14px; color: var(--text-muted);">
-          {query ? `no playbooks match "${query}"` : `no playbooks on ${scopeLabel} yet`}
+          {query ? `no playbooks match "${query}"` : `no ${scopeTab === 'global' ? 'global' : activeProfileName} playbooks yet`}
         </div>
       </div>
     {:else}
-      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 380px)); gap: 16px;">
+      <div class="pb-list">
         {#each filtered as pb (pb.id)}
-          <div
-            class="card"
-            onclick={() => (activeId = pb.id)}
-            role="button"
-            tabindex="0"
-            onkeydown={(e) => { if (e.key === 'Enter') activeId = pb.id; }}
-            style="padding:18px;display:flex;flex-direction:column;gap:12px;border-left:3px solid var(--task);cursor:pointer;max-height:260px;"
-          >
-            <div style="display:flex;flex-direction:column;gap:0;min-height:0;flex:1;">
-              <div style="display:flex;align-items:center;gap:9px;flex-shrink:0;">
-                <span style="color: var(--task); font-size:16px;">✓</span>
-                <span style="font-size:15.5px;font-weight:700;flex:1;color: var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{pb.name}</span>
-                <span class="mono tag" style="flex-shrink:0;">{stepCount(pb)} steps</span>
+          {@const expanded = expandedId === pb.id}
+          <div class="pb-row" class:pb-row--expanded={expanded}>
+            <div
+              class="pb-row-header"
+              role="button"
+              tabindex="0"
+              onclick={() => (expandedId = expanded ? null : pb.id)}
+              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') expandedId = expanded ? null : pb.id; }}
+            >
+              <span class="pb-chevron mono">{expanded ? '⌄' : '›'}</span>
+              <span class="pb-check">✓</span>
+              <span class="pb-name">{pb.name}</span>
+              <div class="pb-tags">
+                <span class="mono tag" style="color: var(--run); border-color: color-mix(in srgb, var(--run) 35%, var(--border));">{pb.status}</span>
+                {#if pb.runner}
+                  <span class="mono tag" title="runs on {pb.runner}">⚙ {pb.runner}</span>
+                {/if}
+                <span class="mono tag">{stepCount(pb)} steps</span>
               </div>
-              <div style="flex:1;overflow-y:auto;margin-top:8px;min-height:0;">
-                <p class="mono" style="font-size:11.5px;color: var(--text-muted);line-height:1.6;margin:0;white-space:pre-wrap;word-break:break-word;">{(pb.markdown ?? '').trim()}</p>
-              </div>
-            </div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;">
-              <span class="mono tag" style="color: var(--run); border-color: color-mix(in srgb, var(--run) 35%, var(--border));">{pb.status}</span>
-              {#if pb.workspace_profile && pb.workspace_profile !== 'global'}
-                <span class="mono tag" style="color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--bg));">{pb.workspace_profile}</span>
-              {:else}
-                <span class="mono tag">global</span>
-              {/if}
-              {#if pb.runner}
-                <span class="mono tag" style="color: var(--text-muted); border-color: var(--border);" title="runs on {pb.runner}">⚙ {pb.runner}</span>
-              {/if}
-            </div>
-            <div style="display:flex;align-items:center;gap:10px;border-top:1px solid var(--border);padding-top:12px;">
-              <span class="mono" style="font-size:11px;color: var(--text-faint);">
-                {#if pb.started_at}last: {new Date(pb.started_at).toLocaleString()}{:else}never run{/if}
-              </span>
-              <div style="margin-left:auto;display:flex;gap:6px;">
-                <button class="btn ghost sm" onclick={(e) => { e.stopPropagation(); activeId = pb.id; }} title="edit">edit</button>
-                <button class="btn primary sm" onclick={(e) => { e.stopPropagation(); runPlaybook(pb); }}>▶ run</button>
-                <button class="btn ghost sm" onclick={(e) => { e.stopPropagation(); pendingDelete = pb; }} title="delete">×</button>
+              <div class="pb-actions">
+                <button class="btn ghost sm" onclick={(e) => { e.stopPropagation(); activeId = pb.id; }}>edit</button>
+                {#if pb.status === 'running'}
+                  <button class="btn danger sm" onclick={(e) => { e.stopPropagation(); cancelPlaybook(pb); }}>■ stop</button>
+                {:else}
+                  <button class="btn primary sm" onclick={(e) => { e.stopPropagation(); runPlaybook(pb); }}>▶ run</button>
+                {/if}
+                <button class="btn ghost sm" onclick={(e) => { e.stopPropagation(); pendingDelete = pb; }}>×</button>
               </div>
             </div>
+            {#if expanded}
+              <div class="pb-detail">
+                <p class="mono" style="font-size:11.5px;color:var(--text-muted);line-height:1.7;margin:0;white-space:pre-wrap;word-break:break-word;">{(pb.markdown ?? '').trim()}</p>
+                {#if pb.started_at}
+                  <p class="mono" style="font-size:11px;color:var(--text-faint);margin:10px 0 0;">last run: {new Date(pb.started_at).toLocaleString()}</p>
+                {/if}
+              </div>
+            {/if}
           </div>
         {/each}
       </div>
@@ -291,7 +328,11 @@
           {/each}
         </select>
         <button class="btn ghost sm" onclick={() => (pendingDelete = active!)}>delete</button>
-        <button class="btn primary sm" onclick={() => runPlaybook(active!, editRunner)}>▶ run</button>
+        {#if active.status === 'running'}
+          <button class="btn danger sm" onclick={() => cancelPlaybook(active!)}>■ stop</button>
+        {:else}
+          <button class="btn primary sm" onclick={() => runPlaybook(active!, editRunner)}>▶ run</button>
+        {/if}
       </div>
     </div>
     <p style="color: var(--text-faint); font-size: 13px; margin: 0 0 22px;">
@@ -405,5 +446,126 @@
     border-radius: 99px;
     text-transform: lowercase;
     letter-spacing: .04em;
+  }
+
+  /* scope tabs */
+  .pb-tabs {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .pb-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    margin-bottom: -1px;
+    transition: color 0.1s, border-color 0.1s;
+  }
+  .pb-tab:hover {
+    color: var(--text);
+  }
+  .pb-tab--active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+  .pb-tab-count {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 99px;
+    background: var(--bg-sunken);
+    color: var(--text-faint);
+  }
+  .pb-tab--active .pb-tab-count {
+    background: color-mix(in srgb, var(--accent) 15%, var(--bg-sunken));
+    color: var(--accent);
+  }
+
+  /* compact list layout */
+  .pb-list {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    overflow: hidden;
+  }
+  .pb-row {
+    border-bottom: 1px solid var(--border);
+  }
+  .pb-row:last-child {
+    border-bottom: none;
+  }
+  .pb-row-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    cursor: pointer;
+    user-select: none;
+    background: var(--bg-elev);
+    transition: background 0.1s;
+  }
+  .pb-row-header:hover {
+    background: color-mix(in srgb, var(--accent) 6%, var(--bg-elev));
+  }
+  .pb-row--expanded .pb-row-header {
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg-elev));
+    border-bottom: 1px solid var(--border);
+  }
+  .pb-chevron {
+    font-size: 13px;
+    color: var(--text-faint);
+    min-width: 14px;
+    text-align: center;
+    line-height: 1;
+  }
+  .pb-check {
+    font-size: 11px;
+    color: var(--run);
+    min-width: 14px;
+    text-align: center;
+    opacity: 0.7;
+  }
+  .pb-name {
+    font-size: 13px;
+    color: var(--text);
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .pb-tags {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .pb-actions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex-shrink: 0;
+    margin-left: 4px;
+  }
+  .pb-detail {
+    padding: 12px 40px 14px;
+    background: var(--bg-sunken);
+  }
+  .tag {
+    font-size: 10px;
+    padding: 1px 7px;
+    border: 1px solid var(--border);
+    border-radius: 99px;
+    color: var(--text-faint);
+    white-space: nowrap;
   }
 </style>
