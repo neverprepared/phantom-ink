@@ -30,10 +30,12 @@ type AutomationRule struct {
 
 // AutomationEvent is emitted by various parts of the app and evaluated against rules.
 type AutomationEvent struct {
-	Type    string          // "entry_created" | "entry_status_change" | "job_complete"
-	Profile string
-	Entry   *CollectedEntry // populated for entry events
-	Job     *CollectJob     // populated for job_complete
+	Type           string         // "entry_created" | "entry_status_change" | "job_complete" | "webhook"
+	Profile        string
+	Entry          *CollectedEntry        // populated for entry events
+	Job            *CollectJob            // populated for job_complete
+	WebhookKey     string                 // populated for webhook events
+	WebhookPayload map[string]interface{} // arbitrary JSON body from the webhook caller
 }
 
 // ── Engine ─────────────────────────────────────────────────────────────────
@@ -94,6 +96,7 @@ type triggerConfig struct {
 	Tags   []string `json:"tags"`
 	Status string   `json:"status"`
 	JobID  string   `json:"job_id"`
+	Key    string   `json:"key"` // webhook key
 }
 
 func matchesTrigger(rule AutomationRule, evt AutomationEvent) bool {
@@ -102,6 +105,15 @@ func matchesTrigger(rule AutomationRule, evt AutomationEvent) bool {
 	}
 	var cfg triggerConfig
 	_ = json.Unmarshal([]byte(rule.TriggerConfig), &cfg)
+
+	switch rule.TriggerType {
+	case "webhook":
+		if cfg.Key == "" || cfg.Key != evt.WebhookKey {
+			return false
+		}
+		// Webhook rules are profile-agnostic by default (key is the discriminator).
+		return true
+	}
 
 	if evt.Entry != nil {
 		if cfg.Kind != "" && evt.Entry.Kind != cfg.Kind {
@@ -191,7 +203,8 @@ func (e *AutomationEngine) fireAction(rule AutomationRule, evt AutomationEvent) 
 
 // ── Template rendering ─────────────────────────────────────────────────────
 
-var metaKeyRe = regexp.MustCompile(`\{metadata\.([^}]+)\}`)
+var metaKeyRe     = regexp.MustCompile(`\{metadata\.([^}]+)\}`)
+var payloadKeyRe  = regexp.MustCompile(`\{payload\.([^}]+)\}`)
 
 func renderTemplate(tmpl string, evt AutomationEvent) string {
 	if tmpl == "" {
@@ -219,6 +232,15 @@ func renderTemplate(tmpl string, evt AutomationEvent) string {
 		key := metaKeyRe.FindStringSubmatch(match)[1]
 		if val, ok := meta[key]; ok {
 			return fmt.Sprintf("%v", val)
+		}
+		return ""
+	})
+	result = payloadKeyRe.ReplaceAllStringFunc(result, func(match string) string {
+		key := payloadKeyRe.FindStringSubmatch(match)[1]
+		if evt.WebhookPayload != nil {
+			if val, ok := evt.WebhookPayload[key]; ok {
+				return fmt.Sprintf("%v", val)
+			}
 		}
 		return ""
 	})

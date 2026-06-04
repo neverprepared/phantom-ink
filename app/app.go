@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -70,6 +71,21 @@ func (a *App) startup(ctx context.Context) {
 	a.client = brainbox.NewClient(a.config.BaseURL, a.config.APIKey)
 	a.sse = brainbox.NewSSEListener(a.client, func(event string) {
 		runtime.EventsEmit(ctx, "brainbox:event", event)
+		// Route webhook.trigger events to the automation engine.
+		if a.automations != nil {
+			var env struct {
+				Action  string                 `json:"action"`
+				Key     string                 `json:"key"`
+				Payload map[string]interface{} `json:"payload"`
+			}
+			if json.Unmarshal([]byte(event), &env) == nil && env.Action == "webhook.trigger" && env.Key != "" {
+				a.automations.Emit(AutomationEvent{
+					Type:           "webhook",
+					WebhookKey:     env.Key,
+					WebhookPayload: env.Payload,
+				})
+			}
+		}
 	})
 	a.sse.Start()
 

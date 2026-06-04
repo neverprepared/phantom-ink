@@ -759,6 +759,27 @@ def _get_sessions_info() -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Webhooks — inbound trigger endpoint (no API key; URL key is the secret)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/webhooks/{key}")
+async def webhook_trigger(key: str, request: Request):
+    """Receive an inbound webhook and broadcast it to the SSE stream.
+
+    The key in the URL path is the shared secret — anyone who knows it can
+    fire this webhook.  Broadcasts action=webhook.trigger so the desktop app
+    can route it to the automation engine.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    _broadcast_sse(json.dumps({"action": "webhook.trigger", "key": key, "payload": payload}))
+    return {"status": "received", "key": key}
+
+
+# ---------------------------------------------------------------------------
 # SSE endpoint
 # ---------------------------------------------------------------------------
 
