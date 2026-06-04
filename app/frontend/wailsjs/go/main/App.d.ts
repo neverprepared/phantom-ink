@@ -31,6 +31,8 @@ export function CreateSession(arg1:brainbox.CreateSessionRequest):Promise<brainb
 
 export function DeleteAgent(arg1:string):Promise<void>;
 
+export function DeleteAutomationRule(arg1:string):Promise<void>;
+
 export function DeleteChain(arg1:string):Promise<void>;
 
 export function DeleteChannel(arg1:string):Promise<void>;
@@ -99,6 +101,8 @@ export function GetLatestCollectedEntry(arg1:string,arg2:string):Promise<main.Co
 
 export function GetLocalRunnerStatus():Promise<main.LocalRunnerStatus>;
 
+export function GetMatchingRules(arg1:string,arg2:string):Promise<Array<main.AutomationRule>>;
+
 export function GetMessageLog():Promise<Array<brainbox.Message>>;
 
 export function GetMetricsHistory():Promise<Array<brainbox.MetricsSample>>;
@@ -146,6 +150,8 @@ export function LaunchTeam(arg1:string,arg2:string,arg3:string,arg4:string,arg5:
 export function ListAgentRoles():Promise<Array<brainbox.AgentDefinition>>;
 
 export function ListAgents():Promise<Array<main.DetectedAgent>>;
+
+export function ListAutomationRules(arg1:string):Promise<Array<main.AutomationRule>>;
 
 export function ListBackups():Promise<Array<string>>;
 
@@ -209,6 +215,8 @@ export function RunPlaybook(arg1:string,arg2:string,arg3:string):Promise<brainbo
 
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
 
+export function SaveAutomationRule(arg1:main.AutomationRule):Promise<void>;
+
 export function SaveChain(arg1:main.Chain):Promise<main.Chain>;
 
 export function SaveCollectJob(arg1:main.CollectJob):Promise<main.CollectJob>;
@@ -248,6 +256,8 @@ export function StopService(arg1:string):Promise<void>;
 export function StopSession(arg1:string):Promise<brainbox.SessionActionResponse>;
 
 export function SubmitTask(arg1:brainbox.SubmitTaskRequest):Promise<brainbox.Task>;
+
+export function TriggerRule(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promise<brainbox.AgentDefinition>;
 

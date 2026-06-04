@@ -383,6 +383,26 @@ func (s *collectScheduler) runJob(job CollectJob) {
 	}
 	if len(entries) > 0 {
 		s.app.emitCollectUpdate(job.Profile)
+		// Emit automation events for each collected entry.
+		if s.app.automations != nil {
+			for _, e := range entries {
+				entry := e
+				s.app.automations.Emit(AutomationEvent{
+					Type:    "entry_created",
+					Profile: job.Profile,
+					Entry:   &entry,
+				})
+			}
+		}
+	}
+	// Emit job_complete event.
+	if s.app.automations != nil {
+		j := job
+		s.app.automations.Emit(AutomationEvent{
+			Type:    "job_complete",
+			Profile: job.Profile,
+			Job:     &j,
+		})
 	}
 }
 

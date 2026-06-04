@@ -943,6 +943,40 @@ export namespace main {
 	        this.output_mode = source["output_mode"];
 	    }
 	}
+	export class AutomationRule {
+	    id: string;
+	    profile: string;
+	    name: string;
+	    description: string;
+	    enabled: boolean;
+	    trigger_type: string;
+	    trigger_config: string;
+	    action_type: string;
+	    action_config: string;
+	    created_at: number;
+	    last_triggered_at?: number;
+	    trigger_count: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AutomationRule(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.profile = source["profile"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.enabled = source["enabled"];
+	        this.trigger_type = source["trigger_type"];
+	        this.trigger_config = source["trigger_config"];
+	        this.action_type = source["action_type"];
+	        this.action_config = source["action_config"];
+	        this.created_at = source["created_at"];
+	        this.last_triggered_at = source["last_triggered_at"];
+	        this.trigger_count = source["trigger_count"];
+	    }
+	}
 	export class ChainFollowup {
 	    chain_id: string;
 	    input_from: string;

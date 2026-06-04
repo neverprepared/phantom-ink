@@ -58,6 +58,10 @@ export function DeleteAgent(arg1) {
   return window['go']['main']['App']['DeleteAgent'](arg1);
 }
 
+export function DeleteAutomationRule(arg1) {
+  return window['go']['main']['App']['DeleteAutomationRule'](arg1);
+}
+
 export function DeleteChain(arg1) {
   return window['go']['main']['App']['DeleteChain'](arg1);
 }
@@ -194,6 +198,10 @@ export function GetLocalRunnerStatus() {
   return window['go']['main']['App']['GetLocalRunnerStatus']();
 }
 
+export function GetMatchingRules(arg1, arg2) {
+  return window['go']['main']['App']['GetMatchingRules'](arg1, arg2);
+}
+
 export function GetMessageLog() {
   return window['go']['main']['App']['GetMessageLog']();
 }
@@ -288,6 +296,10 @@ export function ListAgentRoles() {
 
 export function ListAgents() {
   return window['go']['main']['App']['ListAgents']();
+}
+
+export function ListAutomationRules(arg1) {
+  return window['go']['main']['App']['ListAutomationRules'](arg1);
 }
 
 export function ListBackups() {
@@ -414,6 +426,10 @@ export function RunPreflightChecks() {
   return window['go']['main']['App']['RunPreflightChecks']();
 }
 
+export function SaveAutomationRule(arg1) {
+  return window['go']['main']['App']['SaveAutomationRule'](arg1);
+}
+
 export function SaveChain(arg1) {
   return window['go']['main']['App']['SaveChain'](arg1);
 }
@@ -492,6 +508,10 @@ export function StopSession(arg1) {
 
 export function SubmitTask(arg1) {
   return window['go']['main']['App']['SubmitTask'](arg1);
+}
+
+export function TriggerRule(arg1, arg2, arg3) {
+  return window['go']['main']['App']['TriggerRule'](arg1, arg2, arg3);
 }
 
 export function UpdateAgent(arg1, arg2) {

@@ -38,6 +38,13 @@
     template?: string;
   }
 
+  interface AutomationRule {
+    id: string;
+    name: string;
+    trigger_type: string;
+    action_type: string;
+  }
+
   interface CollectedEntry {
     job_id: string;
     entry_id: string;
@@ -80,6 +87,9 @@
   let selected   = $state<string | null>(null);
   let tagFilter  = $state('');
   let dispatchMsg = $state('');
+  let menuItem    = $state<StreamItem | null>(null);
+  let menuRules   = $state<AutomationRule[]>([]);
+  let menuLoading = $state(false);
 
   const profile = $derived(profileState.active?.name ?? '');
 
@@ -237,6 +247,41 @@
     navigator.clipboard.writeText(rendered).catch(() => {});
     dispatchMsg = 'Prompt copied to clipboard';
     setTimeout(() => { dispatchMsg = ''; }, 3000);
+  }
+
+  async function openActionMenu(item: StreamItem) {
+    if (item.source !== 'event') return;
+    menuItem = item;
+    menuRules = [];
+    menuLoading = true;
+    const e = item.raw as CollectedEntry;
+    try {
+      const a = await getApi();
+      if (a) {
+        const rules = await (a.GetMatchingRules as any)(e.job_id, e.entry_id).catch(() => []);
+        menuRules = (rules ?? []) as AutomationRule[];
+      }
+    } finally {
+      menuLoading = false;
+    }
+  }
+
+  function closeMenu() { menuItem = null; menuRules = []; }
+
+  async function triggerRule(ruleID: string) {
+    if (!menuItem || menuItem.source !== 'event') return;
+    const a = await getApi();
+    if (!a) return;
+    const e = menuItem.raw as CollectedEntry;
+    try {
+      await (a.TriggerRule as any)(ruleID, e.job_id, e.entry_id);
+      dispatchMsg = 'Rule triggered';
+      setTimeout(() => { dispatchMsg = ''; }, 3000);
+    } catch (err: any) {
+      dispatchMsg = `Error: ${err?.message ?? 'trigger failed'}`;
+      setTimeout(() => { dispatchMsg = ''; }, 4000);
+    }
+    closeMenu();
   }
 
   function handleAction(action: EntryAction, item: StreamItem) {
@@ -468,14 +513,38 @@
                   </div>
                 {/if}
               {/if}
-              <!-- Actions -->
-              {#if item.actions.length > 0}
+              <!-- Actions: open_url and copy inline; dispatch via automation menu -->
+              {#if item.actions.filter(a => a.kind === 'open_url' || a.kind === 'copy').length > 0 || item.source === 'event'}
+                {@const inlineActions = item.actions.filter(a => a.kind === 'open_url' || a.kind === 'copy')}
                 <div class="item-actions">
-                  {#each item.actions as action (action.label)}
+                  {#each inlineActions as action (action.label)}
                     <button class="action-btn" onclick={() => handleAction(action, item)}>
                       {action.label}
                     </button>
                   {/each}
+                  {#if item.source === 'event'}
+                    <div class="action-menu-wrap">
+                      <button class="action-btn menu-btn"
+                        class:active={menuItem?.id === item.id}
+                        onclick={() => menuItem?.id === item.id ? closeMenu() : openActionMenu(item)}
+                        title="automations">⋯</button>
+                      {#if menuItem?.id === item.id}
+                        <div class="action-menu">
+                          {#if menuLoading}
+                            <span class="menu-empty">loading…</span>
+                          {:else if menuRules.length === 0}
+                            <span class="menu-empty">no matching rules</span>
+                          {:else}
+                            {#each menuRules as rule (rule.id)}
+                              <button class="menu-rule" onclick={() => triggerRule(rule.id)}>
+                                ▶ {rule.name}
+                              </button>
+                            {/each}
+                          {/if}
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
                 </div>
               {/if}
             </div>
@@ -707,6 +776,27 @@
     transition: all 100ms;
   }
   .action-btn:hover { border-color: var(--color-accent); color: var(--color-accent); background: rgba(234,179,8,0.06); }
+  .action-btn.active { border-color: var(--color-accent); color: var(--color-accent); }
+
+  .action-menu-wrap { position: relative; }
+  .action-menu {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 100;
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-md);
+    padding: 4px; min-width: 160px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .menu-rule {
+    font-family: var(--font-mono); font-size: 11px;
+    padding: 4px 8px; border-radius: var(--radius-sm);
+    border: none; background: none; cursor: pointer;
+    color: var(--color-text-secondary); text-align: left;
+    transition: all 80ms;
+  }
+  .menu-rule:hover { background: rgba(234,179,8,0.08); color: var(--color-accent); }
+  .menu-empty { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-tertiary); padding: 4px 8px; }
 
   /* ── Status glyphs ── */
   .st-active    { color: var(--color-info); }

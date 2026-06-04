@@ -29,6 +29,8 @@ type App struct {
 	schedulerStop    context.CancelFunc
 	collectScheduler *collectScheduler
 	collectStop      context.CancelFunc
+	automations      *AutomationEngine
+	automationsStop  context.CancelFunc
 	localRunner      *localRunner
 	localRunnerStop  context.CancelFunc
 }
@@ -97,6 +99,12 @@ func (a *App) startup(ctx context.Context) {
 		a.collectStop = collectCancel
 		a.collectScheduler = newCollectScheduler(a)
 		a.collectScheduler.Start(collectCtx)
+
+		// Automation engine — evaluates event-driven rules and fires actions.
+		automationCtx, automationCancel := context.WithCancel(ctx)
+		a.automationsStop = automationCancel
+		a.automations = newAutomationEngine(a)
+		a.automations.Start(automationCtx)
 	}
 
 	// Start local runner if enabled.
@@ -124,6 +132,9 @@ func (a *App) shutdown(_ context.Context) {
 	}
 	if a.collectStop != nil {
 		a.collectStop()
+	}
+	if a.automationsStop != nil {
+		a.automationsStop()
 	}
 	if a.localRunnerStop != nil {
 		a.localRunnerStop()
