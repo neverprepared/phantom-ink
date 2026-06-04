@@ -6,11 +6,16 @@
 
   let visiblePanels = $derived(panels.filter(p => !p.debug || debugState.showEventLog));
 
+  let searchActive = $derived(search.trim().length > 0);
+
   let filteredPanels = $derived(
-    search.trim()
+    searchActive
       ? visiblePanels.filter(p => p.label.toLowerCase().includes(search.trim().toLowerCase()))
       : visiblePanels
   );
+
+  let primaryPanels = $derived(filteredPanels.filter(p => p.shortcut));
+  let secondaryPanels = $derived(filteredPanels.filter(p => !p.shortcut));
 </script>
 
 <nav class="sidebar" class:collapsed={sidebarCollapsed.value}>
@@ -33,7 +38,7 @@
   {/if}
 
   <ul class="nav-items">
-    {#each filteredPanels as panel (panel.id)}
+    {#each (searchActive ? filteredPanels : primaryPanels) as panel (panel.id)}
       <li>
         <button
           class="nav-btn"
@@ -54,6 +59,28 @@
       </li>
     {/each}
   </ul>
+
+  {#if !searchActive && secondaryPanels.length > 0}
+    <ul class="nav-items nav-secondary">
+      {#each secondaryPanels as panel (panel.id)}
+        <li>
+          <button
+            class="nav-btn"
+            class:active={currentPanel.value === panel.id}
+            onclick={() => { currentPanel.value = panel.id; }}
+            title={sidebarCollapsed.value ? panel.label : panel.label}
+            aria-label={panel.label}
+            aria-current={currentPanel.value === panel.id ? 'page' : undefined}
+          >
+            <span class="nav-icon" aria-hidden="true">{@html panel.icon}</span>
+            {#if !sidebarCollapsed.value}
+              <span class="nav-label">{panel.label}</span>
+            {/if}
+          </button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
 
   <div class="sidebar-footer">
     <button
@@ -137,6 +164,12 @@
     padding: 8px;
     overflow-y: auto;
     overflow-x: hidden;
+  }
+
+  .nav-secondary {
+    flex: none;
+    border-top: 1px solid var(--border, var(--color-border-primary));
+    padding-top: 6px;
   }
 
   .nav-items li {
