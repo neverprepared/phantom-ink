@@ -179,8 +179,6 @@ export function ListTasks(arg1:string,arg2:number):Promise<Array<main.TaskRow>>;
 
 export function ListUpcomingFires(arg1:number):Promise<Array<main.UpcomingFire>>;
 
-export function OpenLocalSession(arg1:string):Promise<void>;
-
 export function PostChannelMessage(arg1:string,arg2:brainbox.PostChannelMessageRequest):Promise<brainbox.ChannelMessage>;
 
 export function PreviewDispatch(arg1:brainbox.DispatchPreviewRequest):Promise<brainbox.DispatchPreview>;

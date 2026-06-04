@@ -52,14 +52,14 @@ type RegisterRunnerRequest struct {
 	MaxConcurrent int             `json:"max_concurrent,omitempty"`
 }
 
-// RunnerWorkItem is a single unit of work returned by GET /api/runners/{name}/work.
+// RunnerWorkItem is a single unit of work returned by GET /api/runners/{name}/pending.
 type RunnerWorkItem struct {
 	ID      string         `json:"id"`
 	Kind    string         `json:"kind"`
 	Payload map[string]any `json:"payload"`
 }
 
-// RunnerResult is posted back to PATCH /api/runners/{name}/work/{id}.
+// RunnerResult is posted back to POST /api/runners/{name}/result/{id}.
 type RunnerResult struct {
 	OK    bool           `json:"ok"`
 	Data  map[string]any `json:"data,omitempty"`
@@ -72,20 +72,27 @@ func (c *Client) RegisterRunner(req RegisterRunnerRequest) error {
 }
 
 // GetPendingWork long-polls for the next work item for the given runner.
-// The server holds the connection for up to ~30 s; the caller should use a
-// 35 s HTTP client to avoid racing the server timeout.
+// The server holds the connection open for up to ~30 s; use a 35 s client.
+// Returns nil (no error) on HTTP 204 (no work available).
 func (c *Client) GetPendingWork(name string, longPollClient *http.Client) (*RunnerWorkItem, error) {
 	var item RunnerWorkItem
-	err := c.doWith(longPollClient, "GET", "/api/runners/"+url.PathEscape(name)+"/work", nil, &item)
+	err := c.doWith(longPollClient, "GET", "/api/runners/"+url.PathEscape(name)+"/pending", nil, &item)
 	if err != nil {
+		// 204 No Content comes back as an unmarshal error on empty body — treat as no work.
+		if item.ID == "" {
+			return nil, nil
+		}
 		return nil, err
+	}
+	if item.ID == "" {
+		return nil, nil
 	}
 	return &item, nil
 }
 
 // PostRunnerResult posts the result for a completed work item.
 func (c *Client) PostRunnerResult(name, workID string, result RunnerResult) error {
-	return c.patch("/api/runners/"+url.PathEscape(name)+"/work/"+url.PathEscape(workID), result, nil)
+	return c.post("/api/runners/"+url.PathEscape(name)+"/result/"+url.PathEscape(workID), result, nil)
 }
 
 // PostRunnerHeartbeat sends a heartbeat to keep the runner registration alive.
@@ -95,7 +102,7 @@ func (c *Client) PostRunnerHeartbeat(name string) error {
 
 // PostRunnerEvent sends an incremental event (e.g. stdout chunk) for a work item.
 func (c *Client) PostRunnerEvent(name, workID string, event map[string]any) error {
-	return c.post("/api/runners/"+url.PathEscape(name)+"/work/"+url.PathEscape(workID)+"/events", event, nil)
+	return c.post("/api/runners/"+url.PathEscape(name)+"/event", event, nil)
 }
 
 // longPollHTTPClient returns an HTTP client with a 35-second timeout — slightly

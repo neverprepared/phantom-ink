@@ -354,10 +354,6 @@ export function ListUpcomingFires(arg1) {
   return window['go']['main']['App']['ListUpcomingFires'](arg1);
 }
 
-export function OpenLocalSession(arg1) {
-  return window['go']['main']['App']['OpenLocalSession'](arg1);
-}
-
 export function PostChannelMessage(arg1, arg2) {
   return window['go']['main']['App']['PostChannelMessage'](arg1, arg2);
 }
