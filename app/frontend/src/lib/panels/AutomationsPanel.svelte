@@ -397,16 +397,16 @@
             </label>
             <label class="form-row">
               <span class="form-label">input</span>
-              <input class="form-input" bind:value={draft.actChainInput} placeholder="{title} — optional" />
+              <input class="form-input" bind:value={draft.actChainInput} placeholder={"{title} — optional"} />
             </label>
           {:else if draft.actionType === 'notify'}
             <label class="form-row">
               <span class="form-label">title</span>
-              <input class="form-input" bind:value={draft.actTitle} placeholder="{title}" />
+              <input class="form-input" bind:value={draft.actTitle} placeholder={"{title}"} />
             </label>
             <label class="form-row">
               <span class="form-label">body</span>
-              <input class="form-input" bind:value={draft.actBody} placeholder="{description} — optional" />
+              <input class="form-input" bind:value={draft.actBody} placeholder={"{description} — optional"} />
             </label>
           {/if}
         </div>
