@@ -23,16 +23,18 @@
   type TriggerType = 'entry_created' | 'entry_status_change' | 'job_complete';
   type ActionType  = 'fire_job' | 'run_playbook' | 'run_chain' | 'notify';
 
-  interface NamedItem { id: string; name: string; }
+  interface JobItem      { id: string; name: string; profile: string; }
+  interface PlaybookItem { id: string; name: string; workspace_profile: string; }
+  interface ChainItem    { id: string; name: string; }
 
   // ── State ──────────────────────────────────────────────────────────────
 
   const profile = $derived(profileState.active?.name ?? '');
 
   let rules     = $state<AutomationRule[]>([]);
-  let jobs      = $state<NamedItem[]>([]);
-  let playbooks = $state<NamedItem[]>([]);
-  let chains    = $state<NamedItem[]>([]);
+  let jobs      = $state<JobItem[]>([]);
+  let playbooks = $state<PlaybookItem[]>([]);
+  let chains    = $state<ChainItem[]>([]);
   let loading   = $state(false);
   let editingId = $state<string | null>(null);
   let statusMsg = $state('');
@@ -76,20 +78,12 @@
 
   // When draftProfile is '' (global rule), show everything; otherwise show global + that profile
   let visibleJobs = $derived(
-    !draftProfile
-      ? jobs
-      : jobs.filter(j => !(j as any).profile || (j as any).profile === draftProfile)
+    !draftProfile ? jobs : jobs.filter(j => !j.profile || j.profile === draftProfile)
   );
   let visiblePlaybooks = $derived(
-    !draftProfile
-      ? playbooks
-      : playbooks.filter(p => !(p as any).workspace_profile || (p as any).workspace_profile === draftProfile)
+    !draftProfile ? playbooks : playbooks.filter(p => !p.workspace_profile || p.workspace_profile === draftProfile)
   );
-  let visibleChains = $derived(
-    !draftProfile
-      ? chains
-      : chains.filter(c => !(c as any).workspace_profile || (c as any).workspace_profile === draftProfile)
-  );
+  let visibleChains = $derived(chains);
 
   // ── Loading ────────────────────────────────────────────────────────────
 
@@ -105,9 +99,9 @@
         (a.ListChains as any)().catch(() => []),
       ]);
       rules     = (r ?? []) as AutomationRule[];
-      jobs      = ((j ?? []) as any[]).map((x: any) => ({ id: x.id, name: x.name, profile: x.profile ?? '' }));
-      playbooks = ((p ?? []) as any[]).map((x: any) => ({ id: x.id, name: x.name, workspace_profile: x.profile ?? x.workspace_profile ?? '' }));
-      chains    = ((c ?? []) as any[]).map((x: any) => ({ id: x.id, name: x.name, workspace_profile: x.workspace_profile ?? '' }));
+      jobs      = ((j ?? []) as any[]).map((x: any): JobItem      => ({ id: x.id, name: x.name, profile:           x.profile           ?? '' }));
+      playbooks = ((p ?? []) as any[]).map((x: any): PlaybookItem => ({ id: x.id, name: x.name, workspace_profile: x.workspace_profile  ?? '' }));
+      chains    = ((c ?? []) as any[]).map((x: any): ChainItem    => ({ id: x.id, name: x.name }));
     } finally {
       loading = false;
     }
