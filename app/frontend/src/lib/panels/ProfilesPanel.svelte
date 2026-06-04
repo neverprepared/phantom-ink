@@ -336,97 +336,62 @@
       {#each profiles as p}
         {@const pColor = getProfileColor(p.name, profileColorStore.getOverride(p.name))}
         {@const isActive = activeProfile?.name === p.name}
-        <div class="profile-row">
-          <span class="profile-dot" style="background: {pColor.text};"></span>
-          <button
-            class="profile-item"
-            class:active={isActive}
-            style={isActive ? `background: ${pColor.bg}; border-color: ${pColor.border};` : ''}
-            onclick={() => selectProfile(p.name)}
-          >
-            <span class="profile-name" style={isActive ? `color: ${pColor.text};` : ''}>{p.name}</span>
-            <span class="profile-meta">
-              {#if profileDiskMap.has(p.name)}
-                <span class="disk-badge">{profileDiskMap.get(p.name)}</span>
-              {/if}
-              {#if p.has_backup}
-                <span class="secrets-badge plain">backup</span>
-              {/if}
-            </span>
-          </button>
-          <button class="btn-delete-profile" onclick={() => confirmDelete = confirmDelete === p.name ? null : p.name} title="Delete profile" aria-label="Delete profile {p.name}">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-          </button>
-        </div>
-        <div class="color-swatches">
-          {#each PROFILE_PALETTE as swatch (swatch.index)}
-            <button
-              class="swatch"
-              class:selected={pColor.index === swatch.index}
-              style="background: {swatch.text};"
-              onclick={() => setColor(p.name, swatch.index)}
-              title="Color {swatch.index}"
-              aria-label="Set color {swatch.index} for {p.name}"
-            ></button>
-          {/each}
-        </div>
-        {#if confirmDelete === p.name}
-          <div class="confirm-delete">
-            <span class="confirm-text">delete "{p.name}"?</span>
-            <button class="btn-confirm backup" onclick={() => handleDelete(p.name, true)}>backup + delete</button>
-            <button class="btn-confirm danger" onclick={() => handleDelete(p.name, false)}>permanently delete</button>
-            <button class="btn-confirm cancel" onclick={() => confirmDelete = null}>cancel</button>
-          </div>
-        {/if}
-      {/each}
-    {/if}
-  </div>
-
-
-  {#if backups.length > 0}
-    <div class="backups-section">
-      <h3>backups</h3>
-      {#each backups as b}
-        <div class="backup-row">
-          <span class="backup-name">{b}</span>
-          <button class="btn-confirm backup" onclick={() => handleRestore(b)}>restore</button>
-          <button class="btn-confirm danger" onclick={() => handlePurge(b)}>purge</button>
-        </div>
-      {/each}
-    </div>
-  {/if}
-
-  <!-- Profile images -->
-  {#if profiles.length > 0}
-    <div class="images-section">
-      <div class="images-header">
-        <h3>profile images</h3>
-        <span class="images-hint">pre-built containers pushed to private registry</span>
-      </div>
-
-      {#each profiles as p}
         {@const status = imageStatuses[p.name]}
         {@const building = imageBuilding[p.name] ?? false}
         {@const logs = imageLogs[p.name] ?? []}
         {@const logsOpen = imageLogsOpen[p.name] ?? false}
-        <div class="image-row">
-          <div class="image-row-top">
-            <span class="image-profile">{p.name}</span>
-
-            {#if !status}
-              <span class="image-badge checking">checking…</span>
-            {:else if !status.configured}
-              <span class="image-badge unconfigured">registry not configured</span>
-            {:else if status.exists}
-              <span class="image-badge ok">
-                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-                image ready
+        <div class="profile-card" class:active={isActive}>
+          <div class="profile-row">
+            <span class="profile-dot" style="background: {pColor.text};"></span>
+            <button
+              class="profile-item"
+              class:active={isActive}
+              style={isActive ? `background: ${pColor.bg}; border-color: ${pColor.border};` : ''}
+              onclick={() => selectProfile(p.name)}
+            >
+              <span class="profile-name" style={isActive ? `color: ${pColor.text};` : ''}>{p.name}</span>
+              <span class="profile-meta">
+                {#if profileDiskMap.has(p.name)}
+                  <span class="disk-badge">{profileDiskMap.get(p.name)}</span>
+                {/if}
+                {#if p.has_backup}
+                  <span class="secrets-badge plain">backup</span>
+                {/if}
               </span>
-            {:else}
-              <span class="image-badge missing" title={status?.error ?? ''}>no image{status?.error ? ' ⚠' : ''}</span>
-            {/if}
+            </button>
+            <button class="btn-delete-profile" onclick={() => confirmDelete = confirmDelete === p.name ? null : p.name} title="Delete profile" aria-label="Delete profile {p.name}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button>
+          </div>
 
-            <div class="image-actions">
+          <div class="card-footer">
+            <div class="color-swatches">
+              {#each PROFILE_PALETTE as swatch (swatch.index)}
+                <button
+                  class="swatch"
+                  class:selected={pColor.index === swatch.index}
+                  style="background: {swatch.text};"
+                  onclick={() => setColor(p.name, swatch.index)}
+                  title="Color {swatch.index}"
+                  aria-label="Set color {swatch.index} for {p.name}"
+                ></button>
+              {/each}
+            </div>
+
+            <div class="card-image-actions">
+              {#if !status}
+                <span class="image-badge checking">checking…</span>
+              {:else if !status.configured}
+                <span class="image-badge unconfigured">no registry</span>
+              {:else if status.exists}
+                <span class="image-badge ok">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                  image ready
+                </span>
+              {:else}
+                <span class="image-badge missing" title={status?.error ?? ''}>no image{status?.error ? ' ⚠' : ''}</span>
+              {/if}
+
               {#if status?.configured}
                 <button
                   class="btn-build"
@@ -439,15 +404,11 @@
                     <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
                     building…
                   {:else if status?.exists}
-                    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
                     rebuild
                   {:else}
-                    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                     build
                   {/if}
                 </button>
-              {/if}
-              {#if status?.configured}
                 <button class="btn-icon-sm" onclick={() => checkImageStatus(p.name)} title="Refresh status" aria-label="Refresh image status for {p.name}">
                   <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
                 </button>
@@ -471,10 +432,34 @@
               </div>
             {/if}
           {/if}
+
+          {#if confirmDelete === p.name}
+            <div class="confirm-delete">
+              <span class="confirm-text">delete "{p.name}"?</span>
+              <button class="btn-confirm backup" onclick={() => handleDelete(p.name, true)}>backup + delete</button>
+              <button class="btn-confirm danger" onclick={() => handleDelete(p.name, false)}>permanently delete</button>
+              <button class="btn-confirm cancel" onclick={() => confirmDelete = null}>cancel</button>
+            </div>
+          {/if}
+        </div>
+      {/each}
+    {/if}
+  </div>
+
+
+  {#if backups.length > 0}
+    <div class="backups-section">
+      <h3>backups</h3>
+      {#each backups as b}
+        <div class="backup-row">
+          <span class="backup-name">{b}</span>
+          <button class="btn-confirm backup" onclick={() => handleRestore(b)}>restore</button>
+          <button class="btn-confirm danger" onclick={() => handlePurge(b)}>purge</button>
         </div>
       {/each}
     </div>
   {/if}
+
 </div>
 
 <style>
@@ -618,8 +603,16 @@
   .btn-small:hover { background: rgba(16, 185, 129, 0.2); border-color: var(--color-success); }
 
   /* Profile list */
-  .profile-list { display: flex; flex-direction: column; gap: 2px; }
+  .profile-list { display: flex; flex-direction: column; gap: 4px; }
   .empty { font-size: 12px; color: var(--color-text-tertiary); padding: 12px 0; }
+
+  .profile-card {
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    padding: 2px 0;
+    transition: border-color 0.15s;
+  }
+  .profile-card:hover { border-color: var(--color-border-primary); }
 
   .profile-item {
     display: flex;
@@ -669,10 +662,24 @@
     flex-shrink: 0;
   }
 
+  .card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 6px 6px 16px;
+    gap: 8px;
+  }
+
   .color-swatches {
     display: flex;
     gap: 4px;
-    padding: 2px 0 6px 16px;
+  }
+
+  .card-image-actions {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
   }
 
   .swatch {
@@ -722,58 +729,6 @@
   .backup-name { flex: 1; font-size: 13px; font-weight: 500; color: var(--color-text-secondary); }
 
 
-  /* Profile images */
-  .images-section {
-    margin-top: 24px;
-    padding-top: 16px;
-    border-top: 1px solid var(--color-border-primary);
-  }
-
-  .images-header {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    margin-bottom: 12px;
-  }
-  .images-header h3 {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--color-text-tertiary);
-    flex-shrink: 0;
-  }
-  .images-hint {
-    font-size: 11px;
-    color: var(--color-text-muted);
-    font-style: italic;
-  }
-
-  .image-row {
-    padding: 8px 10px;
-    border-radius: var(--radius-md);
-    margin-bottom: 2px;
-  }
-  .image-row:nth-child(odd) { background: rgba(255, 255, 255, 0.015); }
-
-  .image-row-top {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 26px;
-  }
-
-  .image-profile {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--color-text-secondary);
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   .image-badge {
     display: inline-flex;
     align-items: center;
@@ -804,13 +759,6 @@
     background: rgba(148, 163, 184, 0.05);
     border: 1px solid rgba(148, 163, 184, 0.12);
     color: var(--color-text-tertiary);
-  }
-
-  .image-actions {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    flex-shrink: 0;
   }
 
   .btn-build {
@@ -855,8 +803,7 @@
     font-size: 10px;
     font-family: var(--font-mono);
     color: var(--color-text-muted);
-    padding-top: 3px;
-    padding-left: 2px;
+    padding: 0 6px 4px 16px;
   }
 
   .logs-toggle {
