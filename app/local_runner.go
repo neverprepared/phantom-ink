@@ -119,6 +119,7 @@ func (r *localRunner) registerWithBackoff(ctx context.Context) bool {
 		Capabilities: map[string]bool{
 			"docker": true,
 		},
+		Host:          "local-process",
 		MachineID:     r.machineID,
 		MaxConcurrent: 4,
 	}
