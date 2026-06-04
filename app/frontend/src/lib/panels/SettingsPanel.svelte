@@ -25,7 +25,6 @@
   type LocalRunnerStatus = { enabled: boolean; running: boolean; name: string; work_dir: string };
   let runnerStatus = $state<LocalRunnerStatus>({ enabled: false, running: false, name: 'local-mac', work_dir: '' });
   let runnerName = $state('local-mac');
-  let runnerWorkDir = $state('');
   let savingRunner = $state(false);
 
   // --- General ---
@@ -49,7 +48,6 @@
       otlpHost = olh ?? '';
       runnerStatus = rs ?? runnerStatus;
       runnerName = rs?.name ?? 'local-mac';
-      runnerWorkDir = rs?.work_dir ?? '';
       applyTheme(theme);
     } catch (err: any) {
       notifications.error(`Failed to load settings: ${err?.message ?? err}`);
@@ -130,23 +128,12 @@
     }
   }
 
-  async function handleBrowseRunnerDir() {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const dir = await a.BrowseFolder();
-      if (dir) runnerWorkDir = dir;
-    } catch (err: any) {
-      notifications.error(`Browse failed: ${err}`);
-    }
-  }
-
   async function handleEnableRunner() {
     savingRunner = true;
     const a = await getApi();
     if (!a) { savingRunner = false; return; }
     try {
-      await a.EnableLocalRunner(runnerName, runnerWorkDir);
+      await a.EnableLocalRunner(runnerName);
       runnerStatus = await a.GetLocalRunnerStatus();
       notifications.success('Local runner started');
     } catch (err: any) {
@@ -301,16 +288,7 @@
         <div class="field">
           <label for="runner-name">runner name</label>
           <input id="runner-name" type="text" bind:value={runnerName} placeholder="local-mac" disabled={runnerStatus.running} />
-        </div>
-
-        <div class="field">
-          <label for="runner-dir">working directory</label>
-          <div class="input-row">
-            <input id="runner-dir" type="text" bind:value={runnerWorkDir} placeholder="~/workspaces/profiles/personal" disabled={runnerStatus.running} />
-            {#if !runnerStatus.running}
-              <button class="btn-browse" onclick={handleBrowseRunnerDir}>browse</button>
-            {/if}
-          </div>
+          <p class="hint">appears in the session dispatch dropdown as this name</p>
         </div>
 
         <div class="runner-status-row">

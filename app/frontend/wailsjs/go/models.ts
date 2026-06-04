@@ -918,25 +918,7 @@ export namespace brainbox {
 }
 
 export namespace main {
-
-	export class LocalRunnerStatus {
-	    enabled: boolean;
-	    running: boolean;
-	    name: string;
-	    work_dir: string;
-
-	    static createFrom(source: any = {}) {
-	        return new LocalRunnerStatus(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.enabled = source["enabled"];
-	        this.running = source["running"];
-	        this.name = source["name"];
-	        this.work_dir = source["work_dir"];
-	    }
-	}
+	
 	export class AgentInvocation {
 	    prompt_args: string[];
 	    prompt_mode: string;
@@ -1404,6 +1386,22 @@ export namespace main {
 	        this.mem_mb = source["mem_mb"];
 	        this.workspace_profile = source["workspace_profile"];
 	        this.workspace_home = source["workspace_home"];
+	    }
+	}
+	export class LocalRunnerStatus {
+	    enabled: boolean;
+	    running: boolean;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LocalRunnerStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.running = source["running"];
+	        this.name = source["name"];
 	    }
 	}
 	export class LogEntry {

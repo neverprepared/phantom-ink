@@ -98,6 +98,14 @@ export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
 }
 
+export function DisableLocalRunner() {
+  return window['go']['main']['App']['DisableLocalRunner']();
+}
+
+export function EnableLocalRunner(arg1) {
+  return window['go']['main']['App']['EnableLocalRunner'](arg1);
+}
+
 export function EnqueueTask(arg1) {
   return window['go']['main']['App']['EnqueueTask'](arg1);
 }
@@ -180,6 +188,10 @@ export function GetLangfuseHealth() {
 
 export function GetLatestCollectedEntry(arg1, arg2) {
   return window['go']['main']['App']['GetLatestCollectedEntry'](arg1, arg2);
+}
+
+export function GetLocalRunnerStatus() {
+  return window['go']['main']['App']['GetLocalRunnerStatus']();
 }
 
 export function GetMessageLog() {
@@ -342,6 +354,10 @@ export function ListUpcomingFires(arg1) {
   return window['go']['main']['App']['ListUpcomingFires'](arg1);
 }
 
+export function OpenLocalSession(arg1) {
+  return window['go']['main']['App']['OpenLocalSession'](arg1);
+}
+
 export function PostChannelMessage(arg1, arg2) {
   return window['go']['main']['App']['PostChannelMessage'](arg1, arg2);
 }
@@ -488,20 +504,4 @@ export function UpdatePlaybook(arg1, arg2) {
 
 export function UsableAgents() {
   return window['go']['main']['App']['UsableAgents']();
-}
-
-export function EnableLocalRunner(arg1, arg2) {
-  return window['go']['main']['App']['EnableLocalRunner'](arg1, arg2);
-}
-
-export function DisableLocalRunner() {
-  return window['go']['main']['App']['DisableLocalRunner']();
-}
-
-export function GetLocalRunnerStatus() {
-  return window['go']['main']['App']['GetLocalRunnerStatus']();
-}
-
-export function OpenLocalSession(arg1) {
-  return window['go']['main']['App']['OpenLocalSession'](arg1);
 }

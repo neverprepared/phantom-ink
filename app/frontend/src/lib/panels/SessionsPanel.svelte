@@ -116,6 +116,35 @@
   // Volume mounts (browse-based)
   let mountPaths = $state<string[]>([]);
 
+  // Local runner
+  let localRunnerName = $state('');
+  let localRunnerActive = $state(false);
+  let localWorkDir = $state('');
+  let localRecentDirs = $state<string[]>([]);
+
+  function loadLocalRecents() {
+    try {
+      const raw = localStorage.getItem('local_runner_recent_dirs');
+      localRecentDirs = raw ? JSON.parse(raw) : [];
+    } catch { localRecentDirs = []; }
+  }
+
+  function saveLocalRecent(dir: string) {
+    if (!dir) return;
+    const next = [dir, ...localRecentDirs.filter(d => d !== dir)].slice(0, 5);
+    localRecentDirs = next;
+    try { localStorage.setItem('local_runner_recent_dirs', JSON.stringify(next)); } catch {}
+  }
+
+  async function browseLocalWorkDir() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const dir = await a.BrowseFolder();
+      if (dir) localWorkDir = dir;
+    } catch {}
+  }
+
   // Task (optional — runs after session starts)
   let newTask = $state('');
 
@@ -141,9 +170,11 @@
     const a = await getApi();
     if (!a) return;
     try {
+      const dispatchBackend = newBackend === 'local' ? 'docker' : newBackend;
+      const dispatchRunner = newBackend === 'local' ? localRunnerName : newRunner;
       preview = (await a.PreviewDispatch({
-        backend: newBackend,
-        runner: newRunner,
+        backend: dispatchBackend,
+        runner: dispatchRunner,
       })) as DispatchPreview;
       previewError = null;
     } catch (err: any) {
@@ -350,12 +381,21 @@
     if (showPastSessions) loadPastSessions();
   });
 
-  onMount(() => {
+  onMount(async () => {
     refresh();
     refreshMetrics();
     loadRoles();
     loadOllamaModels();
+    loadLocalRecents();
     metricsTimer = setInterval(refreshMetrics, 10_000);
+    const a = await getApi();
+    if (a) {
+      try {
+        const rs = await a.GetLocalRunnerStatus();
+        localRunnerName = rs?.name ?? 'local-mac';
+        localRunnerActive = rs?.running ?? false;
+      } catch {}
+    }
   });
 
   onDestroy(() => {
@@ -493,24 +533,31 @@
       const req: Record<string, any> = {
         name: newName.trim().replace(/\s+/g, '-').toLowerCase(),
         role: newRole,
-        volumes: volumes.length > 0 ? volumes : undefined,
         llm_provider: newLLM,
         llm_model: newLLM === 'ollama' || newLLM === 'codex' ? newModel : '',
-        backend: newBackend,
         workspace_profile: newProfile,
-        workspace_home: wsHome,
         task: newTask.trim() || undefined,
-        runner: newRunner || undefined,
       };
-      if (newBackend === 'utm') {
-        req.vm_template = newVMTemplate;
-        req.guest_os = newGuestOS;
+      if (newBackend === 'local') {
+        req.backend = 'docker';
+        req.runner = localRunnerName;
+        req.workspace_home = localWorkDir || wsHome;
+        saveLocalRecent(localWorkDir);
+      } else {
+        req.backend = newBackend;
+        req.workspace_home = wsHome;
+        req.runner = newRunner || undefined;
+        req.volumes = volumes.length > 0 ? volumes : undefined;
+        if (newBackend === 'utm') {
+          req.vm_template = newVMTemplate;
+          req.guest_os = newGuestOS;
+        }
       }
       const resp = await a.CreateSession(req);
       if (resp.success ?? resp.Success) {
         notifications.success(`Created session: ${newName}`);
         showNewModal = false;
-        newName = ''; newVMTemplate = ''; mountPaths = []; newTask = '';
+        newName = ''; newVMTemplate = ''; mountPaths = []; newTask = ''; localWorkDir = '';
         refresh();
       } else {
         notifications.error(resp.error ?? resp.Error ?? 'Failed to create session');
@@ -885,34 +932,62 @@
           <button class="toggle-opt" class:active={newBackend === 'utm'} onclick={() => newBackend = 'utm'}>
             <span class="toggle-icon">&#x1f5a5;</span> vm
           </button>
+          <button class="toggle-opt" class:active={newBackend === 'local'} onclick={() => newBackend = 'local'}>
+            <span class="toggle-icon">&#x1f4bb;</span> local
+          </button>
         </div>
       </div>
 
-      <!-- Dispatch (runner picker + preview) -->
-      <div class="field">
-        <label for="srunner">dispatch to</label>
-        <select id="srunner" bind:value={newRunner}>
-          <option value="">in-process (API host)</option>
-          {#if preview}
-            {#each preview.candidates as c (c.name)}
-              <option value={c.name} disabled={!c.online}>
-                {c.name}{c.online ? '' : ' (offline)'}{c.tags.length ? ` · ${c.tags.join(',')}` : ''}
-              </option>
-            {/each}
+      {#if newBackend === 'local'}
+        <!-- Local working directory -->
+        <div class="field">
+          <label for="slocaldir">working directory</label>
+          <div class="input-row">
+            <input id="slocaldir" type="text" bind:value={localWorkDir} placeholder="~/workspaces/profiles/personal" />
+            <button class="btn-browse" onclick={browseLocalWorkDir}>browse</button>
+          </div>
+          {#if localRecentDirs.length > 0}
+            <div class="recent-dirs">
+              {#each localRecentDirs as dir (dir)}
+                <button class="recent-dir" onclick={() => localWorkDir = dir} title={dir}>
+                  {truncatePath(dir, 40)}
+                </button>
+              {/each}
+            </div>
           {/if}
-        </select>
-        {#if preview}
-          <p
-            class="preview"
-            class:warn={preview.error === 'stale' || preview.error === 'missing_capability'}
-            class:err={preview.error === 'not_registered'}
-          >
-            → {preview.reason}
-          </p>
-        {:else if previewError}
-          <p class="preview err">→ preview failed: {previewError}</p>
-        {/if}
-      </div>
+          {#if !localRunnerActive}
+            <p class="hint warn-hint">local runner not enabled — configure in Settings</p>
+          {:else}
+            <p class="hint">runs as <code>claude --dangerously-skip-permissions</code> on this Mac via runner <strong>{localRunnerName}</strong></p>
+          {/if}
+        </div>
+      {:else}
+        <!-- Dispatch (runner picker + preview) -->
+        <div class="field">
+          <label for="srunner">dispatch to</label>
+          <select id="srunner" bind:value={newRunner}>
+            <option value="">in-process (API host)</option>
+            {#if preview}
+              {#each preview.candidates as c (c.name)}
+                <option value={c.name} disabled={!c.online}>
+                  {c.name}{c.online ? '' : ' (offline)'}{c.tags.length ? ` · ${c.tags.join(',')}` : ''}
+                </option>
+              {/each}
+            {/if}
+          </select>
+          {#if preview}
+            <p
+              class="preview"
+              class:warn={preview.error === 'stale' || preview.error === 'missing_capability'}
+              class:err={preview.error === 'not_registered'}
+            >
+              → {preview.reason}
+            </p>
+          {:else if previewError}
+            <p class="preview err">→ preview failed: {previewError}</p>
+          {/if}
+        </div>
+      {/if}
 
       {#if newBackend === 'utm'}
         <div class="field">
@@ -1478,6 +1553,47 @@
     color: var(--color-text-tertiary);
     margin-top: 4px;
   }
+  .warn-hint { color: var(--color-warning, #e0a64a); }
+
+  /* Local backend */
+  .input-row {
+    display: flex;
+    gap: 8px;
+  }
+  .input-row input { flex: 1; }
+  .btn-browse {
+    background: transparent;
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-md);
+    color: var(--color-text-secondary);
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-browse:hover { border-color: var(--color-accent); color: var(--color-accent); }
+
+  .recent-dirs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+  }
+  .recent-dir {
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-tertiary);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    padding: 2px 8px;
+    cursor: pointer;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .recent-dir:hover { color: var(--color-accent); border-color: var(--color-accent); }
 
   .preview {
     font-size: 11px;

@@ -51,6 +51,10 @@ export function DeleteSchedule(arg1:string):Promise<void>;
 
 export function DeleteSession(arg1:string):Promise<brainbox.SessionActionResponse>;
 
+export function DisableLocalRunner():Promise<void>;
+
+export function EnableLocalRunner(arg1:string):Promise<void>;
+
 export function EnqueueTask(arg1:main.EnqueueTaskRequest):Promise<string>;
 
 export function ExportSecretsTemplate(arg1:string):Promise<string>;
@@ -92,6 +96,8 @@ export function GetLANIP():Promise<string>;
 export function GetLangfuseHealth():Promise<brainbox.HealthStatus>;
 
 export function GetLatestCollectedEntry(arg1:string,arg2:string):Promise<main.CollectedEntry>;
+
+export function GetLocalRunnerStatus():Promise<main.LocalRunnerStatus>;
 
 export function GetMessageLog():Promise<Array<brainbox.Message>>;
 
@@ -173,6 +179,8 @@ export function ListTasks(arg1:string,arg2:number):Promise<Array<main.TaskRow>>;
 
 export function ListUpcomingFires(arg1:number):Promise<Array<main.UpcomingFire>>;
 
+export function OpenLocalSession(arg1:string):Promise<void>;
+
 export function PostChannelMessage(arg1:string,arg2:brainbox.PostChannelMessageRequest):Promise<brainbox.ChannelMessage>;
 
 export function PreviewDispatch(arg1:brainbox.DispatchPreviewRequest):Promise<brainbox.DispatchPreview>;
@@ -246,11 +254,3 @@ export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promis
 export function UpdatePlaybook(arg1:string,arg2:brainbox.UpdatePlaybookRequest):Promise<brainbox.Playbook>;
 
 export function UsableAgents():Promise<Array<main.DetectedAgent>>;
-
-export function EnableLocalRunner(arg1:string,arg2:string):Promise<void>;
-
-export function DisableLocalRunner():Promise<void>;
-
-export function GetLocalRunnerStatus():Promise<main.LocalRunnerStatus>;
-
-export function OpenLocalSession(arg1:string):Promise<void>;

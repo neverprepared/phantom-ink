@@ -103,11 +103,10 @@ func (a *App) startup(ctx context.Context) {
 	if a.db != nil {
 		if enabled := a.db.GetSetting(settingLocalRunnerEnabled, ""); enabled == "true" {
 			name := a.db.GetSetting(settingLocalRunnerName, "local-mac")
-			workDir := a.db.GetSetting(settingLocalRunnerWorkDir, "")
 			machineID := a.db.GetSetting(settingLocalRunnerMachineID, "")
 			runnerCtx, runnerCancel := context.WithCancel(ctx)
 			a.localRunnerStop = runnerCancel
-			a.localRunner = newLocalRunner(a.client, name, workDir, machineID)
+			a.localRunner = newLocalRunner(a.client, name, machineID)
 			a.localRunner.Start(runnerCtx)
 		}
 	}

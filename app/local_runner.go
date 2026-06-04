@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -20,7 +21,6 @@ import (
 type localRunner struct {
 	client    *brainbox.Client
 	name      string
-	workDir   string
 	machineID string
 
 	longPoll *http.Client
@@ -31,11 +31,10 @@ type localRunner struct {
 	procs sync.Map // workID → *exec.Cmd
 }
 
-func newLocalRunner(client *brainbox.Client, name, workDir, machineID string) *localRunner {
+func newLocalRunner(client *brainbox.Client, name, machineID string) *localRunner {
 	return &localRunner{
 		client:    client,
 		name:      name,
-		workDir:   workDir,
 		machineID: machineID,
 		longPoll:  brainbox.LongPollHTTPClient(),
 		stopCh:    make(chan struct{}),
@@ -167,9 +166,9 @@ func (r *localRunner) execClaude(ctx context.Context, item *brainbox.RunnerWorkI
 		return brainbox.RunnerResult{OK: false, Error: "missing task_description or prompt"}
 	}
 
-	workDir := r.workDir
-	if ws, _ := item.Payload["workspace_home"].(string); ws != "" {
-		workDir = ws
+	workDir, _ := item.Payload["workspace_home"].(string)
+	if workDir == "" {
+		workDir = os.Getenv("HOME")
 	}
 
 	ttl := 600 * time.Second

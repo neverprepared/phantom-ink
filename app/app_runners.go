@@ -14,7 +14,6 @@ type LocalRunnerStatus struct {
 	Enabled bool   `json:"enabled"`
 	Running bool   `json:"running"`
 	Name    string `json:"name"`
-	WorkDir string `json:"work_dir"`
 }
 
 // GetLocalRunnerStatus returns the current local runner configuration and state.
@@ -26,12 +25,13 @@ func (a *App) GetLocalRunnerStatus() LocalRunnerStatus {
 		Enabled: a.db.GetSetting(settingLocalRunnerEnabled, "") == "true",
 		Running: a.localRunner != nil,
 		Name:    a.db.GetSetting(settingLocalRunnerName, "local-mac"),
-		WorkDir: a.db.GetSetting(settingLocalRunnerWorkDir, ""),
 	}
 }
 
 // EnableLocalRunner saves the local runner config and starts the goroutine.
-func (a *App) EnableLocalRunner(name, workDir string) error {
+// workDir is no longer stored here — it is specified per-session at create time
+// via workspace_home in the session payload.
+func (a *App) EnableLocalRunner(name string) error {
 	if name == "" {
 		name = "local-mac"
 	}
@@ -54,7 +54,6 @@ func (a *App) EnableLocalRunner(name, workDir string) error {
 	if a.db != nil {
 		_ = a.db.SetSetting(settingLocalRunnerEnabled, "true")
 		_ = a.db.SetSetting(settingLocalRunnerName, name)
-		_ = a.db.SetSetting(settingLocalRunnerWorkDir, workDir)
 		if machineID != "" {
 			_ = a.db.SetSetting(settingLocalRunnerMachineID, machineID)
 		}
@@ -62,7 +61,7 @@ func (a *App) EnableLocalRunner(name, workDir string) error {
 
 	runnerCtx, cancel := context.WithCancel(a.ctx)
 	a.localRunnerStop = cancel
-	a.localRunner = newLocalRunner(a.client, name, workDir, machineID)
+	a.localRunner = newLocalRunner(a.client, name, machineID)
 	a.localRunner.Start(runnerCtx)
 	return nil
 }
