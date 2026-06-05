@@ -73,6 +73,8 @@ export function GetActiveProfile():Promise<main.Profile>;
 
 export function GetAgentRole(arg1:string):Promise<brainbox.AgentDefinition>;
 
+export function GetAppLogs():Promise<Array<string>>;
+
 export function GetChannel(arg1:string):Promise<brainbox.Channel>;
 
 export function GetChannelMessages(arg1:string,arg2:string):Promise<Array<brainbox.ChannelMessage>>;

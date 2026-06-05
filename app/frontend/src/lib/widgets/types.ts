@@ -94,13 +94,57 @@ export interface ActionItem {
   ref?: string;
 }
 
+export interface SessionSummary {
+  name: string;
+  status: string;
+  workspace_profile?: string;
+  [key: string]: unknown;
+}
+
+export interface HubTask {
+  id: string;
+  description: string;
+  status: string;
+  workspace_profile?: string;
+  spawned_by?: string;
+  job_id?: string;
+  [key: string]: unknown;
+}
+
+export interface UpcomingFire {
+  schedule_id: string;
+  chain_id: string;
+  chain_name: string;
+  cron_expr: string;
+  next_fire_at: string;
+}
+
+export interface DockerStat {
+  name: string;
+  id: string;
+  cpu_perc: string;
+  mem_usage: string;
+  mem_perc: string;
+  net_io: string;
+  block_io: string;
+  pids: string;
+}
+
+export interface LocalProcess {
+  pid: number;
+  name: string;
+  cpu: number;
+  mem: number;
+  [key: string]: unknown;
+}
+
 export interface DashboardData {
-  sessions: any[];
-  hubTasks: any[];
-  fires: any[];
-  taskStats: any | null;
-  dockerStats: any[];
-  localProcs: any[];
+  sessions: SessionSummary[];
+  hubTasks: HubTask[];
+  fires: UpcomingFire[];
+  taskStats: { pending: number; running: number; succeeded: number; failed: number; cancelled: number } | null;
+  dockerStats: DockerStat[];
+  localProcs: LocalProcess[];
   systemInfo: { cpu_cores: number; mem_total_gib: number };
   actionItems: ActionItem[];
   activeSessions: number;

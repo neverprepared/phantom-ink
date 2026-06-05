@@ -152,8 +152,15 @@
     return () => clearInterval(interval);
   });
 
+  $effect(() => {
+    profileState.active; // re-run when active profile changes
+    selected = null;
+    messages = [];
+    lastMessageId = null;
+    void loadChannels();
+  });
+
   onMount(() => {
-    loadChannels();
     // If we got here via panelFocus.startConversationWith(...), open the
     // create modal pre-seeded with those sessions.
     const seed = panelFocus.consumeConversationSeed();

@@ -1,8 +1,10 @@
 /** Shared lazy-loading API accessor for Wails Go bindings. */
 
-let api: any = null;
+type AppBindings = typeof import('../../../wailsjs/go/main/App');
 
-export async function getApi() {
+let api: AppBindings | null = null;
+
+export async function getApi(): Promise<AppBindings | null> {
   if (api) return api;
   try {
     api = await import('../../../wailsjs/go/main/App');

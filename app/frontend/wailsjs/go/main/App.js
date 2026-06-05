@@ -142,6 +142,10 @@ export function GetAgentRole(arg1) {
   return window['go']['main']['App']['GetAgentRole'](arg1);
 }
 
+export function GetAppLogs() {
+  return window['go']['main']['App']['GetAppLogs']();
+}
+
 export function GetChannel(arg1) {
   return window['go']['main']['App']['GetChannel'](arg1);
 }
