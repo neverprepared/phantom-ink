@@ -330,7 +330,7 @@
         <span class="status-msg">{statusMsg}</span>
       {/if}
       {#if editingId !== 'new'}
-        <button class="add-btn" onclick={startNew}>+ new rule</button>
+        <button class="btn sm primary" onclick={startNew}>+ new rule</button>
       {/if}
     </div>
   </div>
@@ -374,10 +374,10 @@
               <div class="webhook-url-row">
                 {#if draft.trigWebhookKey}
                   <input class="form-input webhook-url-input" readonly value={webhookURL} />
-                  <button class="form-btn" onclick={() => navigator.clipboard.writeText(webhookURL)} title="copy">copy</button>
-                  <button class="form-btn" onclick={() => { draft.trigWebhookKey = genWebhookKey(); }} title="rotate key">rotate</button>
+                  <button class="btn sm ghost" onclick={() => navigator.clipboard.writeText(webhookURL)} title="copy">copy</button>
+                  <button class="btn sm ghost" onclick={() => { draft.trigWebhookKey = genWebhookKey(); }} title="rotate key">rotate</button>
                 {:else}
-                  <button class="form-btn primary" onclick={() => { draft.trigWebhookKey = genWebhookKey(); }}>generate url</button>
+                  <button class="btn sm primary" onclick={() => { draft.trigWebhookKey = genWebhookKey(); }}>generate url</button>
                 {/if}
               </div>
             </div>
@@ -489,8 +489,8 @@
         </label>
 
         <div class="form-actions">
-          <button class="form-btn primary" onclick={save} disabled={!isFormValid()}>save</button>
-          <button class="form-btn" onclick={cancelEdit}>cancel</button>
+          <button class="btn sm primary" onclick={save} disabled={!isFormValid()}>save</button>
+          <button class="btn sm ghost" onclick={cancelEdit}>cancel</button>
         </div>
       {/snippet}
       {@render formBody()}
@@ -537,10 +537,10 @@
                     <div class="webhook-url-row">
                       {#if draft.trigWebhookKey}
                         <input class="form-input webhook-url-input" readonly value={webhookURL} />
-                        <button class="form-btn" onclick={() => navigator.clipboard.writeText(webhookURL)} title="copy">copy</button>
-                        <button class="form-btn" onclick={() => { draft.trigWebhookKey = genWebhookKey(); }} title="rotate key">rotate</button>
+                        <button class="btn sm ghost" onclick={() => navigator.clipboard.writeText(webhookURL)} title="copy">copy</button>
+                        <button class="btn sm ghost" onclick={() => { draft.trigWebhookKey = genWebhookKey(); }} title="rotate key">rotate</button>
                       {:else}
-                        <button class="form-btn primary" onclick={() => { draft.trigWebhookKey = genWebhookKey(); }}>generate url</button>
+                        <button class="btn sm primary" onclick={() => { draft.trigWebhookKey = genWebhookKey(); }}>generate url</button>
                       {/if}
                     </div>
                   </div>
@@ -636,8 +636,8 @@
                 <span class="form-label">enabled</span>
               </label>
               <div class="form-actions">
-                <button class="form-btn primary" onclick={save} disabled={!isFormValid()}>save</button>
-                <button class="form-btn" onclick={cancelEdit}>cancel</button>
+                <button class="btn sm primary" onclick={save} disabled={!isFormValid()}>save</button>
+                <button class="btn sm ghost" onclick={cancelEdit}>cancel</button>
               </div>
             </div>
           {:else}
@@ -687,14 +687,6 @@
   }
 
   .status-msg { font-family: var(--font-mono); font-size: 11px; color: var(--color-success); }
-
-  .add-btn {
-    font-family: var(--font-mono); font-size: 11px;
-    padding: 3px 10px; border-radius: var(--radius-sm);
-    border: 1px solid var(--color-accent); background: rgba(234,179,8,0.06);
-    color: var(--color-accent); cursor: pointer;
-  }
-  .add-btn:hover { background: rgba(234,179,8,0.12); }
 
   .empty { font-size: 13px; color: var(--color-text-tertiary); padding: var(--spacing-3xl) 0; line-height: 1.5; }
 
@@ -803,14 +795,4 @@
   .seg-btn:hover:not(.active) { color: var(--color-text-secondary); }
 
   .form-actions { display: flex; gap: var(--spacing-sm); }
-  .form-btn {
-    font-family: var(--font-mono); font-size: 11px;
-    padding: 4px 12px; border-radius: var(--radius-sm);
-    border: 1px solid var(--color-border-primary);
-    background: none; cursor: pointer; color: var(--color-text-secondary); transition: all 100ms;
-  }
-  .form-btn:hover:not(:disabled) { border-color: var(--color-border-secondary); color: var(--color-text-primary); }
-  .form-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .form-btn.primary { background: var(--color-accent); border-color: var(--color-accent); color: #000; font-weight: 600; }
-  .form-btn.primary:hover:not(:disabled) { opacity: 0.85; }
 </style>

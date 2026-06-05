@@ -581,7 +581,7 @@
     <h1><span class="accent">sessions</span></h1>
     <div class="header-actions">
       {#if loading}<Spinner />{/if}
-      <button class="new-btn" onclick={openCreateModal}>+ new session</button>
+      <button class="btn primary" onclick={openCreateModal}>+ new session</button>
     </div>
   </header>
 
@@ -1130,17 +1130,6 @@
     margin-bottom: 20px;
   }
 
-  .new-btn {
-    background: rgba(59, 130, 246, 0.1);
-    border: 1px solid rgba(59, 130, 246, 0.3);
-    color: var(--color-info);
-    padding: 7px 14px;
-    border-radius: var(--radius-lg);
-    font-size: 13px;
-    font-weight: 500;
-    transition: all 0.15s;
-  }
-  .new-btn:hover { background: rgba(59, 130, 246, 0.2); border-color: var(--color-info); }
 
 
   .stats-row {

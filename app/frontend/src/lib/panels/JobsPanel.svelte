@@ -291,7 +291,7 @@
         <span class="status-msg">{statusMsg}</span>
       {/if}
       {#if editingId !== 'new'}
-        <button class="add-btn" onclick={startNew}>+ new job</button>
+        <button class="btn sm primary" onclick={startNew}>+ new job</button>
       {/if}
     </div>
   </div>
@@ -393,8 +393,8 @@
       {/if}
 
       <div class="form-actions">
-        <button class="form-btn primary" onclick={save} disabled={!isFormValid()}>save</button>
-        <button class="form-btn" onclick={cancelEdit}>cancel</button>
+        <button class="btn sm primary" onclick={save} disabled={!isFormValid()}>save</button>
+        <button class="btn sm ghost" onclick={cancelEdit}>cancel</button>
       </div>
     </div>
   {/if}
@@ -489,8 +489,8 @@
               {/if}
 
               <div class="form-actions">
-                <button class="form-btn primary" onclick={save} disabled={!isFormValid()}>save</button>
-                <button class="form-btn" onclick={cancelEdit}>cancel</button>
+                <button class="btn sm primary" onclick={save} disabled={!isFormValid()}>save</button>
+                <button class="btn sm ghost" onclick={cancelEdit}>cancel</button>
               </div>
             </div>
           {:else}
@@ -549,14 +549,6 @@
     font-family: var(--font-mono); font-size: 11px;
     color: var(--color-success);
   }
-
-  .add-btn {
-    font-family: var(--font-mono); font-size: 11px;
-    padding: 3px 10px; border-radius: var(--radius-sm);
-    border: 1px solid var(--color-accent); background: rgba(234,179,8,0.06);
-    color: var(--color-accent); cursor: pointer;
-  }
-  .add-btn:hover { background: rgba(234,179,8,0.12); }
 
   /* Filter */
   .filter-row { display: flex; align-items: center; gap: var(--spacing-sm); }
@@ -688,14 +680,4 @@
   .form-unit { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-muted); }
 
   .form-actions { display: flex; gap: var(--spacing-sm); }
-  .form-btn {
-    font-family: var(--font-mono); font-size: 11px;
-    padding: 4px 12px; border-radius: var(--radius-sm);
-    border: 1px solid var(--color-border-primary);
-    background: none; cursor: pointer; color: var(--color-text-secondary); transition: all 100ms;
-  }
-  .form-btn:hover:not(:disabled) { border-color: var(--color-border-secondary); color: var(--color-text-primary); }
-  .form-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .form-btn.primary { background: var(--color-accent); border-color: var(--color-accent); color: #000; font-weight: 600; }
-  .form-btn.primary:hover:not(:disabled) { opacity: 0.85; }
 </style>
