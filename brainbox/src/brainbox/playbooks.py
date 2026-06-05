@@ -32,7 +32,7 @@ _playbooks: dict[str, Playbook] = {}
 _run_tasks: dict[str, asyncio.Task] = {}  # playbook_id -> active asyncio.Task
 _listeners: list[Callable] = []
 
-TASK_PATTERN = re.compile(r"^[ \t]*-[ \t]\[[ ]\][ \t](.+)$", re.MULTILINE)
+_TASK_MARKER = re.compile(r"^[ \t]*-[ \t]\[[ ]\][ \t]", re.MULTILINE)
 
 
 # ---------------------------------------------------------------------------
@@ -59,10 +59,20 @@ def on_event(fn: Callable) -> None:
 
 
 def _parse_tasks(markdown: str) -> list[PlaybookTask]:
-    return [
-        PlaybookTask(index=i, content=m.group(1).strip())
-        for i, m in enumerate(TASK_PATTERN.finditer(markdown))
-    ]
+    """Parse `- [ ]` checklist items, capturing multi-line bodies.
+
+    Each task runs from its marker to the next marker (or end of string).
+    Indented continuation lines are included verbatim so Claude receives
+    the full instruction, not just the first line.
+    """
+    positions = [m.start() for m in _TASK_MARKER.finditer(markdown)]
+    tasks = []
+    for i, pos in enumerate(positions):
+        end = positions[i + 1] if i + 1 < len(positions) else len(markdown)
+        chunk = markdown[pos:end]
+        content = _TASK_MARKER.sub("", chunk, count=1).rstrip()
+        tasks.append(PlaybookTask(index=i, content=content))
+    return tasks
 
 
 # ---------------------------------------------------------------------------
