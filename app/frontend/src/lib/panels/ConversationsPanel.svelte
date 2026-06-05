@@ -64,6 +64,11 @@
   const allSelected = $derived(filteredChannels.length > 0 && filteredChannels.every(c => selectedIds.has(c.id)));
   const someSelected = $derived(selectedIds.size > 0);
 
+  let activeCollapsed = $state(false);
+  let completedCollapsed = $state(false);
+  const activeChannels = $derived(filteredChannels.filter(c => c.status !== 'completed'));
+  const completedChannels = $derived(filteredChannels.filter(c => c.status === 'completed'));
+
   // Create channel modal
   let showCreateModal = $state(false);
   // Add-participant modal — opened from a live conversation's header to
@@ -421,7 +426,15 @@
   }
 </script>
 
-<div class="channels-layout">
+<div class="conversations-root">
+  <header class="panel-header conversations-header">
+    <h1 class="page-title">conversations</h1>
+    <div class="header-actions">
+      {#if loading}<Spinner />{/if}
+      <button class="btn primary" onclick={() => openCreateModal()}>+ new conversation</button>
+    </div>
+  </header>
+  <div class="channels-layout">
   <!-- Left: channel list -->
   <div class="channel-list">
     <div class="list-header">
@@ -433,11 +446,8 @@
           {isBatchDeleting ? 'Deleting…' : 'Delete'}
         </button>
       {:else}
-        <span class="list-title">Conversations</span>
+        <span class="list-title">channels</span>
         {#if loading}<Spinner size={12} />{/if}
-        <button class="btn-icon" onclick={() => openCreateModal()} title="New conversation">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-        </button>
       {/if}
     </div>
 
@@ -446,38 +456,90 @@
     {:else if filteredChannels.length === 0}
       <div class="list-empty">No conversations yet</div>
     {:else}
-      <ul class="channel-items">
-        {#each filteredChannels as ch (ch.id)}
-          <li class="channel-item-row" class:row-selecting={someSelected}>
-            <input
-              type="checkbox"
-              class="row-cb"
-              checked={selectedIds.has(ch.id)}
-              onclick={(e) => { e.stopPropagation(); toggleSelect(ch.id); }}
-            />
-            {#if confirmDeleteId === ch.id}
-              <div class="delete-confirm">
-                <span>Delete?</span>
-                <button class="btn-confirm-yes" onclick={(e) => confirmDelete(ch, e)}>Yes</button>
-                <button class="btn-confirm-no" onclick={cancelDelete}>No</button>
-              </div>
-            {:else}
-              <button
-                class="channel-item"
-                class:active={selected?.id === ch.id}
-                onclick={() => selectChannel(ch)}
-              >
-                <span class="status-dot" class:completed={ch.status === 'completed'}></span>
-                <span class="channel-name">{ch.name}</span>
-                <span class="participant-count">{ch.participants.length}</span>
-              </button>
-              <button class="btn-delete-channel" onclick={(e) => requestDelete(ch, e)} title="Delete conversation">
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-              </button>
-            {/if}
-          </li>
-        {/each}
-      </ul>
+      <div class="channel-sections">
+        {#if activeChannels.length > 0}
+          <button class="section-toggle" onclick={() => activeCollapsed = !activeCollapsed}>
+            <svg class="section-chevron" class:collapsed={activeCollapsed} xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+            active
+            <span class="section-count">{activeChannels.length}</span>
+          </button>
+          {#if !activeCollapsed}
+            <ul class="channel-items">
+              {#each activeChannels as ch (ch.id)}
+                <li class="channel-item-row" class:row-selecting={someSelected}>
+                  <input
+                    type="checkbox"
+                    class="row-cb"
+                    checked={selectedIds.has(ch.id)}
+                    onclick={(e) => { e.stopPropagation(); toggleSelect(ch.id); }}
+                  />
+                  {#if confirmDeleteId === ch.id}
+                    <div class="delete-confirm">
+                      <span>Delete?</span>
+                      <button class="btn-confirm-yes" onclick={(e) => confirmDelete(ch, e)}>Yes</button>
+                      <button class="btn-confirm-no" onclick={cancelDelete}>No</button>
+                    </div>
+                  {:else}
+                    <button
+                      class="channel-item"
+                      class:active={selected?.id === ch.id}
+                      onclick={() => selectChannel(ch)}
+                    >
+                      <span class="status-dot" class:completed={ch.status === 'completed'}></span>
+                      <span class="channel-name">{ch.name}</span>
+                      <span class="participant-count">{ch.participants.length}</span>
+                    </button>
+                    <button class="btn-delete-channel" onclick={(e) => requestDelete(ch, e)} title="Delete conversation">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                    </button>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        {/if}
+        {#if completedChannels.length > 0}
+          <button class="section-toggle" onclick={() => completedCollapsed = !completedCollapsed}>
+            <svg class="section-chevron" class:collapsed={completedCollapsed} xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+            completed
+            <span class="section-count">{completedChannels.length}</span>
+          </button>
+          {#if !completedCollapsed}
+            <ul class="channel-items">
+              {#each completedChannels as ch (ch.id)}
+                <li class="channel-item-row" class:row-selecting={someSelected}>
+                  <input
+                    type="checkbox"
+                    class="row-cb"
+                    checked={selectedIds.has(ch.id)}
+                    onclick={(e) => { e.stopPropagation(); toggleSelect(ch.id); }}
+                  />
+                  {#if confirmDeleteId === ch.id}
+                    <div class="delete-confirm">
+                      <span>Delete?</span>
+                      <button class="btn-confirm-yes" onclick={(e) => confirmDelete(ch, e)}>Yes</button>
+                      <button class="btn-confirm-no" onclick={cancelDelete}>No</button>
+                    </div>
+                  {:else}
+                    <button
+                      class="channel-item"
+                      class:active={selected?.id === ch.id}
+                      onclick={() => selectChannel(ch)}
+                    >
+                      <span class="status-dot" class:completed={ch.status === 'completed'}></span>
+                      <span class="channel-name">{ch.name}</span>
+                      <span class="participant-count">{ch.participants.length}</span>
+                    </button>
+                    <button class="btn-delete-channel" onclick={(e) => requestDelete(ch, e)} title="Delete conversation">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                    </button>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        {/if}
+      </div>
     {/if}
   </div>
 
@@ -571,6 +633,7 @@
       {/if}
     {/if}
   </div>
+  </div>
 </div>
 
 <!-- Create channel modal -->
@@ -642,7 +705,8 @@
   .channels-layout {
     display: grid;
     grid-template-columns: 220px 1fr;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     gap: 0;
     overflow: hidden;
   }
@@ -697,8 +761,6 @@
 
   .channel-items {
     list-style: none;
-    overflow-y: auto;
-    flex: 1;
     padding: 8px;
   }
 
@@ -1226,5 +1288,66 @@
   .btn-primary:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+
+  .conversations-root {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .conversations-header {
+    padding: var(--panel-padding);
+    padding-bottom: var(--spacing-xl);
+    border-bottom: 1px solid var(--color-border-primary);
+    flex-shrink: 0;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+  }
+
+  .channel-sections {
+    overflow-y: auto;
+    flex: 1;
+  }
+
+  .section-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 6px 14px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-tertiary);
+    cursor: pointer;
+  }
+
+  .section-toggle:hover {
+    color: var(--color-text-secondary);
+    background: rgba(255,255,255,0.03);
+  }
+
+  .section-chevron {
+    transition: transform 0.15s;
+    flex-shrink: 0;
+  }
+
+  .section-chevron.collapsed {
+    transform: rotate(-90deg);
+  }
+
+  .section-count {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 10px;
   }
 </style>
