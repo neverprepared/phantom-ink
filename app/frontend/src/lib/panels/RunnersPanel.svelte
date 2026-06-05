@@ -189,7 +189,7 @@
 
 <style>
   .panel {
-    padding: 24px;
+    padding: var(--panel-padding);
     max-width: 1100px;
   }
   .header-actions {
