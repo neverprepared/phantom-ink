@@ -330,7 +330,7 @@
         <span class="status-msg">{statusMsg}</span>
       {/if}
       {#if editingId !== 'new'}
-        <button class="btn sm primary" onclick={startNew}>+ new rule</button>
+        <button class="btn primary" onclick={startNew}>+ new rule</button>
       {/if}
     </div>
   </div>
