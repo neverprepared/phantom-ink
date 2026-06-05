@@ -284,7 +284,7 @@
 
 <div class="jobs">
   <div class="cpanel-header">
-    <h2 class="cpanel-title">jobs</h2>
+    <h1 class="page-title">jobs</h1>
     <div class="cpanel-actions">
       {#if loading}<Spinner />{/if}
       {#if statusMsg}

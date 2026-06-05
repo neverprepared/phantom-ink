@@ -578,7 +578,7 @@
 
 <div class="panel" aria-busy={loading}>
   <header>
-    <h1><span class="accent">sessions</span></h1>
+    <h1 class="page-title">sessions</h1>
     <div class="header-actions">
       {#if loading}<Spinner />{/if}
       <button class="btn primary" onclick={openCreateModal}>+ new session</button>
@@ -1118,9 +1118,6 @@
     align-items: center;
     margin-bottom: 20px;
   }
-
-  h1 { font-size: 22px; font-weight: 600; }
-  .accent { color: var(--color-accent); }
 
   .header-actions { display: flex; gap: 8px; align-items: center; }
 

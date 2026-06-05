@@ -382,7 +382,7 @@
 
 <div class="stream-panel">
   <div class="cpanel-header">
-    <h2 class="cpanel-title">stream</h2>
+    <h1 class="page-title">stream</h1>
     <div class="cpanel-actions">
       {#if loading || refreshing}<Spinner />{/if}
       {#if dispatchMsg}

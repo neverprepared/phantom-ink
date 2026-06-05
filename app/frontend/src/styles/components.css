@@ -170,10 +170,6 @@
   letter-spacing: -0.01em;
 }
 
-.panel-accent {
-  color: var(--color-accent);
-}
-
 /* --- Row / list item --- */
 .row {
   display: flex;

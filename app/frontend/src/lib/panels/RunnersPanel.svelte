@@ -102,7 +102,7 @@
 
 <div class="panel">
   <header>
-    <h1><span class="accent">runners</span></h1>
+    <h1 class="page-title">runners</h1>
     <div class="header-actions">
       {#if !loaded}<Spinner />{/if}
       <button class="btn primary" onclick={() => (showingPair = true)}>+ pair a runner</button>
@@ -197,14 +197,6 @@
     align-items: baseline;
     gap: 12px;
     margin-bottom: 16px;
-  }
-  h1 {
-    font-size: 22px;
-    font-weight: 600;
-    margin: 0;
-  }
-  h1 .accent {
-    color: var(--color-accent);
   }
   .header-actions {
     margin-left: auto;

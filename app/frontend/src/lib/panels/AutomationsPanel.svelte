@@ -323,7 +323,7 @@
 
 <div class="automations">
   <div class="cpanel-header">
-    <h2 class="cpanel-title">automations</h2>
+    <h1 class="page-title">automations</h1>
     <div class="cpanel-actions">
       {#if loading}<Spinner />{/if}
       {#if statusMsg}

@@ -280,7 +280,7 @@
 
 <div class="panel">
   <header>
-    <h1><span class="accent">profiles</span></h1>
+    <h1 class="page-title">profiles</h1>
     <div class="header-actions">
       <button class="btn-icon" onclick={() => { refreshProfiles(); refreshDisk(); }} disabled={scanning} title="Refresh" aria-label="Refresh profiles">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class:spinning={scanning} aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
@@ -479,8 +479,6 @@
 <style>
   .panel { padding: var(--panel-padding); }
   header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-  h1 { font-size: 22px; font-weight: 600; }
-  .accent { color: var(--color-accent); }
   .header-actions { display: flex; gap: 8px; }
 
   .btn-icon {

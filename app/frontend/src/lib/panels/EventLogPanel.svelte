@@ -27,7 +27,7 @@
 
 <div class="panel">
   <header>
-    <h1><span class="accent">event log</span></h1>
+    <h1 class="page-title">event log</h1>
     <div class="toolbar">
       <label class="toggle">
         <input type="checkbox" bind:checked={autoscroll} />
@@ -69,9 +69,6 @@
     margin-bottom: 16px;
     flex-shrink: 0;
   }
-
-  h1 { font-size: 22px; font-weight: 600; }
-  .accent { color: var(--color-accent); }
 
   .toolbar {
     display: flex;
