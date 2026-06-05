@@ -15,7 +15,7 @@
   import ProfilesPanel from '../panels/ProfilesPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
   import DashboardPanel from '../panels/DashboardPanel.svelte';
-  import TimelinePanel from '../panels/TimelinePanel.svelte';
+  import StreamPanel from '../panels/StreamPanel.svelte';
   import RunnersPanel from '../panels/RunnersPanel.svelte';
 </script>
 
@@ -24,8 +24,8 @@
   <div class="body">
     <Sidebar />
     <main class="content">
-      {#if currentPanel.value === 'timeline'}
-        <TimelinePanel />
+      {#if currentPanel.value === 'stream'}
+        <StreamPanel />
       {:else if currentPanel.value === 'sessions'}
         <SessionsPanel />
       {:else if currentPanel.value === 'runners'}

@@ -33,8 +33,8 @@
           {#if item.ref}
             <button
               class="action-ref mono"
-              onclick={() => currentPanel.value = 'timeline'}
-              title="view in timeline"
+              onclick={() => currentPanel.value = 'stream'}
+              title="view in stream"
             >{item.ref.slice(0, 8)}</button>
           {/if}
         </div>

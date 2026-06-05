@@ -41,7 +41,7 @@ export const DEFAULT_LAYOUT: DashboardLayout = {
     {
       id: 'stat-running-m',
       kind: 'stat-counter',
-      config: { label: 'RUNNING TASKS', color: 'blue', navTarget: 'timeline', dataKey: 'runningTasks' },
+      config: { label: 'RUNNING TASKS', color: 'blue', navTarget: 'stream', dataKey: 'runningTasks' },
       collectionId: 'default-morning',
       x: 2, y: 4, w: 2, h: 2, minW: 2, minH: 2,
     },
@@ -78,14 +78,14 @@ export const DEFAULT_LAYOUT: DashboardLayout = {
     {
       id: 'stat-running',
       kind: 'stat-counter',
-      config: { label: 'RUNNING TASKS', color: 'blue', navTarget: 'timeline', dataKey: 'runningTasks' },
+      config: { label: 'RUNNING TASKS', color: 'blue', navTarget: 'stream', dataKey: 'runningTasks' },
       collectionId: 'default-ops',
       x: 2, y: 0, w: 2, h: 2, minW: 2, minH: 2,
     },
     {
       id: 'stat-failed',
       kind: 'stat-counter',
-      config: { label: 'FAILED (24h)', color: 'red', navTarget: 'timeline', dataKey: 'failedTasks' },
+      config: { label: 'FAILED (24h)', color: 'red', navTarget: 'stream', dataKey: 'failedTasks' },
       collectionId: 'default-ops',
       x: 4, y: 0, w: 2, h: 2, minW: 2, minH: 2,
     },

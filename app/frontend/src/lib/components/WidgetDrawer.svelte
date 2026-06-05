@@ -92,7 +92,7 @@
     { val: 'muted',   label: 'Muted' },
   ];
 
-  const NAV_TARGETS = ['', 'sessions', 'timeline', 'agents', 'chains', 'conversations', 'playbooks'];
+  const NAV_TARGETS = ['', 'sessions', 'stream', 'agents', 'chains', 'conversations', 'playbooks'];
 
   function handleAdd() {
     const id = crypto.randomUUID();
