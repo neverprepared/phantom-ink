@@ -201,7 +201,7 @@
                 {#if t.status === 'pending' || t.status === 'running'}
                   <button class="btn-sm btn-danger" onclick={() => cancel(t)}>cancel</button>
                 {:else if t.status === 'failed' || t.status === 'cancelled'}
-                  <button class="btn-sm btn-secondary" onclick={() => retry(t)}>retry</button>
+                  <button class="btn-sm btn-ghost" onclick={() => retry(t)}>retry</button>
                 {/if}
               </div>
             </div>
