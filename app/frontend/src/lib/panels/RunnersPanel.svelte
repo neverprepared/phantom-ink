@@ -101,7 +101,7 @@
 </script>
 
 <div class="panel">
-  <header>
+  <header class="panel-header">
     <h1 class="page-title">runners</h1>
     <div class="header-actions">
       {#if !loaded}<Spinner />{/if}
@@ -192,14 +192,7 @@
     padding: 24px;
     max-width: 1100px;
   }
-  header {
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
   .header-actions {
-    margin-left: auto;
     display: flex;
     gap: 8px;
   }

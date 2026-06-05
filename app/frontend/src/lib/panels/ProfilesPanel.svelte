@@ -279,7 +279,7 @@
 </script>
 
 <div class="panel">
-  <header>
+  <header class="panel-header">
     <h1 class="page-title">profiles</h1>
     <div class="header-actions">
       <button class="btn-icon" onclick={() => { refreshProfiles(); refreshDisk(); }} disabled={scanning} title="Refresh" aria-label="Refresh profiles">
@@ -478,7 +478,6 @@
 
 <style>
   .panel { padding: var(--panel-padding); }
-  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
   .header-actions { display: flex; gap: 8px; }
 
   .btn-icon {

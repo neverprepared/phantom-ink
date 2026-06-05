@@ -381,9 +381,9 @@
 </script>
 
 <div class="stream-panel">
-  <div class="cpanel-header">
+  <div class="panel-header">
     <h1 class="page-title">stream</h1>
-    <div class="cpanel-actions">
+    <div style="display:flex;align-items:center;gap:var(--spacing-md);">
       {#if loading || refreshing}<Spinner />{/if}
       {#if dispatchMsg}
         <span class="dispatch-msg">{dispatchMsg}</span>

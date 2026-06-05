@@ -160,7 +160,7 @@
 </script>
 
 <div class="panel">
-  <header>
+  <header class="panel-header">
     <h1 class="page-title">settings</h1>
   </header>
 
@@ -332,7 +332,6 @@
 
 <style>
   .panel { padding: var(--panel-padding); }
-  header { margin-bottom: 24px; }
   .loading { color: var(--color-text-tertiary); font-size: 13px; padding: 24px 0; }
 
   .settings-form { max-width: 560px; }

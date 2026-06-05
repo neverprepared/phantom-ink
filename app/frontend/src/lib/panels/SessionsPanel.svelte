@@ -577,7 +577,7 @@
 </script>
 
 <div class="panel" aria-busy={loading}>
-  <header>
+  <header class="panel-header">
     <h1 class="page-title">sessions</h1>
     <div class="header-actions">
       {#if loading}<Spinner />{/if}
@@ -1111,13 +1111,6 @@
 
 <style>
   .panel { padding: var(--panel-padding); }
-
-  header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-  }
 
   .header-actions { display: flex; gap: 8px; align-items: center; }
 

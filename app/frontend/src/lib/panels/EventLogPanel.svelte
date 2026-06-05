@@ -26,7 +26,7 @@
 </script>
 
 <div class="panel">
-  <header>
+  <header class="panel-header">
     <h1 class="page-title">event log</h1>
     <div class="toolbar">
       <label class="toggle">
@@ -60,14 +60,6 @@
     overflow: hidden;
     padding: var(--panel-padding);
     padding-bottom: 0;
-  }
-
-  header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    margin-bottom: 16px;
-    flex-shrink: 0;
   }
 
   .toolbar {

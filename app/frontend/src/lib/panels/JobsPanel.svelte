@@ -283,9 +283,9 @@
 </script>
 
 <div class="jobs">
-  <div class="cpanel-header">
+  <div class="panel-header">
     <h1 class="page-title">jobs</h1>
-    <div class="cpanel-actions">
+    <div style="display:flex;align-items:center;gap:var(--spacing-md);">
       {#if loading}<Spinner />{/if}
       {#if statusMsg}
         <span class="status-msg">{statusMsg}</span>
