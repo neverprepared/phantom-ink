@@ -3,6 +3,7 @@
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
   import PairRunnerModal from '../components/PairRunnerModal.svelte';
+  import Spinner from '../components/Spinner.svelte';
 
   interface Runner {
     name: string;
@@ -102,10 +103,7 @@
   <header>
     <h1><span class="accent">runners</span></h1>
     <div class="header-actions">
-      <button class="btn" onclick={refresh} title="Refresh">
-        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
-        refresh
-      </button>
+      {#if !loaded}<Spinner />{/if}
       <button class="btn primary" onclick={() => (showingPair = true)}>+ pair a runner</button>
     </div>
   </header>

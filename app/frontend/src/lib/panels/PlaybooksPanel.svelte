@@ -2,8 +2,9 @@
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
-  import { profileState } from '../stores.svelte';
+  import { profileState, refreshTick } from '../stores.svelte';
   import Modal from '../components/Modal.svelte';
+  import Spinner from '../components/Spinner.svelte';
 
   interface PlaybookTask {
     id: string;
@@ -75,14 +76,14 @@
   const profileCount = $derived(playbooks.filter((p) => p.workspace_profile !== 'global').length);
   const globalCount = $derived(playbooks.filter((p) => p.workspace_profile === 'global').length);
 
-  async function load() {
-    loading = true;
+  async function load(silent = false) {
+    if (!silent) loading = true;
     try {
       const api = await getApi();
       const result = await api.ListPlaybooks(activeProfileName);
       playbooks = (result ?? []) as Playbook[];
     } catch (e: any) {
-      notifications.error(`Failed to load playbooks: ${e?.message ?? e}`);
+      if (!silent) notifications.error(`Failed to load playbooks: ${e?.message ?? e}`);
     } finally {
       loading = false;
     }
@@ -91,6 +92,11 @@
   $effect(() => {
     const _ = activeProfileName;
     load();
+  });
+
+  $effect(() => {
+    refreshTick.count;
+    void load(true);
   });
 
   onMount(async () => {
@@ -225,6 +231,7 @@
       <h1 class="page-title" style="display:flex;align-items:center;gap:10px;">
         playbooks
         <span class="scope-chip mono">{scopeLabel}</span>
+        {#if loading}<Spinner />{/if}
       </h1>
       <div style="display:flex;gap:10px;align-items:center;">
         <div class="filter" style="margin:0;width:260px;">

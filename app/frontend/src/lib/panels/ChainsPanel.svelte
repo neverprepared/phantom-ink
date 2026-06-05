@@ -2,8 +2,9 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
-  import { panelFocus, profileState } from '../stores.svelte';
+  import { panelFocus, profileState, refreshTick } from '../stores.svelte';
   import Modal from '../components/Modal.svelte';
+  import Spinner from '../components/Spinner.svelte';
 
   interface UsableAgent {
     id: string;
@@ -107,8 +108,8 @@
     return chainable.find((a) => a.id === id)?.label ?? id;
   }
 
-  async function load() {
-    loading = true;
+  async function load(silent = false) {
+    if (!silent) loading = true;
     const a = await getApi();
     if (!a) { loading = false; return; }
     try {
@@ -142,6 +143,11 @@
     if (id) {
       activeId = id;
     }
+  });
+
+  $effect(() => {
+    refreshTick.count;
+    void load(true);
   });
 
   // ----- gallery helpers: derive canvas-style nodes/edges from a chain -----
@@ -417,6 +423,7 @@
       <h1 class="page-title" style="display:flex;align-items:center;gap:10px;">
         chains
         <span class="scope-chip mono">{scopeLabel}</span>
+        {#if loading}<Spinner />{/if}
       </h1>
       <div style="display:flex;gap:10px;align-items:center;">
         <div class="filter" style="margin:0;width:240px;">

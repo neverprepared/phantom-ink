@@ -6,6 +6,7 @@
   import { profileState, panelFocus } from '../stores.svelte';
   import Modal from '../components/Modal.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import Spinner from '../components/Spinner.svelte';
 
   interface Participant {
     name: string;
@@ -426,6 +427,7 @@
         </button>
       {:else}
         <span class="list-title">Conversations</span>
+        {#if loading}<Spinner size={12} />{/if}
         <button class="btn-icon" onclick={() => openCreateModal()} title="New conversation">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
         </button>

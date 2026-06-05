@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { brainboxEvents } from '../events.svelte';
   import { profileState } from '../stores.svelte';
+  import Spinner from '../components/Spinner.svelte';
 
   // ── Types ──────────────────────────────────────────────────────────────
 
@@ -380,11 +381,9 @@
 
 <div class="stream-panel">
   <div class="panel-header">
-    <h2 class="panel-title">
-      stream
-      {#if refreshing}<span class="blink">·</span>{/if}
-    </h2>
+    <h2 class="panel-title">stream</h2>
     <div class="header-right">
+      {#if loading || refreshing}<Spinner />{/if}
       {#if dispatchMsg}
         <span class="dispatch-msg">{dispatchMsg}</span>
       {/if}
@@ -565,8 +564,6 @@
     color: var(--color-text-primary); margin: 0;
     display: flex; align-items: center; gap: var(--spacing-xs);
   }
-  .blink { color: var(--color-accent); animation: blink 1s step-end infinite; }
-  @keyframes blink { 50% { opacity: 0; } }
 
   .header-right { display: flex; align-items: center; gap: var(--spacing-md); }
 

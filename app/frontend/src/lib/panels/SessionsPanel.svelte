@@ -4,13 +4,14 @@
   import { brainboxEvents } from '../events.svelte';
   import { notifications } from '../notifications.svelte';
   import { combinedHistory as combinedHistoryStore, localHistory as localHistoryStore, diskHistory as diskHistoryStore } from '../metricsHistory.svelte';
-  import { profileState, profileColorStore, featureFlags, panelFocus } from '../stores.svelte';
+  import { profileState, profileColorStore, featureFlags, panelFocus, refreshTick } from '../stores.svelte';
   import { getProfileColor, profileColorStyle } from '../utils/profileColors';
   import EmptyState from '../components/EmptyState.svelte';
   import Badge from '../components/Badge.svelte';
   import Modal from '../components/Modal.svelte';
   import ProfilePicker from '../components/ProfilePicker.svelte';
   import MetricsChart from '../components/MetricsChart.svelte';
+  import Spinner from '../components/Spinner.svelte';
 
 
   let allSessions = $state<any[]>([]);
@@ -228,9 +229,9 @@
     } catch { /* non-critical */ }
   }
 
-  async function refresh() {
+  async function refresh(silent = false) {
     const a = await getApi();
-    if (!a) { loading = false; return; }
+    if (!a) { if (!silent) loading = false; return; }
     try {
       const [sess, hubState, procs, diskStats, diskBk] = await Promise.all([
         a.GetSessions(),
@@ -400,6 +401,11 @@
 
   onDestroy(() => {
     if (metricsTimer) clearInterval(metricsTimer);
+  });
+
+  $effect(() => {
+    refreshTick.count;
+    void refresh(true);
   });
 
   $effect(() => {
@@ -588,10 +594,8 @@
   <header>
     <h1><span class="accent">sessions</span></h1>
     <div class="header-actions">
+      {#if loading}<Spinner />{/if}
       <button class="new-btn" onclick={openCreateModal}>+ new session</button>
-      <button class="refresh-btn" onclick={refresh} title="Refresh" aria-label="Refresh">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
-      </button>
     </div>
   </header>
 
@@ -678,7 +682,7 @@
   {/if}
 
   {#if loading}
-    <div class="loading">loading sessions...</div>
+    <div class="loading"><Spinner size={20} /></div>
   {:else if allSessions.length === 0}
     <EmptyState title="No sessions" message="Create a new session to get started." />
   {:else if visibleSessions.length === 0 && filteredLocal.length === 0}
@@ -1152,16 +1156,6 @@
   }
   .new-btn:hover { background: rgba(59, 130, 246, 0.2); border-color: var(--color-info); }
 
-  .refresh-btn {
-    background: none;
-    border: 1px solid var(--color-border-secondary);
-    color: var(--color-text-tertiary);
-    padding: 6px;
-    border-radius: var(--radius-md);
-    display: flex;
-    transition: all 0.15s;
-  }
-  .refresh-btn:hover { color: var(--color-text-primary); border-color: var(--color-text-tertiary); }
 
   .stats-row {
     display: flex;
@@ -1199,7 +1193,7 @@
   }
   .toggle-chevron.open { transform: rotate(180deg); }
 
-  .loading { color: var(--color-text-tertiary); font-size: 13px; padding: 24px 0; }
+  .loading { display: flex; justify-content: center; padding: 48px 0; color: var(--color-text-tertiary); }
 
   .session-list { display: flex; flex-direction: column; gap: 12px; }
 

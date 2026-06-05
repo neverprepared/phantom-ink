@@ -1,7 +1,8 @@
 <script lang="ts">
   import { getApi } from '../utils/api';
   import { onMount } from 'svelte';
-  import { profileState } from '../stores.svelte';
+  import { profileState, refreshTick } from '../stores.svelte';
+  import Spinner from '../components/Spinner.svelte';
 
   // ── Types ──────────────────────────────────────────────────────────────
 
@@ -94,10 +95,10 @@
 
   // ── Loading ────────────────────────────────────────────────────────────
 
-  async function load() {
+  async function load(silent = false) {
     const a = await getApi();
     if (!a) return;
-    loading = true;
+    if (!silent) loading = true;
     try {
       const [r, j, p, c, cfg] = await Promise.all([
         (a.ListAutomationRules as any)('').catch(() => []),
@@ -307,12 +308,18 @@
   }
 
   onMount(() => { void load(); });
+
+  $effect(() => {
+    refreshTick.count;
+    void load(true);
+  });
 </script>
 
 <div class="automations">
   <div class="panel-header">
     <h2 class="panel-title">automations</h2>
     <div class="header-right">
+      {#if loading}<Spinner />{/if}
       {#if statusMsg}
         <span class="status-msg">{statusMsg}</span>
       {/if}
