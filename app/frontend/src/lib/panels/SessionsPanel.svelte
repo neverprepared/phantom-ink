@@ -682,7 +682,7 @@
   {/if}
 
   {#if loading}
-    <div class="loading">loading sessions...</div>
+    <div class="loading"><Spinner size={20} /></div>
   {:else if allSessions.length === 0}
     <EmptyState title="No sessions" message="Create a new session to get started." />
   {:else if visibleSessions.length === 0 && filteredLocal.length === 0}
@@ -1193,7 +1193,7 @@
   }
   .toggle-chevron.open { transform: rotate(180deg); }
 
-  .loading { color: var(--color-text-tertiary); font-size: 13px; padding: 24px 0; }
+  .loading { display: flex; justify-content: center; padding: 48px 0; color: var(--color-text-tertiary); }
 
   .session-list { display: flex; flex-direction: column; gap: 12px; }
 
