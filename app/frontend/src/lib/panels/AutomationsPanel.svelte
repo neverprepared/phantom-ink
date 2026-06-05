@@ -322,7 +322,7 @@
 </script>
 
 <div class="automations">
-  <div class="panel-header">
+  <div class="panel-header" style="margin-bottom:0;">
     <h1 class="page-title">automations</h1>
     <div style="display:flex;align-items:center;gap:var(--spacing-md);">
       {#if loading}<Spinner />{/if}

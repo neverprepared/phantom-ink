@@ -381,7 +381,7 @@
 </script>
 
 <div class="stream-panel">
-  <div class="panel-header">
+  <div class="panel-header" style="margin-bottom:0;">
     <h1 class="page-title">stream</h1>
     <div style="display:flex;align-items:center;gap:var(--spacing-md);">
       {#if loading || refreshing}<Spinner />{/if}
