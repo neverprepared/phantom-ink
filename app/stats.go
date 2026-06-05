@@ -305,11 +305,13 @@ func (a *App) ScanDiskUsage() DiskOverview {
 		}
 		bytes := dirSize(p.WorkspaceHome)
 		if a.db != nil {
-			a.db.conn.Exec(
+			if _, err := a.db.conn.Exec(
 				"INSERT INTO disk_cache (profile_name, bytes, scanned_at) VALUES (?, ?, ?) "+
 					"ON CONFLICT(profile_name) DO UPDATE SET bytes=excluded.bytes, scanned_at=excluded.scanned_at",
 				p.Name, bytes, now,
-			)
+			); err != nil {
+				logErr("disk cache update for profile %q: %v", p.Name, err)
+			}
 		}
 	}
 
@@ -320,7 +322,9 @@ func (a *App) ScanDiskUsage() DiskOverview {
 			profileNames[p.Name] = true
 		}
 		rows, err := a.db.conn.Query("SELECT profile_name FROM disk_cache")
-		if err == nil {
+		if err != nil {
+			logErr("disk cache cleanup query: %v", err)
+		} else {
 			defer rows.Close()
 			var toDelete []string
 			for rows.Next() {
@@ -330,7 +334,9 @@ func (a *App) ScanDiskUsage() DiskOverview {
 				}
 			}
 			for _, name := range toDelete {
-				a.db.conn.Exec("DELETE FROM disk_cache WHERE profile_name = ?", name)
+				if _, err := a.db.conn.Exec("DELETE FROM disk_cache WHERE profile_name = ?", name); err != nil {
+					logErr("disk cache purge %q: %v", name, err)
+				}
 			}
 		}
 	}

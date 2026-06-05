@@ -152,30 +152,12 @@ func (a *App) GetTaskStats(windowHours int) (TaskStats, error) {
 	}
 	since := time.Now().UTC().Add(-time.Duration(windowHours) * time.Hour).Format(time.RFC3339)
 	stats := TaskStats{WindowHours: windowHours}
-	tasks, err := a.db.ListTasks("", 500)
+	p, r, s, f, c, err := a.db.TaskStatsCounted(since)
 	if err != nil {
 		return stats, err
 	}
-	for _, t := range tasks {
-		switch t.Status {
-		case TaskPending:
-			stats.Pending++
-		case TaskRunning:
-			stats.Running++
-		case TaskSucceeded:
-			if t.FinishedAt >= since {
-				stats.Succeeded++
-			}
-		case TaskFailed:
-			if t.FinishedAt >= since {
-				stats.Failed++
-			}
-		case TaskCancelled:
-			if t.FinishedAt >= since {
-				stats.Cancelled++
-			}
-		}
-	}
+	stats.Pending, stats.Running = p, r
+	stats.Succeeded, stats.Failed, stats.Cancelled = s, f, c
 	return stats, nil
 }
 

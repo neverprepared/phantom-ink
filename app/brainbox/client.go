@@ -59,56 +59,8 @@ func (c *Client) snapshot() (baseURL, apiKey string) {
 	return c.baseURL, c.apiKey
 }
 
-// do performs an HTTP request and unmarshals the JSON response into result.
-// If result is nil, the response body is discarded.
-func (c *Client) do(method, path string, body interface{}, result interface{}) error {
-	var bodyReader io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return fmt.Errorf("marshal body: %w", err)
-		}
-		bodyReader = bytes.NewReader(data)
-	}
-
-	baseURL, apiKey := c.snapshot()
-	req, err := http.NewRequest(method, baseURL+path, bodyReader)
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if apiKey != "" {
-		req.Header.Set("X-API-Key", apiKey)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	if result != nil {
-		if err := json.Unmarshal(respBody, result); err != nil {
-			return fmt.Errorf("unmarshal response: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// doWith is like do but uses a custom HTTP client (e.g. longer timeout).
+// doWith performs an HTTP request using the provided client and unmarshals
+// the JSON response into result. If result is nil the body is discarded.
 func (c *Client) doWith(httpClient *http.Client, method, path string, body interface{}, result interface{}) error {
 	var bodyReader io.Reader
 	if body != nil {
@@ -142,7 +94,12 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, body inter
 		return fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+		// Cap body to 500 bytes — nginx error pages are enormous.
+		body := respBody
+		if len(body) > 500 {
+			body = append(body[:500], []byte("…")...)
+		}
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	if result != nil {
 		if err := json.Unmarshal(respBody, result); err != nil {
@@ -150,6 +107,11 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, body inter
 		}
 	}
 	return nil
+}
+
+// do performs an HTTP request using the default client.
+func (c *Client) do(method, path string, body interface{}, result interface{}) error {
+	return c.doWith(c.httpClient, method, path, body, result)
 }
 
 // get is a convenience wrapper for GET requests.

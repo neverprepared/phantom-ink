@@ -2,6 +2,7 @@
   import { getApi } from '../utils/api';
   import { onMount } from 'svelte';
   import { profileState, refreshTick } from '../stores.svelte';
+  import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
 
   // ── Types ──────────────────────────────────────────────────────────────
@@ -182,7 +183,9 @@
     try {
       await (a.DeleteAutomationRule as any)(id);
       await load();
-    } catch {}
+    } catch (e: any) {
+      notifications.error(`Failed to delete rule: ${e?.message ?? 'unknown error'}`);
+    }
   }
 
   async function toggle(rule: AutomationRule) {
@@ -191,7 +194,9 @@
     try {
       await (a.SaveAutomationRule as any)({ ...rule, enabled: !rule.enabled });
       await load();
-    } catch {}
+    } catch (e: any) {
+      notifications.error(`Failed to update rule: ${e?.message ?? 'unknown error'}`);
+    }
   }
 
   // ── Form helpers ───────────────────────────────────────────────────────

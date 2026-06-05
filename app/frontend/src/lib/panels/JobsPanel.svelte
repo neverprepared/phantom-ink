@@ -2,6 +2,7 @@
   import { getApi } from '../utils/api';
   import { onMount } from 'svelte';
   import { profileState, dashboardState } from '../stores.svelte';
+  import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
 
   // ── Types ──────────────────────────────────────────────────────────────
@@ -151,7 +152,9 @@
     try {
       await (a.DeleteCollectJob as any)(id);
       await load();
-    } catch {}
+    } catch (e: any) {
+      notifications.error(`Failed to delete job: ${e?.message ?? 'unknown error'}`);
+    }
   }
 
   async function runNow(id: string) {
@@ -172,7 +175,9 @@
     try {
       await (a.SaveCollectJob as any)({ ...job, enabled: !job.enabled });
       await load();
-    } catch {}
+    } catch (e: any) {
+      notifications.error(`Failed to update job: ${e?.message ?? 'unknown error'}`);
+    }
   }
 
   // ── Form helpers ───────────────────────────────────────────────────────

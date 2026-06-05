@@ -25,8 +25,8 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="backdrop" onclick={handleBackdrop} role="dialog" aria-modal="true" tabindex="-1">
-  <div class="modal" bind:this={dialogEl}>
+<div class="backdrop" onclick={handleBackdrop}>
+  <div class="modal" bind:this={dialogEl} role="dialog" aria-modal="true" tabindex="-1">
     {@render children()}
   </div>
 </div>

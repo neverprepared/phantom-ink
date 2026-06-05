@@ -278,6 +278,7 @@ type collectScheduler struct {
 	interval time.Duration
 	stopOnce sync.Once
 	stopped  chan struct{}
+	inflight sync.Map // job.ID → struct{}: prevents concurrent runs of the same job
 }
 
 func newCollectScheduler(a *App) *collectScheduler {
@@ -324,7 +325,14 @@ func (s *collectScheduler) tick() {
 		if !collectJobIsDue(job, now) {
 			continue
 		}
-		go s.runJob(job)
+		if _, loaded := s.inflight.LoadOrStore(job.ID, struct{}{}); loaded {
+			continue
+		}
+		j := job
+		go func() {
+			defer s.inflight.Delete(j.ID)
+			s.runJob(j)
+		}()
 	}
 }
 

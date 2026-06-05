@@ -3,7 +3,7 @@
   import AppShell from './lib/layout/AppShell.svelte';
   import CommandPalette from './lib/components/CommandPalette.svelte';
   import Notifications from './lib/components/Notifications.svelte';
-  import { commandPalette, currentPanel, profileState, profileColorStore, featureFlags } from './lib/stores.svelte';
+  import { commandPalette, currentPanel, profileState, profileColorStore, featureFlags, refreshTick } from './lib/stores.svelte';
   import { notifications } from './lib/notifications.svelte';
   import { startEventListener } from './lib/events.svelte';
   import './styles/tokens.css';
@@ -87,6 +87,21 @@
       cleanup();
       window.removeEventListener('keydown', handleKeydown);
     };
+  });
+
+  $effect(() => {
+    refreshTick.count;
+    void (async () => {
+      try {
+        const mod = await import('../wailsjs/go/main/App');
+        const services = await mod.ListServices();
+        featureFlags.services = (services ?? []).map((s: any) => ({
+          name: s.name,
+          enabled: s.enabled,
+          running: s.running,
+        }));
+      } catch {}
+    })();
   });
 </script>
 

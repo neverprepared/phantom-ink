@@ -91,7 +91,7 @@
 
   $effect(() => {
     const _ = activeProfileName;
-    load();
+    void load(true);
   });
 
   $effect(() => {

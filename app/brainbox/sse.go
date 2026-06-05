@@ -17,6 +17,7 @@ type SSEListener struct {
 	client     *Client
 	onEvent    func(string)
 	cancel     context.CancelFunc
+	stopped    chan struct{} // closed when loop() exits; nil when not running
 	mu         sync.Mutex
 	running    bool
 	httpClient *http.Client // no Timeout: context cancellation handles shutdown
@@ -39,27 +40,39 @@ func (s *SSEListener) Start() {
 		return
 	}
 	s.running = true
+	stopped := make(chan struct{})
+	s.stopped = stopped
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.mu.Unlock()
 
-	go s.loop(ctx)
+	go func() {
+		defer close(stopped)
+		s.loop(ctx)
+	}()
 }
 
 // Stop halts the SSE listener.
 func (s *SSEListener) Stop() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.cancel != nil {
 		s.cancel()
 	}
 	s.running = false
+	stopped := s.stopped
+	s.mu.Unlock()
+
+	if stopped != nil {
+		select {
+		case <-stopped:
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 // Restart stops and restarts the listener (use when URL/key changes).
 func (s *SSEListener) Restart() {
 	s.Stop()
-	time.Sleep(100 * time.Millisecond)
 	s.Start()
 }
 
