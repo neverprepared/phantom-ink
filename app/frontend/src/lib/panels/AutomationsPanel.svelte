@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getApi } from '../utils/api';
   import { onMount } from 'svelte';
-  import { profileState } from '../stores.svelte';
+  import { profileState, refreshTick } from '../stores.svelte';
 
   // ── Types ──────────────────────────────────────────────────────────────
 
@@ -94,10 +94,10 @@
 
   // ── Loading ────────────────────────────────────────────────────────────
 
-  async function load() {
+  async function load(silent = false) {
     const a = await getApi();
     if (!a) return;
-    loading = true;
+    if (!silent) loading = true;
     try {
       const [r, j, p, c, cfg] = await Promise.all([
         (a.ListAutomationRules as any)('').catch(() => []),
@@ -307,6 +307,11 @@
   }
 
   onMount(() => { void load(); });
+
+  $effect(() => {
+    refreshTick.count;
+    void load(true);
+  });
 </script>
 
 <div class="automations">

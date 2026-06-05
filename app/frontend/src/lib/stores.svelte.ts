@@ -56,6 +56,23 @@ if (typeof window !== 'undefined') {
 }
 
 // ---------------------------------------------------------------------------
+// Background refresh tick — increments every 30 s. Panels that lack live
+// event feeds subscribe via $effect so they reload silently while visible.
+// The interval is started once at module load; panels are unmounted when not
+// active (AppShell uses {#if}), so their effects only fire while on screen.
+// ---------------------------------------------------------------------------
+
+let _tick = $state(0);
+
+export const refreshTick = {
+  get count() { return _tick; },
+};
+
+if (typeof window !== 'undefined') {
+  setInterval(() => { _tick++; }, 30_000);
+}
+
+// ---------------------------------------------------------------------------
 // Panel focus — one-shot signal for cross-panel navigation. Setter sets the
 // target chain ID and switches the current panel; reader clears after use.
 // Used by TasksSection (and later, others) to "open this chain" without

@@ -4,7 +4,7 @@
   import { brainboxEvents } from '../events.svelte';
   import { notifications } from '../notifications.svelte';
   import { combinedHistory as combinedHistoryStore, localHistory as localHistoryStore, diskHistory as diskHistoryStore } from '../metricsHistory.svelte';
-  import { profileState, profileColorStore, featureFlags, panelFocus } from '../stores.svelte';
+  import { profileState, profileColorStore, featureFlags, panelFocus, refreshTick } from '../stores.svelte';
   import { getProfileColor, profileColorStyle } from '../utils/profileColors';
   import EmptyState from '../components/EmptyState.svelte';
   import Badge from '../components/Badge.svelte';
@@ -228,9 +228,9 @@
     } catch { /* non-critical */ }
   }
 
-  async function refresh() {
+  async function refresh(silent = false) {
     const a = await getApi();
-    if (!a) { loading = false; return; }
+    if (!a) { if (!silent) loading = false; return; }
     try {
       const [sess, hubState, procs, diskStats, diskBk] = await Promise.all([
         a.GetSessions(),
@@ -400,6 +400,11 @@
 
   onDestroy(() => {
     if (metricsTimer) clearInterval(metricsTimer);
+  });
+
+  $effect(() => {
+    refreshTick.count;
+    void refresh(true);
   });
 
   $effect(() => {

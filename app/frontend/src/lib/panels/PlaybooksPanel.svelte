@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
-  import { profileState } from '../stores.svelte';
+  import { profileState, refreshTick } from '../stores.svelte';
   import Modal from '../components/Modal.svelte';
 
   interface PlaybookTask {
@@ -75,14 +75,14 @@
   const profileCount = $derived(playbooks.filter((p) => p.workspace_profile !== 'global').length);
   const globalCount = $derived(playbooks.filter((p) => p.workspace_profile === 'global').length);
 
-  async function load() {
-    loading = true;
+  async function load(silent = false) {
+    if (!silent) loading = true;
     try {
       const api = await getApi();
       const result = await api.ListPlaybooks(activeProfileName);
       playbooks = (result ?? []) as Playbook[];
     } catch (e: any) {
-      notifications.error(`Failed to load playbooks: ${e?.message ?? e}`);
+      if (!silent) notifications.error(`Failed to load playbooks: ${e?.message ?? e}`);
     } finally {
       loading = false;
     }
@@ -91,6 +91,11 @@
   $effect(() => {
     const _ = activeProfileName;
     load();
+  });
+
+  $effect(() => {
+    refreshTick.count;
+    void load(true);
   });
 
   onMount(async () => {
