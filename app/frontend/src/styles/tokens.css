@@ -202,8 +202,8 @@ body {
    Prototype utility classes (used by ported components)
    ============================================================ */
 .mono { font-family: var(--font-mono); }
-.page-title { font-size: 30px; font-weight: 800; color: var(--accent); letter-spacing: -.01em;
-  margin: 0; font-family: var(--font-sans); }
+.page-title { font-size: 22px; font-weight: 600; color: var(--text, var(--color-text-primary)); letter-spacing: 0.04em;
+  margin: 0; font-family: var(--font-mono); }
 .mono-head { font-family: var(--font-mono); font-size: 13px; letter-spacing: .12em;
   text-transform: uppercase; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
 .mono-head::before { content: "»"; color: var(--accent); font-weight: 700; }
