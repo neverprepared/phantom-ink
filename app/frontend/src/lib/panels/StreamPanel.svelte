@@ -378,10 +378,10 @@
 
 </script>
 
-<div class="timeline">
+<div class="stream-panel">
   <div class="panel-header">
     <h2 class="panel-title">
-      timeline
+      stream
       {#if refreshing}<span class="blink">·</span>{/if}
     </h2>
     <div class="header-right">
@@ -544,7 +544,7 @@
 </div>
 
 <style>
-  .timeline {
+  .stream-panel {
     padding: var(--panel-padding);
     display: flex;
     flex-direction: column;
