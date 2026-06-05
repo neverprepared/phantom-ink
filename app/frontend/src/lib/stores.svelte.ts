@@ -222,6 +222,7 @@ export const connectionState = {
   set connected(v: boolean) { _connected = v; },
   get lastEventTime() { return _lastEventTime; },
   get lastEventText() { return _lastEventText; },
+  disconnect() { _connected = false; },
   recordEvent(text: string) {
     _connected = true;
     _lastEventTime = new Date();

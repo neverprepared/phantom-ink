@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,7 +50,14 @@ func (a *App) startup(ctx context.Context) {
 	// Open database (single source of truth)
 	db, err := OpenDB()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
+		logErr("Failed to open database: %v", err)
+		// Emit a startup-error event once the window is ready so the user
+		// sees a visible notification rather than silent degraded behaviour.
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			runtime.EventsEmit(ctx, "app:startup-error",
+				fmt.Sprintf("Database failed to open: %v. Most features will be unavailable.", err))
+		}()
 	}
 	a.db = db
 
@@ -93,7 +102,7 @@ func (a *App) startup(ctx context.Context) {
 	// briefly and we don't want to delay window paint.
 	go func() {
 		if _, err := a.RescanAgents(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: initial agent rescan failed: %v\n", err)
+			logErr("warning: initial agent rescan failed: %v", err)
 		}
 	}()
 
@@ -387,9 +396,31 @@ func walkForBrainboxRoot(start string) string {
 }
 
 func (a *App) waitAndReconnect() error {
+	// Derive the host:port to probe from the configured BaseURL so remote
+	// deployments (non-localhost, non-9999) reconnect correctly.
+	a.mu.RLock()
+	baseURL := a.config.BaseURL
+	a.mu.RUnlock()
+
+	addr := "localhost:9999" // safe default
+	if u, err := url.Parse(baseURL); err == nil && u.Hostname() != "" {
+		h := u.Hostname()
+		p := u.Port()
+		if p == "" {
+			if u.Scheme == "https" {
+				p = "443"
+			} else {
+				p = "80"
+			}
+		}
+		addr = net.JoinHostPort(h, p)
+	}
+
 	for i := 0; i < 30; i++ {
 		time.Sleep(1 * time.Second)
-		if isPortOpen(9999) {
+		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+		if err == nil {
+			conn.Close()
 			break
 		}
 	}

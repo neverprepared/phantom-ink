@@ -17,6 +17,18 @@ export const brainboxEvents = {
   get log() { return _log; },
 };
 
+// If no event arrives within 90 s, mark the connection as lost.
+// Reset on every received event so normal traffic keeps the indicator green.
+const HEARTBEAT_TIMEOUT_MS = 90_000;
+let _heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+
+function resetHeartbeat() {
+  if (_heartbeatTimer) clearTimeout(_heartbeatTimer);
+  _heartbeatTimer = setTimeout(() => {
+    connectionState.disconnect();
+  }, HEARTBEAT_TIMEOUT_MS);
+}
+
 function handleRaw(raw: string) {
   let parsed: BrainboxEvent;
   try {
@@ -34,6 +46,7 @@ function handleRaw(raw: string) {
   _last = parsed;
   _log = [parsed, ..._log].slice(0, 500);
   connectionState.recordEvent(raw.slice(0, 80));
+  resetHeartbeat();
 }
 
 /**
@@ -63,7 +76,13 @@ export function startEventListener(): () => void {
   }
 
   rt.EventsOn('brainbox:event', handleRaw);
+  rt.EventsOn('app:startup-error', (msg: string) => {
+    notifications.error(msg, 0); // persistent — DB failure is not transient
+  });
+  resetHeartbeat(); // start the watchdog; first real event will reset it
   return () => {
+    if (_heartbeatTimer) clearTimeout(_heartbeatTimer);
     (window as any).runtime?.EventsOff?.('brainbox:event');
+    (window as any).runtime?.EventsOff?.('app:startup-error');
   };
 }

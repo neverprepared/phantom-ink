@@ -152,8 +152,17 @@
   // --- edit state ---
   let editingWidget = $state<WidgetInstance | null>(null);
 
+  function resetFormFields() {
+    scLabel = ''; scColor = 'default'; scNavTarget = ''; scDataKey = 'activeSessions';
+    ccLabel = ''; ccApi = 'hub_tasks'; ccStatus = ''; ccColor = '';
+    smLabel = ''; smCommand = ''; smValueType = 'number'; smColor = ''; smInterval = '60';
+    hmLabel = ''; hmUrl = ''; hmPath = ''; hmHeader = ''; hmValueType = 'number'; hmColor = ''; hmInterval = '60';
+    stLabel = 'stream'; stProfile = ''; stTag = ''; stLimit = '20'; stSources = ['task', 'event'];
+  }
+
   function startEdit(w: WidgetInstance) {
     editingWidget = w;
+    resetFormFields();
     const c = w.config as any;
     if (w.kind === 'script-metric') {
       smLabel = c.label ?? ''; smCommand = c.command ?? ''; smValueType = c.valueType ?? 'number'; smColor = c.color ?? ''; smInterval = String(c.interval ?? 60);

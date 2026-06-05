@@ -230,10 +230,10 @@ func (a *App) RunChain(id, input, cwdOverride string) (string, error) {
 // rejected. On-success follow-ups inherit the same profile so autonomous
 // flows stay in their lane.
 func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps []ChainStep, profileName, filesArg string) error {
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	// Use an independent context for subprocess execution. a.ctx is the Wails
+	// window context and gets cancelled on window close/resize events — tying
+	// long-running agent processes to it would kill them unexpectedly.
+	ctx := context.Background()
 	log := make([]ChainRunEvent, 0, len(steps)*2+2)
 
 	emit := func(ev ChainRunEvent) {
@@ -293,7 +293,7 @@ func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps [
 	finishedAt := time.Now().UTC().Format(time.RFC3339)
 	logJSON, _ := json.Marshal(log)
 	if err := a.db.UpdateChainRun(runID, finishedAt, status, string(logJSON)); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to persist chain run %s: %v\n", runID, err)
+		logErr("failed to persist chain run %s: %v", runID, err)
 	}
 
 	emit(ChainRunEvent{Phase: "run:done", Status: status, Error: failure})
