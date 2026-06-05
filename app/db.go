@@ -837,6 +837,60 @@ func (db *DB) ListTasks(status string, limit int) ([]TaskRow, error) {
 	return out, nil
 }
 
+// TaskStatsCounted returns task counts by status. Active tasks (pending/running)
+// are always included; terminal tasks (succeeded/failed/cancelled) are filtered
+// to those finished at or after `since` (RFC3339).
+func (db *DB) TaskStatsCounted(since string) (pending, running, succeeded, failed, cancelled int, err error) {
+	// Active tasks — not time-scoped
+	rows, e := db.conn.Query(
+		"SELECT status, COUNT(*) FROM tasks WHERE status IN ('pending','running') GROUP BY status")
+	if e != nil {
+		err = fmt.Errorf("count active tasks: %w", e)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var status string
+		var count int
+		if rows.Scan(&status, &count) != nil {
+			continue
+		}
+		switch status {
+		case "pending":
+			pending = count
+		case "running":
+			running = count
+		}
+	}
+	rows.Close()
+
+	// Terminal tasks within time window
+	rows2, e := db.conn.Query(
+		"SELECT status, COUNT(*) FROM tasks WHERE status IN ('succeeded','failed','cancelled') AND finished_at >= ? GROUP BY status",
+		since)
+	if e != nil {
+		err = fmt.Errorf("count terminal tasks: %w", e)
+		return
+	}
+	defer rows2.Close()
+	for rows2.Next() {
+		var status string
+		var count int
+		if rows2.Scan(&status, &count) != nil {
+			continue
+		}
+		switch status {
+		case "succeeded":
+			succeeded = count
+		case "failed":
+			failed = count
+		case "cancelled":
+			cancelled = count
+		}
+	}
+	return
+}
+
 // ---------------------------------------------------------------------------
 // Schedules (cron)
 // ---------------------------------------------------------------------------

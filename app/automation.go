@@ -40,14 +40,21 @@ type AutomationEvent struct {
 
 // ── Engine ─────────────────────────────────────────────────────────────────
 
+const maxConcurrentActions = 10
+
 // AutomationEngine listens on an event bus, evaluates rules, and fires actions.
 type AutomationEngine struct {
 	app *App
 	bus chan AutomationEvent
+	sem chan struct{} // bounds concurrent fireAction goroutines
 }
 
 func newAutomationEngine(app *App) *AutomationEngine {
-	return &AutomationEngine{app: app, bus: make(chan AutomationEvent, 128)}
+	return &AutomationEngine{
+		app: app,
+		bus: make(chan AutomationEvent, 128),
+		sem: make(chan struct{}, maxConcurrentActions),
+	}
 }
 
 // Emit sends an event to the engine. Non-blocking — drops if bus is full.
@@ -78,13 +85,25 @@ func (e *AutomationEngine) process(evt AutomationEvent) {
 	}
 	rules, err := e.app.db.ListEnabledAutomationRules(evt.Profile)
 	if err != nil {
+		logErr("automation: list rules: %v", err)
 		return
 	}
 	for _, rule := range rules {
 		r := rule
-		if matchesTrigger(r, evt) {
-			go e.fireAction(r, evt)
-			_ = e.app.db.RecordAutomationTrigger(r.ID)
+		if !matchesTrigger(r, evt) {
+			continue
+		}
+		if err := e.app.db.RecordAutomationTrigger(r.ID); err != nil {
+			logErr("automation: record trigger for rule %s: %v", r.ID, err)
+		}
+		select {
+		case e.sem <- struct{}{}:
+			go func() {
+				defer func() { <-e.sem }()
+				e.fireAction(r, evt)
+			}()
+		default:
+			logErr("automation: action pool full, dropping rule %s (%s)", r.ID, r.Name)
 		}
 	}
 }
@@ -104,7 +123,10 @@ func matchesTrigger(rule AutomationRule, evt AutomationEvent) bool {
 		return false
 	}
 	var cfg triggerConfig
-	_ = json.Unmarshal([]byte(rule.TriggerConfig), &cfg)
+	if err := json.Unmarshal([]byte(rule.TriggerConfig), &cfg); err != nil {
+		logErr("automation: rule %s has invalid trigger_config JSON: %v", rule.ID, err)
+		return false
+	}
 
 	switch rule.TriggerType {
 	case "webhook":
