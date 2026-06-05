@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  let { onClose, children }: { onClose: () => void; children: () => any } = $props();
+  let { onClose, children, maxWidth = '480px' }: { onClose: () => void; children: () => any; maxWidth?: string } = $props();
 
   let dialogEl: HTMLDivElement;
 
@@ -26,7 +26,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="backdrop" onclick={handleBackdrop}>
-  <div class="modal" bind:this={dialogEl} role="dialog" aria-modal="true" tabindex="-1">
+  <div class="modal" bind:this={dialogEl} role="dialog" aria-modal="true" tabindex="-1" style="max-width:{maxWidth}">
     {@render children()}
   </div>
 </div>
@@ -49,7 +49,7 @@
     border-radius: var(--radius-xl);
     padding: 24px;
     width: 100%;
-    max-width: 480px;
+    max-width: var(--modal-max-width, 480px); /* overridden by maxWidth prop via inline style */
     max-height: 80vh;
     overflow-y: auto;
     box-shadow: var(--shadow-modal);

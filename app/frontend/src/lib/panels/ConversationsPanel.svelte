@@ -638,7 +638,7 @@
 
 <!-- Create channel modal -->
 {#if showCreateModal}
-  <Modal onClose={() => showCreateModal = false}>
+  <Modal onClose={() => showCreateModal = false} maxWidth="680px">
     <div class="modal-body">
       <label class="field-label" for="ch-name">Conversation name</label>
       <input id="ch-name" class="field-input" bind:value={newChannelName} placeholder="e.g. architecture-debate" />
@@ -1176,7 +1176,6 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    min-width: 560px;
   }
 
   .field-label {
@@ -1211,7 +1210,7 @@
 
   .participant-row {
     display: grid;
-    grid-template-columns: 120px 90px 1fr 1fr auto;
+    grid-template-columns: minmax(100px,140px) minmax(80px,100px) minmax(120px,1fr) minmax(120px,1fr) auto;
     gap: 6px;
     align-items: center;
   }
