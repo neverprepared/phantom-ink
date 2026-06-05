@@ -81,6 +81,7 @@
   }
 
   function capabilities(r: Runner): string[] {
+    if (r.host === 'local-process') return ['application'];
     return Object.entries(r.capabilities ?? {})
       .filter(([_, v]) => v)
       .map(([k]) => k);
