@@ -1024,7 +1024,9 @@ export namespace main {
 	    }
 	}
 	export class ChainStep {
+	    type: string;
 	    agent_id: string;
+	    playbook_id: string;
 	    prompt_template: string;
 	    cwd: string;
 	    executor: string;
@@ -1035,7 +1037,9 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
 	        this.agent_id = source["agent_id"];
+	        this.playbook_id = source["playbook_id"];
 	        this.prompt_template = source["prompt_template"];
 	        this.cwd = source["cwd"];
 	        this.executor = source["executor"];
@@ -1049,6 +1053,7 @@ export namespace main {
 	    cwd: string;
 	    on_success: ChainFollowup[];
 	    files: string[];
+	    workspace_profile: string;
 	    created_at: string;
 	    updated_at: string;
 	
@@ -1065,6 +1070,7 @@ export namespace main {
 	        this.cwd = source["cwd"];
 	        this.on_success = this.convertValues(source["on_success"], ChainFollowup);
 	        this.files = source["files"];
+	        this.workspace_profile = source["workspace_profile"];
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
 	    }
