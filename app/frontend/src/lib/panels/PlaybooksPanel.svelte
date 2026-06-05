@@ -4,6 +4,7 @@
   import { notifications } from '../notifications.svelte';
   import { profileState, refreshTick } from '../stores.svelte';
   import Modal from '../components/Modal.svelte';
+  import Spinner from '../components/Spinner.svelte';
 
   interface PlaybookTask {
     id: string;
@@ -230,6 +231,7 @@
       <h1 class="page-title" style="display:flex;align-items:center;gap:10px;">
         playbooks
         <span class="scope-chip mono">{scopeLabel}</span>
+        {#if loading}<Spinner />{/if}
       </h1>
       <div style="display:flex;gap:10px;align-items:center;">
         <div class="filter" style="margin:0;width:260px;">

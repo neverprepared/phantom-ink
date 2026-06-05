@@ -2,6 +2,7 @@
   import { getApi } from '../utils/api';
   import { onMount } from 'svelte';
   import { profileState, dashboardState } from '../stores.svelte';
+  import Spinner from '../components/Spinner.svelte';
 
   // ── Types ──────────────────────────────────────────────────────────────
 
@@ -279,6 +280,7 @@
   <div class="panel-header">
     <h2 class="panel-title">jobs</h2>
     <div class="header-right">
+      {#if loading}<Spinner />{/if}
       {#if statusMsg}
         <span class="status-msg">{statusMsg}</span>
       {/if}

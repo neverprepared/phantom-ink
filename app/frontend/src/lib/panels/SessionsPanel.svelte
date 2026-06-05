@@ -11,6 +11,7 @@
   import Modal from '../components/Modal.svelte';
   import ProfilePicker from '../components/ProfilePicker.svelte';
   import MetricsChart from '../components/MetricsChart.svelte';
+  import Spinner from '../components/Spinner.svelte';
 
 
   let allSessions = $state<any[]>([]);
@@ -593,8 +594,8 @@
   <header>
     <h1><span class="accent">sessions</span></h1>
     <div class="header-actions">
+      {#if loading}<Spinner />{/if}
       <button class="new-btn" onclick={openCreateModal}>+ new session</button>
-
     </div>
   </header>
 
