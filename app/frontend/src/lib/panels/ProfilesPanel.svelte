@@ -5,6 +5,7 @@
   import { profileState, profileColorStore, type Profile } from '../stores.svelte';
   import { getProfileColor, profileColorStyle, PROFILE_PALETTE } from '../utils/profileColors';
   import PieChart from '../components/PieChart.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
 
   // --- Profile image state ---
   type ImageStatus = { configured: boolean; exists: boolean; tag: string; digest: string; error?: string; built_at?: string };
@@ -77,8 +78,8 @@
       profileState.profiles = scanned ?? [];
       const ap = await a.GetActiveProfile();
       profileState.active = ap?.name ? ap : null;
-    } catch (err) {
-      console.error('Failed to scan profiles:', err);
+    } catch (err: any) {
+      notifications.error(`Failed to scan profiles: ${err?.message ?? err}`);
     } finally {
       scanning = false;
     }
@@ -340,7 +341,7 @@
 
   <div class="profile-list">
     {#if profiles.length === 0}
-      <p class="empty">no profiles found</p>
+      <EmptyState title="No profiles found" />
     {:else}
       <button class="profile-item" class:active={!activeProfile} onclick={clearProfile}>
         <span class="profile-name">all profiles</span>

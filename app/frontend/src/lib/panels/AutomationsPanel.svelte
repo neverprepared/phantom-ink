@@ -4,6 +4,7 @@
   import { profileState, refreshTick } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
 
   // ── Types ──────────────────────────────────────────────────────────────
 
@@ -321,9 +322,9 @@
 </script>
 
 <div class="automations">
-  <div class="panel-header">
-    <h2 class="panel-title">automations</h2>
-    <div class="header-right">
+  <div class="cpanel-header">
+    <h2 class="cpanel-title">automations</h2>
+    <div class="cpanel-actions">
       {#if loading}<Spinner />{/if}
       {#if statusMsg}
         <span class="status-msg">{statusMsg}</span>
@@ -500,7 +501,7 @@
   {#if loading && rules.length === 0}
     <div class="empty">loading…</div>
   {:else if rules.length === 0 && editingId !== 'new'}
-    <div class="empty">no automation rules yet — create one to trigger actions from events</div>
+    <EmptyState title="No automation rules" message="Create one to trigger actions from events." />
   {:else}
     <div class="rule-list">
       {#each rules as rule (rule.id)}
@@ -684,15 +685,6 @@
     gap: var(--spacing-md);
     min-height: 100%;
   }
-
-  .panel-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding-bottom: var(--spacing-md);
-    border-bottom: 1px solid var(--color-border-primary);
-    flex-shrink: 0;
-  }
-  .panel-title { font-size: 14px; font-weight: 600; color: var(--color-text-primary); margin: 0; }
-  .header-right { display: flex; align-items: center; gap: var(--spacing-md); }
 
   .status-msg { font-family: var(--font-mono); font-size: 11px; color: var(--color-success); }
 

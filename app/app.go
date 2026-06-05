@@ -207,7 +207,11 @@ func (a *App) GetConfig() Config {
 		cfg.BaseURL = "http://127.0.0.1:9999"
 	}
 	if cfg.WorkspacesRoot == "" {
-		cfg.WorkspacesRoot = defaultWorkspacesRoot()
+		if root := a.db.GetWorkspacesRoot(); root != "" {
+			cfg.WorkspacesRoot = root
+		} else {
+			cfg.WorkspacesRoot = defaultWorkspacesRoot()
+		}
 	}
 	return cfg
 }

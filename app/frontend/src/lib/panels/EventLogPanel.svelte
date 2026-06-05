@@ -1,5 +1,6 @@
 <script lang="ts">
   import { brainboxEvents } from '../events.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
 
   let logEl: HTMLElement;
   let autoscroll = $state(true);
@@ -38,7 +39,7 @@
 
   <div class="log" bind:this={logEl}>
     {#if log.length === 0}
-      <div class="empty">no events yet — waiting for brainbox activity</div>
+      <EmptyState title="No events yet" message="Waiting for brainbox activity." />
     {:else}
       {#each [...log].reverse() as event (event)}
         <div class="row">

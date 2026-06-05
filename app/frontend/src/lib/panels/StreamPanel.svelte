@@ -4,6 +4,7 @@
   import { brainboxEvents } from '../events.svelte';
   import { profileState } from '../stores.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
 
   // ── Types ──────────────────────────────────────────────────────────────
 
@@ -380,9 +381,9 @@
 </script>
 
 <div class="stream-panel">
-  <div class="panel-header">
-    <h2 class="panel-title">stream</h2>
-    <div class="header-right">
+  <div class="cpanel-header">
+    <h2 class="cpanel-title">stream</h2>
+    <div class="cpanel-actions">
       {#if loading || refreshing}<Spinner />{/if}
       {#if dispatchMsg}
         <span class="dispatch-msg">{dispatchMsg}</span>
@@ -421,7 +422,7 @@
     {/if}
 
     {#if streamItems.length === 0}
-      <div class="empty">no events yet</div>
+      <EmptyState title="No events yet" />
     {:else}
       <div class="stream">
         {#each streamItems as item, i (item.id)}
@@ -550,22 +551,6 @@
     gap: var(--spacing-md);
     min-height: 100%;
   }
-
-  .panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-bottom: var(--spacing-md);
-    border-bottom: 1px solid var(--color-border-primary);
-    flex-shrink: 0;
-  }
-  .panel-title {
-    font-size: 14px; font-weight: 600;
-    color: var(--color-text-primary); margin: 0;
-    display: flex; align-items: center; gap: var(--spacing-xs);
-  }
-
-  .header-right { display: flex; align-items: center; gap: var(--spacing-md); }
 
   .dispatch-msg {
     font-family: var(--font-mono);

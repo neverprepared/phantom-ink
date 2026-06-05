@@ -4,6 +4,7 @@
   import { notifications } from '../notifications.svelte';
   import PairRunnerModal from '../components/PairRunnerModal.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
 
   interface Runner {
     name: string;
@@ -111,12 +112,9 @@
   {#if !loaded}
     <div class="empty">loading…</div>
   {:else if loadError}
-    <div class="empty error">{loadError}</div>
+    <EmptyState title="Failed to load runners" message={loadError} />
   {:else if runners.length === 0}
-    <div class="empty">
-      <p>no runners registered yet</p>
-      <p class="hint">click <strong>+ pair a runner</strong> above, then run <code>Brainbox Runner.app</code> on the target mac and paste the token</p>
-    </div>
+    <EmptyState title="No runners registered yet" message="Click + pair a runner above, then run Brainbox Runner.app on the target Mac and paste the token." />
   {:else}
     <table class="runner-table">
       <thead>

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -353,6 +354,19 @@ func (db *DB) GetSetting(key, fallback string) string {
 	err := db.conn.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val)
 	if err != nil {
 		return fallback
+	}
+	return val
+}
+
+// GetWorkspacesRoot returns the workspaces_root setting or "" if unset.
+func (db *DB) GetWorkspacesRoot() string {
+	var val string
+	if err := db.conn.QueryRow("SELECT value FROM settings WHERE key = 'workspaces_root'").Scan(&val); err != nil || val == "" {
+		return ""
+	}
+	home := os.Getenv("HOME")
+	if strings.HasPrefix(val, "~/") {
+		val = filepath.Join(home, val[2:])
 	}
 	return val
 }

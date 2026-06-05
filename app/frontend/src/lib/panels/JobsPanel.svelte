@@ -4,6 +4,7 @@
   import { profileState, dashboardState } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
 
   // ── Types ──────────────────────────────────────────────────────────────
 
@@ -282,9 +283,9 @@
 </script>
 
 <div class="jobs">
-  <div class="panel-header">
-    <h2 class="panel-title">jobs</h2>
-    <div class="header-right">
+  <div class="cpanel-header">
+    <h2 class="cpanel-title">jobs</h2>
+    <div class="cpanel-actions">
       {#if loading}<Spinner />{/if}
       {#if statusMsg}
         <span class="status-msg">{statusMsg}</span>
@@ -402,9 +403,9 @@
   {#if loading && jobs.length === 0}
     <div class="empty">loading…</div>
   {:else if jobs.length === 0 && editingId !== 'new'}
-    <div class="empty">no jobs yet — create one to schedule recurring work</div>
+    <EmptyState title="No jobs yet" message="Create one to schedule recurring work." />
   {:else if visible.length === 0 && editingId !== 'new'}
-    <div class="empty">no jobs for this profile</div>
+    <EmptyState title="No jobs for this profile" />
   {:else}
     <div class="job-list">
       {#each visible as job (job.id)}
@@ -543,18 +544,6 @@
     gap: var(--spacing-md);
     min-height: 100%;
   }
-
-  .panel-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding-bottom: var(--spacing-md);
-    border-bottom: 1px solid var(--color-border-primary);
-    flex-shrink: 0;
-  }
-  .panel-title {
-    font-size: 14px; font-weight: 600;
-    color: var(--color-text-primary); margin: 0;
-  }
-  .header-right { display: flex; align-items: center; gap: var(--spacing-md); }
 
   .status-msg {
     font-family: var(--font-mono); font-size: 11px;
