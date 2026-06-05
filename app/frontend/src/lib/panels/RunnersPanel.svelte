@@ -194,28 +194,8 @@
   }
   .header-actions {
     display: flex;
-    gap: 8px;
-  }
-  .btn {
-    background: var(--color-surface-hover);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    color: var(--color-text-secondary);
-    padding: 6px 12px;
-    font-size: 12px;
-    cursor: pointer;
-    display: inline-flex;
     align-items: center;
-    gap: 6px;
-  }
-  .btn:hover { background: var(--color-surface-active); }
-  .btn.primary {
-    background: rgba(59, 130, 246, 0.1);
-    border-color: rgba(59, 130, 246, 0.3);
-    color: var(--color-info);
-  }
-  .btn.primary:hover {
-    background: rgba(59, 130, 246, 0.2);
+    gap: 8px;
   }
 
   .empty {
