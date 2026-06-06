@@ -218,9 +218,9 @@ var migrations = []migration{
 	{version: 10, fn: func(conn *sql.DB) error {
 		return addColumnIfMissing(conn, "chains", "files_json", "TEXT NOT NULL DEFAULT '[]'")
 	}},
-	// v16: profile-scoped chains. workspace_profile="" means global (visible
+	// v17: profile-scoped chains. workspace_profile="" means global (visible
 	// in all profiles). Non-empty means the chain belongs to that profile only.
-	{version: 16, fn: func(conn *sql.DB) error {
+	{version: 17, fn: func(conn *sql.DB) error {
 		return addColumnIfMissing(conn, "chains", "workspace_profile", "TEXT NOT NULL DEFAULT ''")
 	}},
 	// v11: data collection scheduler — periodic commands whose output is
