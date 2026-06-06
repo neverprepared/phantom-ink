@@ -127,7 +127,7 @@
       const [c, usable, tasks, pbs] = await Promise.all([
         a.ListChains(),
         a.UsableAgents(),
-        a.ListTasks('', 200),
+        a.ListTasks('', profileState.active?.name ?? '', 200),
         a.ListPlaybooks(profileState.active?.name ?? '').catch(() => []),
       ]);
       chains = (c ?? []) as Chain[];

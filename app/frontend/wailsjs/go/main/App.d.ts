@@ -136,7 +136,7 @@ export function GetSessionHistory(arg1:number,arg2:number):Promise<Array<brainbo
 
 export function GetSessionTraces(arg1:string,arg2:number):Promise<Array<brainbox.Trace>>;
 
-export function GetSessions():Promise<Array<brainbox.Session>>;
+export function GetSessions(arg1:string):Promise<Array<brainbox.Session>>;
 
 export function GetSessionsMetricsHistory():Promise<Record<string, Array<brainbox.SessionMetricsSample>>>;
 
@@ -190,7 +190,7 @@ export function ListSchedules(arg1:string):Promise<Array<main.ScheduleRow>>;
 
 export function ListServices():Promise<Array<main.ServiceStatus>>;
 
-export function ListTasks(arg1:string,arg2:number):Promise<Array<main.TaskRow>>;
+export function ListTasks(arg1:string,arg2:string,arg3:number):Promise<Array<main.TaskRow>>;
 
 export function ListUpcomingFires(arg1:number):Promise<Array<main.UpcomingFire>>;
 

@@ -839,27 +839,34 @@ func (db *DB) GetTask(id string) (TaskRow, bool) {
 	return t, true
 }
 
-// ListTasks returns tasks filtered by status (empty string = all). Limit is
-// capped at 200 to keep the UI snappy.
-func (db *DB) ListTasks(status string, limit int) ([]TaskRow, error) {
+// ListTasks returns tasks filtered by status (empty = all) and workspace
+// (empty = all). Limit is capped at 200 to keep the UI snappy.
+func (db *DB) ListTasks(status, workspace string, limit int) ([]TaskRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 200
 	}
-	var rows *sql.Rows
-	var err error
-	if status == "" {
-		rows, err = db.conn.Query(`
-			SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
-			       enqueued_at, scheduled_for, started_at, finished_at,
-			       attempts, max_attempts, last_error, result_run_id
-			FROM tasks ORDER BY enqueued_at DESC LIMIT ?`, limit)
-	} else {
-		rows, err = db.conn.Query(`
-			SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
-			       enqueued_at, scheduled_for, started_at, finished_at,
-			       attempts, max_attempts, last_error, result_run_id
-			FROM tasks WHERE status = ? ORDER BY enqueued_at DESC LIMIT ?`, status, limit)
+	const selectCols = `id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
+	       enqueued_at, scheduled_for, started_at, finished_at,
+	       attempts, max_attempts, last_error, result_run_id`
+	var (
+		where  []string
+		args   []any
+	)
+	if status != "" {
+		where = append(where, "status = ?")
+		args = append(args, status)
 	}
+	if workspace != "" {
+		where = append(where, "workspace_profile = ?")
+		args = append(args, workspace)
+	}
+	q := "SELECT " + selectCols + " FROM tasks"
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY enqueued_at DESC LIMIT ?"
+	args = append(args, limit)
+	rows, err := db.conn.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

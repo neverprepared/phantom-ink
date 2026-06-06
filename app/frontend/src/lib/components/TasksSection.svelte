@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
-  import { panelFocus } from '../stores.svelte';
+  import { panelFocus, profileState } from '../stores.svelte';
 
   interface Task {
     id: string;
@@ -42,7 +42,7 @@
     try {
       const status = filter === 'all' ? '' : filter;
       const [t, c] = await Promise.all([
-        a.ListTasks(status, 100),
+        a.ListTasks(status, profileState.active?.name ?? '', 100),
         a.ListChains(),
       ]);
       tasks = (t ?? []) as Task[];

@@ -266,8 +266,8 @@ export function GetSessionTraces(arg1, arg2) {
   return window['go']['main']['App']['GetSessionTraces'](arg1, arg2);
 }
 
-export function GetSessions() {
-  return window['go']['main']['App']['GetSessions']();
+export function GetSessions(arg1) {
+  return window['go']['main']['App']['GetSessions'](arg1);
 }
 
 export function GetSessionsMetricsHistory() {
@@ -374,8 +374,8 @@ export function ListServices() {
   return window['go']['main']['App']['ListServices']();
 }
 
-export function ListTasks(arg1, arg2) {
-  return window['go']['main']['App']['ListTasks'](arg1, arg2);
+export function ListTasks(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListTasks'](arg1, arg2, arg3);
 }
 
 export function ListUpcomingFires(arg1) {

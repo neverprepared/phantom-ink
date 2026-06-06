@@ -190,7 +190,7 @@
     const a = await getApi();
     if (!a) return;
     try {
-      const all = ((await a.GetSessions()) ?? []) as any[];
+      const all = ((await a.GetSessions(profileState.active?.name ?? '')) ?? []) as any[];
       const activeProfile = profileState.active?.name?.toLowerCase() ?? '';
       availableSessions = all.filter((s: any) => {
         if (!s.active) return false;
@@ -229,7 +229,7 @@
     const a = await getApi();
     if (!a) return;
     try {
-      const all = ((await a.GetSessions()) ?? []) as any[];
+      const all = ((await a.GetSessions(profileState.active?.name ?? '')) ?? []) as any[];
       const activeProfile = profileState.active?.name?.toLowerCase() ?? '';
       const inChannel = new Set(selected.participants.map(p => p.name));
       addParticipantCandidates = all

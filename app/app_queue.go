@@ -83,12 +83,13 @@ func (a *App) EnqueueTask(req EnqueueTaskRequest) (string, error) {
 	return t.ID, nil
 }
 
-// ListTasks returns recent tasks, newest first. Empty status returns all.
-func (a *App) ListTasks(status string, limit int) ([]TaskRow, error) {
+// ListTasks returns recent tasks, newest first. Empty status returns all
+// statuses; empty workspace returns all workspaces.
+func (a *App) ListTasks(status, workspace string, limit int) ([]TaskRow, error) {
 	if a.db == nil {
 		return []TaskRow{}, fmt.Errorf("database not initialized")
 	}
-	rows, err := a.db.ListTasks(status, limit)
+	rows, err := a.db.ListTasks(status, workspace, limit)
 	if err != nil {
 		return nil, err
 	}

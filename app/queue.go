@@ -108,7 +108,9 @@ func (w *worker) recoverOrphans() {
 	if w.app.db == nil {
 		return
 	}
-	rows, err := w.app.db.ListTasks(TaskRunning, 200)
+	// Recovery is cross-profile: any interrupted task needs to be marked failed
+	// regardless of which workspace owned it.
+	rows, err := w.app.db.ListTasks(TaskRunning, "", 200)
 	if err != nil {
 		return
 	}
