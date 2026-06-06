@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -110,18 +111,59 @@ func (r *localRunner) run(ctx context.Context) {
 	}
 }
 
+// outboundIP returns the local IP this machine uses to reach external hosts.
+// It dials a UDP socket (no actual traffic) to discover which interface is used.
+func outboundIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String()
+}
+
+// ollamaPort probes the local Ollama HTTP server and returns the port it's
+// listening on (default 11434), or 0 if Ollama is not running.
+func ollamaPort() int {
+	const port = 11434
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/", port))
+	if err != nil {
+		return 0
+	}
+	resp.Body.Close()
+	if resp.StatusCode == 200 {
+		return port
+	}
+	return 0
+}
+
 func (r *localRunner) registerWithBackoff(ctx context.Context) bool {
-	req := brainbox.RegisterRunnerRequest{
-		Name: r.name,
+	caps := map[string]bool{
 		// "docker" is the capability key the API validates against the backend
 		// field — it means "can handle docker-backend session.create work items".
 		// The actual execution is a local process, not a container.
-		Capabilities: map[string]bool{
-			"docker": true,
-		},
-		Host:          "local-process",
+		"docker": true,
+	}
+
+	host := outboundIP()
+	if host == "" {
+		host = "local-process"
+	}
+
+	var ollamaAdvertisePort int
+	if port := ollamaPort(); port > 0 {
+		caps["ollama"] = true
+		ollamaAdvertisePort = port
+	}
+
+	req := brainbox.RegisterRunnerRequest{
+		Name:          r.name,
+		Capabilities:  caps,
+		Host:          host,
 		MachineID:     r.machineID,
 		MaxConcurrent: 4,
+		OllamaPort:    ollamaAdvertisePort,
 	}
 	delay := 5 * time.Second
 	const maxDelay = 30 * time.Second
