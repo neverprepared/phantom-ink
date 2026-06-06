@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import docker
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
