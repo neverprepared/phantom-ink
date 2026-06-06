@@ -1,8 +1,0 @@
-# Self-Improvement Ratchet
-
-Scans lessons-learned, identifies entries fixable in code/prompts/config, implements the fixes, and opens PRs. This is not a review — implement the fixes and open PRs.
-
-- [ ] Search for all unresolved lessons: `memory_search(tags=["lessons-learned", "self-correction"], para="areas", limit=50)`. For each entry, read its full content with `memory_recall(id="<id>")`. List every entry that has "Fixable In Code: yes" and does NOT already have a "## Resolution" section. If none are fixable, report "No fixable lessons found" and stop.
-- [ ] For each fixable lesson, write a concrete fix plan: the exact file(s) to change, what to change, and why. Do not skip any — if the fix is ambiguous, make your best judgment and note assumptions. Group related lessons that touch the same files into a single fix.
-- [ ] Clone the repo: `gh auth login --with-token <<< "$GITHUB_TOKEN" 2>/dev/null || true && git clone "$BRAINBOX_REPO_URL" /home/developer/workspace/repo && cd /home/developer/workspace/repo`. Create a unique branch `fix/lessons-${BRAINBOX_TASK_ID:0:8}`. Implement ALL fixes from the plan. Commit each fix (or group) with a message referencing the lesson title. Push the branch and open a PR. Run `gh pr checks <number> --watch` and fix any CI failures. Do not proceed until CI is green.
-- [ ] For each lesson that was fixed, update it: `memory_update(id="<lesson_id>", content="<append to existing content>\n\n## Resolution\nFixed in PR <url>\nStatus: resolved")`. Then store a summary: `memory_store(title="self-improvement/<date>", content="## Fixes Applied\n- <lesson title>: fixed in PR <url>\n- ...\n\n## Lessons Still Open\n- ...", para="projects", tags=["self-improvement", "resolved"])`.
