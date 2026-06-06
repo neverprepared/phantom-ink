@@ -233,7 +233,7 @@ class GithubSettings(BaseSettings):
     repo: str = "neverprepared/phantom-ink"  # owner/repo for release lookups
     runner_tag_prefix: str = "runner/v"      # tag prefix for BrainboxRunner releases
 
-    model_config = ConfigDict(env_prefix="CL_GITHUB__")
+    model_config = SettingsConfigDict(env_prefix="CL_GITHUB__")
 
 
 class Settings(BaseSettings):
