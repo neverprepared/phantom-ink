@@ -26,22 +26,19 @@ func integrationsDir() string {
 	return dir
 }
 
-// ensureComposeFile extracts an embedded compose file to the integrations dir.
-// A SHA-256 hash of the embedded content is stored alongside the file; if the
-// stored hash differs from the embedded content the file is re-extracted so
-// updates to the bundled compose files are always applied.
+// ensureComposeFile extracts an embedded compose directory to the integrations dir.
+// A SHA-256 hash of docker-compose.yml is stored alongside; if it differs the
+// entire directory (including config subdirs) is re-extracted so updates to
+// bundled compose files are always applied.
 func ensureComposeFile(name string) (string, error) {
 	dir := filepath.Join(integrationsDir(), name)
 	dest := filepath.Join(dir, "docker-compose.yml")
 	hashDest := filepath.Join(dir, "docker-compose.hash")
 
-	data, err := embeddedCompose.ReadFile(fmt.Sprintf("compose/%s/docker-compose.yml", name))
+	currentHash, err := hashEmbedDir(fmt.Sprintf("compose/%s", name))
 	if err != nil {
-		return "", fmt.Errorf("read embedded compose for %s: %w", name, err)
+		return "", fmt.Errorf("hash embedded dir for %s: %w", name, err)
 	}
-
-	sum := sha256.Sum256(data)
-	currentHash := fmt.Sprintf("%x", sum)
 
 	if stored, err := os.ReadFile(hashDest); err == nil {
 		if strings.TrimSpace(string(stored)) == currentHash {
@@ -49,16 +46,75 @@ func ensureComposeFile(name string) (string, error) {
 		}
 	}
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("create dir: %w", err)
-	}
-	if err := os.WriteFile(dest, data, 0644); err != nil {
-		return "", fmt.Errorf("write compose file: %w", err)
+	if err := extractEmbedDir(fmt.Sprintf("compose/%s", name), dir); err != nil {
+		return "", fmt.Errorf("extract compose dir for %s: %w", name, err)
 	}
 	if err := os.WriteFile(hashDest, []byte(currentHash), 0644); err != nil {
 		return "", fmt.Errorf("write compose hash: %w", err)
 	}
 	return dest, nil
+}
+
+// extractEmbedDir recursively extracts all files from an embedded directory to dest.
+func extractEmbedDir(embedPath, destDir string) error {
+	entries, err := embeddedCompose.ReadDir(embedPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		src := embedPath + "/" + entry.Name()
+		dst := filepath.Join(destDir, entry.Name())
+		if entry.IsDir() {
+			if err := extractEmbedDir(src, dst); err != nil {
+				return err
+			}
+			continue
+		}
+		fileData, err := embeddedCompose.ReadFile(src)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, fileData, 0644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// hashEmbedDir returns a hex SHA-256 over the sorted contents of all files
+// under embedPath, so any change to any embedded file invalidates the hash.
+func hashEmbedDir(embedPath string) (string, error) {
+	h := sha256.New()
+	var walk func(string) error
+	walk = func(p string) error {
+		entries, err := embeddedCompose.ReadDir(p)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			child := p + "/" + entry.Name()
+			if entry.IsDir() {
+				if err := walk(child); err != nil {
+					return err
+				}
+				continue
+			}
+			data, err := embeddedCompose.ReadFile(child)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(h, "%s:", child)
+			h.Write(data)
+		}
+		return nil
+	}
+	if err := walk(embedPath); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 // serviceEnv returns the environment variables needed for a named service's
@@ -132,6 +188,13 @@ var knownServices = []ServiceDef{
 		Description: "LLM observability — traces, metrics, and cost tracking",
 		DefaultURL:  "http://localhost:3000",
 		Port:        3000,
+	},
+	{
+		Name:        "opensearch",
+		Label:       "OpenSearch",
+		Description: "OpenTelemetry signal store — traces, metrics, and logs via OTLP → OpenSearch + Dashboards",
+		DefaultURL:  "http://localhost:5601",
+		Port:        5601,
 	},
 	{
 		Name:        "ollama",
