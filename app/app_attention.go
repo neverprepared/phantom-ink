@@ -6,26 +6,36 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // AttentionItem is one card in the Stream panel's "Attention" tab. It comes
-// from a variety of backend sources (failed hub tasks, collected entries with
-// actions, etc.) and gets a stable composite ID so dismissals persist across
-// app restarts.
+// from a variety of backend sources and gets a stable composite ID so
+// dismissals and resolutions persist across app restarts.
 type AttentionItem struct {
-	ID        string          `json:"id"`        // "<source>:<sourceID>"
-	Source    string          `json:"source"`    // "task" | "entry"
-	Title     string          `json:"title"`
-	Subtitle  string          `json:"subtitle"`
-	Reason    string          `json:"reason"`    // why this needs attention
-	Workspace string          `json:"workspace"` // for profile filter
-	Time      int64           `json:"time"`      // epoch ms (sort key, newest first)
-	URL       string          `json:"url,omitempty"`
-	Actions   json.RawMessage `json:"actions,omitempty"` // passthrough for entry actions
+	ID        string   `json:"id"`        // "<source>:<sourceID>"
+	Source    string   `json:"source"`    // "task" | "chain" | "entry" | "hub"
+	SourceID  string   `json:"source_id"` // raw id within the source
+	Title     string   `json:"title"`
+	Subtitle  string   `json:"subtitle"`
+	Reason    string   `json:"reason"`    // why this needs attention
+	Workspace string   `json:"workspace"` // for profile filter
+	Time      int64    `json:"time"`      // epoch ms (sort key, newest first)
+	URL       string   `json:"url,omitempty"`
+	Actions   []string `json:"actions"`   // ["retry","open","respond","dismiss"]
+	UserReply string   `json:"user_reply,omitempty"`
+}
+
+// OpenTarget tells the frontend which panel to navigate to for an attention item.
+type OpenTarget struct {
+	Panel string `json:"panel"` // "chains" | "jobs" | "sessions"
+	Ref   string `json:"ref"`   // run id or task id
 }
 
 // ListAttention returns items requiring user focus, filtered by workspace
-// (empty string = all). Dismissed items are excluded.
+// (empty string = all). Active producer-driven items are unioned with the two
+// legacy scraped sources; dismissed items are excluded.
 func (a *App) ListAttention(workspace string) ([]AttentionItem, error) {
 	if a.db == nil {
 		return nil, fmt.Errorf("database not available")
@@ -37,32 +47,52 @@ func (a *App) ListAttention(workspace string) ([]AttentionItem, error) {
 
 	var items []AttentionItem
 
-	// ── Source 1: failed hub tasks ────────────────────────────────────────────
+	// ── Source 1: producer-driven attention_items ─────────────────────────────
+	rows, err := a.db.ListActiveAttention(workspace)
+	if err == nil {
+		for _, r := range rows {
+			items = append(items, AttentionItem{
+				ID:        r.ID,
+				Source:    r.Source,
+				SourceID:  r.SourceID,
+				Title:     r.Title,
+				Subtitle:  r.Subtitle,
+				Reason:    r.Reason,
+				Workspace: r.Workspace,
+				Time:      r.CreatedAt,
+				URL:       r.URL,
+				Actions:   r.Actions,
+				UserReply: r.UserReply,
+			})
+		}
+	}
+
+	// ── Source 2: failed hub tasks (legacy scrape) ────────────────────────────
 	if a.client != nil {
 		tasks, err := a.client.ListTasks("failed", workspace)
 		if err == nil {
 			for _, t := range tasks {
-				id := "task:" + t.ID
+				id := "hub:" + t.ID
 				if dismissed[id] {
 					continue
 				}
+				actions := []string{"open", "dismiss"}
 				items = append(items, AttentionItem{
-					ID:        id,
-					Source:    "task",
-					Title:     truncate(t.Description, 80),
-					Subtitle:  fmt.Sprintf("%s · %s", t.AgentName, t.SessionName),
-					Reason:    errString(t.Error),
+					ID:       id,
+					Source:   "hub",
+					SourceID: t.ID,
+					Title:    truncate(t.Description, 80),
+					Subtitle: fmt.Sprintf("%s · %s", t.AgentName, t.SessionName),
+					Reason:   errString(t.Error),
 					Workspace: t.WorkspaceProfile,
-					Time:      coerceMillis(t.UpdatedAt),
+					Time:     coerceMillis(t.UpdatedAt),
+					Actions:  actions,
 				})
 			}
 		}
-		// Errors here are non-fatal — brainbox may be down; we still want
-		// collected entries to render. Surface via empty list rather than
-		// erroring the whole call.
 	}
 
-	// ── Source 2: collected entries with actions[] populated ──────────────────
+	// ── Source 3: collected entries with actions[] (legacy scrape) ────────────
 	entries, err := a.db.ListCollectedEntries(workspace, "", "")
 	if err == nil {
 		for _, e := range entries {
@@ -73,16 +103,21 @@ func (a *App) ListAttention(workspace string) ([]AttentionItem, error) {
 			if dismissed[id] {
 				continue
 			}
+			actions := []string{"dismiss"}
+			if e.URL != "" {
+				actions = []string{"open", "dismiss"}
+			}
 			items = append(items, AttentionItem{
-				ID:        id,
-				Source:    "entry",
-				Title:     firstNonEmpty(e.Title, e.EntryID),
-				Subtitle:  fmt.Sprintf("%s · %s", e.Kind, e.JobID),
-				Reason:    statusReason(e.Status),
+				ID:       id,
+				Source:   "entry",
+				SourceID: e.EntryID,
+				Title:    firstNonEmpty(e.Title, e.EntryID),
+				Subtitle: fmt.Sprintf("%s · %s", e.Kind, e.JobID),
+				Reason:   statusReason(e.Status),
 				Workspace: e.Profile,
-				Time:      timeFromEntry(e),
-				URL:       e.URL,
-				Actions:   e.Actions,
+				Time:     timeFromEntry(e),
+				URL:      e.URL,
+				Actions:  actions,
 			})
 		}
 	}
@@ -91,20 +126,106 @@ func (a *App) ListAttention(workspace string) ([]AttentionItem, error) {
 	return items, nil
 }
 
-// DismissAttention persists a dismissal so the item won't reappear.
+// DismissAttention resolves producer-driven items (removes from active queue)
+// or persists a legacy dismissal for scraped items.
 func (a *App) DismissAttention(id string) error {
 	if a.db == nil {
 		return fmt.Errorf("database not available")
 	}
+	if resolved, err := a.db.ResolveAttentionItem(id); err != nil {
+		return err
+	} else if resolved {
+		return nil
+	}
 	return a.db.DismissAttentionRow(id)
 }
 
-// RestoreAttention removes a dismissal — used by an "undo" UI.
+// RestoreAttention removes a legacy dismissal — used by an "undo" UI.
 func (a *App) RestoreAttention(id string) error {
 	if a.db == nil {
 		return fmt.Errorf("database not available")
 	}
 	return a.db.UndismissAttentionRow(id)
+}
+
+// AttentionRetry re-dispatches the work that caused the attention item and
+// resolves it. task:* items retry the local queue task; chain:* items
+// re-enqueue a new task with the original chain input.
+func (a *App) AttentionRetry(id string) error {
+	if a.db == nil {
+		return fmt.Errorf("database not available")
+	}
+	row, ok := a.db.GetAttentionItem(id)
+	if !ok {
+		return fmt.Errorf("attention item %q not found", id)
+	}
+	switch row.Source {
+	case "task":
+		if err := a.RetryTask(row.SourceID); err != nil {
+			return fmt.Errorf("retry task: %w", err)
+		}
+	case "chain":
+		var ctx map[string]any
+		_ = json.Unmarshal([]byte(row.ContextJSON), &ctx)
+		chainID, _ := ctx["chain_id"].(string)
+		input, _ := ctx["input"].(string)
+		cwd, _ := ctx["cwd"].(string)
+		profile, _ := ctx["workspace_profile"].(string)
+		if chainID == "" {
+			return fmt.Errorf("chain attention item missing context")
+		}
+		if _, err := a.EnqueueTask(EnqueueTaskRequest{
+			ChainID:          chainID,
+			Input:            input,
+			Cwd:              cwd,
+			Trigger:          TriggerManual,
+			WorkspaceProfile: profile,
+		}); err != nil {
+			return fmt.Errorf("re-enqueue chain: %w", err)
+		}
+	default:
+		return fmt.Errorf("source %q does not support retry", row.Source)
+	}
+	_, err := a.db.ResolveAttentionItem(id)
+	return err
+}
+
+// AttentionRespond stores the user's reply on the item and emits an event so
+// automations can hook into it. The item is not auto-resolved — the user
+// dismisses explicitly after following up.
+func (a *App) AttentionRespond(id, text string) error {
+	if a.db == nil {
+		return fmt.Errorf("database not available")
+	}
+	if err := a.db.SetAttentionUserReply(id, text); err != nil {
+		return err
+	}
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "attention:responded", map[string]string{"id": id, "text": text})
+	}
+	return nil
+}
+
+// AttentionOpenTarget returns the panel and ref the frontend should navigate to
+// for a given attention item.
+func (a *App) AttentionOpenTarget(id string) (OpenTarget, error) {
+	parts := strings.SplitN(id, ":", 2)
+	if len(parts) != 2 {
+		return OpenTarget{}, fmt.Errorf("invalid attention item id: %s", id)
+	}
+	source, sourceID := parts[0], parts[1]
+	switch source {
+	case "task":
+		return OpenTarget{Panel: "jobs", Ref: sourceID}, nil
+	case "chain":
+		return OpenTarget{Panel: "chains", Ref: sourceID}, nil
+	case "hub":
+		return OpenTarget{Panel: "sessions", Ref: sourceID}, nil
+	case "entry":
+		return OpenTarget{Panel: "timeline", Ref: sourceID}, nil
+	default:
+		return OpenTarget{Panel: "jobs", Ref: sourceID}, nil
+	}
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -199,4 +320,17 @@ func statusReason(status string) string {
 	default:
 		return status
 	}
+}
+
+// chainNameOrID returns the chain's human-readable name, falling back to the
+// id when the chain is not found.
+func chainNameOrID(db *DB, chainID string) string {
+	if db == nil {
+		return chainID
+	}
+	row, ok := db.GetChain(chainID)
+	if !ok || row.Name == "" {
+		return chainID
+	}
+	return row.Name
 }

@@ -333,6 +333,12 @@ func (a *App) GetMessageLog() ([]brainbox.Message, error) {
 	return a.client.GetMessageLog()
 }
 
+// SubmitTaskAndWait submits a brainbox hub task and polls until it reaches a
+// terminal state, then returns the outcome. Blocks up to TimeoutSec (default 300).
+func (a *App) SubmitTaskAndWait(req brainbox.WaitForTaskRequest) (brainbox.WaitForTaskResponse, error) {
+	return a.client.SubmitTaskAndWait(req)
+}
+
 // ---------------------------------------------------------------------------
 // Observability
 // ---------------------------------------------------------------------------

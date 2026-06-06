@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { getApi, openInBrowser } from '../utils/api';
-  import { featureFlags, profileState } from '../stores.svelte';
+  import { featureFlags, profileState, currentPanel } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -10,14 +10,21 @@
 
   interface AttentionItem {
     id: string;
-    source: 'task' | 'entry';
+    source: 'task' | 'chain' | 'entry' | 'hub';
+    source_id: string;
     title: string;
     subtitle: string;
     reason: string;
     workspace: string;
     time: number;
     url?: string;
-    actions?: any[]; // EntryAction[] passthrough for entry-source items
+    actions: string[]; // "retry" | "open" | "respond" | "dismiss"
+    user_reply?: string;
+  }
+
+  interface OpenTarget {
+    panel: string;
+    ref: string;
   }
 
   interface LogEntry {
@@ -41,8 +48,13 @@
   let attentionError = $state<string | null>(null);
   let logsError = $state<string | null>(null);
 
+  // Inline respond expander state
+  let respondingId = $state<string | null>(null);
+  let respondText = $state('');
+
   let attentionPoll: number | undefined;
   let logsPoll: number | undefined;
+  let sseCleanup: Array<() => void> = [];
 
   const ATTN_POLL_MS = 5_000;
   const LOGS_POLL_MS = 3_000;
@@ -52,7 +64,6 @@
   let activeProfile    = $derived(profileState.active);
   let workspaceFilter  = $derived(activeProfile?.name ?? '');
 
-  // Force the user back to Attention if they were on Live and OpenSearch goes off.
   $effect(() => {
     if (tab === 'live' && !opensearchActive) tab = 'attention';
   });
@@ -90,14 +101,21 @@
   onMount(() => {
     void refreshAttention();
     attentionPoll = window.setInterval(refreshAttention, ATTN_POLL_MS);
+
+    // SSE-driven immediate refresh — supplements the 5s safety net poll.
+    const sseEvents = ['task:event', 'chain:run:event', 'brainbox:event'];
+    for (const ev of sseEvents) {
+      const off = (window as any).runtime?.EventsOn?.(ev, () => void refreshAttention());
+      if (typeof off === 'function') sseCleanup.push(off);
+    }
   });
 
   onDestroy(() => {
     if (attentionPoll !== undefined) window.clearInterval(attentionPoll);
     if (logsPoll      !== undefined) window.clearInterval(logsPoll);
+    sseCleanup.forEach(fn => fn());
   });
 
-  // Start/stop the logs poller when the user opens/leaves the Live tab.
   $effect(() => {
     if (tab === 'live' && opensearchActive) {
       void refreshLogs();
@@ -110,7 +128,6 @@
     }
   });
 
-  // Re-fetch immediately when the workspace filter changes.
   let lastFilter = $state(workspaceFilter);
   $effect(() => {
     if (workspaceFilter !== lastFilter) {
@@ -124,7 +141,7 @@
 
   async function dismiss(item: AttentionItem) {
     const prev = attention;
-    attention = attention.filter(i => i.id !== item.id); // optimistic
+    attention = attention.filter(i => i.id !== item.id);
     const a = await getApi();
     if (!a) return;
     try {
@@ -135,8 +152,51 @@
     }
   }
 
-  function openItem(item: AttentionItem) {
-    if (item.url) openInBrowser(item.url);
+  async function retry(item: AttentionItem) {
+    const prev = attention;
+    attention = attention.filter(i => i.id !== item.id);
+    const a = await getApi();
+    if (!a) return;
+    try {
+      await a.AttentionRetry(item.id);
+    } catch (err: any) {
+      attention = prev;
+      notifications.error(`Retry failed: ${err?.message ?? err}`);
+    }
+  }
+
+  function openRespond(item: AttentionItem) {
+    if (respondingId === item.id) {
+      respondingId = null;
+    } else {
+      respondingId = item.id;
+      respondText = item.user_reply ?? '';
+    }
+  }
+
+  async function submitRespond(item: AttentionItem) {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      await a.AttentionRespond(item.id, respondText);
+      // Refresh to show the stored reply on the card.
+      void refreshAttention();
+      respondingId = null;
+    } catch (err: any) {
+      notifications.error(`Failed to respond: ${err?.message ?? err}`);
+    }
+  }
+
+  async function openTarget(item: AttentionItem) {
+    if (item.url) { openInBrowser(item.url); return; }
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const target = (await a.AttentionOpenTarget(item.id)) as OpenTarget;
+      if (target?.panel) currentPanel.value = target.panel;
+    } catch (err: any) {
+      notifications.error(`Navigate failed: ${err?.message ?? err}`);
+    }
   }
 
   function openDashboardsDiscover() {
@@ -236,12 +296,41 @@
               {#if item.subtitle}
                 <div class="attn-sub">{item.subtitle}</div>
               {/if}
+
+              {#if item.user_reply}
+                <div class="attn-reply">↩ {item.user_reply}</div>
+              {/if}
+
               <div class="attn-actions">
-                {#if item.url}
-                  <button class="btn ghost small" onclick={() => openItem(item)}>open ↗</button>
-                {/if}
-                <button class="btn ghost small" onclick={() => dismiss(item)}>dismiss</button>
+                {#each item.actions as action (action)}
+                  {#if action === 'retry'}
+                    <button class="btn ghost small" onclick={() => retry(item)}>retry</button>
+                  {:else if action === 'respond'}
+                    <button
+                      class="btn ghost small"
+                      class:active={respondingId === item.id}
+                      onclick={() => openRespond(item)}>respond</button>
+                  {:else if action === 'open'}
+                    <button class="btn ghost small" onclick={() => openTarget(item)}>open ↗</button>
+                  {:else if action === 'dismiss'}
+                    <button class="btn ghost small" onclick={() => dismiss(item)}>dismiss</button>
+                  {/if}
+                {/each}
               </div>
+
+              {#if respondingId === item.id}
+                <div class="respond-box">
+                  <textarea
+                    class="respond-input"
+                    bind:value={respondText}
+                    placeholder="Your reply…"
+                    rows="3"></textarea>
+                  <div class="respond-footer">
+                    <button class="btn ghost small" onclick={() => (respondingId = null)}>cancel</button>
+                    <button class="btn ghost small" onclick={() => submitRespond(item)}>submit</button>
+                  </div>
+                </div>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -389,7 +478,9 @@
     flex-direction: column;
     gap: 4px;
   }
-  .attn-row.src-task { border-left-color: #e57373; }
+  .attn-row.src-task  { border-left-color: #e57373; }
+  .attn-row.src-chain { border-left-color: #ce93d8; }
+  .attn-row.src-hub   { border-left-color: #e57373; }
   .attn-row.src-entry { border-left-color: #ffb74d; }
 
   .attn-meta {
@@ -414,7 +505,42 @@
 
   .attn-title { font-size: 14px; font-weight: 600; color: var(--text, var(--color-text-primary)); }
   .attn-sub   { font-size: 12.5px; color: var(--text-muted, var(--color-text-secondary)); }
-  .attn-actions { display: flex; gap: 8px; margin-top: 6px; }
+  .attn-reply {
+    font-size: 12px;
+    color: var(--text-muted, var(--color-text-secondary));
+    font-style: italic;
+    padding: 4px 8px;
+    background: var(--bg, var(--color-bg-primary));
+    border-radius: var(--r-sm, var(--radius-sm));
+    border-left: 2px solid var(--border, var(--color-border-primary));
+  }
+  .attn-actions { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+
+  /* ── Respond expander ───────────────────────────────────────────────── */
+  .respond-box {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+    padding: 8px;
+    background: var(--bg, var(--color-bg-primary));
+    border: 1px solid var(--border, var(--color-border-primary));
+    border-radius: var(--r-sm, var(--radius-sm));
+  }
+  .respond-input {
+    width: 100%;
+    font-family: inherit;
+    font-size: 12.5px;
+    background: var(--bg-elev, var(--color-bg-secondary));
+    border: 1px solid var(--border, var(--color-border-primary));
+    border-radius: var(--r-sm, var(--radius-sm));
+    color: var(--text, var(--color-text-primary));
+    padding: 6px 8px;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+  .respond-input:focus { outline: 1px solid var(--accent, var(--color-accent)); }
+  .respond-footer { display: flex; gap: 6px; justify-content: flex-end; }
 
   /* ── Live logs ──────────────────────────────────────────────────────── */
   .log-list {
@@ -480,6 +606,10 @@
     background: var(--bg-hover, var(--color-surface-hover));
   }
   .btn.ghost.small { padding: 3px 10px; font-size: 11.5px; }
+  .btn.ghost.active {
+    color: var(--accent, var(--color-accent));
+    border-color: var(--accent, var(--color-accent));
+  }
 
   .empty {
     text-align: center;
