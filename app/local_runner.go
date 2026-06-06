@@ -123,12 +123,22 @@ func outboundIP() string {
 }
 
 // ollamaPort probes the local Ollama HTTP server and returns the port it's
-// listening on (default 11434), or 0 if Ollama is not running.
-func ollamaPort() int {
+// listening on (default 11434), or 0 if Ollama is not reachable on the
+// outbound network interface (i.e. OLLAMA_HOST=0.0.0.0 is not set).
+//
+// We probe via the outbound IP — not localhost — because the brainbox API
+// must reach Ollama from a remote host. If Ollama is only bound to 127.0.0.1
+// (the default), it is unreachable from the API server and we must not
+// advertise the capability.
+func ollamaPort(outbound string) int {
+	if outbound == "" || outbound == "local-process" {
+		return 0
+	}
 	const port = 11434
 	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/", port))
+	resp, err := client.Get(fmt.Sprintf("http://%s:%d/", outbound, port))
 	if err != nil {
+		fmt.Printf("local runner: ollama not reachable on %s:%d (set OLLAMA_HOST=0.0.0.0 to enable): %v\n", outbound, port, err)
 		return 0
 	}
 	resp.Body.Close()
@@ -152,7 +162,7 @@ func (r *localRunner) registerWithBackoff(ctx context.Context) bool {
 	}
 
 	var ollamaAdvertisePort int
-	if port := ollamaPort(); port > 0 {
+	if port := ollamaPort(host); port > 0 {
 		caps["ollama"] = true
 		ollamaAdvertisePort = port
 	}
