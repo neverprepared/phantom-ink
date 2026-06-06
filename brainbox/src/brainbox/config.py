@@ -228,6 +228,14 @@ class DockerSettings(BaseSettings):
     cert_path: str | None = None
 
 
+class GithubSettings(BaseSettings):
+    token: str = ""                          # PAT with repo read scope (CL_GITHUB__TOKEN)
+    repo: str = "neverprepared/phantom-ink"  # owner/repo for release lookups
+    runner_tag_prefix: str = "runner/v"      # tag prefix for BrainboxRunner releases
+
+    model_config = ConfigDict(env_prefix="CL_GITHUB__")
+
+
 class Settings(BaseSettings):
     role: str = "assistant"
     image: str = ""
@@ -299,6 +307,7 @@ class Settings(BaseSettings):
     utm: UTMSettings = Field(default_factory=UTMSettings)
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     docker: DockerSettings = Field(default_factory=DockerSettings)
+    github: GithubSettings = Field(default_factory=GithubSettings)
     path_map: dict[str, str] = Field(
         default_factory=dict
     )  # host path → container path substitutions
