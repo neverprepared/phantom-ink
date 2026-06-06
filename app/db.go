@@ -303,6 +303,14 @@ var migrations = []migration{
 		);
 		CREATE INDEX IF NOT EXISTS idx_automation_rules_profile ON automation_rules(profile, enabled);
 	`},
+	// v16: persisted dismissals for the Stream panel's attention queue.
+	// `id` is the stable AttentionItem ID built from "<source>:<source_id>".
+	{version: 16, sql: `
+		CREATE TABLE IF NOT EXISTS dismissed_attention (
+			id           TEXT PRIMARY KEY,
+			dismissed_at INTEGER NOT NULL DEFAULT 0
+		);
+	`},
 }
 
 func (db *DB) migrate() error {

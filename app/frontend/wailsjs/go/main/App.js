@@ -106,6 +106,10 @@ export function DisableLocalRunner() {
   return window['go']['main']['App']['DisableLocalRunner']();
 }
 
+export function DismissAttention(arg1) {
+  return window['go']['main']['App']['DismissAttention'](arg1);
+}
+
 export function EnableLocalRunner(arg1) {
   return window['go']['main']['App']['EnableLocalRunner'](arg1);
 }
@@ -218,6 +222,10 @@ export function GetOTLPHost() {
   return window['go']['main']['App']['GetOTLPHost']();
 }
 
+export function GetObservabilityOverview(arg1) {
+  return window['go']['main']['App']['GetObservabilityOverview'](arg1);
+}
+
 export function GetPlatform() {
   return window['go']['main']['App']['GetPlatform']();
 }
@@ -300,6 +308,10 @@ export function ListAgentRoles() {
 
 export function ListAgents() {
   return window['go']['main']['App']['ListAgents']();
+}
+
+export function ListAttention(arg1) {
+  return window['go']['main']['App']['ListAttention'](arg1);
 }
 
 export function ListAutomationRules(arg1) {
@@ -400,6 +412,10 @@ export function RescanAgents() {
 
 export function RestartBrainboxAPI() {
   return window['go']['main']['App']['RestartBrainboxAPI']();
+}
+
+export function RestoreAttention(arg1) {
+  return window['go']['main']['App']['RestoreAttention'](arg1);
 }
 
 export function RestoreProfile(arg1) {
@@ -512,6 +528,10 @@ export function StopSession(arg1) {
 
 export function SubmitTask(arg1) {
   return window['go']['main']['App']['SubmitTask'](arg1);
+}
+
+export function TailLogs(arg1, arg2) {
+  return window['go']['main']['App']['TailLogs'](arg1, arg2);
 }
 
 export function TriggerRule(arg1, arg2, arg3) {

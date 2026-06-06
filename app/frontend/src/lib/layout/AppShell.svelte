@@ -17,6 +17,7 @@
   import DashboardPanel from '../panels/DashboardPanel.svelte';
   import StreamPanel from '../panels/StreamPanel.svelte';
   import RunnersPanel from '../panels/RunnersPanel.svelte';
+  import ObservabilityPanel from '../panels/ObservabilityPanel.svelte';
 </script>
 
 <div class="shell">
@@ -44,6 +45,8 @@
         <AutomationsPanel />
       {:else if currentPanel.value === 'jobs'}
         <JobsPanel />
+      {:else if currentPanel.value === 'observability'}
+        <ObservabilityPanel />
       {:else if currentPanel.value === 'profiles'}
         <ProfilesPanel />
       {:else if currentPanel.value === 'settings'}

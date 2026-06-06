@@ -1,732 +1,490 @@
 <script lang="ts">
-  import { getApi } from '../utils/api';
-  import { onMount } from 'svelte';
-  import { brainboxEvents } from '../events.svelte';
-  import { profileState } from '../stores.svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { getApi, openInBrowser } from '../utils/api';
+  import { featureFlags, profileState } from '../stores.svelte';
+  import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
 
-  // ── Types ──────────────────────────────────────────────────────────────
+  // ── Types ──────────────────────────────────────────────────────────────────
 
-  interface TaskNode {
+  interface AttentionItem {
     id: string;
-    description: string;
-    agent_name: string;
-    status: string;
-    created_at: number;
-    updated_at: number;
-    error: string | null;
-    session_name: string;
-    workspace_profile: string;
-    job_id: string;
-    spawned_by: string;
-    child_task_ids: string[];
-  }
-
-  interface EntryAction {
-    label: string;
-    kind: 'open_url' | 'copy' | 'dispatch' | 'prompt';
-    url?: string;
-    value?: string;
-    agent?: string;
-    prompt?: string;
-    template?: string;
-  }
-
-  interface AutomationRule {
-    id: string;
-    name: string;
-    trigger_type: string;
-    action_type: string;
-  }
-
-  interface CollectedEntry {
-    job_id: string;
-    entry_id: string;
-    profile: string;
-    kind: string;
-    title: string;
-    description: string;
-    value: string;
-    url: string;
-    start_at?: number;
-    end_at?: number;
-    status: string;
-    tags: string[];
-    metadata: any;
-    actions: EntryAction[];
-    collected_at: number;
-  }
-
-  // Unified stream item
-  interface StreamItem {
-    id: string;
-    source: 'task' | 'event';
-    time: number;         // for sorting (start_at or created_at)
+    source: 'task' | 'entry';
     title: string;
     subtitle: string;
-    status: string;
+    reason: string;
+    workspace: string;
+    time: number;
     url?: string;
-    actions: EntryAction[];
-    raw: TaskNode | CollectedEntry;
+    actions?: any[]; // EntryAction[] passthrough for entry-source items
   }
 
-  // ── State ──────────────────────────────────────────────────────────────
+  interface LogEntry {
+    time: string;
+    body: string;
+    session?: string;
+    workspace?: string;
+    model?: string;
+    duration_ms?: number;
+  }
 
-  let allTasks   = $state<TaskNode[]>([]);
-  let collectEntries = $state<CollectedEntry[]>([]);
-  let loading    = $state(true);
-  let refreshing = $state(false);
-  let expanded   = $state<Set<string>>(new Set());
-  let tagFilter  = $state('');
-  let dispatchMsg = $state('');
-  let menuItem    = $state<StreamItem | null>(null);
-  let menuRules   = $state<AutomationRule[]>([]);
-  let menuLoading = $state(false);
+  type Tab = 'attention' | 'live';
 
-  const profile = $derived(profileState.active?.name ?? '');
+  // ── State ──────────────────────────────────────────────────────────────────
 
-  // streamProfile: '' = all profiles, otherwise scoped to a specific one.
-  // Initialised to the active profile; syncs when the active profile changes.
-  let streamProfile = $state('');
-  $effect(() => { streamProfile = profile; });
+  let tab = $state<Tab>('attention');
+  let attention = $state<AttentionItem[]>([]);
+  let logs = $state<LogEntry[]>([]);
+  let attentionLoading = $state(true);
+  let logsLoading = $state(false);
+  let attentionError = $state<string | null>(null);
+  let logsError = $state<string | null>(null);
 
-  // ── Stream view ────────────────────────────────────────────────────────
+  let attentionPoll: number | undefined;
+  let logsPoll: number | undefined;
 
-  let streamItems = $derived.by((): StreamItem[] => {
-    const items: StreamItem[] = [];
+  const ATTN_POLL_MS = 5_000;
+  const LOGS_POLL_MS = 3_000;
+  const LOGS_LIMIT = 1000;
 
-    // Hub tasks — filter by streamProfile when set
-    const myTasks = allTasks.filter(t =>
-      !t.spawned_by &&
-      (!streamProfile || (t.workspace_profile ?? '').toLowerCase() === streamProfile.toLowerCase())
-    );
-    for (const t of myTasks) {
-      items.push({
-        id: `task:${t.id}`,
-        source: 'task',
-        time: t.created_at,
-        title: t.description || t.id.slice(0, 12),
-        subtitle: `${t.agent_name} · ${elapsed(t)}`,
-        status: taskStatus(t.status),
-        actions: [],
-        raw: t,
-      });
-    }
+  let opensearchActive = $derived(featureFlags.isActive('opensearch'));
+  let activeProfile    = $derived(profileState.active);
+  let workspaceFilter  = $derived(activeProfile?.name ?? '');
 
-    // Collected events — filter by streamProfile and tag client-side
-    const profileFiltered = streamProfile
-      ? collectEntries.filter(e => (e.profile ?? '').toLowerCase() === streamProfile.toLowerCase())
-      : collectEntries;
-    const tagFiltered = tagFilter
-      ? profileFiltered.filter(e => e.tags?.includes(tagFilter))
-      : profileFiltered;
-    for (const e of tagFiltered) {
-      items.push({
-        id: `entry:${e.job_id}:${e.entry_id}`,
-        source: 'event',
-        time: e.start_at ?? e.collected_at,
-        title: e.title,
-        subtitle: buildEntrySubtitle(e),
-        status: entryStatus(e.status),
-        url: e.url || undefined,
-        actions: Array.isArray(e.actions) ? e.actions : [],
-        raw: e,
-      });
-    }
-
-    items.sort((a, b) => b.time - a.time);
-    return items;
+  // Force the user back to Attention if they were on Live and OpenSearch goes off.
+  $effect(() => {
+    if (tab === 'live' && !opensearchActive) tab = 'attention';
   });
 
-  let nowIndex = $derived.by(() => {
-    const now = Date.now();
-    return streamItems.findIndex(i => i.time <= now);
-  });
+  // ── Loaders ────────────────────────────────────────────────────────────────
 
-  // Spawned children grouped by root task id — for inline subtask expansion.
-  let jobChildren = $derived.by(() => {
-    const map = new Map<string, TaskNode[]>();
-    for (const t of allTasks) {
-      if (t.spawned_by) {
-        const key = t.job_id ?? t.spawned_by;
-        const arr = map.get(key) ?? [];
-        arr.push(t);
-        map.set(key, arr);
-      }
-    }
-    return map;
-  });
-
-  // ── Data loading ───────────────────────────────────────────────────────
-
-  async function load(silent = false) {
+  async function refreshAttention() {
     const a = await getApi();
     if (!a) return;
-    if (!silent) loading = true; else refreshing = true;
     try {
-      // Load all profiles' data — stream filters client-side via streamProfile
-      const [tasks, entries] = await Promise.all([
-        (a.ListHubTasks('', '') as Promise<any>).catch(() => []),
-        (a.ListCollectedEntries('', 'event', '') as Promise<any>).catch(() => []),
-      ]);
-      allTasks = tasks ?? [];
-      collectEntries = entries ?? [];
+      attention = ((await a.ListAttention(workspaceFilter)) ?? []) as AttentionItem[];
+      attentionError = null;
+    } catch (err: any) {
+      attentionError = `${err?.message ?? err}`;
     } finally {
-      loading = false;
-      refreshing = false;
+      attentionLoading = false;
+    }
+  }
+
+  async function refreshLogs() {
+    if (!opensearchActive) return;
+    const a = await getApi();
+    if (!a) return;
+    logsLoading = true;
+    try {
+      logs = ((await a.TailLogs(workspaceFilter, LOGS_LIMIT)) ?? []) as LogEntry[];
+      logsError = null;
+    } catch (err: any) {
+      logsError = `${err?.message ?? err}`;
+    } finally {
+      logsLoading = false;
     }
   }
 
   onMount(() => {
-    void load();
-    const handler = () => void load(true);
-    window.runtime?.EventsOn('collect:update', handler);
-    return () => window.runtime?.EventsOff('collect:update');
+    void refreshAttention();
+    attentionPoll = window.setInterval(refreshAttention, ATTN_POLL_MS);
   });
 
-  let _lastEv = $derived(brainboxEvents.last);
-  $effect(() => { if (_lastEv) void load(true); });
+  onDestroy(() => {
+    if (attentionPoll !== undefined) window.clearInterval(attentionPoll);
+    if (logsPoll      !== undefined) window.clearInterval(logsPoll);
+  });
 
-  // ── Actions ────────────────────────────────────────────────────────────
-
-  function openURL(url: string) {
-    window.runtime?.BrowserOpenURL(url);
-  }
-
-  function copyValue(value: string) {
-    navigator.clipboard.writeText(value).catch(() => {});
-  }
-
-  async function dispatchAction(action: EntryAction, item: StreamItem) {
-    const a = await getApi();
-    if (!a) return;
-    const rendered = renderTemplate(action.prompt ?? '', item);
-    try {
-      await (a.EnqueueTask as any)({
-        description: item.title,
-        input: rendered,
-        agent: action.agent ?? 'developer',
-        workspace_profile: profile,
-      });
-      dispatchMsg = `Dispatched to ${action.agent ?? 'developer'}`;
-      setTimeout(() => { dispatchMsg = ''; }, 3000);
-    } catch (e: any) {
-      dispatchMsg = `Error: ${e?.message ?? 'dispatch failed'}`;
-      setTimeout(() => { dispatchMsg = ''; }, 4000);
-    }
-  }
-
-  function promptAction(action: EntryAction, item: StreamItem) {
-    // Pre-fill the system clipboard with the rendered template so the user
-    // can paste into the dispatch form. A full dispatch-form integration
-    // is tracked as a follow-up.
-    const rendered = renderTemplate(action.template ?? '', item);
-    navigator.clipboard.writeText(rendered).catch(() => {});
-    dispatchMsg = 'Prompt copied to clipboard';
-    setTimeout(() => { dispatchMsg = ''; }, 3000);
-  }
-
-  async function openActionMenu(item: StreamItem) {
-    if (item.source !== 'event') return;
-    menuItem = item;
-    menuRules = [];
-    menuLoading = true;
-    const e = item.raw as CollectedEntry;
-    try {
-      const a = await getApi();
-      if (a) {
-        const rules = await (a.GetMatchingRules as any)(e.job_id, e.entry_id).catch(() => []);
-        menuRules = (rules ?? []) as AutomationRule[];
+  // Start/stop the logs poller when the user opens/leaves the Live tab.
+  $effect(() => {
+    if (tab === 'live' && opensearchActive) {
+      void refreshLogs();
+      if (logsPoll === undefined) {
+        logsPoll = window.setInterval(refreshLogs, LOGS_POLL_MS);
       }
-    } finally {
-      menuLoading = false;
+    } else if (logsPoll !== undefined) {
+      window.clearInterval(logsPoll);
+      logsPoll = undefined;
     }
-  }
+  });
 
-  function closeMenu() { menuItem = null; menuRules = []; }
+  // Re-fetch immediately when the workspace filter changes.
+  let lastFilter = $state(workspaceFilter);
+  $effect(() => {
+    if (workspaceFilter !== lastFilter) {
+      lastFilter = workspaceFilter;
+      void refreshAttention();
+      if (tab === 'live') void refreshLogs();
+    }
+  });
 
-  async function triggerRule(ruleID: string) {
-    if (!menuItem || menuItem.source !== 'event') return;
+  // ── Actions ────────────────────────────────────────────────────────────────
+
+  async function dismiss(item: AttentionItem) {
+    const prev = attention;
+    attention = attention.filter(i => i.id !== item.id); // optimistic
     const a = await getApi();
     if (!a) return;
-    const e = menuItem.raw as CollectedEntry;
     try {
-      await (a.TriggerRule as any)(ruleID, e.job_id, e.entry_id);
-      dispatchMsg = 'Rule triggered';
-      setTimeout(() => { dispatchMsg = ''; }, 3000);
+      await a.DismissAttention(item.id);
     } catch (err: any) {
-      dispatchMsg = `Error: ${err?.message ?? 'trigger failed'}`;
-      setTimeout(() => { dispatchMsg = ''; }, 4000);
-    }
-    closeMenu();
-  }
-
-  function handleAction(action: EntryAction, item: StreamItem) {
-    switch (action.kind) {
-      case 'open_url':  if (action.url)   openURL(action.url); break;
-      case 'copy':      if (action.value) copyValue(action.value); break;
-      case 'dispatch':  void dispatchAction(action, item); break;
-      case 'prompt':    promptAction(action, item); break;
+      attention = prev;
+      notifications.error(`Failed to dismiss: ${err?.message ?? err}`);
     }
   }
 
-  function renderTemplate(tmpl: string, item: StreamItem): string {
-    const e = item.source === 'event' ? item.raw as CollectedEntry : null;
-    return tmpl
-      .replace(/\{title\}/g, item.title)
-      .replace(/\{url\}/g, item.url ?? '')
-      .replace(/\{status\}/g, item.status)
-      .replace(/\{metadata\.([^}]+)\}/g, (_, key) => {
-        if (!e?.metadata) return '';
-        return String(e.metadata[key] ?? '');
-      });
+  function openItem(item: AttentionItem) {
+    if (item.url) openInBrowser(item.url);
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────
-
-  function taskStatus(s: string): string {
-    switch (s) {
-      case 'running':   return 'active';
-      case 'completed': return 'done';
-      case 'failed':    return 'failed';
-      case 'cancelled': return 'cancelled';
-      default:          return 'pending';
-    }
+  function openDashboardsDiscover() {
+    const ws = workspaceFilter;
+    const filter = ws
+      ? `&_a=(filters:!((meta:(disabled:!f,index:logs-otel,key:'resource.attributes.workspace.keyword',negate:!f),query:(match_phrase:(resource.attributes.workspace.keyword:'${ws}')))))`
+      : '';
+    openInBrowser(`http://localhost:5601/app/data-explorer/discover#/?_g=()${filter}`);
   }
 
-  function entryStatus(s: string): string {
-    return s || 'active';
+  // ── Formatters ─────────────────────────────────────────────────────────────
+
+  function fmtAgo(ms: number): string {
+    if (!ms) return '';
+    const diff = Date.now() - ms;
+    if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
+    if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
+    if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
+    return `${Math.round(diff / 86_400_000)}d ago`;
   }
 
-  function statusGlyph(s: string): string {
-    switch (s) {
-      case 'active':   return '●';
-      case 'done':     return '✓';
-      case 'failed':   return '✗';
-      case 'cancelled':return '○';
-      case 'upcoming': return '◷';
-      default:         return '·';
-    }
+  function fmtTime(iso: string): string {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      return d.toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch { return iso; }
   }
 
-  function fmtTime(ms: number): string {
-    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  function fmtDur(ms?: number): string {
+    if (!ms) return '';
+    return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(2)}s`;
   }
 
-  function fmtDate(ms: number): string {
-    const d = new Date(ms);
-    const today = new Date();
-    if (d.toDateString() === today.toDateString()) return 'today';
-    const tom = new Date(today); tom.setDate(tom.getDate() + 1);
-    if (d.toDateString() === tom.toDateString()) return 'tomorrow';
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  function sessionShort(id?: string): string {
+    if (!id) return '';
+    return id.length > 8 ? id.slice(0, 8) : id;
   }
-
-  function elapsed(t: TaskNode): string {
-    const end = (t.status === 'running') ? Date.now() : (t.updated_at ?? Date.now());
-    const ms = end - t.created_at;
-    if (ms < 1000) return '<1s';
-    if (ms < 60_000) return `${Math.floor(ms / 1000)}s`;
-    const m = Math.floor(ms / 60_000);
-    const s = Math.floor((ms % 60_000) / 1000);
-    return s > 0 ? `${m}m ${s}s` : `${m}m`;
-  }
-
-  function buildEntrySubtitle(e: CollectedEntry): string {
-    const parts: string[] = [];
-    if (e.tags?.length) parts.push(e.tags[0]);
-    if (e.end_at && e.start_at) {
-      const durMin = Math.round((e.end_at - e.start_at) / 60_000);
-      if (durMin > 0) parts.push(`${durMin}m`);
-    }
-    if (e.value) parts.push(e.value);
-    return parts.join(' · ');
-  }
-
-  function detectURLs(text: string): Array<{ type: 'text' | 'url'; content: string }> {
-    const urlRe = /https?:\/\/[^\s)>\]"']+/g;
-    const parts: Array<{ type: 'text' | 'url'; content: string }> = [];
-    let last = 0, m: RegExpExecArray | null;
-    while ((m = urlRe.exec(text)) !== null) {
-      if (m.index > last) parts.push({ type: 'text', content: text.slice(last, m.index) });
-      parts.push({ type: 'url', content: m[0] });
-      last = m.index + m[0].length;
-    }
-    if (last < text.length) parts.push({ type: 'text', content: text.slice(last) });
-    return parts;
-  }
-
-  function toggleExpand(jobId: string) {
-    const next = new Set(expanded);
-    if (next.has(jobId)) next.delete(jobId); else next.add(jobId);
-    expanded = next;
-  }
-
-  // All tags for filter bar
-  let allTags = $derived.by(() => {
-    const set = new Set<string>();
-    for (const e of collectEntries) e.tags?.forEach(t => set.add(t));
-    return [...set].sort();
-  });
-
-  // All profiles present in stream data
-  let streamProfiles = $derived.by(() => {
-    const set = new Set<string>();
-    for (const t of allTasks) if (t.workspace_profile) set.add(t.workspace_profile);
-    for (const e of collectEntries) if (e.profile) set.add(e.profile);
-    return [...set].sort();
-  });
-
 </script>
 
-<div class="stream-panel">
-  <div class="panel-header" style="margin-bottom:var(--spacing-sm);">
+<div class="panel">
+  <header class="panel-header">
     <h1 class="page-title">stream</h1>
-    <div style="display:flex;align-items:center;gap:var(--spacing-md);">
-      {#if loading || refreshing}<Spinner />{/if}
-      {#if dispatchMsg}
-        <span class="dispatch-msg">{dispatchMsg}</span>
-      {/if}
+    <div class="header-actions">
+      <div class="scope">
+        scope:
+        <span class="scope-value">{workspaceFilter || 'all'}</span>
+      </div>
     </div>
+  </header>
+
+  <div class="tabs">
+    <button
+      class="tab"
+      class:active={tab === 'attention'}
+      onclick={() => (tab = 'attention')}>
+      attention
+      {#if attention.length > 0}
+        <span class="badge">{attention.length}</span>
+      {/if}
+    </button>
+    <button
+      class="tab"
+      class:active={tab === 'live'}
+      class:disabled={!opensearchActive}
+      disabled={!opensearchActive}
+      onclick={() => (tab = 'live')}
+      title={opensearchActive ? '' : 'Enable OpenSearch to view live logs'}>
+      live
+      {#if tab === 'live' && logsLoading}
+        <Spinner />
+      {/if}
+    </button>
   </div>
 
-  {#if loading}
-    <div class="empty">loading…</div>
-
-  {:else}
-    <!-- Profile filter -->
-    {#if streamProfiles.length > 1}
-      <div class="filter-row">
-        <span class="filter-label">profile</span>
-        <div class="tag-bar inline">
-          <button class="tag" class:active={streamProfile === ''} onclick={() => streamProfile = ''}>all</button>
-          {#each streamProfiles as p (p)}
-            <button class="tag" class:active={streamProfile === p} onclick={() => streamProfile = streamProfile === p ? '' : p}>{p}</button>
-          {/each}
-        </div>
-      </div>
-    {/if}
-
-    <!-- Tag filter -->
-    {#if allTags.length > 0}
-      <div class="filter-row">
-        <span class="filter-label">tag</span>
-        <div class="tag-bar inline">
-          <button class="tag" class:active={tagFilter === ''} onclick={() => tagFilter = ''}>all</button>
-          {#each allTags as t (t)}
-            <button class="tag" class:active={tagFilter === t} onclick={() => tagFilter = tagFilter === t ? '' : t}>{t}</button>
-          {/each}
-        </div>
-      </div>
-    {/if}
-
-    {#if streamItems.length === 0}
-      <EmptyState title="No events yet" />
-    {:else}
-      <div class="stream">
-        {#each streamItems as item, i (item.id)}
-          <!-- "now" divider between upcoming and past -->
-          {#if i === nowIndex}
-            <div class="now-divider">
-              <span class="now-label">now</span>
-            </div>
-          {/if}
-
-          <div class="stream-item src-{item.source} st-{item.status}">
-            <div class="item-time">{fmtTime(item.time)}<br/><span class="item-date">{fmtDate(item.time)}</span></div>
-            <span class="item-glyph st-{item.status}">{statusGlyph(item.status)}</span>
-            <div class="item-body">
-              <div class="item-title-row">
-                {#if item.source === 'task'}
-                  {@const rootTask = item.raw as TaskNode}
-                  {@const children = jobChildren.get(rootTask.id) ?? []}
-                  {#if children.length > 0}
-                    <button class="expand-btn" onclick={() => toggleExpand(rootTask.id)}
-                      title="{expanded.has(rootTask.id) ? 'collapse' : 'expand'} subtasks">
-                      {expanded.has(rootTask.id) ? '▼' : '▶'}
-                    </button>
-                  {/if}
-                {/if}
-                {#if item.url}
-                  <button class="item-title link" onclick={() => openURL(item.url!)}>{item.title}</button>
-                {:else}
-                  <span class="item-title">{item.title}</span>
-                {/if}
+  {#if tab === 'attention'}
+    <section class="tab-body">
+      {#if attentionError}
+        <EmptyState title="Failed to load attention items" message={attentionError} />
+      {:else if attentionLoading && attention.length === 0}
+        <div class="empty">loading…</div>
+      {:else if attention.length === 0}
+        <EmptyState
+          title="Nothing needs attention"
+          message="Failed tasks and entries with pending actions will appear here." />
+      {:else}
+        <ul class="attn-list">
+          {#each attention as item (item.id)}
+            <li class="attn-row src-{item.source}">
+              <div class="attn-meta">
+                <span class="attn-source">{item.source}</span>
+                <span class="attn-reason">{item.reason}</span>
+                {#if item.workspace}<span class="attn-ws">{item.workspace}</span>{/if}
+                <span class="attn-time">{fmtAgo(item.time)}</span>
               </div>
+              <div class="attn-title">{item.title}</div>
               {#if item.subtitle}
-                <span class="item-sub">{item.subtitle}</span>
+                <div class="attn-sub">{item.subtitle}</div>
               {/if}
-              <!-- Description with auto-linked URLs -->
-              {#if item.source === 'event'}
-                {@const e = item.raw as CollectedEntry}
-                {#if e.description}
-                  <span class="item-desc">
-                    {#each detectURLs(e.description) as part}
-                      {#if part.type === 'url'}
-                        <button class="inline-link" onclick={() => openURL(part.content)}>{part.content}</button>
-                      {:else}
-                        {part.content}
-                      {/if}
-                    {/each}
-                  </span>
+              <div class="attn-actions">
+                {#if item.url}
+                  <button class="btn ghost small" onclick={() => openItem(item)}>open ↗</button>
                 {/if}
-                {#if e.tags?.length}
-                  <div class="item-tags">
-                    {#each e.tags as tag (tag)}
-                      <span class="item-tag">{tag}</span>
-                    {/each}
-                  </div>
-                {/if}
-              {/if}
-              <!-- Actions: open_url and copy inline; dispatch via automation menu -->
-              {#if item.actions.filter(a => a.kind === 'open_url' || a.kind === 'copy').length > 0 || item.source === 'event'}
-                {@const inlineActions = item.actions.filter(a => a.kind === 'open_url' || a.kind === 'copy')}
-                <div class="item-actions">
-                  {#each inlineActions as action (action.label)}
-                    <button class="action-btn" onclick={() => handleAction(action, item)}>
-                      {action.label}
-                    </button>
-                  {/each}
-                  {#if item.source === 'event'}
-                    <div class="action-menu-wrap">
-                      <button class="action-btn menu-btn"
-                        class:active={menuItem?.id === item.id}
-                        onclick={() => menuItem?.id === item.id ? closeMenu() : openActionMenu(item)}
-                        title="automations">⋯</button>
-                      {#if menuItem?.id === item.id}
-                        <div class="action-menu">
-                          {#if menuLoading}
-                            <span class="menu-empty">loading…</span>
-                          {:else if menuRules.length === 0}
-                            <span class="menu-empty">no matching rules</span>
-                          {:else}
-                            {#each menuRules as rule (rule.id)}
-                              <button class="menu-rule" onclick={() => triggerRule(rule.id)}>
-                                ▶ {rule.name}
-                              </button>
-                            {/each}
-                          {/if}
-                        </div>
-                      {/if}
-                    </div>
-                  {/if}
-                </div>
-              {/if}
-              <!-- Inline subtask expansion for task items -->
-              {#if item.source === 'task'}
-                {@const rootTask = item.raw as TaskNode}
-                {@const children = jobChildren.get(rootTask.id) ?? []}
-                {#if expanded.has(rootTask.id) && children.length > 0}
-                  <div class="subtask-list">
-                    {#each children.sort((a, b) => a.created_at - b.created_at) as child (child.id)}
-                      {@const cs = taskStatus(child.status)}
-                      <div class="subtask-row st-{cs}">
-                        <span class="subtask-edge">└─</span>
-                        <span class="item-glyph st-{cs}">{statusGlyph(cs)}</span>
-                        <span class="subtask-name">{child.description || child.id.slice(0, 12)}</span>
-                        <span class="subtask-meta">{child.agent_name} · {elapsed(child)}</span>
-                        {#if child.status === 'failed' && child.error}
-                          <span class="subtask-error" title={child.error}>!</span>
-                        {/if}
-                      </div>
-                    {/each}
-                  </div>
-                {/if}
-              {/if}
-            </div>
-          </div>
-        {/each}
-      </div>
-    {/if}
-
+                <button class="btn ghost small" onclick={() => dismiss(item)}>dismiss</button>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {:else if tab === 'live'}
+    <section class="tab-body">
+      {#if !opensearchActive}
+        <EmptyState
+          title="OpenSearch not enabled"
+          message="Enable the OpenSearch integration to stream live telemetry logs here." />
+      {:else if logsError}
+        <EmptyState title="Failed to tail logs" message={logsError} />
+      {:else if logs.length === 0 && !logsLoading}
+        <EmptyState
+          title="No logs in the last 24h"
+          message="Start a Claude Code session or widen your workspace filter." />
+      {:else}
+        <ol class="log-list">
+          {#each logs as l, i (l.time + ':' + i)}
+            <li class="log-row">
+              <span class="log-time">{fmtTime(l.time)}</span>
+              <span class="log-body">{l.body}</span>
+              {#if l.model}<span class="log-tag">{l.model}</span>{/if}
+              {#if l.workspace}<span class="log-tag tag-ws">{l.workspace}</span>{/if}
+              {#if l.session}<span class="log-tag tag-sess">{sessionShort(l.session)}</span>{/if}
+              {#if l.duration_ms}<span class="log-dur">{fmtDur(l.duration_ms)}</span>{/if}
+            </li>
+          {/each}
+        </ol>
+        <div class="log-footer">
+          showing {logs.length} of last 24h, newest first ·
+          <button class="link-btn" onclick={openDashboardsDiscover}>view more in Dashboards ↗</button>
+        </div>
+      {/if}
+    </section>
   {/if}
 </div>
 
 <style>
-  .stream-panel {
-    padding: var(--panel-padding);
+  .panel {
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-md);
-    min-height: 100%;
+    height: 100%;
+    padding: var(--panel-padding);
+    overflow: hidden;
   }
 
-  .dispatch-msg {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--color-success);
+  .panel-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    gap: 16px;
+    flex-shrink: 0;
   }
+
+  .page-title {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: lowercase;
+    margin: 0;
+    color: var(--text, var(--color-text-primary));
+  }
+
+  .header-actions { display: flex; gap: 12px; align-items: center; }
+
+  .scope {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint, var(--color-text-tertiary));
+  }
+  .scope-value {
+    color: var(--text, var(--color-text-primary));
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    margin-left: 4px;
+    padding: 2px 8px;
+    background: var(--bg-elev, var(--color-bg-tertiary));
+    border-radius: var(--r-sm, var(--radius-sm));
+  }
+
+  /* ── Tabs ────────────────────────────────────────────────────────────── */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border, var(--color-border-primary));
+    margin-bottom: 16px;
+    flex-shrink: 0;
+  }
+
+  .tab {
+    background: none;
+    border: none;
+    color: var(--text-muted, var(--color-text-secondary));
+    padding: 8px 14px;
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: lowercase;
+    cursor: pointer;
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: color 0.15s;
+  }
+  .tab:hover { color: var(--text, var(--color-text-primary)); }
+  .tab.active { color: var(--text, var(--color-text-primary)); }
+  .tab.active::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: -1px;
+    height: 2px;
+    background: var(--accent, var(--color-accent));
+  }
+  .tab.disabled { color: var(--text-faint, var(--color-text-tertiary)); cursor: not-allowed; }
+
+  .badge {
+    background: var(--accent, var(--color-accent));
+    color: white;
+    border-radius: 999px;
+    padding: 1px 7px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+
+  .tab-body { flex: 1; min-height: 0; overflow-y: auto; }
+
+  /* ── Attention ──────────────────────────────────────────────────────── */
+  .attn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+
+  .attn-row {
+    background: var(--bg-elev, var(--color-bg-secondary));
+    border: 1px solid var(--border, var(--color-border-primary));
+    border-left: 3px solid var(--accent, var(--color-accent));
+    border-radius: var(--r-md, var(--radius-md));
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .attn-row.src-task { border-left-color: #e57373; }
+  .attn-row.src-entry { border-left-color: #ffb74d; }
+
+  .attn-meta {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint, var(--color-text-tertiary));
+  }
+  .attn-source { font-weight: 700; }
+  .attn-reason { color: var(--text-muted, var(--color-text-secondary)); }
+  .attn-ws {
+    padding: 1px 7px;
+    background: var(--bg, var(--color-bg-tertiary));
+    border-radius: var(--r-sm, var(--radius-sm));
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .attn-time { margin-left: auto; }
+
+  .attn-title { font-size: 14px; font-weight: 600; color: var(--text, var(--color-text-primary)); }
+  .attn-sub   { font-size: 12.5px; color: var(--text-muted, var(--color-text-secondary)); }
+  .attn-actions { display: flex; gap: 8px; margin-top: 6px; }
+
+  /* ── Live logs ──────────────────────────────────────────────────────── */
+  .log-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 12px;
+  }
+  .log-row {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border-subtle, var(--color-border-secondary, transparent));
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .log-row:hover { background: var(--bg-hover, var(--color-surface-hover)); }
+  .log-time { color: var(--text-faint, var(--color-text-tertiary)); flex-shrink: 0; }
+  .log-body { color: var(--text, var(--color-text-primary)); font-weight: 600; }
+  .log-tag {
+    background: var(--bg-elev, var(--color-bg-tertiary));
+    color: var(--text-muted, var(--color-text-secondary));
+    padding: 1px 7px;
+    border-radius: var(--r-sm, var(--radius-sm));
+    font-size: 11px;
+  }
+  .tag-ws   { color: var(--accent, var(--color-accent)); }
+  .tag-sess { font-family: var(--font-mono, ui-monospace, monospace); }
+  .log-dur  { color: var(--text-faint, var(--color-text-tertiary)); margin-left: auto; }
+
+  .log-footer {
+    margin-top: 12px;
+    font-size: 11.5px;
+    color: var(--text-faint, var(--color-text-tertiary));
+    text-align: right;
+  }
+  .link-btn {
+    background: none;
+    border: none;
+    color: var(--accent, var(--color-accent));
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+  }
+  .link-btn:hover { text-decoration: underline; }
+
+  /* ── Shared ─────────────────────────────────────────────────────────── */
+  .btn.ghost {
+    background: none;
+    border: 1px solid var(--border, var(--color-border-primary));
+    color: var(--text-muted, var(--color-text-secondary));
+    padding: 6px 12px;
+    border-radius: var(--r-sm, var(--radius-sm));
+    font-family: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn.ghost:hover {
+    color: var(--text, var(--color-text-primary));
+    background: var(--bg-hover, var(--color-surface-hover));
+  }
+  .btn.ghost.small { padding: 3px 10px; font-size: 11.5px; }
 
   .empty {
-    font-size: 13px; color: var(--color-text-tertiary);
-    padding: var(--spacing-3xl) 0; line-height: 1.5;
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-faint, var(--color-text-tertiary));
+    font-size: 13px;
   }
-
-  /* ── Filter bars ── */
-  .filter-row {
-    display: flex; align-items: center; gap: var(--spacing-sm);
-    padding-bottom: var(--spacing-xs);
-  }
-  .filter-label {
-    font-family: var(--font-mono); font-size: 10px;
-    color: var(--color-text-muted); width: 38px; flex-shrink: 0;
-  }
-  .tag-bar {
-    display: flex; flex-wrap: wrap; gap: 6px;
-    padding-bottom: var(--spacing-sm);
-  }
-  .tag-bar.inline { padding-bottom: 0; }
-  .tag {
-    font-family: var(--font-mono); font-size: 10px;
-    padding: 2px 8px; border-radius: 999px;
-    border: 1px solid var(--color-border-primary);
-    background: none; cursor: pointer;
-    color: var(--color-text-muted); font-family: inherit;
-  }
-  .tag:hover { border-color: var(--color-border-secondary); color: var(--color-text-secondary); }
-  .tag.active { border-color: var(--color-accent); color: var(--color-accent); background: rgba(234,179,8,0.06); }
-
-  /* ── Stream ── */
-  .stream { display: flex; flex-direction: column; gap: 2px; }
-
-  .now-divider {
-    display: flex; align-items: center; gap: var(--spacing-sm);
-    padding: var(--spacing-xs) 0; margin: var(--spacing-xs) 0;
-  }
-  .now-divider::before, .now-divider::after {
-    content: ''; flex: 1; height: 1px;
-    background: var(--color-accent); opacity: 0.4;
-  }
-  .now-label {
-    font-family: var(--font-mono); font-size: 10px;
-    color: var(--color-accent); letter-spacing: 0.1em;
-  }
-
-  .stream-item {
-    display: grid;
-    grid-template-columns: 52px 18px 1fr;
-    gap: var(--spacing-sm);
-    padding: var(--spacing-sm) var(--spacing-md);
-    border-radius: var(--radius-sm);
-    transition: background 100ms;
-  }
-  .stream-item:hover { background: var(--color-surface-hover); }
-  .stream-item.st-upcoming { opacity: 0.85; }
-  .stream-item.src-event { border-left: 2px solid var(--color-info); padding-left: calc(var(--spacing-md) - 2px); }
-  .stream-item.src-task  { border-left: 2px solid var(--color-border-primary); padding-left: calc(var(--spacing-md) - 2px); }
-
-  .item-time {
-    font-family: var(--font-mono); font-size: 11px;
-    color: var(--color-text-muted); text-align: right;
-    line-height: 1.3; flex-shrink: 0;
-    padding-top: 1px;
-  }
-  .item-date { font-size: 9px; opacity: 0.7; }
-
-  .item-glyph { font-size: 13px; font-family: var(--font-mono); text-align: center; padding-top: 1px; }
-
-  .item-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-
-  .item-title-row { display: flex; align-items: baseline; gap: var(--spacing-xs); }
-
-  .item-title {
-    font-size: 13px; font-weight: 500;
-    color: var(--color-text-primary);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    background: none; border: none; padding: 0; text-align: left;
-  }
-  .item-title.link {
-    cursor: pointer; color: var(--color-text-primary);
-    text-decoration: none;
-  }
-  .item-title.link:hover { color: var(--color-accent); text-decoration: underline; }
-
-  .item-sub {
-    font-family: var(--font-mono); font-size: 10px;
-    color: var(--color-text-muted);
-  }
-
-  .item-desc {
-    font-size: 11px; color: var(--color-text-tertiary);
-    line-height: 1.4; word-break: break-word;
-  }
-
-  .inline-link {
-    background: none; border: none; padding: 0;
-    color: var(--color-info); font-size: inherit;
-    cursor: pointer; text-decoration: underline;
-    font-family: var(--font-mono); font-size: 10px;
-  }
-  .inline-link:hover { opacity: 0.8; }
-
-  .item-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
-  .item-tag {
-    font-family: var(--font-mono); font-size: 9px;
-    color: var(--color-text-muted);
-    background: var(--color-surface-subtle);
-    border: 1px solid var(--color-border-primary);
-    border-radius: 999px; padding: 1px 6px;
-  }
-
-  .item-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-  .action-btn {
-    font-family: var(--font-mono); font-size: 10px;
-    padding: 2px 8px; border-radius: var(--radius-sm);
-    border: 1px solid var(--color-border-primary);
-    background: var(--color-bg-secondary); cursor: pointer;
-    color: var(--color-text-secondary); font-family: inherit;
-    transition: all 100ms;
-  }
-  .action-btn:hover { border-color: var(--color-accent); color: var(--color-accent); background: rgba(234,179,8,0.06); }
-  .action-btn.active { border-color: var(--color-accent); color: var(--color-accent); }
-
-  .action-menu-wrap { position: relative; }
-  .action-menu {
-    position: absolute; top: calc(100% + 4px); left: 0; z-index: 100;
-    background: var(--color-bg-primary);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    padding: 4px; min-width: 160px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-    display: flex; flex-direction: column; gap: 2px;
-  }
-  .menu-rule {
-    font-family: var(--font-mono); font-size: 11px;
-    padding: 4px 8px; border-radius: var(--radius-sm);
-    border: none; background: none; cursor: pointer;
-    color: var(--color-text-secondary); text-align: left;
-    transition: all 80ms;
-  }
-  .menu-rule:hover { background: rgba(234,179,8,0.08); color: var(--color-accent); }
-  .menu-empty { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-tertiary); padding: 4px 8px; }
-
-  /* ── Status glyphs ── */
-  .st-active    { color: var(--color-info); }
-  .st-done      { color: var(--color-success); }
-  .st-failed    { color: var(--color-error); }
-  .st-cancelled { color: var(--color-text-muted); }
-  .st-upcoming  { color: var(--color-text-tertiary); }
-  .st-pending   { color: var(--color-text-tertiary); }
-
-  /* ── Subtask expansion ── */
-  .expand-btn {
-    background: none; border: none; padding: 0 4px 0 0;
-    font-size: 9px; color: var(--color-text-muted);
-    cursor: pointer; line-height: 1; flex-shrink: 0;
-    font-family: var(--font-mono);
-  }
-  .expand-btn:hover { color: var(--color-text-secondary); }
-
-  .subtask-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
-  .subtask-row {
-    display: flex; align-items: center; gap: 6px;
-    padding: 1px 0;
-  }
-  .subtask-edge { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-muted); flex-shrink: 0; }
-  .subtask-name { font-size: 11px; color: var(--color-text-secondary); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-  .subtask-meta { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-muted); white-space: nowrap; flex-shrink: 0; }
-  .subtask-error { font-family: var(--font-mono); font-size: 10px; color: var(--color-error); cursor: default; }
-
-  .mono { font-family: var(--font-mono); }
 </style>

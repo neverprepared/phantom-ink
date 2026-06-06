@@ -943,6 +943,34 @@ export namespace main {
 	        this.output_mode = source["output_mode"];
 	    }
 	}
+	export class AttentionItem {
+	    id: string;
+	    source: string;
+	    title: string;
+	    subtitle: string;
+	    reason: string;
+	    workspace: string;
+	    time: number;
+	    url?: string;
+	    actions?: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AttentionItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.source = source["source"];
+	        this.title = source["title"];
+	        this.subtitle = source["subtitle"];
+	        this.reason = source["reason"];
+	        this.workspace = source["workspace"];
+	        this.time = source["time"];
+	        this.url = source["url"];
+	        this.actions = source["actions"];
+	    }
+	}
 	export class AutomationRule {
 	    id: string;
 	    profile: string;
@@ -1725,6 +1753,57 @@ export namespace main {
 	        this.chain_name = source["chain_name"];
 	        this.cron_expr = source["cron_expr"];
 	        this.next_fire_at = source["next_fire_at"];
+	    }
+	}
+
+}
+
+export namespace opensearch {
+	
+	export class LogEntry {
+	    time: string;
+	    body: string;
+	    session?: string;
+	    workspace?: string;
+	    model?: string;
+	    duration_ms?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LogEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.time = source["time"];
+	        this.body = source["body"];
+	        this.session = source["session"];
+	        this.workspace = source["workspace"];
+	        this.model = source["model"];
+	        this.duration_ms = source["duration_ms"];
+	    }
+	}
+	export class Overview {
+	    cost_today_usd: number;
+	    tokens_today: number;
+	    api_requests_1h: number;
+	    avg_latency_ms_1h: number;
+	    as_of: string;
+	    workspace: string;
+	    matched_workspace: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Overview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.cost_today_usd = source["cost_today_usd"];
+	        this.tokens_today = source["tokens_today"];
+	        this.api_requests_1h = source["api_requests_1h"];
+	        this.avg_latency_ms_1h = source["avg_latency_ms_1h"];
+	        this.as_of = source["as_of"];
+	        this.workspace = source["workspace"];
+	        this.matched_workspace = source["matched_workspace"];
 	    }
 	}
 
