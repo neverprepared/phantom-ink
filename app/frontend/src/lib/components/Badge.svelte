@@ -16,83 +16,83 @@
     letter-spacing: 0.04em;
     line-height: 1.4;
     white-space: nowrap;
-    background: rgba(100, 116, 139, 0.15);
+    background: var(--color-muted-bg);
     color: var(--color-text-tertiary);
-    border: 1px solid rgba(100, 116, 139, 0.2);
+    border: 1px solid var(--color-muted-border);
     flex-shrink: 0;
   }
 
   /* Status variants */
   .badge.running, .badge.active {
-    background: rgba(16, 185, 129, 0.15);
+    background: var(--color-success-bg);
     color: var(--color-status-success-text);
-    border-color: rgba(16, 185, 129, 0.3);
+    border-color: var(--color-success-border);
   }
 
   .badge.stopped, .badge.failed, .badge.cancelled {
-    background: rgba(239, 68, 68, 0.1);
+    background: var(--color-error-bg);
     color: var(--color-status-error-text);
-    border-color: rgba(239, 68, 68, 0.2);
+    border-color: var(--color-error-border);
   }
 
   .badge.pending {
-    background: rgba(245, 158, 11, 0.1);
+    background: var(--color-warning-bg);
     color: var(--color-status-warning-text);
-    border-color: rgba(245, 158, 11, 0.2);
+    border-color: var(--color-warning-border);
   }
 
   .badge.completed {
-    background: rgba(59, 130, 246, 0.1);
-    color: #60a5fa;
-    border-color: rgba(59, 130, 246, 0.2);
+    background: var(--color-info-bg);
+    color: var(--color-role-blue-text);
+    border-color: var(--color-info-border);
   }
 
   /* Role variants */
   .badge.developer {
-    background: rgba(59, 130, 246, 0.1);
-    color: #3b82f6;
-    border-color: rgba(59, 130, 246, 0.2);
+    background: var(--color-info-bg);
+    color: var(--color-role-developer);
+    border-color: var(--color-info-border);
   }
 
   .badge.supervisor {
-    background: rgba(245, 158, 11, 0.1);
-    color: #f59e0b;
-    border-color: rgba(245, 158, 11, 0.2);
+    background: var(--color-warning-bg);
+    color: var(--color-role-supervisor);
+    border-color: var(--color-warning-border);
   }
 
   .badge.worker {
-    background: rgba(16, 185, 129, 0.1);
-    color: #10b981;
-    border-color: rgba(16, 185, 129, 0.2);
+    background: var(--color-success-bg);
+    color: var(--color-role-worker);
+    border-color: var(--color-success-border);
   }
 
   .badge.reviewer {
     background: rgba(236, 72, 153, 0.1);
-    color: #ec4899;
+    color: var(--color-role-reviewer);
     border-color: rgba(236, 72, 153, 0.2);
   }
 
   .badge.researcher {
     background: rgba(168, 85, 247, 0.1);
-    color: #a855f7;
+    color: var(--color-role-researcher);
     border-color: rgba(168, 85, 247, 0.2);
   }
 
   .badge.assistant {
-    background: rgba(99, 102, 241, 0.1);
-    color: #6366f1;
-    border-color: rgba(99, 102, 241, 0.2);
+    background: var(--color-info-bg);
+    color: var(--color-role-blue-text);
+    border-color: var(--color-info-border);
   }
 
   .badge.qa {
-    background: rgba(245, 158, 11, 0.1);
-    color: #f59e0b;
-    border-color: rgba(245, 158, 11, 0.2);
+    background: var(--color-warning-bg);
+    color: var(--color-role-supervisor);
+    border-color: var(--color-warning-border);
   }
 
   .badge.linter {
-    background: rgba(14, 165, 233, 0.1);
-    color: #0ea5e9;
-    border-color: rgba(14, 165, 233, 0.2);
+    background: var(--color-info-bg);
+    color: var(--color-info);
+    border-color: var(--color-info-border);
   }
 </style>

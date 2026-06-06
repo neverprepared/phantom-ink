@@ -202,8 +202,8 @@ body {
    Prototype utility classes (used by ported components)
    ============================================================ */
 .mono { font-family: var(--font-mono); }
-.page-title { font-size: 30px; font-weight: 800; color: var(--accent); letter-spacing: -.01em;
-  margin: 0; font-family: var(--font-sans); }
+.page-title { font-size: 22px; font-weight: 600; color: var(--text, var(--color-text-primary)); letter-spacing: 0.04em;
+  margin: 0; font-family: var(--font-mono); text-transform: uppercase; }
 .mono-head { font-family: var(--font-mono); font-size: 13px; letter-spacing: .12em;
   text-transform: uppercase; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
 .mono-head::before { content: "»"; color: var(--accent); font-weight: 700; }
@@ -388,4 +388,18 @@ body {
   --color-role-orange-text: #fb923c;
   --color-role-purple-bg:  rgba(139, 92, 246, 0.15);
   --color-role-purple-text: #a78bfa;
+
+  /* Semantic tint tokens — bg + border for status/role chips */
+  --color-accent-bg:   rgba(234, 179, 8, 0.10);
+  --color-accent-border: rgba(234, 179, 8, 0.20);
+  --color-info-bg:     rgba(59, 130, 246, 0.10);
+  --color-info-border: rgba(59, 130, 246, 0.20);
+  --color-success-bg:  rgba(16, 185, 129, 0.10);
+  --color-success-border: rgba(16, 185, 129, 0.20);
+  --color-error-bg:    rgba(239, 68, 68, 0.10);
+  --color-error-border: rgba(239, 68, 68, 0.20);
+  --color-warning-bg:  rgba(245, 158, 11, 0.10);
+  --color-warning-border: rgba(245, 158, 11, 0.20);
+  --color-muted-bg:    rgba(100, 116, 139, 0.15);
+  --color-muted-border: rgba(100, 116, 139, 0.20);
 }

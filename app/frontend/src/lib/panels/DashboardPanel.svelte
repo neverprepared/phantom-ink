@@ -473,8 +473,8 @@
 <div class="dashboard">
   <div class="header">
     <div class="brand">
-      <span class="os-badge">OS</span>
       <span class="brand-name">PHANTOM-INK</span>
+      <span class="os-badge">OS</span>
       {#if refreshing}<span class="refreshing">·</span>{/if}
     </div>
     <div class="datestamp">[ {formatDate(now)} ]</div>

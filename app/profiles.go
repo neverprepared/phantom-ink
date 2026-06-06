@@ -27,7 +27,7 @@ type Profile struct {
 func defaultWorkspacesRoot() string {
 	home := os.Getenv("HOME")
 
-	db, err := sql.Open("sqlite", filepath.Join(home, ".config", "phantom-ink", "phantom-ink.db")+"?mode=ro")
+	db, err := sql.Open("sqlite", dbPath+"?mode=ro")
 	if err == nil {
 		defer db.Close()
 		var val string

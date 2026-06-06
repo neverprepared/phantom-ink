@@ -229,7 +229,7 @@
 
 <div class="panel" aria-busy={loading}>
   <header class="panel-header">
-    <h1><span class="panel-accent">integrations</span></h1>
+    <h1 class="page-title">integrations</h1>
     {#if loading}<Spinner />{/if}
   </header>
 

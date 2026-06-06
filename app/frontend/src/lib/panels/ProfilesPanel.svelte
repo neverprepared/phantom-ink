@@ -5,6 +5,7 @@
   import { profileState, profileColorStore, type Profile } from '../stores.svelte';
   import { getProfileColor, profileColorStyle, PROFILE_PALETTE } from '../utils/profileColors';
   import PieChart from '../components/PieChart.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
 
   // --- Profile image state ---
   type ImageStatus = { configured: boolean; exists: boolean; tag: string; digest: string; error?: string; built_at?: string };
@@ -77,8 +78,8 @@
       profileState.profiles = scanned ?? [];
       const ap = await a.GetActiveProfile();
       profileState.active = ap?.name ? ap : null;
-    } catch (err) {
-      console.error('Failed to scan profiles:', err);
+    } catch (err: any) {
+      notifications.error(`Failed to scan profiles: ${err?.message ?? err}`);
     } finally {
       scanning = false;
     }
@@ -278,15 +279,13 @@
 </script>
 
 <div class="panel">
-  <header>
-    <h1><span class="accent">profiles</span></h1>
+  <header class="panel-header">
+    <h1 class="page-title">profiles</h1>
     <div class="header-actions">
-      <button class="btn-icon" onclick={() => { refreshProfiles(); refreshDisk(); }} disabled={scanning} title="Refresh" aria-label="Refresh profiles">
+      <button class="btn-refresh" onclick={() => { refreshProfiles(); refreshDisk(); }} disabled={scanning} title="Refresh" aria-label="Refresh profiles">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class:spinning={scanning} aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
       </button>
-      <button class="btn-icon" onclick={() => showCreateProfile = !showCreateProfile} title="Create new profile" aria-label="Create new profile">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-      </button>
+      <button class="btn primary" onclick={() => showCreateProfile = !showCreateProfile}>+ new profile</button>
     </div>
   </header>
 
@@ -340,7 +339,7 @@
 
   <div class="profile-list">
     {#if profiles.length === 0}
-      <p class="empty">no profiles found</p>
+      <EmptyState title="No profiles found" />
     {:else}
       <button class="profile-item" class:active={!activeProfile} onclick={clearProfile}>
         <span class="profile-name">all profiles</span>
@@ -477,23 +476,7 @@
 
 <style>
   .panel { padding: var(--panel-padding); }
-  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-  h1 { font-size: 22px; font-weight: 600; }
-  .accent { color: var(--color-accent); }
-  .header-actions { display: flex; gap: 8px; }
-
-  .btn-icon {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    color: var(--color-text-tertiary);
-    padding: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.15s;
-  }
-  .btn-icon:hover { background: rgba(255, 255, 255, 0.1); color: var(--color-text-secondary); }
+  .header-actions { display: flex; align-items: center; gap: 8px; }
 
   .spinning { animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }

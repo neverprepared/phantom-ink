@@ -160,8 +160,8 @@
 </script>
 
 <div class="panel">
-  <header>
-    <h1><span class="accent">settings</span></h1>
+  <header class="panel-header">
+    <h1 class="page-title">settings</h1>
   </header>
 
   {#if !loaded}
@@ -332,10 +332,6 @@
 
 <style>
   .panel { padding: var(--panel-padding); }
-  header { margin-bottom: 24px; }
-  h1 { font-size: 22px; font-weight: 600; }
-  .accent { color: var(--color-accent); }
-
   .loading { color: var(--color-text-tertiary); font-size: 13px; padding: 24px 0; }
 
   .settings-form { max-width: 560px; }

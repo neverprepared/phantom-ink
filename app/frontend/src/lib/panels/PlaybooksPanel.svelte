@@ -226,7 +226,7 @@
 
 {#if !active}
   <!-- ===== LIBRARY ===== -->
-  <div class="pi-main-inner" style="padding: 22px 26px;">
+  <div class="pi-main-inner" style="padding: var(--panel-padding);">
     <div class="section-row" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
       <h1 class="page-title" style="display:flex;align-items:center;gap:10px;">
         playbooks
@@ -314,7 +314,7 @@
   </div>
 {:else}
   <!-- ===== EDITOR ===== -->
-  <div class="pi-main-inner" style="padding: 22px 26px; max-width: 860px;">
+  <div class="pi-main-inner" style="padding: var(--panel-padding); max-width: 860px;">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
       <button class="btn ghost sm" onclick={() => (activeId = null)}>←</button>
       <span style="color: var(--task);font-size:18px;">✓</span>

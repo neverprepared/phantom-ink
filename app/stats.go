@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -365,12 +366,36 @@ func (a *App) GetAPILogs(lines int) []LogEntry {
 	}
 	logPath := filepath.Join(configHome, "phantom-ink", "brainbox", "logs", "brainbox.log")
 
-	data, err := os.ReadFile(logPath)
+	f, err := os.Open(logPath)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+
+	const maxRead = 128 * 1024
+	offset := info.Size() - maxRead
+	if offset < 0 {
+		offset = 0
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return nil
+	}
+
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return nil
 	}
 
 	allLines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	// If we seeked mid-file the first line may be partial — drop it
+	if offset > 0 && len(allLines) > 0 {
+		allLines = allLines[1:]
+	}
 	start := len(allLines) - lines
 	if start < 0 {
 		start = 0

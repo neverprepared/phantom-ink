@@ -1,5 +1,6 @@
 <script lang="ts">
   import { brainboxEvents } from '../events.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
 
   let logEl: HTMLElement;
   let autoscroll = $state(true);
@@ -25,8 +26,8 @@
 </script>
 
 <div class="panel">
-  <header>
-    <h1><span class="accent">event log</span></h1>
+  <header class="panel-header">
+    <h1 class="page-title">event log</h1>
     <div class="toolbar">
       <label class="toggle">
         <input type="checkbox" bind:checked={autoscroll} />
@@ -38,7 +39,7 @@
 
   <div class="log" bind:this={logEl}>
     {#if log.length === 0}
-      <div class="empty">no events yet — waiting for brainbox activity</div>
+      <EmptyState title="No events yet" message="Waiting for brainbox activity." />
     {:else}
       {#each [...log].reverse() as event (event)}
         <div class="row">
@@ -60,17 +61,6 @@
     padding: var(--panel-padding);
     padding-bottom: 0;
   }
-
-  header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    margin-bottom: 16px;
-    flex-shrink: 0;
-  }
-
-  h1 { font-size: 22px; font-weight: 600; }
-  .accent { color: var(--color-accent); }
 
   .toolbar {
     display: flex;

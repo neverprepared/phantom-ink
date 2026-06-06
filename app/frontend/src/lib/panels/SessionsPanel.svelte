@@ -263,11 +263,6 @@
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   }
 
-  function fmtMB(mb: number): string {
-    if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
-    return `${mb.toFixed(0)} MB`;
-  }
-
   async function refreshMetrics() {
     const a = await getApi();
     if (!a) return;
@@ -322,15 +317,6 @@
     } catch { /* non-critical */ }
   }
 
-  let filteredPast = $derived.by(() => {
-    const base = activeProfile
-      ? pastSessions.filter(s => (s.runner_name ?? '') === '' || true) // show all; profile filter below
-      : pastSessions;
-    if (!activeProfile) return base;
-    // No workspace_profile in history rows — show all when a profile filter is active
-    return base;
-  });
-
   function groupByDate(entries: any[]): { label: string; items: any[] }[] {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
@@ -354,7 +340,7 @@
 
   let agentData  = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.agent_count })));
   let cpuData    = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.total_cpu })));
-  let memData    = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.total_mem / 1024 / 1024 })));
+  let memData    = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.total_mem })));
   let latestAgents = $derived(combinedHistoryStore.value.length ? String(combinedHistoryStore.value[combinedHistoryStore.value.length - 1].agent_count) : '–');
   let latestCPU    = $derived(combinedHistoryStore.value.length ? `${combinedHistoryStore.value[combinedHistoryStore.value.length - 1].total_cpu.toFixed(1)}%` : '–');
   let latestMem    = $derived(combinedHistoryStore.value.length ? formatBytes(combinedHistoryStore.value[combinedHistoryStore.value.length - 1].total_mem) : '–');
@@ -591,11 +577,11 @@
 </script>
 
 <div class="panel" aria-busy={loading}>
-  <header>
-    <h1><span class="accent">sessions</span></h1>
+  <header class="panel-header">
+    <h1 class="page-title">sessions</h1>
     <div class="header-actions">
       {#if loading}<Spinner />{/if}
-      <button class="new-btn" onclick={openCreateModal}>+ new session</button>
+      <button class="btn primary" onclick={openCreateModal}>+ new session</button>
     </div>
   </header>
 
@@ -673,7 +659,7 @@
         label="total memory"
         current={latestMem}
         color="var(--color-success)"
-        formatY={fmtMB}
+        formatY={formatBytes}
         hoverIdx={aggregateHoverIdx}
         onHover={(idx) => aggregateHoverIdx = idx}
         onHoverEnd={() => aggregateHoverIdx = null}
@@ -823,10 +809,10 @@
   {#if showPastSessions}
     <div class="history-section">
       <h2 class="history-heading">history</h2>
-      {#if filteredPast.length === 0}
+      {#if pastSessions.length === 0}
         <p class="history-empty">no past sessions recorded yet</p>
       {:else}
-        {#each groupByDate(filteredPast) as group (group.label)}
+        {#each groupByDate(pastSessions) as group (group.label)}
           <div class="history-date-group">
             <div class="history-date-label">{group.label}</div>
             {#each group.items as entry (entry.id)}
@@ -1126,16 +1112,6 @@
 <style>
   .panel { padding: var(--panel-padding); }
 
-  header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-  }
-
-  h1 { font-size: 22px; font-weight: 600; }
-  .accent { color: var(--color-accent); }
-
   .header-actions { display: flex; gap: 8px; align-items: center; }
 
   .charts-row {
@@ -1144,17 +1120,6 @@
     margin-bottom: 20px;
   }
 
-  .new-btn {
-    background: rgba(59, 130, 246, 0.1);
-    border: 1px solid rgba(59, 130, 246, 0.3);
-    color: var(--color-info);
-    padding: 7px 14px;
-    border-radius: var(--radius-lg);
-    font-size: 13px;
-    font-weight: 500;
-    transition: all 0.15s;
-  }
-  .new-btn:hover { background: rgba(59, 130, 246, 0.2); border-color: var(--color-info); }
 
 
   .stats-row {

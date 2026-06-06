@@ -4,6 +4,7 @@
   import { notifications } from '../notifications.svelte';
   import PairRunnerModal from '../components/PairRunnerModal.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
 
   interface Runner {
     name: string;
@@ -100,8 +101,8 @@
 </script>
 
 <div class="panel">
-  <header>
-    <h1><span class="accent">runners</span></h1>
+  <header class="panel-header">
+    <h1 class="page-title">runners</h1>
     <div class="header-actions">
       {#if !loaded}<Spinner />{/if}
       <button class="btn primary" onclick={() => (showingPair = true)}>+ pair a runner</button>
@@ -111,12 +112,9 @@
   {#if !loaded}
     <div class="empty">loading…</div>
   {:else if loadError}
-    <div class="empty error">{loadError}</div>
+    <EmptyState title="Failed to load runners" message={loadError} />
   {:else if runners.length === 0}
-    <div class="empty">
-      <p>no runners registered yet</p>
-      <p class="hint">click <strong>+ pair a runner</strong> above, then run <code>Brainbox Runner.app</code> on the target mac and paste the token</p>
-    </div>
+    <EmptyState title="No runners registered yet" message="Click + pair a runner above, then run Brainbox Runner.app on the target Mac and paste the token." />
   {:else}
     <table class="runner-table">
       <thead>
@@ -191,48 +189,13 @@
 
 <style>
   .panel {
-    padding: 24px;
+    padding: var(--panel-padding);
     max-width: 1100px;
   }
-  header {
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-  h1 {
-    font-size: 22px;
-    font-weight: 600;
-    margin: 0;
-  }
-  h1 .accent {
-    color: var(--color-accent);
-  }
   .header-actions {
-    margin-left: auto;
     display: flex;
-    gap: 8px;
-  }
-  .btn {
-    background: var(--color-surface-hover);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    color: var(--color-text-secondary);
-    padding: 6px 12px;
-    font-size: 12px;
-    cursor: pointer;
-    display: inline-flex;
     align-items: center;
-    gap: 6px;
-  }
-  .btn:hover { background: var(--color-surface-active); }
-  .btn.primary {
-    background: rgba(59, 130, 246, 0.1);
-    border-color: rgba(59, 130, 246, 0.3);
-    color: var(--color-info);
-  }
-  .btn.primary:hover {
-    background: rgba(59, 130, 246, 0.2);
+    gap: 8px;
   }
 
   .empty {

@@ -418,7 +418,7 @@
 
 {#if !activeChain}
   <!-- ===== GALLERY ===== -->
-  <div class="pi-main-inner" style="padding: 22px 26px;">
+  <div class="pi-main-inner" style="padding: var(--panel-padding);">
     <div class="section-row" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
       <h1 class="page-title" style="display:flex;align-items:center;gap:10px;">
         chains

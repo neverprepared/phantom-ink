@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -302,6 +303,14 @@ var migrations = []migration{
 		);
 		CREATE INDEX IF NOT EXISTS idx_automation_rules_profile ON automation_rules(profile, enabled);
 	`},
+	// v16: persisted dismissals for the Stream panel's attention queue.
+	// `id` is the stable AttentionItem ID built from "<source>:<source_id>".
+	{version: 16, sql: `
+		CREATE TABLE IF NOT EXISTS dismissed_attention (
+			id           TEXT PRIMARY KEY,
+			dismissed_at INTEGER NOT NULL DEFAULT 0
+		);
+	`},
 }
 
 func (db *DB) migrate() error {
@@ -353,6 +362,19 @@ func (db *DB) GetSetting(key, fallback string) string {
 	err := db.conn.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val)
 	if err != nil {
 		return fallback
+	}
+	return val
+}
+
+// GetWorkspacesRoot returns the workspaces_root setting or "" if unset.
+func (db *DB) GetWorkspacesRoot() string {
+	var val string
+	if err := db.conn.QueryRow("SELECT value FROM settings WHERE key = 'workspaces_root'").Scan(&val); err != nil || val == "" {
+		return ""
+	}
+	home := os.Getenv("HOME")
+	if strings.HasPrefix(val, "~/") {
+		val = filepath.Join(home, val[2:])
 	}
 	return val
 }

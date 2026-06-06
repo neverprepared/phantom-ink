@@ -4,6 +4,7 @@
   import { profileState, dashboardState } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
 
   // ── Types ──────────────────────────────────────────────────────────────
 
@@ -282,15 +283,15 @@
 </script>
 
 <div class="jobs">
-  <div class="panel-header">
-    <h2 class="panel-title">jobs</h2>
-    <div class="header-right">
+  <div class="panel-header" style="margin-bottom:var(--spacing-sm);">
+    <h1 class="page-title">jobs</h1>
+    <div style="display:flex;align-items:center;gap:var(--spacing-md);">
       {#if loading}<Spinner />{/if}
       {#if statusMsg}
         <span class="status-msg">{statusMsg}</span>
       {/if}
       {#if editingId !== 'new'}
-        <button class="add-btn" onclick={startNew}>+ new job</button>
+        <button class="btn primary" onclick={startNew}>+ new job</button>
       {/if}
     </div>
   </div>
@@ -392,8 +393,8 @@
       {/if}
 
       <div class="form-actions">
-        <button class="form-btn primary" onclick={save} disabled={!isFormValid()}>save</button>
-        <button class="form-btn" onclick={cancelEdit}>cancel</button>
+        <button class="btn sm primary" onclick={save} disabled={!isFormValid()}>save</button>
+        <button class="btn sm ghost" onclick={cancelEdit}>cancel</button>
       </div>
     </div>
   {/if}
@@ -402,9 +403,9 @@
   {#if loading && jobs.length === 0}
     <div class="empty">loading…</div>
   {:else if jobs.length === 0 && editingId !== 'new'}
-    <div class="empty">no jobs yet — create one to schedule recurring work</div>
+    <EmptyState title="No jobs yet" message="Create one to schedule recurring work." />
   {:else if visible.length === 0 && editingId !== 'new'}
-    <div class="empty">no jobs for this profile</div>
+    <EmptyState title="No jobs for this profile" />
   {:else}
     <div class="job-list">
       {#each visible as job (job.id)}
@@ -488,8 +489,8 @@
               {/if}
 
               <div class="form-actions">
-                <button class="form-btn primary" onclick={save} disabled={!isFormValid()}>save</button>
-                <button class="form-btn" onclick={cancelEdit}>cancel</button>
+                <button class="btn sm primary" onclick={save} disabled={!isFormValid()}>save</button>
+                <button class="btn sm ghost" onclick={cancelEdit}>cancel</button>
               </div>
             </div>
           {:else}
@@ -544,30 +545,10 @@
     min-height: 100%;
   }
 
-  .panel-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding-bottom: var(--spacing-md);
-    border-bottom: 1px solid var(--color-border-primary);
-    flex-shrink: 0;
-  }
-  .panel-title {
-    font-size: 14px; font-weight: 600;
-    color: var(--color-text-primary); margin: 0;
-  }
-  .header-right { display: flex; align-items: center; gap: var(--spacing-md); }
-
   .status-msg {
     font-family: var(--font-mono); font-size: 11px;
     color: var(--color-success);
   }
-
-  .add-btn {
-    font-family: var(--font-mono); font-size: 11px;
-    padding: 3px 10px; border-radius: var(--radius-sm);
-    border: 1px solid var(--color-accent); background: rgba(234,179,8,0.06);
-    color: var(--color-accent); cursor: pointer;
-  }
-  .add-btn:hover { background: rgba(234,179,8,0.12); }
 
   /* Filter */
   .filter-row { display: flex; align-items: center; gap: var(--spacing-sm); }
@@ -699,14 +680,4 @@
   .form-unit { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-muted); }
 
   .form-actions { display: flex; gap: var(--spacing-sm); }
-  .form-btn {
-    font-family: var(--font-mono); font-size: 11px;
-    padding: 4px 12px; border-radius: var(--radius-sm);
-    border: 1px solid var(--color-border-primary);
-    background: none; cursor: pointer; color: var(--color-text-secondary); transition: all 100ms;
-  }
-  .form-btn:hover:not(:disabled) { border-color: var(--color-border-secondary); color: var(--color-text-primary); }
-  .form-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .form-btn.primary { background: var(--color-accent); border-color: var(--color-accent); color: #000; font-weight: 600; }
-  .form-btn.primary:hover:not(:disabled) { opacity: 0.85; }
 </style>
