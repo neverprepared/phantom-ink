@@ -540,6 +540,25 @@
       ></textarea>
     </div>
 
+    <!-- template variable legend -->
+    <div class="card legend-card" style="margin-bottom:16px;padding:12px 16px;">
+      <div class="mono" style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint);margin-bottom:10px;">Template variables</div>
+      <div class="legend-rows">
+        <div class="legend-row">
+          <code class="legend-var">&#123;&#123;input&#125;&#125;</code>
+          <span class="legend-desc">The value entered in the Input field above. Available in every step — use it in the first step to pass the user's request in.</span>
+        </div>
+        <div class="legend-row">
+          <code class="legend-var">&#123;&#123;prev.output&#125;&#125;</code>
+          <span class="legend-desc">The stdout of the previous step. Use this to chain steps together — each step refines or acts on what the prior step produced.</span>
+        </div>
+        <div class="legend-row">
+          <code class="legend-var">&#123;&#123;files&#125;&#125;</code>
+          <span class="legend-desc">Shell-quoted absolute paths of files attached to this chain (set via the chain's <em>files</em> field). Resolved against the active profile's workspace home at run time.</span>
+        </div>
+      </div>
+    </div>
+
     <!-- steps -->
     {#if activeChain.steps.length === 0}
       <div class="card" style="padding:32px;text-align:center;color:var(--text-faint);margin-bottom:16px;">
@@ -752,6 +771,28 @@
   }
 
   .step-card { padding: 14px 16px; }
+
+  .legend-card { background: var(--bg-sunken); }
+  .legend-rows { display: flex; flex-direction: column; gap: 8px; }
+  .legend-row { display: flex; align-items: baseline; gap: 12px; }
+  .legend-var {
+    font-size: 11px;
+    font-family: var(--font-mono, monospace);
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+    padding: 1px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    min-width: 140px;
+  }
+  .legend-desc {
+    font-size: 12px;
+    color: var(--text-faint);
+    line-height: 1.5;
+  }
+  .legend-desc em { font-style: normal; color: var(--text-muted); }
 
   .field-row { margin-bottom: 12px; }
   .field-row:last-child { margin-bottom: 0; }
