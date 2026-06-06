@@ -409,7 +409,7 @@
       </div>
     </div>
     <p style="color: var(--text-faint); font-size: 13px; margin: -4px 0 22px;">
-      Wire agents and playbooks into sequential steps. Open a chain to edit its steps and run it.
+      Sequential agent pipelines — each step runs an agent or playbook, passing its output to the next via <code style="font-size:11px;">&#123;&#123;prev.output&#125;&#125;</code>. Open a chain to edit steps, set a prompt template, and run it with an input.
     </p>
 
     {#if loading}
