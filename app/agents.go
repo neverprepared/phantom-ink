@@ -93,10 +93,14 @@ var knownAgents = []AgentDescriptor{
 	{
 		ID: "copilot", Binary: "copilot", Label: "GitHub Copilot CLI",
 		VersionArgs: []string{"--version"},
-		// TODO: wire copilot invocation — CLI surface varies across the
-		// standalone `copilot` binary and `gh copilot` extensions; pick one
-		// when a user actually wants to chain it.
-		Invocation: AgentInvocation{},
+		// `copilot` runs interactively by default; `-p` is its non-interactive
+		// prompt mode, and `--allow-all-tools` is required to run scripted
+		// (otherwise it waits on confirmation for every tool call). This wires
+		// the standalone binary, not the `gh copilot` extension.
+		Invocation: AgentInvocation{
+			PromptArgs: []string{"--allow-all-tools", "-p"},
+			PromptMode: "arg", AcceptsCwd: true, OutputMode: "stdout+files",
+		},
 	},
 	{
 		ID: "opencode", Binary: "opencode", Label: "opencode",
