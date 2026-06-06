@@ -14,18 +14,29 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+// playbookPollInterval is how often we check playbook status while waiting
+// for a playbook step to finish.
+const playbookPollInterval = 4 * time.Second
+
+// playbookStepTimeout is the maximum time a single playbook step may run
+// before the chain aborts it. Playbooks drive brainbox sessions which can
+// be slow — 30 minutes is generous but bounded.
+const playbookStepTimeout = 30 * time.Minute
+
 // ---------------------------------------------------------------------------
 // Chains — runtime CRUD + execution
 // ---------------------------------------------------------------------------
 
 const chainRunEvent = "chain:run:event"
 
-// ListChains returns every saved chain with steps materialized from JSON.
+// ListChains returns chains visible for the active profile: chains owned by
+// that profile plus global chains (workspace_profile=""). When no profile is
+// active, all chains are returned.
 func (a *App) ListChains() ([]Chain, error) {
 	if a.db == nil {
 		return []Chain{}, fmt.Errorf("database not initialized")
 	}
-	rawRows, err := a.db.ListChains()
+	rawRows, err := a.db.ListChains(a.activeProfileName())
 	if err != nil {
 		return nil, err
 	}
@@ -35,15 +46,16 @@ func (a *App) ListChains() ([]Chain, error) {
 		followups, _ := chainFollowupsFromJSON(r.OnSuccessJSON)
 		files, _ := chainFilesFromJSON(r.FilesJSON)
 		out = append(out, Chain{
-			ID:          r.ID,
-			Name:        r.Name,
-			Description: r.Description,
-			Steps:       steps,
-			Cwd:         r.Cwd,
-			OnSuccess:   followups,
-			Files:       files,
-			CreatedAt:   r.CreatedAt,
-			UpdatedAt:   r.UpdatedAt,
+			ID:               r.ID,
+			Name:             r.Name,
+			Description:      r.Description,
+			Steps:            steps,
+			Cwd:              r.Cwd,
+			OnSuccess:        followups,
+			Files:            files,
+			WorkspaceProfile: r.WorkspaceProfile,
+			CreatedAt:        r.CreatedAt,
+			UpdatedAt:        r.UpdatedAt,
 		})
 	}
 	return out, nil
@@ -107,7 +119,7 @@ func (a *App) SaveChain(c Chain) (Chain, error) {
 	if err := a.db.UpsertChain(ChainRow{
 		ID: c.ID, Name: c.Name, Description: c.Description,
 		StepsJSON: stepsJSON, Cwd: c.Cwd, OnSuccessJSON: followupsJSON,
-		FilesJSON: filesJSON,
+		FilesJSON: filesJSON, WorkspaceProfile: c.WorkspaceProfile,
 		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}); err != nil {
 		return Chain{}, err
@@ -253,42 +265,73 @@ func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps [
 	var failure string
 
 	for i, step := range steps {
-		desc, _ := agentDescriptor(step.AgentID)
-		rawCwd := step.Cwd
-		if rawCwd == "" {
-			rawCwd = baseCwd
-		}
-		resolvedCwd, err := a.resolveCwd(profileName, rawCwd)
-		if err != nil {
-			status = "failed"
-			failure = fmt.Sprintf("step %d (%s): %v", i+1, step.AgentID, err)
+		switch step.Type {
+		case "playbook":
+			if step.PlaybookID == "" {
+				status = "failed"
+				failure = fmt.Sprintf("step %d: playbook step has no playbook_id", i+1)
+				emit(ChainRunEvent{
+					Phase: "step:done", StepIndex: i,
+					Error: failure, Status: "failed",
+				})
+				goto done
+			}
+			emit(ChainRunEvent{Phase: "step:start", StepIndex: i, AgentID: "playbook:" + step.PlaybookID, Status: "running"})
+			playbookOut, err := a.runPlaybookStep(ctx, step.PlaybookID, profileName)
+			if err != nil {
+				status = "failed"
+				failure = fmt.Sprintf("step %d (playbook:%s): %v", i+1, step.PlaybookID, err)
+				emit(ChainRunEvent{
+					Phase: "step:done", StepIndex: i, AgentID: "playbook:" + step.PlaybookID,
+					Error: err.Error(), Status: "failed",
+				})
+				goto done
+			}
+			emit(ChainRunEvent{
+				Phase: "step:done", StepIndex: i, AgentID: "playbook:" + step.PlaybookID,
+				Output: playbookOut, Status: "success",
+			})
+			prevOutput = playbookOut
+
+		default: // "agent" or legacy empty string
+			desc, _ := agentDescriptor(step.AgentID)
+			rawCwd := step.Cwd
+			if rawCwd == "" {
+				rawCwd = baseCwd
+			}
+			resolvedCwd, err := a.resolveCwd(profileName, rawCwd)
+			if err != nil {
+				status = "failed"
+				failure = fmt.Sprintf("step %d (%s): %v", i+1, step.AgentID, err)
+				emit(ChainRunEvent{
+					Phase: "step:done", StepIndex: i, AgentID: step.AgentID,
+					Error: err.Error(), Status: "failed",
+				})
+				goto done
+			}
+			prompt := renderPromptTemplate(step.PromptTemplate, initialInput, prevOutput, filesArg)
+
+			emit(ChainRunEvent{Phase: "step:start", StepIndex: i, AgentID: step.AgentID, Status: "running"})
+
+			stdout, stderr, exitCode, err := runChainStep(ctx, desc, prompt, resolvedCwd)
+			if err != nil {
+				status = "failed"
+				failure = fmt.Sprintf("step %d (%s): %v", i+1, step.AgentID, err)
+				emit(ChainRunEvent{
+					Phase: "step:done", StepIndex: i, AgentID: step.AgentID,
+					Output: stdout, Stderr: stderr, ExitCode: exitCode,
+					Error: err.Error(), Status: "failed",
+				})
+				goto done
+			}
 			emit(ChainRunEvent{
 				Phase: "step:done", StepIndex: i, AgentID: step.AgentID,
-				Error: err.Error(), Status: "failed",
+				Output: stdout, Stderr: stderr, ExitCode: exitCode, Status: "success",
 			})
-			break
+			prevOutput = stdout
 		}
-		prompt := renderPromptTemplate(step.PromptTemplate, initialInput, prevOutput, filesArg)
-
-		emit(ChainRunEvent{Phase: "step:start", StepIndex: i, AgentID: step.AgentID, Status: "running"})
-
-		stdout, stderr, exitCode, err := runChainStep(ctx, desc, prompt, resolvedCwd)
-		if err != nil {
-			status = "failed"
-			failure = fmt.Sprintf("step %d (%s): %v", i+1, step.AgentID, err)
-			emit(ChainRunEvent{
-				Phase: "step:done", StepIndex: i, AgentID: step.AgentID,
-				Output: stdout, Stderr: stderr, ExitCode: exitCode,
-				Error: err.Error(), Status: "failed",
-			})
-			break
-		}
-		emit(ChainRunEvent{
-			Phase: "step:done", StepIndex: i, AgentID: step.AgentID,
-			Output: stdout, Stderr: stderr, ExitCode: exitCode, Status: "success",
-		})
-		prevOutput = stdout
 	}
+done:
 
 	finishedAt := time.Now().UTC().Format(time.RFC3339)
 	logJSON, _ := json.Marshal(log)
@@ -444,6 +487,44 @@ func (a *App) emitTaskEvent(taskID, chainID, status string, attempts int, errMsg
 		Attempts: attempts, Error: errMsg,
 		At: time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+// runPlaybookStep triggers a brainbox playbook and polls until it reaches a
+// terminal state. Returns a brief status summary as the step output (fed into
+// {{prev.output}} for downstream steps). Blocks up to playbookStepTimeout.
+func (a *App) runPlaybookStep(parent context.Context, playbookID, profileName string) (string, error) {
+	if a.client == nil {
+		return "", fmt.Errorf("brainbox client not available")
+	}
+	ctx, cancel := context.WithTimeout(parent, playbookStepTimeout)
+	defer cancel()
+
+	if _, err := a.client.RunPlaybook(playbookID, profileName, ""); err != nil {
+		return "", fmt.Errorf("start playbook: %w", err)
+	}
+
+	ticker := time.NewTicker(playbookPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("timed out waiting for playbook %s", playbookID)
+		case <-ticker.C:
+			pb, err := a.client.GetPlaybook(playbookID)
+			if err != nil {
+				return "", fmt.Errorf("poll playbook: %w", err)
+			}
+			switch pb.Status {
+			case "completed":
+				return fmt.Sprintf("playbook %q completed (%d tasks)", pb.Name, len(pb.Tasks)), nil
+			case "failed":
+				return "", fmt.Errorf("playbook %q failed", pb.Name)
+			case "cancelled":
+				return "", fmt.Errorf("playbook %q was cancelled", pb.Name)
+			}
+			// "running" or "idle" — keep polling
+		}
+	}
 }
 
 // newChainID returns a short opaque chain identifier.

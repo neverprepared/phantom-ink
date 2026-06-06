@@ -101,7 +101,7 @@ func (a *App) ListUpcomingFires(limit int) ([]UpcomingFire, error) {
 		return nil, err
 	}
 	chainsByID := make(map[string]string)
-	if list, err := a.db.ListChains(); err == nil {
+	if list, err := a.db.ListChains(""); err == nil {
 		for _, c := range list {
 			chainsByID[c.ID] = c.Name
 		}

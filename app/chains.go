@@ -25,15 +25,16 @@ const stepRunTimeout = 5 * time.Minute
 // whatever profile is active at run time. At render time the {{files}}
 // template variable expands to the shell-quoted absolute paths.
 type Chain struct {
-	ID          string           `json:"id"`
-	Name        string           `json:"name"`
-	Description string           `json:"description"`
-	Steps       []ChainStep      `json:"steps"`
-	Cwd         string           `json:"cwd"`
-	OnSuccess   []ChainFollowup  `json:"on_success"`
-	Files       []string         `json:"files"`
-	CreatedAt   string           `json:"created_at"`
-	UpdatedAt   string           `json:"updated_at"`
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Description      string          `json:"description"`
+	Steps            []ChainStep     `json:"steps"`
+	Cwd              string          `json:"cwd"`
+	OnSuccess        []ChainFollowup `json:"on_success"`
+	Files            []string        `json:"files"`
+	WorkspaceProfile string          `json:"workspace_profile"`
+	CreatedAt        string          `json:"created_at"`
+	UpdatedAt        string          `json:"updated_at"`
 }
 
 // ChainFollowup is a declarative spec for enqueueing a follow-up task when a
@@ -56,15 +57,18 @@ type ChainFollowup struct {
 // (the initial user input) and {{prev.output}} (the previous step's stdout).
 // Cwd overrides the chain-level cwd for this step; empty means inherit.
 //
-// Executor selects the execution backend. Only "host" is wired today (host
-// subprocess via runChainStep). Reserved values for future backends:
+// Type selects the step kind:
 //
-//   - "session": run the step inside a brainbox containerized session
-//   - "queue":   submit to a task queue, harvest async (autonomous workers)
+//   - "agent" (default/empty): run an agent binary on the host via AgentID
+//   - "playbook": trigger a brainbox playbook run via PlaybookID, block until
+//     the playbook reaches a terminal state (completed/failed/cancelled)
 //
-// Empty string is treated as "host" so older saved chains continue to work.
+// Executor (agent steps only) selects the execution backend. Only "host" is
+// wired today. Reserved: "session", "queue".
 type ChainStep struct {
-	AgentID        string `json:"agent_id"`
+	Type           string `json:"type"`       // "agent" (default) | "playbook"
+	AgentID        string `json:"agent_id"`   // non-empty when type="agent"
+	PlaybookID     string `json:"playbook_id"` // non-empty when type="playbook"
 	PromptTemplate string `json:"prompt_template"`
 	Cwd            string `json:"cwd"`
 	Executor       string `json:"executor"`

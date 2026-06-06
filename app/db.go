@@ -218,6 +218,11 @@ var migrations = []migration{
 	{version: 10, fn: func(conn *sql.DB) error {
 		return addColumnIfMissing(conn, "chains", "files_json", "TEXT NOT NULL DEFAULT '[]'")
 	}},
+	// v17: profile-scoped chains. workspace_profile="" means global (visible
+	// in all profiles). Non-empty means the chain belongs to that profile only.
+	{version: 17, fn: func(conn *sql.DB) error {
+		return addColumnIfMissing(conn, "chains", "workspace_profile", "TEXT NOT NULL DEFAULT ''")
+	}},
 	// v11: data collection scheduler — periodic commands whose output is
 	// stored as timeline entries (metrics, events). collected_entries are
 	// upserted by (job_id, entry_id) so reruns update existing rows.
@@ -547,15 +552,16 @@ func (db *DB) SetAgentEnabled(id string, enabled bool) error {
 // StepsJSON via encoding/json. OnSuccessJSON is the same idea for the
 // declarative followups list — read+written wholesale with the chain.
 type ChainRow struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	StepsJSON     string `json:"steps_json"`
-	Cwd           string `json:"cwd"`
-	OnSuccessJSON string `json:"on_success_json"`
-	FilesJSON     string `json:"files_json"`
-	CreatedAt     string `json:"created_at"`
-	UpdatedAt     string `json:"updated_at"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	StepsJSON        string `json:"steps_json"`
+	Cwd              string `json:"cwd"`
+	OnSuccessJSON    string `json:"on_success_json"`
+	FilesJSON        string `json:"files_json"`
+	WorkspaceProfile string `json:"workspace_profile"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
 }
 
 func (db *DB) UpsertChain(c ChainRow) error {
@@ -566,36 +572,50 @@ func (db *DB) UpsertChain(c ChainRow) error {
 		c.FilesJSON = "[]"
 	}
 	_, err := db.conn.Exec(`
-		INSERT INTO chains (id, name, description, steps_json, cwd, on_success_json, files_json, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO chains (id, name, description, steps_json, cwd, on_success_json, files_json, workspace_profile, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			name            = excluded.name,
-			description     = excluded.description,
-			steps_json      = excluded.steps_json,
-			cwd             = excluded.cwd,
-			on_success_json = excluded.on_success_json,
-			files_json      = excluded.files_json,
-			updated_at      = excluded.updated_at`,
-		c.ID, c.Name, c.Description, c.StepsJSON, c.Cwd, c.OnSuccessJSON, c.FilesJSON, c.CreatedAt, c.UpdatedAt)
+			name              = excluded.name,
+			description       = excluded.description,
+			steps_json        = excluded.steps_json,
+			cwd               = excluded.cwd,
+			on_success_json   = excluded.on_success_json,
+			files_json        = excluded.files_json,
+			workspace_profile = excluded.workspace_profile,
+			updated_at        = excluded.updated_at`,
+		c.ID, c.Name, c.Description, c.StepsJSON, c.Cwd, c.OnSuccessJSON, c.FilesJSON, c.WorkspaceProfile, c.CreatedAt, c.UpdatedAt)
 	return err
 }
 
 func (db *DB) GetChain(id string) (ChainRow, bool) {
 	var r ChainRow
 	err := db.conn.QueryRow(`
-		SELECT id, name, description, steps_json, cwd, on_success_json, files_json, created_at, updated_at
+		SELECT id, name, description, steps_json, cwd, on_success_json, files_json, workspace_profile, created_at, updated_at
 		FROM chains WHERE id = ?`, id).Scan(
-		&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.FilesJSON, &r.CreatedAt, &r.UpdatedAt)
+		&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.FilesJSON, &r.WorkspaceProfile, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return r, false
 	}
 	return r, true
 }
 
-func (db *DB) ListChains() ([]ChainRow, error) {
-	rows, err := db.conn.Query(`
-		SELECT id, name, description, steps_json, cwd, on_success_json, files_json, created_at, updated_at
-		FROM chains ORDER BY name`)
+// ListChains returns chains visible for the given profile: profile-owned chains
+// plus global chains (workspace_profile=""). Pass "" to return all chains.
+func (db *DB) ListChains(profile string) ([]ChainRow, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if profile == "" {
+		rows, err = db.conn.Query(`
+			SELECT id, name, description, steps_json, cwd, on_success_json, files_json, workspace_profile, created_at, updated_at
+			FROM chains ORDER BY name`)
+	} else {
+		rows, err = db.conn.Query(`
+			SELECT id, name, description, steps_json, cwd, on_success_json, files_json, workspace_profile, created_at, updated_at
+			FROM chains WHERE workspace_profile = '' OR workspace_profile = ?
+			ORDER BY name`, profile)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -603,7 +623,7 @@ func (db *DB) ListChains() ([]ChainRow, error) {
 	var out []ChainRow
 	for rows.Next() {
 		var r ChainRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.FilesJSON, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.FilesJSON, &r.WorkspaceProfile, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			continue
 		}
 		out = append(out, r)

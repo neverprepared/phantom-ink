@@ -14,9 +14,17 @@
   }
 
   interface ChainStep {
+    type?: 'agent' | 'playbook';
     agent_id: string;
+    playbook_id?: string;
     prompt_template: string;
     cwd: string;
+  }
+
+  interface PlaybookItem {
+    id: string;
+    name: string;
+    workspace_profile: string;
   }
 
   interface ChainFollowup {
@@ -85,6 +93,9 @@
   let activeId = $state<string | null>(null);
   let pendingDelete = $state<Chain | null>(null);
   let query = $state('');
+  let editName = $state('');
+  let availablePlaybooks = $state<PlaybookItem[]>([]);
+  let playbookPickerOpen = $state(false);
 
   // search/filter
   const filteredChains = $derived(
@@ -113,10 +124,11 @@
     const a = await getApi();
     if (!a) { loading = false; return; }
     try {
-      const [c, usable, tasks] = await Promise.all([
+      const [c, usable, tasks, pbs] = await Promise.all([
         a.ListChains(),
         a.UsableAgents(),
         a.ListTasks('', 200),
+        a.ListPlaybooks(profileState.active?.name ?? '').catch(() => []),
       ]);
       chains = (c ?? []) as Chain[];
       chainable = ((usable ?? []) as any[]).filter((u: any) => u.invocation?.prompt_mode);
@@ -130,6 +142,7 @@
         }
       }
       recentByChain = next;
+      availablePlaybooks = ((pbs ?? []) as any[]).map((p: any) => ({ id: p.id, name: p.name, workspace_profile: p.workspace_profile ?? '' }));
     } catch (err: any) {
       notifications.error(`Failed to load chains: ${err?.message ?? err}`);
     } finally {
@@ -166,16 +179,31 @@
     });
     c.steps.forEach((s, i) => {
       const nid = `s-${c.id}-${i}`;
-      nodes.push({
-        id: nid,
-        type: 'agent',
-        x: positions[nid]?.x ?? (i + 1) * 240,
-        y: positions[nid]?.y ?? 0,
-        title: agentLabel(s.agent_id),
-        sub: s.prompt_template?.slice(0, 40) ?? '',
-        state: 'idle',
-        stepIdx: i,
-      });
+      if (s.type === 'playbook') {
+        const pb = availablePlaybooks.find((p) => p.id === s.playbook_id);
+        nodes.push({
+          id: nid,
+          type: 'playbook',
+          x: positions[nid]?.x ?? (i + 1) * 240,
+          y: positions[nid]?.y ?? 0,
+          title: pb?.name ?? s.playbook_id ?? 'playbook',
+          sub: s.playbook_id?.slice(0, 8) ?? '',
+          ref: s.playbook_id,
+          state: 'idle',
+          stepIdx: i,
+        });
+      } else {
+        nodes.push({
+          id: nid,
+          type: 'agent',
+          x: positions[nid]?.x ?? (i + 1) * 240,
+          y: positions[nid]?.y ?? 0,
+          title: agentLabel(s.agent_id),
+          sub: s.prompt_template?.slice(0, 40) ?? '',
+          state: 'idle',
+          stepIdx: i,
+        });
+      }
     });
     const edges: CanvasEdge[] = [];
     for (let i = 0; i < nodes.length - 1; i++) {
@@ -208,8 +236,9 @@
     }
     const draft: Chain = {
       id: '', name: 'new-chain', description: '',
-      steps: [{ agent_id: chainable[0].id, prompt_template: '{{input}}', cwd: '' }],
+      steps: [{ type: 'agent', agent_id: chainable[0].id, prompt_template: '{{input}}', cwd: '' }],
       cwd: '', on_success: [], files: [], created_at: '', updated_at: '',
+      workspace_profile: profileState.active?.name ?? '',
     };
     try {
       await a.SaveChain(draft);
@@ -233,6 +262,18 @@
       await load();
     } catch (err: any) {
       notifications.error(`Delete failed: ${err?.message ?? err}`);
+    }
+  }
+
+  async function saveChainName() {
+    if (!activeChain || editName.trim() === '' || editName.trim() === activeChain.name) return;
+    const a = await getApi();
+    if (!a) return;
+    try {
+      await a.SaveChain({ ...activeChain, name: editName.trim() });
+      await load();
+    } catch (err: any) {
+      notifications.error(`Rename failed: ${err?.message ?? err}`);
     }
   }
 
@@ -266,6 +307,10 @@
     canvasEdges = edges;
     panX = 30; panY = 10; zoom = 1; sel = null;
     running = false;
+  });
+
+  $effect(() => {
+    if (activeChain) editName = activeChain.name;
   });
 
   function onCanvasMouseDown(e: MouseEvent) {
@@ -352,11 +397,44 @@
     notifications.info('node added');
   }
 
-  function delNode(id: string) {
+  async function delNode(id: string) {
     canvasNodes = canvasNodes.filter((n) => n.id !== id);
     canvasEdges = canvasEdges.filter((e) => e.from !== id && e.to !== id);
     sel = null;
-    if (activeChain) savePositions(activeChain.id, canvasNodes);
+    if (activeChain) {
+      savePositions(activeChain.id, canvasNodes);
+      const match = id.match(/^s-[^-]+-(\d+)$/);
+      if (match) {
+        const stepIdx = parseInt(match[1], 10);
+        const updatedSteps = activeChain.steps.filter((_, i) => i !== stepIdx);
+        const a = await getApi();
+        if (a) {
+          try {
+            await a.SaveChain({ ...activeChain, steps: updatedSteps });
+            await load();
+          } catch (err: any) {
+            notifications.error(`Remove node failed: ${err?.message ?? err}`);
+          }
+        }
+      }
+    }
+  }
+
+  async function addPlaybookNode(pb: PlaybookItem) {
+    if (!activeChain) return;
+    playbookPickerOpen = false;
+    const a = await getApi();
+    if (!a) return;
+    const updatedSteps: ChainStep[] = [
+      ...activeChain.steps,
+      { type: 'playbook', agent_id: '', playbook_id: pb.id, prompt_template: '', cwd: '' },
+    ];
+    try {
+      await a.SaveChain({ ...activeChain, steps: updatedSteps });
+      await load();
+    } catch (err: any) {
+      notifications.error(`Add playbook node failed: ${err?.message ?? err}`);
+    }
   }
 
   function runChainAnim() {
@@ -533,7 +611,14 @@
       <div style="pointer-events:auto;display:flex;align-items:center;gap:12px;">
         <button class="btn ghost sm" onclick={() => (activeId = null)} title="all chains">←</button>
         <div>
-          <div class="page-title" style="font-size:26px;color: var(--accent);">{activeChain.name}</div>
+          <input
+            class="chain-name-input"
+            bind:value={editName}
+            onblur={(e) => { (e.target as HTMLInputElement).style.borderBottomColor = 'transparent'; saveChainName(); }}
+            onkeydown={(e) => { if (e.key === 'Enter') { saveChainName(); (e.target as HTMLInputElement).blur(); } }}
+            onfocus={(e) => { (e.target as HTMLInputElement).style.borderBottomColor = 'var(--accent)'; }}
+            style="font-size:26px;font-weight:700;color:var(--accent);background:transparent;border:none;border-bottom:1px solid transparent;outline:none;width:260px;padding:0;font-family:inherit;cursor:text;"
+          />
           <div class="mono" style="font-size:11.5px;color: var(--text-faint);margin-top:2px;">
             {scopeLabel} · {canvasNodes.length} nodes · {canvasEdges.length} edges
           </div>
@@ -559,6 +644,21 @@
                 </button>
               {/each}
             </div>
+            {#if availablePlaybooks.length > 0}
+              <div class="mono" style="font-size:9.5px;color: var(--text-faint);padding:6px 9px 2px;letter-spacing:.08em;border-top:1px solid var(--border-subtle);margin-top:4px;">PLAYBOOKS</div>
+              <div style="max-height:160px;overflow-y:auto;padding:2px 4px 4px;">
+                {#each availablePlaybooks as pb (pb.id)}
+                  <button
+                    class="btn sm ghost"
+                    style="width:100%;text-align:left;justify-content:flex-start;padding:5px 8px;gap:6px;"
+                    onclick={() => addPlaybookNode(pb)}
+                  >
+                    <span style="width:8px;height:8px;border-radius:99px;background:var(--task);flex-shrink:0;"></span>
+                    <span style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{pb.name}</span>
+                  </button>
+                {/each}
+              </div>
+            {/if}
           </div>
         {/if}
       </div>
@@ -631,7 +731,7 @@
             <span style="width:7px;height:7px;border-radius:99px;background: {nodeStateColor(n.state)};"></span>
             {#if ring}
               <button
-                onclick={(e) => { e.stopPropagation(); delNode(n.id); }}
+                onclick={(e) => { e.stopPropagation(); void delNode(n.id); }}
                 class="iconbtn"
                 style="width:18px;height:18px;"
                 aria-label="delete node"
