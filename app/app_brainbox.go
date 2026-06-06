@@ -10,8 +10,23 @@ import (
 // Sessions — pass-through to brainbox client
 // ---------------------------------------------------------------------------
 
-func (a *App) GetSessions() ([]brainbox.Session, error) {
-	return a.client.ListSessions()
+// GetSessions returns brainbox sessions, optionally filtered to a workspace
+// profile. Pass "" to return all sessions across profiles.
+func (a *App) GetSessions(workspace string) ([]brainbox.Session, error) {
+	sessions, err := a.client.ListSessions()
+	if err != nil {
+		return nil, err
+	}
+	if workspace == "" {
+		return sessions, nil
+	}
+	out := sessions[:0]
+	for _, s := range sessions {
+		if s.WorkspaceProfile == workspace {
+			out = append(out, s)
+		}
+	}
+	return out, nil
 }
 
 func (a *App) GetSessionHistory(limit, offset int) ([]brainbox.SessionHistoryEntry, error) {

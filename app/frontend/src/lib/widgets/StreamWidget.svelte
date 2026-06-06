@@ -73,9 +73,8 @@
       const merged: StreamItem[] = [];
 
       if (sources.includes('task')) {
-        const tasks: any[] = ((await (a.ListHubTasks as any)('', '')) ?? [])
-          .filter((t: any) => !t.spawned_by)
-          .filter((t: any) => !filterProfile || (t.workspace_profile ?? '').toLowerCase() === filterProfile.toLowerCase());
+        const tasks: any[] = ((await (a.ListHubTasks as any)('', filterProfile ?? '')) ?? [])
+          .filter((t: any) => !t.spawned_by);
         for (const t of tasks) {
           merged.push({
             id: `task:${t.id}`,

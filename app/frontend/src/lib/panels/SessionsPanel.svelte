@@ -234,7 +234,7 @@
     if (!a) { if (!silent) loading = false; return; }
     try {
       const [sess, hubState, procs, diskStats, diskBk] = await Promise.all([
-        a.GetSessions(),
+        a.GetSessions(profileState.active?.name ?? ''),
         a.GetHubState(),
         a.FindClaudeProcesses(),
         a.GetContainerDiskUsage().catch(() => []),

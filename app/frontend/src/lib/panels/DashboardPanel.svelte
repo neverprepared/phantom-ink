@@ -366,7 +366,7 @@
     if (!silent) loading = true; else refreshing = true;
     try {
       const [s, tasks, f, ts, ds, procs] = await Promise.all([
-        (a.GetSessions() as Promise<any>).catch(() => []),
+        (a.GetSessions(profileState.active?.name ?? '') as Promise<any>).catch(() => []),
         (a.ListHubTasks('', profileState.active?.name ?? '') as Promise<any>).catch(() => []),
         (a.ListUpcomingFires(5) as Promise<any>).catch(() => []),
         (a.GetTaskStats(24) as Promise<any>).catch(() => null),
