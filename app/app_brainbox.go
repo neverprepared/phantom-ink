@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"phantom-ink/brainbox"
 	"time"
@@ -79,18 +80,121 @@ func (a *App) DeleteSession(name string) (brainbox.SessionActionResponse, error)
 // Hub
 // ---------------------------------------------------------------------------
 
-func (a *App) GetHubState() (brainbox.HubState, error) {
-	return a.client.GetHubState()
+func (a *App) GetHubState() (HubStateView, error) {
+	state, err := a.client.GetHubState()
+	if err != nil {
+		return HubStateView{}, err
+	}
+	return HubStateView{
+		Agents: state.Agents,
+		Tasks:  normalizeHubTasks(state.Tasks),
+		Tokens: state.Tokens,
+		Repos:  state.Repos,
+	}, nil
+}
+
+// HubTask is the UI-facing shape of a brainbox hub task. brainbox.Task uses
+// interface{} for repo_url/created_at/updated_at/result/error because their
+// upstream JSON shapes vary; we coerce them here so JS sees predictable types.
+type HubTask struct {
+	ID               string   `json:"id"`
+	Description      string   `json:"description"`
+	AgentName        string   `json:"agent_name"`
+	Status           string   `json:"status"`
+	RepoURL          string   `json:"repo_url"`
+	CreatedAt        int64    `json:"created_at"`        // epoch ms, 0 if unparseable
+	UpdatedAt        int64    `json:"updated_at"`        // epoch ms, 0 if unparseable
+	Result           string   `json:"result"`            // JSON-encoded passthrough
+	Error            string   `json:"error"`             // flat string
+	SessionName      string   `json:"session_name"`
+	WorkspaceProfile string   `json:"workspace_profile"`
+	JobID            string   `json:"job_id"`
+	SpawnedBy        string   `json:"spawned_by"`
+	ChildTaskIDs     []string `json:"child_task_ids"`
+	ChannelIDs       []string `json:"channel_ids"`
+}
+
+// HubStateView mirrors brainbox.HubState but with HubTask in place of the
+// loose brainbox.Task so the frontend never sees an interface{}.
+type HubStateView struct {
+	Agents []brainbox.Agent         `json:"agents"`
+	Tasks  []HubTask                `json:"tasks"`
+	Tokens []map[string]interface{} `json:"tokens"`
+	Repos  []brainbox.Repo          `json:"repos"`
+}
+
+func normalizeHubTask(t brainbox.Task) HubTask {
+	return HubTask{
+		ID:               t.ID,
+		Description:      t.Description,
+		AgentName:        t.AgentName,
+		Status:           t.Status,
+		RepoURL:          anyToString(t.RepoURL),
+		CreatedAt:        coerceMillis(t.CreatedAt),
+		UpdatedAt:        coerceMillis(t.UpdatedAt),
+		Result:           anyToJSON(t.Result),
+		Error:            errString(t.Error),
+		SessionName:      t.SessionName,
+		WorkspaceProfile: t.WorkspaceProfile,
+		JobID:            t.JobID,
+		SpawnedBy:        t.SpawnedBy,
+		ChildTaskIDs:     t.ChildTaskIDs,
+		ChannelIDs:       t.ChannelIDs,
+	}
+}
+
+func normalizeHubTasks(ts []brainbox.Task) []HubTask {
+	out := make([]HubTask, len(ts))
+	for i, t := range ts {
+		out[i] = normalizeHubTask(t)
+	}
+	return out
+}
+
+// anyToString flattens an arbitrary brainbox interface{} into a string. Returns
+// "" for nil; falls back to fmt.Sprint for non-string scalars.
+func anyToString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprint(v)
+}
+
+// anyToJSON serialises an arbitrary brainbox result payload as a JSON string so
+// the frontend can choose to parse it (or display it raw) without typecasting.
+func anyToJSON(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // ListHubTasks returns brainbox hub tasks. Renamed from ListTasks to avoid
 // shadowing the new App.ListTasks which reads the local task queue.
-func (a *App) ListHubTasks(status, workspaceProfile string) ([]brainbox.Task, error) {
-	return a.client.ListTasks(status, workspaceProfile)
+func (a *App) ListHubTasks(status, workspaceProfile string) ([]HubTask, error) {
+	ts, err := a.client.ListTasks(status, workspaceProfile)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeHubTasks(ts), nil
 }
 
-func (a *App) SubmitTask(req brainbox.SubmitTaskRequest) (brainbox.Task, error) {
-	return a.client.SubmitTask(req)
+func (a *App) SubmitTask(req brainbox.SubmitTaskRequest) (HubTask, error) {
+	t, err := a.client.SubmitTask(req)
+	if err != nil {
+		return HubTask{}, err
+	}
+	return normalizeHubTask(t), nil
 }
 
 // CancelHubTask cancels a brainbox hub task. Renamed from CancelTask to
@@ -102,8 +206,12 @@ func (a *App) CancelHubTask(taskID string) error {
 // GetTaskLineage returns all tasks belonging to a job tree (same job_id).
 // Pass the root supervisor's task ID as jobID. The Timeline panel uses this
 // to build the full tree for a selected job.
-func (a *App) GetTaskLineage(jobID string) ([]brainbox.Task, error) {
-	return a.client.ListTasksByJob(jobID)
+func (a *App) GetTaskLineage(jobID string) ([]HubTask, error) {
+	ts, err := a.client.ListTasksByJob(jobID)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeHubTasks(ts), nil
 }
 
 // ListAgentRoles returns brainbox's multi-agent role catalog (developer,

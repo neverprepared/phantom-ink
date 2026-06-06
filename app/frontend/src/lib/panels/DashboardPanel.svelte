@@ -75,9 +75,7 @@
     const now = Date.now();
 
     for (const t of runningHubTasks) {
-      const created = typeof t.created_at === 'number'
-        ? t.created_at : parseFloat(t.created_at ?? '0') * 1000;
-      const ageMin = Math.floor((now - created) / 60_000);
+      const ageMin = Math.floor((now - (t.created_at ?? 0)) / 60_000);
       if (ageMin > 30) {
         items.push({
           kind: 'task_stuck',
@@ -89,10 +87,9 @@
     }
 
     for (const t of failedHubTasks.slice(0, 3)) {
-      const err = typeof t.error === 'string' ? t.error : JSON.stringify(t.error ?? '');
       items.push({
         kind: 'task_failed', title: 'task failed',
-        desc: err.slice(0, 100) || (t.description ?? '').slice(0, 100) || t.id.slice(0, 12),
+        desc: (t.error ?? '').slice(0, 100) || (t.description ?? '').slice(0, 100) || t.id.slice(0, 12),
         severity: 'warning', ref: t.id,
       });
     }
