@@ -114,6 +114,7 @@ from .ollama import (
     list_models as ollama_list_models,
     pull_model as ollama_pull_model,
 )
+from .ollama_pool import get_pool
 
 log = get_logger()
 
@@ -346,8 +347,13 @@ async def lifespan(app: FastAPI):
     _docker_events_task = asyncio.create_task(_watch_docker_events())
     _metrics_sample_task = asyncio.create_task(_metrics_sample_loop())
 
+    # Start Ollama instance pool
+    get_pool().start()
+
     log.info("api.started", metadata={"port": settings.api_port})
     yield
+
+    get_pool().stop()
 
     if _docker_events_task:
         _docker_events_task.cancel()
@@ -948,6 +954,7 @@ async def runners_register(request: Request, _key=Depends(require_api_key)):
     max_concurrent = int(body.get("max_concurrent") or 4)
     host = (body.get("host") or "").strip() or None
     machine_id = (body.get("machine_id") or "").strip() or None
+    ollama_port = int(body["ollama_port"]) if body.get("ollama_port") else None
     # If a stable machine_id is provided and a runner with that ID already
     # exists under a different name, remove the old entry so the rename is
     # seamless rather than creating a duplicate.
@@ -962,7 +969,11 @@ async def runners_register(request: Request, _key=Depends(require_api_key)):
         in_flight=in_flight,
         max_concurrent=max_concurrent,
         machine_id=machine_id,
+        ollama_port=ollama_port,
     )
+    # If runner advertises Ollama and we know its host, add it to the pool.
+    if caps.get("ollama") and host:
+        await get_pool().add_runner(name, host, ollama_port or 11434)
     return {
         "ok": True,
         "runner": {
@@ -1104,6 +1115,7 @@ async def runners_delete(name: str, _key=Depends(require_api_key)):
     removed = await reg.deregister(name)
     if not removed:
         raise HTTPException(status_code=404, detail="runner not registered")
+    await get_pool().remove_runner(name)
     return {"ok": True}
 
 
@@ -3178,34 +3190,71 @@ async def api_langfuse_trace_detail(trace_id: str, _key=Depends(require_api_key)
 
 @app.get("/api/ollama/health")
 async def api_ollama_health():
-    """Check Ollama connectivity."""
+    """Check Ollama connectivity — picks the best healthy pool instance."""
+    pool = get_pool()
+    inst = pool.pick()
+    if inst is None:
+        return {"healthy": False, "host": settings.ollama.host}
     loop = asyncio.get_running_loop()
-    healthy = await loop.run_in_executor(None, ollama_health_check)
-    return {"healthy": healthy, "host": settings.ollama.host}
+    healthy = await loop.run_in_executor(None, lambda: ollama_health_check(inst.url))
+    return {"healthy": healthy, "host": inst.url, "runner": inst.runner_name}
+
+
+@app.get("/api/ollama/instances")
+async def api_ollama_instances(_key=Depends(require_api_key)):
+    """List all Ollama instances in the pool with their health and load."""
+    instances = get_pool().all_instances()
+    return {
+        "instances": [
+            {
+                "runner": i.runner_name,
+                "url": i.url,
+                "healthy": i.healthy,
+                "models": i.models,
+                "in_flight": i.in_flight,
+                "last_checked": i.last_checked,
+            }
+            for i in instances
+        ]
+    }
 
 
 @app.post("/api/ollama/chat")
 async def api_ollama_chat(body: OllamaChatRequest, _key=Depends(require_api_key)):
-    """Proxy a chat completion request to Ollama."""
+    """Proxy a chat completion request to the best available Ollama instance."""
+    pool = get_pool()
+    inst = pool.pick()
+    if inst is None:
+        raise HTTPException(status_code=503, detail="no Ollama instances available")
+    pool.acquire(inst)
     try:
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, lambda: ollama_chat(body.messages, body.model))
+        result = await loop.run_in_executor(
+            None, lambda: ollama_chat(body.messages, body.model, inst.url)
+        )
         return {
             "model": result.model,
             "message": {"role": result.message.role, "content": result.message.content},
             "total_duration": result.total_duration,
             "eval_count": result.eval_count,
+            "runner": inst.runner_name,
         }
     except OllamaError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
+    finally:
+        pool.release(inst)
 
 
 @app.get("/api/ollama/models")
 async def api_ollama_models(_key=Depends(require_api_key)):
-    """List models available on the Ollama server."""
+    """List models available on the best healthy Ollama instance."""
+    pool = get_pool()
+    inst = pool.pick()
+    if inst is None:
+        raise HTTPException(status_code=503, detail="no Ollama instances available")
     try:
         loop = asyncio.get_running_loop()
-        models = await loop.run_in_executor(None, ollama_list_models)
+        models = await loop.run_in_executor(None, lambda: ollama_list_models(inst.url))
         return {
             "models": [
                 {
@@ -3215,7 +3264,8 @@ async def api_ollama_models(_key=Depends(require_api_key)):
                     "digest": m.digest,
                 }
                 for m in models
-            ]
+            ],
+            "runner": inst.runner_name,
         }
     except OllamaError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
@@ -3223,22 +3273,33 @@ async def api_ollama_models(_key=Depends(require_api_key)):
 
 @app.post("/api/ollama/pull")
 async def api_ollama_pull(body: OllamaPullRequest, _key=Depends(require_api_key)):
-    """Pull a model from the Ollama registry."""
+    """Pull a model on the best healthy Ollama instance."""
+    pool = get_pool()
+    inst = pool.pick()
+    if inst is None:
+        raise HTTPException(status_code=503, detail="no Ollama instances available")
+    pool.acquire(inst)
     try:
         loop = asyncio.get_running_loop()
-        status = await loop.run_in_executor(None, lambda: ollama_pull_model(body.name))
-        return {"status": status, "model": body.name}
+        status = await loop.run_in_executor(None, lambda: ollama_pull_model(body.name, inst.url))
+        return {"status": status, "model": body.name, "runner": inst.runner_name}
     except OllamaError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
+    finally:
+        pool.release(inst)
 
 
 @app.delete("/api/ollama/models/{name:path}")
 async def api_ollama_delete_model(name: str, _key=Depends(require_api_key)):
-    """Delete a model from the Ollama server."""
+    """Delete a model from the best healthy Ollama instance."""
+    pool = get_pool()
+    inst = pool.pick()
+    if inst is None:
+        raise HTTPException(status_code=503, detail="no Ollama instances available")
     try:
         loop = asyncio.get_running_loop()
-        status = await loop.run_in_executor(None, lambda: ollama_delete_model(name))
-        return {"status": status, "model": name}
+        status = await loop.run_in_executor(None, lambda: ollama_delete_model(name, inst.url))
+        return {"status": status, "model": name, "runner": inst.runner_name}
     except OllamaError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
