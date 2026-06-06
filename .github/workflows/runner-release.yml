@@ -185,7 +185,7 @@ jobs:
             Casks/brainbox-runner.rb
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
           git add Casks/brainbox-runner.rb
           git commit -m "chore: update brainbox-runner cask to v$VERSION"
-          git pull --rebase origin main
           git push origin HEAD:main
