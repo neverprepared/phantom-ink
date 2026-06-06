@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
   import { panelFocus, profileState, refreshTick } from '../stores.svelte';
@@ -19,6 +19,7 @@
     playbook_id?: string;
     prompt_template: string;
     cwd: string;
+    executor?: string;
   }
 
   interface PlaybookItem {
@@ -47,6 +48,13 @@
     workspace_profile?: string;
   }
 
+  interface StepOutput {
+    output: string;
+    stderr: string;
+    status: string;
+    error: string;
+  }
+
   type NodeType = 'trigger' | 'agent' | 'tool' | 'playbook';
   interface CanvasNode {
     id: string;
@@ -57,14 +65,8 @@
     sub: string;
     ref?: string;
     state: 'idle' | 'run' | 'done';
-    stepIdx?: number; // index into chain.steps when type === 'agent'
   }
-  interface CanvasEdge {
-    from: string;
-    to: string;
-    label: string;
-    on?: boolean;
-  }
+  interface CanvasEdge { from: string; to: string; label: string; }
 
   const NODE_META: Record<NodeType, { color: string; label: string }> = {
     trigger:  { color: 'var(--accent)', label: 'trigger' },
@@ -78,11 +80,7 @@
   function edgePath(a: CanvasNode, b: CanvasNode) {
     const x1 = a.x + NW, y1 = a.y + NH / 2, x2 = b.x, y2 = b.y + NH / 2;
     const dx = Math.max(40, Math.abs(x2 - x1) * 0.5);
-    return {
-      d: `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`,
-      mx: (x1 + x2) / 2,
-      my: (y1 + y2) / 2,
-    };
+    return { d: `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}` };
   }
 
   // ----- shared state -----
@@ -97,27 +95,47 @@
   let availablePlaybooks = $state<PlaybookItem[]>([]);
   let playbookPickerOpen = $state(false);
 
-  // search/filter
+  // editor state
+  let chainInput = $state('');
+  let running = $state(false);
+  let runPhase = $state<'idle' | 'running' | 'done'>('idle');
+  let runFinalStatus = $state('');
+  let stepOutputs = $state<Map<number, StepOutput>>(new Map());
+  let stepRunning = $state<Set<number>>(new Set());
+  let expandedOutputs = $state<Set<number>>(new Set());
+
   const filteredChains = $derived(
     (() => {
       const q = query.trim().toLowerCase();
       if (!q) return chains;
       return chains.filter((c) =>
         (c.name + ' ' + (c.description ?? '') + ' ' + c.steps.map((s) => s.agent_id).join(' '))
-          .toLowerCase()
-          .includes(q),
+          .toLowerCase().includes(q),
       );
     })(),
   );
 
   const activeChain = $derived(activeId ? chains.find((c) => c.id === activeId) ?? null : null);
-
-  // scope label
   const scopeLabel = $derived(profileState.active?.name ?? 'all');
 
   function agentLabel(id: string): string {
     return chainable.find((a) => a.id === id)?.label ?? id;
   }
+
+  // Reset run state when switching chains
+  $effect(() => {
+    activeId;
+    runPhase = 'idle';
+    stepOutputs = new Map();
+    stepRunning = new Set();
+    expandedOutputs = new Set();
+    running = false;
+    runFinalStatus = '';
+  });
+
+  $effect(() => {
+    if (activeChain) editName = activeChain.name;
+  });
 
   async function load(silent = false) {
     if (!silent) loading = true;
@@ -136,10 +154,7 @@
       for (const t of (tasks ?? []) as any[]) {
         if (!t.chain_id) continue;
         const bucket = next.get(t.chain_id) ?? [];
-        if (bucket.length < 5) {
-          bucket.push({ status: t.status });
-          next.set(t.chain_id, bucket);
-        }
+        if (bucket.length < 5) { bucket.push({ status: t.status }); next.set(t.chain_id, bucket); }
       }
       recentByChain = next;
       availablePlaybooks = ((pbs ?? []) as any[]).map((p: any) => ({ id: p.id, name: p.name, workspace_profile: p.workspace_profile ?? '' }));
@@ -150,12 +165,54 @@
     }
   }
 
+  let unsubChainRun: (() => void) | null = null;
+
+  function subscribeChainEvents() {
+    if (typeof window === 'undefined' || !(window as any).runtime?.EventsOn) return;
+    unsubChainRun = (window as any).runtime.EventsOn('chain:run:event', (ev: any) => {
+      if (!activeChain || ev.chain_id !== activeChain.id) return;
+      if (ev.phase === 'run:start') {
+        running = true;
+        runPhase = 'running';
+        stepOutputs = new Map();
+        stepRunning = new Set();
+        expandedOutputs = new Set();
+      } else if (ev.phase === 'step:start') {
+        stepRunning = new Set([...stepRunning, ev.step_index]);
+        expandedOutputs = new Set([...expandedOutputs, ev.step_index]);
+      } else if (ev.phase === 'step:done') {
+        const next = new Set(stepRunning);
+        next.delete(ev.step_index);
+        stepRunning = next;
+        stepOutputs = new Map([...stepOutputs, [ev.step_index, {
+          output: ev.output ?? '',
+          stderr: ev.stderr ?? '',
+          status: ev.status ?? '',
+          error: ev.error ?? '',
+        }]]);
+      } else if (ev.phase === 'run:done') {
+        running = false;
+        runPhase = 'done';
+        runFinalStatus = ev.status ?? '';
+        stepRunning = new Set();
+      }
+    });
+  }
+
   onMount(async () => {
     await load();
     const id = panelFocus.consumeChainFocus();
-    if (id) {
-      activeId = id;
-    }
+    if (id) activeId = id;
+
+    const trySubscribe = () => {
+      if ((window as any).runtime?.EventsOn) { subscribeChainEvents(); }
+      else { setTimeout(trySubscribe, 100); }
+    };
+    trySubscribe();
+  });
+
+  onDestroy(() => {
+    if (unsubChainRun) { unsubChainRun(); unsubChainRun = null; }
   });
 
   $effect(() => {
@@ -163,77 +220,29 @@
     void load(true);
   });
 
-  // ----- gallery helpers: derive canvas-style nodes/edges from a chain -----
+  // ----- gallery thumbnail helpers -----
   function nodesFromChain(c: Chain): { nodes: CanvasNode[]; edges: CanvasEdge[] } {
-    const positions = loadPositions(c.id);
     const nodes: CanvasNode[] = [];
-    // trigger virtual node
-    nodes.push({
-      id: `t-${c.id}`,
-      type: 'trigger',
-      x: positions[`t-${c.id}`]?.x ?? 0,
-      y: positions[`t-${c.id}`]?.y ?? 0,
-      title: 'manual',
-      sub: 'trigger',
-      state: 'idle',
-    });
+    nodes.push({ id: `t-${c.id}`, type: 'trigger', x: 0, y: 0, title: 'manual', sub: 'trigger', state: 'idle' });
     c.steps.forEach((s, i) => {
       const nid = `s-${c.id}-${i}`;
       if (s.type === 'playbook') {
         const pb = availablePlaybooks.find((p) => p.id === s.playbook_id);
-        nodes.push({
-          id: nid,
-          type: 'playbook',
-          x: positions[nid]?.x ?? (i + 1) * 240,
-          y: positions[nid]?.y ?? 0,
-          title: pb?.name ?? s.playbook_id ?? 'playbook',
-          sub: s.playbook_id?.slice(0, 8) ?? '',
-          ref: s.playbook_id,
-          state: 'idle',
-          stepIdx: i,
-        });
+        nodes.push({ id: nid, type: 'playbook', x: (i + 1) * 240, y: 0, title: pb?.name ?? s.playbook_id ?? 'playbook', sub: '', state: 'idle' });
       } else {
-        nodes.push({
-          id: nid,
-          type: 'agent',
-          x: positions[nid]?.x ?? (i + 1) * 240,
-          y: positions[nid]?.y ?? 0,
-          title: agentLabel(s.agent_id),
-          sub: s.prompt_template?.slice(0, 40) ?? '',
-          state: 'idle',
-          stepIdx: i,
-        });
+        nodes.push({ id: nid, type: 'agent', x: (i + 1) * 240, y: 0, title: agentLabel(s.agent_id), sub: s.prompt_template?.slice(0, 40) ?? '', state: 'idle' });
       }
     });
     const edges: CanvasEdge[] = [];
-    for (let i = 0; i < nodes.length - 1; i++) {
-      edges.push({ from: nodes[i].id, to: nodes[i + 1].id, label: '' });
-    }
+    for (let i = 0; i < nodes.length - 1; i++) edges.push({ from: nodes[i].id, to: nodes[i + 1].id, label: '' });
     return { nodes, edges };
   }
 
-  function loadPositions(chainId: string): Record<string, { x: number; y: number }> {
-    try {
-      const raw = localStorage.getItem(`chain-pos-${chainId}`);
-      if (!raw) return {};
-      return JSON.parse(raw);
-    } catch {
-      return {};
-    }
-  }
-  function savePositions(chainId: string, nodes: CanvasNode[]) {
-    const out: Record<string, { x: number; y: number }> = {};
-    for (const n of nodes) out[n.id] = { x: n.x, y: n.y };
-    try { localStorage.setItem(`chain-pos-${chainId}`, JSON.stringify(out)); } catch {}
-  }
-
+  // ----- chain CRUD -----
   async function newChain() {
     const a = await getApi();
     if (!a) return;
-    if (chainable.length === 0) {
-      notifications.error('No usable agents — enable one to build a chain');
-      return;
-    }
+    if (chainable.length === 0) { notifications.error('No usable agents — enable one to build a chain'); return; }
     const draft: Chain = {
       id: '', name: 'new-chain', description: '',
       steps: [{ type: 'agent', agent_id: chainable[0].id, prompt_template: '{{input}}', cwd: '' }],
@@ -241,7 +250,7 @@
       workspace_profile: profileState.active?.name ?? '',
     };
     try {
-      await a.SaveChain(draft);
+      await a.SaveChain(draft as any);
       notifications.success('Chain created');
       await load();
     } catch (err: any) {
@@ -270,227 +279,116 @@
     const a = await getApi();
     if (!a) return;
     try {
-      await a.SaveChain({ ...activeChain, name: editName.trim() });
-      await load();
+      await a.SaveChain({ ...activeChain, name: editName.trim() } as any);
+      await load(true);
     } catch (err: any) {
       notifications.error(`Rename failed: ${err?.message ?? err}`);
     }
   }
 
-  // ============== CANVAS VIEW ==============
-  let canvasNodes = $state<CanvasNode[]>([]);
-  let canvasEdges = $state<CanvasEdge[]>([]);
-  let panX = $state(30);
-  let panY = $state(10);
-  let zoom = $state(1);
-  let sel = $state<string | null>(null);
-  let running = $state(false);
-  let addOpen = $state(false);
-
-  // drag-to-connect temp
-  let connecting = $state<{ from: string; x1: number; y1: number; x2: number; y2: number } | null>(null);
-
-  let canvasEl: HTMLDivElement | null = $state(null);
-
-  // when activeChain changes, hydrate canvas state
-  let lastHydratedId: string | null = null;
-  $effect(() => {
-    const c = activeChain;
-    if (!c) {
-      lastHydratedId = null;
-      return;
-    }
-    if (lastHydratedId === c.id) return;
-    lastHydratedId = c.id;
-    const { nodes, edges } = nodesFromChain(c);
-    canvasNodes = nodes;
-    canvasEdges = edges;
-    panX = 30; panY = 10; zoom = 1; sel = null;
-    running = false;
-  });
-
-  $effect(() => {
-    if (activeChain) editName = activeChain.name;
-  });
-
-  function onCanvasMouseDown(e: MouseEvent) {
-    const t = e.target as HTMLElement;
-    if (t.closest('.chain-node, .chain-toolbar, .chain-add, .chain-mini, .chain-handle')) return;
-    sel = null;
-    const sx = e.clientX, sy = e.clientY;
-    const ox = panX, oy = panY;
-    const move = (ev: MouseEvent) => { panX = ox + ev.clientX - sx; panY = oy + ev.clientY - sy; };
-    const up = () => {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
-    };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
-  }
-
-  function onNodeMouseDown(e: MouseEvent, id: string) {
-    e.stopPropagation();
-    sel = id;
-    const n = canvasNodes.find((m) => m.id === id);
-    if (!n) return;
-    const sx = e.clientX, sy = e.clientY;
-    const ox = n.x, oy = n.y;
-    const move = (ev: MouseEvent) => {
-      const nx = ox + (ev.clientX - sx) / zoom;
-      const ny = oy + (ev.clientY - sy) / zoom;
-      canvasNodes = canvasNodes.map((m) => (m.id === id ? { ...m, x: nx, y: ny } : m));
-    };
-    const up = () => {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
-      if (activeChain) savePositions(activeChain.id, canvasNodes);
-    };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
-  }
-
-  function worldPoint(clientX: number, clientY: number): { x: number; y: number } {
-    if (!canvasEl) return { x: 0, y: 0 };
-    const r = canvasEl.getBoundingClientRect();
-    return { x: (clientX - r.left - panX) / zoom, y: (clientY - r.top - panY) / zoom };
-  }
-
-  function onOutputHandleDown(e: MouseEvent, nodeId: string) {
-    e.stopPropagation();
-    e.preventDefault();
-    const n = canvasNodes.find((m) => m.id === nodeId);
-    if (!n) return;
-    const start = { x: n.x + NW, y: n.y + NH / 2 };
-    const cur = worldPoint(e.clientX, e.clientY);
-    connecting = { from: nodeId, x1: start.x, y1: start.y, x2: cur.x, y2: cur.y };
-    const move = (ev: MouseEvent) => {
-      const p = worldPoint(ev.clientX, ev.clientY);
-      if (connecting) connecting = { ...connecting, x2: p.x, y2: p.y };
-    };
-    const up = (ev: MouseEvent) => {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
-      // hit-test input handles
-      const tgt = (ev.target as HTMLElement)?.closest('.chain-handle-in') as HTMLElement | null;
-      if (tgt && tgt.dataset.nodeId && tgt.dataset.nodeId !== nodeId) {
-        const toId = tgt.dataset.nodeId;
-        if (!canvasEdges.find((ed) => ed.from === nodeId && ed.to === toId)) {
-          canvasEdges = [...canvasEdges, { from: nodeId, to: toId, label: '' }];
-        }
-      }
-      connecting = null;
-    };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
-  }
-
-  function addNode(type: NodeType, ref?: string, title?: string, sub?: string) {
-    const id = 'n' + Date.now();
-    const cx = (-panX + 380) / zoom;
-    const cy = (-panY + 230) / zoom;
-    canvasNodes = [
-      ...canvasNodes,
-      { id, type, x: cx, y: cy, title: title || NODE_META[type].label, sub: sub || '', ref, state: 'idle' },
-    ];
-    addOpen = false;
-    if (activeChain) savePositions(activeChain.id, canvasNodes);
-    notifications.info('node added');
-  }
-
-  async function delNode(id: string) {
-    canvasNodes = canvasNodes.filter((n) => n.id !== id);
-    canvasEdges = canvasEdges.filter((e) => e.from !== id && e.to !== id);
-    sel = null;
-    if (activeChain) {
-      savePositions(activeChain.id, canvasNodes);
-      const match = id.match(/^s-[^-]+-(\d+)$/);
-      if (match) {
-        const stepIdx = parseInt(match[1], 10);
-        const updatedSteps = activeChain.steps.filter((_, i) => i !== stepIdx);
-        const a = await getApi();
-        if (a) {
-          try {
-            await a.SaveChain({ ...activeChain, steps: updatedSteps });
-            await load();
-          } catch (err: any) {
-            notifications.error(`Remove node failed: ${err?.message ?? err}`);
-          }
-        }
-      }
+  // ----- step editing -----
+  async function saveStep(i: number, updatedStep: ChainStep) {
+    if (!activeChain) return;
+    const a = await getApi();
+    if (!a) return;
+    const steps = activeChain.steps.map((s, idx) => idx === i ? updatedStep : s);
+    try {
+      await a.SaveChain({ ...activeChain, steps } as any);
+      await load(true);
+    } catch (err: any) {
+      notifications.error(`Save failed: ${err?.message ?? err}`);
     }
   }
 
-  async function addPlaybookNode(pb: PlaybookItem) {
+  async function addAgentStep() {
+    if (!activeChain) return;
+    if (chainable.length === 0) { notifications.error('No usable agents available'); return; }
+    const a = await getApi();
+    if (!a) return;
+    const newStep: ChainStep = {
+      type: 'agent', agent_id: chainable[0].id,
+      prompt_template: activeChain.steps.length === 0 ? '{{input}}' : '{{prev.output}}',
+      cwd: '',
+    };
+    try {
+      await a.SaveChain({ ...activeChain, steps: [...activeChain.steps, newStep] } as any);
+      await load(true);
+    } catch (err: any) {
+      notifications.error(`Add step failed: ${err?.message ?? err}`);
+    }
+  }
+
+  async function addPlaybookStepFromPicker(pb: PlaybookItem) {
     if (!activeChain) return;
     playbookPickerOpen = false;
     const a = await getApi();
     if (!a) return;
-    const updatedSteps: ChainStep[] = [
-      ...activeChain.steps,
-      { type: 'playbook', agent_id: '', playbook_id: pb.id, prompt_template: '', cwd: '' },
-    ];
+    const newStep: ChainStep = { type: 'playbook', agent_id: '', playbook_id: pb.id, prompt_template: '', cwd: '' };
     try {
-      await a.SaveChain({ ...activeChain, steps: updatedSteps });
-      await load();
+      await a.SaveChain({ ...activeChain, steps: [...activeChain.steps, newStep] } as any);
+      await load(true);
     } catch (err: any) {
-      notifications.error(`Add playbook node failed: ${err?.message ?? err}`);
+      notifications.error(`Add playbook step failed: ${err?.message ?? err}`);
     }
   }
 
-  function runChainAnim() {
-    if (running) return;
-    running = true;
-    const order = [...canvasNodes].sort((a, b) => {
-      const ta = a.type === 'trigger' ? -1 : 0;
-      const tb = b.type === 'trigger' ? -1 : 0;
-      return ta - tb || a.x - b.x;
-    });
-    canvasNodes = canvasNodes.map((n) => ({ ...n, state: 'idle' }));
-    canvasEdges = canvasEdges.map((e) => ({ ...e, on: false }));
-    order.forEach((n, i) => {
-      setTimeout(() => {
-        canvasNodes = canvasNodes.map((m) => (m.id === n.id ? { ...m, state: 'run' } : m));
-        canvasEdges = canvasEdges.map((e) => (e.from === n.id ? { ...e, on: true } : e));
-        setTimeout(() => {
-          canvasNodes = canvasNodes.map((m) => (m.id === n.id ? { ...m, state: 'done' } : m));
-        }, 520);
-      }, i * 620);
-    });
-    setTimeout(() => {
-      running = false;
-      notifications.success('chain run complete');
-    }, order.length * 620 + 600);
-  }
-
-  async function runChainReal() {
+  async function deleteStep(i: number) {
     if (!activeChain) return;
     const a = await getApi();
     if (!a) return;
-    runChainAnim();
+    const steps = activeChain.steps.filter((_, idx) => idx !== i);
     try {
-      await a.RunChain(activeChain.id, '', activeChain.cwd ?? '');
+      await a.SaveChain({ ...activeChain, steps } as any);
+      await load(true);
     } catch (err: any) {
+      notifications.error(`Remove step failed: ${err?.message ?? err}`);
+    }
+  }
+
+  async function moveStep(i: number, dir: -1 | 1) {
+    if (!activeChain) return;
+    const j = i + dir;
+    if (j < 0 || j >= activeChain.steps.length) return;
+    const a = await getApi();
+    if (!a) return;
+    const steps = [...activeChain.steps];
+    [steps[i], steps[j]] = [steps[j], steps[i]];
+    try {
+      await a.SaveChain({ ...activeChain, steps } as any);
+      await load(true);
+    } catch (err: any) {
+      notifications.error(`Reorder failed: ${err?.message ?? err}`);
+    }
+  }
+
+  async function runChainReal() {
+    if (!activeChain || running) return;
+    const a = await getApi();
+    if (!a) return;
+    runPhase = 'running';
+    running = true;
+    stepOutputs = new Map();
+    stepRunning = new Set();
+    expandedOutputs = new Set();
+    try {
+      await a.RunChain(activeChain.id, chainInput, activeChain.cwd ?? '');
+    } catch (err: any) {
+      running = false;
+      runPhase = 'done';
+      runFinalStatus = 'failed';
       notifications.error(`Run failed: ${err?.message ?? err}`);
     }
   }
 
-  // ----- minimap bounds -----
-  const mmBounds = $derived(
-    (() => {
-      if (canvasNodes.length === 0) return { bx: 0, by: 0, bw: 1, bh: 1, ms: 1 };
-      const bx = Math.min(...canvasNodes.map((n) => n.x), 0);
-      const by = Math.min(...canvasNodes.map((n) => n.y), 0);
-      const bw = Math.max(...canvasNodes.map((n) => n.x + NW)) - bx + 40;
-      const bh = Math.max(...canvasNodes.map((n) => n.y + NH)) - by + 40;
-      const ms = Math.min(150 / bw, 90 / bh);
-      return { bx, by, bw, bh, ms };
-    })(),
-  );
+  function toggleOutput(i: number) {
+    const next = new Set(expandedOutputs);
+    if (next.has(i)) next.delete(i); else next.add(i);
+    expandedOutputs = next;
+  }
 
-  function nodeStateColor(s: CanvasNode['state']): string {
-    if (s === 'run') return 'var(--accent)';
-    if (s === 'done') return 'var(--run)';
-    return 'var(--text-faint)';
+  function truncateOutput(s: string, max = 2000): string {
+    if (s.length <= max) return s;
+    return s.slice(0, max) + `\n… (${s.length - max} more chars)`;
   }
 </script>
 
@@ -511,7 +409,7 @@
       </div>
     </div>
     <p style="color: var(--text-faint); font-size: 13px; margin: -4px 0 22px;">
-      Orchestration graphs — each wires playbooks, agents and tools into a flow. Open one to edit on the canvas.
+      Sequential agent pipelines — each step runs an agent or playbook, passing its output to the next via <code style="font-size:11px;">&#123;&#123;prev.output&#125;&#125;</code>. Open a chain to edit steps, set a prompt template, and run it with an input.
     </p>
 
     {#if loading}
@@ -535,7 +433,7 @@
             onkeydown={(e) => { if (e.key === 'Enter') activeId = c.id; }}
             style="padding:0;overflow:hidden;text-align:left;cursor:pointer;display:flex;flex-direction:column;border-left:3px solid var(--task);"
           >
-            <!-- thumb -->
+            <!-- thumbnail -->
             <div style="background: var(--bg-sunken); background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px); background-size: 14px 14px; height: 132px; position: relative;">
               <svg width="100%" height="132" viewBox="0 0 300 132" preserveAspectRatio="xMidYMid meet" style="display:block;">
                 {#each preview.edges as e, i (i)}
@@ -574,8 +472,7 @@
                 <span style="color: var(--text-faint);">↗</span>
               </div>
               <div class="mono" style="font-size:11px;color: var(--text-faint);margin-top:7px;display:flex;gap:10px;align-items:center;">
-                <span>{preview.nodes.length} nodes</span>
-                <span>{preview.edges.length} edges</span>
+                <span>{c.steps.length} steps</span>
                 <span style="margin-left:auto;">{recent.length} runs</span>
                 {#if c.workspace_profile && c.workspace_profile !== 'global'}
                   <span class="tag" style="color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--bg));">{c.workspace_profile}</span>
@@ -597,180 +494,230 @@
       </div>
     {/if}
   </div>
+
 {:else}
-  <!-- ===== CANVAS ===== -->
-  <div
-    bind:this={canvasEl}
-    class="scroll"
-    onmousedown={onCanvasMouseDown}
-    role="presentation"
-    style="position: relative; height: calc(100vh - 86px); width: 100%; overflow: hidden; cursor: grab; background-image: radial-gradient(var(--grid-dot) 1.4px, transparent 1.4px); background-size: {22 * zoom}px {22 * zoom}px; background-position: {panX}px {panY}px;"
-  >
+  <!-- ===== STEP-LIST EDITOR ===== -->
+  <div class="pi-main-inner editor-wrap" style="padding: var(--panel-padding);">
+
     <!-- toolbar -->
-    <div class="chain-toolbar" style="position:absolute;top:18px;left:22px;right:22px;z-index:10;display:flex;align-items:center;gap:12px;pointer-events:none;">
-      <div style="pointer-events:auto;display:flex;align-items:center;gap:12px;">
-        <button class="btn ghost sm" onclick={() => (activeId = null)} title="all chains">←</button>
-        <div>
-          <input
-            class="chain-name-input"
-            bind:value={editName}
-            onblur={(e) => { (e.target as HTMLInputElement).style.borderBottomColor = 'transparent'; saveChainName(); }}
-            onkeydown={(e) => { if (e.key === 'Enter') { saveChainName(); (e.target as HTMLInputElement).blur(); } }}
-            onfocus={(e) => { (e.target as HTMLInputElement).style.borderBottomColor = 'var(--accent)'; }}
-            style="font-size:26px;font-weight:700;color:var(--accent);background:transparent;border:none;border-bottom:1px solid transparent;outline:none;width:260px;padding:0;font-family:inherit;cursor:text;"
-          />
-          <div class="mono" style="font-size:11.5px;color: var(--text-faint);margin-top:2px;">
-            {scopeLabel} · {canvasNodes.length} nodes · {canvasEdges.length} edges
-          </div>
-        </div>
-      </div>
-      <div style="margin-left:auto;display:flex;gap:8px;pointer-events:auto;position:relative;">
-        <button class="btn sm" onclick={() => (addOpen = !addOpen)}>+ node</button>
-        <button class="btn sm {running ? '' : 'primary'}" onclick={runChainReal} disabled={running}>
-          {running ? 'running…' : '▶ run chain'}
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;">
+      <button class="btn ghost sm" onclick={() => (activeId = null)}>← chains</button>
+      <input
+        class="chain-name-input"
+        bind:value={editName}
+        onblur={() => saveChainName()}
+        onkeydown={(e) => { if (e.key === 'Enter') { saveChainName(); (e.target as HTMLInputElement).blur(); } }}
+        style="font-size:20px;font-weight:700;color:var(--accent);background:transparent;border:none;border-bottom:1px solid transparent;outline:none;flex:1;min-width:160px;padding:0;font-family:inherit;"
+        onfocus={(e) => ((e.target as HTMLInputElement).style.borderBottomColor = 'var(--accent)')}
+      />
+      <span class="scope-chip mono">{scopeLabel}</span>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+        {#if runPhase === 'done'}
+          <span class="mono" style="font-size:12px;color:{runFinalStatus === 'success' ? 'var(--run)' : 'var(--fail)'};">
+            {runFinalStatus === 'success' ? '✓ done' : '✗ failed'}
+          </span>
+        {/if}
+        {#if running}<Spinner />{/if}
+        <button class="btn primary" onclick={runChainReal} disabled={running || activeChain.steps.length === 0}>
+          {running ? 'running…' : '▶ run'}
         </button>
-        {#if addOpen}
-          <div class="chain-add" style="position:absolute;top:40px;right:0;width:280px;background: var(--bg-elev);border:1px solid var(--border);border-radius: var(--r-lg);box-shadow: var(--shadow-lg);padding:8px;z-index:20;">
-            <div style="display:flex;align-items:center;padding:6px 8px 8px;">
-              <span class="mono" style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color: var(--text-muted);flex:1;">» add node</span>
-              <button class="iconbtn" style="width:22px;height:22px;" onclick={() => (addOpen = false)}>×</button>
+      </div>
+    </div>
+
+    <!-- input field -->
+    <div class="card" style="margin-bottom:16px;padding:14px 16px;">
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px;">
+        <span style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;">Input</span>
+        <code class="mono" style="font-size:11px;color:var(--text-faint);">&#123;&#123;input&#125;&#125;</code>
+        <span style="font-size:11px;color:var(--text-faint);margin-left:auto;">passed to the first step and available as &#123;&#123;input&#125;&#125; in any step template</span>
+      </div>
+      <textarea
+        class="step-textarea"
+        bind:value={chainInput}
+        rows={3}
+        placeholder="Enter the chain input value…"
+        style="width:100%;resize:vertical;"
+      ></textarea>
+    </div>
+
+    <!-- steps -->
+    {#if activeChain.steps.length === 0}
+      <div class="card" style="padding:32px;text-align:center;color:var(--text-faint);margin-bottom:16px;">
+        No steps yet — add one below.
+      </div>
+    {:else}
+      <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:12px;">
+        {#each activeChain.steps as step, i (i)}
+          {@const out = stepOutputs.get(i)}
+          {@const isRunning = stepRunning.has(i)}
+          {@const expanded = expandedOutputs.has(i)}
+
+          <div class="card step-card" style="border-left: 3px solid {step.type === 'playbook' ? 'var(--task)' : 'var(--run)'};">
+            <!-- step header -->
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+              <span class="mono" style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-faint);padding:2px 7px;border:1px solid var(--border);border-radius:99px;">step {i + 1}</span>
+              <span class="mono" style="font-size:10px;color:{step.type === 'playbook' ? 'var(--task)' : 'var(--run)'};">{step.type ?? 'agent'}</span>
+              {#if isRunning}
+                <Spinner />
+              {:else if out}
+                <span class="mono" style="font-size:10px;color:{out.status === 'success' ? 'var(--run)' : 'var(--fail)'};">
+                  {out.status === 'success' ? '✓' : '✗'} {out.status}
+                </span>
+              {/if}
+              <div style="margin-left:auto;display:flex;gap:4px;">
+                <button class="iconbtn" onclick={() => moveStep(i, -1)} disabled={i === 0} title="move up" aria-label="move step up">↑</button>
+                <button class="iconbtn" onclick={() => moveStep(i, 1)} disabled={i === activeChain.steps.length - 1} title="move down" aria-label="move step down">↓</button>
+                <button class="iconbtn" onclick={() => deleteStep(i)} title="remove step" aria-label="remove step" style="color:var(--fail);">×</button>
+              </div>
             </div>
-            <div class="mono" style="font-size:9.5px;color: var(--text-faint);padding:2px 9px;letter-spacing:.08em;">PRIMITIVES</div>
-            <div style="display:flex;gap:6px;padding:4px 6px 8px;">
-              {#each ['trigger', 'agent', 'tool'] as t (t)}
-                <button class="btn sm ghost" onclick={() => addNode(t as NodeType)} style="flex:1;flex-direction:column;gap:4px;padding:9px 4px;">
-                  <span style="width:10px;height:10px;border-radius:99px;background: {NODE_META[t as NodeType].color};"></span>
-                  <span class="mono" style="font-size:10px;">{t}</span>
-                </button>
-              {/each}
-            </div>
-            {#if availablePlaybooks.length > 0}
-              <div class="mono" style="font-size:9.5px;color: var(--text-faint);padding:6px 9px 2px;letter-spacing:.08em;border-top:1px solid var(--border-subtle);margin-top:4px;">PLAYBOOKS</div>
-              <div style="max-height:160px;overflow-y:auto;padding:2px 4px 4px;">
-                {#each availablePlaybooks as pb (pb.id)}
-                  <button
-                    class="btn sm ghost"
-                    style="width:100%;text-align:left;justify-content:flex-start;padding:5px 8px;gap:6px;"
-                    onclick={() => addPlaybookNode(pb)}
+
+            {#if step.type === 'playbook'}
+              <!-- playbook step -->
+              <div class="field-row">
+                <div class="field-label">Playbook</div>
+                {#if availablePlaybooks.length === 0}
+                  <span style="font-size:13px;color:var(--text-faint);">no playbooks available for {scopeLabel}</span>
+                {:else}
+                  <select
+                    class="step-select"
+                    value={step.playbook_id ?? ''}
+                    onchange={(e) => saveStep(i, { ...step, playbook_id: (e.target as HTMLSelectElement).value })}
                   >
-                    <span style="width:8px;height:8px;border-radius:99px;background:var(--task);flex-shrink:0;"></span>
-                    <span style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{pb.name}</span>
-                  </button>
-                {/each}
+                    {#each availablePlaybooks as pb (pb.id)}
+                      <option value={pb.id}>{pb.name}</option>
+                    {/each}
+                  </select>
+                {/if}
+              </div>
+            {:else}
+              <!-- agent step -->
+              <div class="field-row">
+                <div class="field-label">Agent</div>
+                {#if chainable.length === 0}
+                  <span style="font-size:13px;color:var(--text-faint);">no usable agents detected</span>
+                {:else}
+                  <select
+                    class="step-select"
+                    value={step.agent_id}
+                    onchange={(e) => saveStep(i, { ...step, agent_id: (e.target as HTMLSelectElement).value })}
+                  >
+                    {#each chainable as agent (agent.id)}
+                      <option value={agent.id}>{agent.label}</option>
+                    {/each}
+                  </select>
+                {/if}
+              </div>
+
+              <div class="field-row">
+                <div class="field-label">
+                  Prompt template
+                  <span class="mono field-hint">&#123;&#123;input&#125;&#125; · &#123;&#123;prev.output&#125;&#125; · &#123;&#123;files&#125;&#125;</span>
+                </div>
+                <textarea
+                  class="step-textarea"
+                  value={step.prompt_template}
+                  rows={4}
+                  placeholder="&#123;&#123;input&#125;&#125;"
+                  onblur={(e) => saveStep(i, { ...step, prompt_template: (e.target as HTMLTextAreaElement).value })}
+                ></textarea>
+              </div>
+
+              <div class="field-row">
+                <div class="field-label">
+                  Working directory
+                  <span class="field-hint">optional — overrides chain cwd for this step</span>
+                </div>
+                <input
+                  class="step-input"
+                  value={step.cwd}
+                  placeholder="(inherit chain cwd)"
+                  onblur={(e) => saveStep(i, { ...step, cwd: (e.target as HTMLInputElement).value })}
+                />
+              </div>
+            {/if}
+
+            <!-- step output -->
+            {#if out || isRunning}
+              <div style="margin-top:12px;border-top:1px solid var(--border-subtle);padding-top:10px;">
+                <button
+                  class="btn ghost sm"
+                  onclick={() => toggleOutput(i)}
+                  style="font-size:11px;margin-bottom:{expanded ? '8px' : '0'};"
+                >
+                  {expanded ? '▾ hide output' : '▸ show output'}
+                  {#if out && out.output}
+                    <span class="mono" style="color:var(--text-faint);margin-left:6px;">{out.output.split('\n').length} lines</span>
+                  {/if}
+                </button>
+                {#if expanded}
+                  {#if isRunning}
+                    <div style="color:var(--text-faint);font-size:12px;">running…</div>
+                  {:else if out}
+                    {#if out.error}
+                      <pre class="output-block error-block">{out.error}</pre>
+                    {/if}
+                    {#if out.output}
+                      <pre class="output-block">{truncateOutput(out.output)}</pre>
+                    {/if}
+                    {#if out.stderr}
+                      <pre class="output-block stderr-block">{truncateOutput(out.stderr)}</pre>
+                    {/if}
+                  {/if}
+                {/if}
               </div>
             {/if}
           </div>
-        {/if}
+        {/each}
       </div>
-    </div>
+    {/if}
 
-    <!-- world -->
-    <div style="position:absolute;left:0;top:0;transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: 0 0;">
-      <svg style="position:absolute;overflow:visible;pointer-events:none;left:0;top:0;" width="10" height="10">
-        {#each canvasEdges as e, i (i)}
-          {@const a = canvasNodes.find((n) => n.id === e.from)}
-          {@const b = canvasNodes.find((n) => n.id === e.to)}
-          {#if a && b}
-            {@const p = edgePath(a, b)}
-            <path
-              d={p.d}
-              fill="none"
-              stroke={e.on ? 'var(--accent)' : 'var(--border-strong)'}
-              stroke-width={e.on ? 2.4 : 1.6}
-              stroke-dasharray={e.on ? '6 5' : '0'}
-              class={e.on ? 'edge-anim' : ''}
-            />
-          {/if}
-        {/each}
-        {#if connecting}
-          {@const x1 = connecting.x1}
-          {@const y1 = connecting.y1}
-          {@const x2 = connecting.x2}
-          {@const y2 = connecting.y2}
-          {@const dx = Math.max(40, Math.abs(x2 - x1) * 0.5)}
-          <path d={`M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`} fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 4" />
-        {/if}
-      </svg>
-
-      {#each canvasEdges as e, i (i)}
-        {@const a = canvasNodes.find((n) => n.id === e.from)}
-        {@const b = canvasNodes.find((n) => n.id === e.to)}
-        {#if a && b && e.label}
-          {@const p = edgePath(a, b)}
-          <div class="mono" style="position:absolute;left:{p.mx}px;top:{p.my}px;transform: translate(-50%,-50%);font-size:9.5px;color: var(--text-muted);background: var(--bg);border:1px solid var(--border);padding:1px 6px;border-radius:99px;white-space:nowrap;pointer-events:none;">
-            {e.label}
+    <!-- add step -->
+    <div style="display:flex;gap:8px;margin-bottom:24px;flex-wrap:wrap;position:relative;">
+      <button class="btn sm" onclick={addAgentStep}>+ agent step</button>
+      {#if availablePlaybooks.length > 0}
+        <button class="btn sm ghost" onclick={() => (playbookPickerOpen = !playbookPickerOpen)}>+ playbook step</button>
+        {#if playbookPickerOpen}
+          <div class="chain-add" style="position:absolute;top:38px;left:0;width:280px;background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-lg);padding:8px;z-index:20;">
+            <div style="display:flex;align-items:center;padding:4px 8px 8px;">
+              <span class="mono" style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);flex:1;">pick playbook</span>
+              <button class="iconbtn" style="width:22px;height:22px;" onclick={() => (playbookPickerOpen = false)}>×</button>
+            </div>
+            <div style="max-height:200px;overflow-y:auto;padding:2px 4px 4px;">
+              {#each availablePlaybooks as pb (pb.id)}
+                <button
+                  class="btn sm ghost"
+                  style="width:100%;text-align:left;justify-content:flex-start;padding:5px 8px;gap:6px;"
+                  onclick={() => addPlaybookStepFromPicker(pb)}
+                >
+                  <span style="width:8px;height:8px;border-radius:99px;background:var(--task);flex-shrink:0;"></span>
+                  <span style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{pb.name}</span>
+                </button>
+              {/each}
+            </div>
           </div>
         {/if}
-      {/each}
-
-      {#each canvasNodes as n (n.id)}
-        {@const m = NODE_META[n.type]}
-        {@const ring = sel === n.id}
-        <div
-          class="chain-node"
-          onmousedown={(e) => onNodeMouseDown(e, n.id)}
-          role="presentation"
-          style="position:absolute;left:{n.x}px;top:{n.y}px;width:{NW}px;min-height:{NH}px;cursor:grab;background: var(--bg-elev);border: 1px solid {ring ? m.color : 'var(--border)'};border-left: 3px solid {m.color};border-radius: var(--r-md); box-shadow: {ring ? 'var(--shadow-md)' : 'var(--shadow-sm)'}; padding: 11px 13px; user-select: none; {n.state === 'run' ? `outline: 2px solid color-mix(in srgb, ${m.color} 50%, transparent); outline-offset: 2px;` : ''}"
-        >
-          {#if n.type !== 'trigger'}
-            <span
-              class="chain-handle chain-handle-in"
-              data-node-id={n.id}
-              style="position:absolute;left:-6px;top:{NH / 2 - 5}px;width:10px;height:10px;border-radius:99px;background: var(--bg-elev);border: 2px solid {m.color};"
-            ></span>
-          {/if}
-          <span
-            class="chain-handle chain-handle-out"
-            data-node-id={n.id}
-            onmousedown={(e) => onOutputHandleDown(e, n.id)}
-            role="presentation"
-            style="position:absolute;right:-6px;top:{NH / 2 - 5}px;width:10px;height:10px;border-radius:99px;background: var(--bg-elev);border: 2px solid {m.color};cursor:crosshair;"
-          ></span>
-          <div style="display:flex;align-items:center;gap:7px;">
-            <span class="mono" style="font-size:9px;letter-spacing:.1em;text-transform:uppercase;color: {m.color};flex:1;">{m.label}</span>
-            <span style="width:7px;height:7px;border-radius:99px;background: {nodeStateColor(n.state)};"></span>
-            {#if ring}
-              <button
-                onclick={(e) => { e.stopPropagation(); void delNode(n.id); }}
-                class="iconbtn"
-                style="width:18px;height:18px;"
-                aria-label="delete node"
-              >×</button>
-            {/if}
-          </div>
-          <div style="font-size:13.5px;font-weight:700;margin-top:5px;color: var(--text);">{n.title}</div>
-          {#if n.sub}
-            <div class="mono" style="font-size:10.5px;color: var(--text-faint);margin-top:2px;">{n.sub}</div>
-          {/if}
-        </div>
-      {/each}
+      {/if}
     </div>
 
-    <!-- zoom controls -->
-    <div class="chain-mini" style="position:absolute;bottom:18px;left:22px;z-index:10;display:flex;gap:6px;">
-      <button class="btn sm" onclick={() => (zoom = Math.min(1.6, +(zoom + 0.15).toFixed(2)))}>+</button>
-      <button class="btn sm" onclick={() => (zoom = Math.max(0.5, +(zoom - 0.15).toFixed(2)))}>−</button>
-      <button class="btn sm" onclick={() => { zoom = 1; panX = 30; panY = 10; }}>fit</button>
-      <span class="mono" style="align-self:center;font-size:11px;color: var(--text-faint);margin-left:4px;">{Math.round(zoom * 100)}%</span>
+    <!-- chain cwd -->
+    <div class="card" style="padding:14px 16px;">
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px;">
+        <span style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;">Chain cwd</span>
+        <span style="font-size:11px;color:var(--text-faint);">default working directory for all steps</span>
+      </div>
+      <input
+        class="step-input"
+        value={activeChain.cwd}
+        placeholder="(profile home)"
+        onblur={async (e) => {
+          const a = await getApi();
+          if (!a || !activeChain) return;
+          try { await a.SaveChain({ ...activeChain, cwd: (e.target as HTMLInputElement).value } as any); await load(true); }
+          catch (err: any) { notifications.error(`Save cwd failed: ${err?.message ?? err}`); }
+        }}
+      />
     </div>
 
-    <!-- minimap -->
-    <div class="chain-mini card" style="position:absolute;bottom:18px;right:22px;z-index:10;width:160px;height:100px;overflow:hidden;padding:0;">
-      <svg width="160" height="100">
-        {#each canvasNodes as n (n.id)}
-          {@const m = NODE_META[n.type]}
-          <rect
-            x={5 + (n.x - mmBounds.bx) * mmBounds.ms}
-            y={5 + (n.y - mmBounds.by) * mmBounds.ms}
-            width={NW * mmBounds.ms}
-            height={NH * mmBounds.ms}
-            rx="2"
-            fill={m.color}
-            opacity="0.85"
-          />
-        {/each}
-      </svg>
-    </div>
   </div>
 {/if}
 
@@ -791,6 +738,8 @@
 
 <style>
   .pi-main-inner { max-width: 1280px; margin: 0 auto; }
+  .editor-wrap { max-width: 820px; }
+
   .scope-chip {
     font-size: 11px;
     color: var(--text-faint);
@@ -801,4 +750,88 @@
     text-transform: lowercase;
     letter-spacing: .04em;
   }
+
+  .step-card { padding: 14px 16px; }
+
+  .field-row { margin-bottom: 12px; }
+  .field-row:last-child { margin-bottom: 0; }
+
+  .field-label {
+    display: block;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-bottom: 5px;
+  }
+
+  .field-hint {
+    font-size: 10.5px;
+    color: var(--text-faint);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+    margin-left: 6px;
+  }
+
+  .step-select {
+    width: 100%;
+    padding: 7px 10px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+  }
+
+  .step-input {
+    width: 100%;
+    padding: 7px 10px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+    box-sizing: border-box;
+  }
+
+  .step-textarea {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    color: var(--text);
+    font-size: 13px;
+    font-family: var(--font-mono, monospace);
+    box-sizing: border-box;
+    resize: vertical;
+    line-height: 1.5;
+  }
+
+  .step-textarea:focus, .step-select:focus, .step-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .output-block {
+    background: var(--bg-sunken);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    padding: 10px 12px;
+    font-size: 11.5px;
+    font-family: var(--font-mono, monospace);
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--text-muted);
+    max-height: 300px;
+    overflow-y: auto;
+    margin: 0 0 6px;
+  }
+
+  .error-block { border-color: color-mix(in srgb, var(--fail) 40%, var(--border)); color: var(--fail); }
+  .stderr-block { color: var(--text-faint); border-style: dashed; }
 </style>
