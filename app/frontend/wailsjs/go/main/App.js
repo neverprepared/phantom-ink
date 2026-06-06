@@ -6,6 +6,18 @@ export function AddChannelParticipant(arg1, arg2) {
   return window['go']['main']['App']['AddChannelParticipant'](arg1, arg2);
 }
 
+export function AttentionOpenTarget(arg1) {
+  return window['go']['main']['App']['AttentionOpenTarget'](arg1);
+}
+
+export function AttentionRespond(arg1, arg2) {
+  return window['go']['main']['App']['AttentionRespond'](arg1, arg2);
+}
+
+export function AttentionRetry(arg1) {
+  return window['go']['main']['App']['AttentionRetry'](arg1);
+}
+
 export function BrowseFolder() {
   return window['go']['main']['App']['BrowseFolder']();
 }
@@ -528,6 +540,10 @@ export function StopSession(arg1) {
 
 export function SubmitTask(arg1) {
   return window['go']['main']['App']['SubmitTask'](arg1);
+}
+
+export function SubmitTaskAndWait(arg1) {
+  return window['go']['main']['App']['SubmitTaskAndWait'](arg1);
 }
 
 export function TailLogs(arg1, arg2) {

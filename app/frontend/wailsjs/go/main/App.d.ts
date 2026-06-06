@@ -6,6 +6,12 @@ import {opensearch} from '../models';
 
 export function AddChannelParticipant(arg1:string,arg2:brainbox.ChannelParticipantRequest):Promise<brainbox.Channel>;
 
+export function AttentionOpenTarget(arg1:string):Promise<main.OpenTarget>;
+
+export function AttentionRespond(arg1:string,arg2:string):Promise<void>;
+
+export function AttentionRetry(arg1:string):Promise<void>;
+
 export function BrowseFolder():Promise<string>;
 
 export function BrowseProfileFiles(arg1:string):Promise<Array<string>>;
@@ -96,7 +102,7 @@ export function GetDiskOverview():Promise<main.DiskOverview>;
 
 export function GetDockerStats():Promise<Array<main.ContainerStat>>;
 
-export function GetHubState():Promise<brainbox.HubState>;
+export function GetHubState():Promise<main.HubStateView>;
 
 export function GetLANIP():Promise<string>;
 
@@ -144,7 +150,7 @@ export function GetSystemInfo():Promise<main.SystemInfo>;
 
 export function GetTask(arg1:string):Promise<main.TaskRow>;
 
-export function GetTaskLineage(arg1:string):Promise<Array<brainbox.Task>>;
+export function GetTaskLineage(arg1:string):Promise<Array<main.HubTask>>;
 
 export function GetTaskStats(arg1:number):Promise<main.TaskStats>;
 
@@ -174,7 +180,7 @@ export function ListCollectJobs(arg1:string):Promise<Array<main.CollectJob>>;
 
 export function ListCollectedEntries(arg1:string,arg2:string,arg3:string):Promise<Array<main.CollectedEntry>>;
 
-export function ListHubTasks(arg1:string,arg2:string):Promise<Array<brainbox.Task>>;
+export function ListHubTasks(arg1:string,arg2:string):Promise<Array<main.HubTask>>;
 
 export function ListOllamaModels():Promise<Array<brainbox.OllamaModel>>;
 
@@ -266,7 +272,9 @@ export function StopService(arg1:string):Promise<void>;
 
 export function StopSession(arg1:string):Promise<brainbox.SessionActionResponse>;
 
-export function SubmitTask(arg1:brainbox.SubmitTaskRequest):Promise<brainbox.Task>;
+export function SubmitTask(arg1:brainbox.SubmitTaskRequest):Promise<main.HubTask>;
+
+export function SubmitTaskAndWait(arg1:brainbox.WaitForTaskRequest):Promise<brainbox.WaitForTaskResponse>;
 
 export function TailLogs(arg1:string,arg2:number):Promise<Array<opensearch.LogEntry>>;
 

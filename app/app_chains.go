@@ -339,6 +339,27 @@ done:
 		logErr("failed to persist chain run %s: %v", runID, err)
 	}
 
+	if status == "failed" && a.db != nil {
+		ctxJSON, _ := json.Marshal(map[string]any{
+			"chain_id":          chainID,
+			"input":             initialInput,
+			"cwd":               baseCwd,
+			"workspace_profile": profileName,
+		})
+		_ = a.db.InsertAttentionItem(AttentionItemRow{
+			ID:          "chain:" + runID,
+			Source:      "chain",
+			SourceID:    runID,
+			Workspace:   profileName,
+			Title:       "Chain step failed",
+			Subtitle:    chainNameOrID(a.db, chainID),
+			Reason:      truncate(failure, 200),
+			Actions:     []string{"retry", "open", "dismiss"},
+			ContextJSON: string(ctxJSON),
+			CreatedAt:   time.Now().UnixMilli(),
+		})
+	}
+
 	emit(ChainRunEvent{Phase: "run:done", Status: status, Error: failure})
 	if status != "success" {
 		return fmt.Errorf("%s", failure)

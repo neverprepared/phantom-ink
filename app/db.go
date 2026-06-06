@@ -316,6 +316,28 @@ var migrations = []migration{
 			dismissed_at INTEGER NOT NULL DEFAULT 0
 		);
 	`},
+	// v18: producer-driven attention items. Agents and the task queue insert
+	// directly into this table at the moment of failure; the aggregator unions
+	// it with the two legacy scraped sources. resolved_at=NULL means active.
+	{version: 18, sql: `
+		CREATE TABLE IF NOT EXISTS attention_items (
+			id           TEXT PRIMARY KEY,
+			source       TEXT NOT NULL,
+			source_id    TEXT NOT NULL,
+			workspace    TEXT NOT NULL DEFAULT '',
+			title        TEXT NOT NULL DEFAULT '',
+			subtitle     TEXT NOT NULL DEFAULT '',
+			reason       TEXT NOT NULL DEFAULT '',
+			url          TEXT NOT NULL DEFAULT '',
+			actions_json TEXT NOT NULL DEFAULT '[]',
+			context_json TEXT NOT NULL DEFAULT '{}',
+			user_reply   TEXT NOT NULL DEFAULT '',
+			created_at   INTEGER NOT NULL DEFAULT 0,
+			resolved_at  INTEGER
+		);
+		CREATE INDEX IF NOT EXISTS idx_attention_active
+			ON attention_items(resolved_at, workspace, created_at DESC);
+	`},
 }
 
 func (db *DB) migrate() error {

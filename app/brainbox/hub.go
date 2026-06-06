@@ -1,6 +1,9 @@
 package brainbox
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Task represents a hub task.
 type Task struct {
@@ -282,4 +285,116 @@ func (c *Client) UpdateRepo(name string, req UpdateRepoRequest) (Repo, error) {
 func (c *Client) DeleteRepo(name string) error {
 	path := fmt.Sprintf("/api/hub/repos/%s", name)
 	return c.delete(path, nil)
+}
+
+// WaitForTaskRequest is the input for SubmitTaskAndWait.
+type WaitForTaskRequest struct {
+	Description      string `json:"description"`
+	AgentName        string `json:"agent_name"`
+	RepoURL          string `json:"repo_url,omitempty"`
+	WorkspaceProfile string `json:"workspace_profile,omitempty"`
+	WorkspaceHome    string `json:"workspace_home,omitempty"`
+	TimeoutSec       int    `json:"timeout_sec,omitempty"` // 0 → 300
+}
+
+// WaitForTaskResponse is the result from SubmitTaskAndWait.
+type WaitForTaskResponse struct {
+	TaskID string         `json:"task_id"`
+	Status string         `json:"status"`           // "completed" | "failed" | "timeout"
+	Result map[string]any `json:"result,omitempty"`
+	Error  string         `json:"error,omitempty"`
+}
+
+// SubmitTaskAndWait submits a hub task and polls until it reaches a terminal
+// state, then returns the outcome. Polling is client-side (3s interval) so no
+// brainbox server changes are required. A future PR can replace polling with a
+// server-push wait endpoint while keeping this call-site unchanged.
+func (c *Client) SubmitTaskAndWait(req WaitForTaskRequest) (WaitForTaskResponse, error) {
+	timeoutSec := req.TimeoutSec
+	if timeoutSec <= 0 {
+		timeoutSec = 300
+	}
+
+	submitted, err := c.SubmitTask(SubmitTaskRequest{
+		Description:      req.Description,
+		AgentName:        req.AgentName,
+		RepoURL:          req.RepoURL,
+		WorkspaceProfile: req.WorkspaceProfile,
+		WorkspaceHome:    req.WorkspaceHome,
+	})
+	if err != nil {
+		return WaitForTaskResponse{}, fmt.Errorf("submit task: %w", err)
+	}
+
+	deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			var tasks []Task
+			path := fmt.Sprintf("/api/hub/tasks/%s", submitted.ID)
+			var single Task
+			if err := c.get(path, &single); err != nil {
+				// If individual fetch fails, fall back to list search.
+				tasks, err = c.ListTasks("", "")
+				if err != nil {
+					if time.Now().After(deadline) {
+						return WaitForTaskResponse{TaskID: submitted.ID, Status: "timeout"}, nil
+					}
+					continue
+				}
+				for _, t := range tasks {
+					if t.ID == submitted.ID {
+						single = t
+						break
+					}
+				}
+			}
+			switch single.Status {
+			case "completed":
+				var result map[string]any
+				if m, ok := single.Result.(map[string]any); ok {
+					result = m
+				}
+				return WaitForTaskResponse{
+					TaskID: submitted.ID,
+					Status: "completed",
+					Result: result,
+				}, nil
+			case "failed":
+				return WaitForTaskResponse{
+					TaskID: submitted.ID,
+					Status: "failed",
+					Error:  errString(single.Error),
+				}, nil
+			case "cancelled":
+				return WaitForTaskResponse{
+					TaskID: submitted.ID,
+					Status: "failed",
+					Error:  "task cancelled",
+				}, nil
+			}
+			if time.Now().After(deadline) {
+				return WaitForTaskResponse{TaskID: submitted.ID, Status: "timeout"}, nil
+			}
+		}
+	}
+}
+
+// errString flattens the brainbox Task.Error (interface{}) to a plain string.
+func errString(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	if m, ok := v.(map[string]any); ok {
+		if msg, ok := m["message"].(string); ok {
+			return msg
+		}
+	}
+	return fmt.Sprint(v)
 }

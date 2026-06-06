@@ -171,3 +171,74 @@ Always use the `$BRAINBOX_HUB_URL` environment variable (defaults to `http://hub
 | Create task | POST | `/api/hub/tasks` |
 | Get hub state | GET | `/api/hub/state` |
 | Signal completion | POST | `/api/hub/messages` (lifecycle event) |
+
+## Programmatic API (Python Supervisor SDK)
+
+The `brainbox.supervisor` module provides a synchronous, A2A-adjacent SDK for
+spawning workers and waiting on their results from within a Python session or
+script running inside brainbox.
+
+### Setup
+
+```python
+import os
+from brainbox.supervisor import Supervisor
+
+hub_url = os.environ.get("BRAINBOX_HUB_URL", "http://hub:9999")
+token   = open("/run/secrets/agent-token").read().strip()
+
+sup = Supervisor(hub_url=hub_url, agent_token=token)
+```
+
+### Discover available agents
+
+```python
+agents = sup.list_available_agents()
+for a in agents:
+    print(f"{a.name} ({a.spawn_mode}): {a.description}")
+```
+
+### Spawn a worker and wait for the result
+
+```python
+handle = sup.spawn_worker(
+    description="Implement the feature described in JIRA-1234",
+    agent="worker",
+    repo_url=os.environ["BRAINBOX_REPO_URL"],
+    wait=True,           # blocks until terminal state or timeout
+    timeout_sec=600,
+)
+if handle.status == "completed":
+    print("Done:", handle.result)
+elif handle.status == "failed":
+    print("Failed:", handle.error)
+else:
+    print("Timed out — task still running:", handle.task_id)
+```
+
+### Fire-and-forget (non-blocking)
+
+```python
+handle = sup.spawn_worker("Write tests for the auth module", agent="worker")
+# ... do other work ...
+final = sup.wait_for_task(handle.task_id, timeout_sec=300)
+```
+
+### Send a directed message to another agent
+
+```python
+sup.message_agent(
+    recipient="merge-queue",
+    body="Status check — any PRs ready to merge?",
+)
+```
+
+### Design notes
+
+The SDK is shaped to be A2A-adapter-compatible:
+- `list_available_agents` → Agent Cards in A2A terms
+- `spawn_worker` → A2A task delegation
+- `message_agent` → A2A coordination primitive
+
+A future PR can plug in a full A2A transport adapter without changing call
+sites. See `PLAN.md` (Phase C, Out of scope) for the full A2A migration path.
