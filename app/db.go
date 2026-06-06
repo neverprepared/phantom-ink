@@ -338,6 +338,15 @@ var migrations = []migration{
 		CREATE INDEX IF NOT EXISTS idx_attention_active
 			ON attention_items(resolved_at, workspace, created_at DESC);
 	`},
+	// v19: re-assert dismissed_attention for DBs that recorded v16 in
+	// schema_version without actually creating the table (happened in
+	// development when migration numbering was reordered).
+	{version: 19, sql: `
+		CREATE TABLE IF NOT EXISTS dismissed_attention (
+			id           TEXT PRIMARY KEY,
+			dismissed_at INTEGER NOT NULL DEFAULT 0
+		);
+	`},
 }
 
 func (db *DB) migrate() error {

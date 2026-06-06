@@ -24,7 +24,6 @@
   import SessionsMiniWidget    from '../widgets/SessionsMiniWidget.svelte';
   import WidgetDrawer          from '../components/WidgetDrawer.svelte';
 
-  import type { DashboardCollection } from '../widgets/types';
 
   // --- Data state ---
   let sessions    = $state<any[]>([]);
@@ -118,53 +117,10 @@
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let drawerOpen = $state(false);
 
-  // --- Collections ---
-  let activeCollectionId = $state<string | null>(null);
   let arrangeMode = $state(false);
 
-  let collections = $derived<DashboardCollection[]>(
-    dashboardState.layout?.collections ?? []
-  );
-
-  let activeCollection = $derived(
-    collections.find(c => c.id === activeCollectionId) ?? collections[0] ?? null
-  );
-
-  function addCollection(name: string): void {
-    const id = 'col-' + Date.now();
-    const updated = [...collections, { id, name }];
-    const layout = dashboardState.layout ?? { version: 1 as const, widgets: [] };
-    dashboardState.layout = { ...layout, collections: updated };
-    activeCollectionId = id;
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveLayout, 800);
-    // Reload grid to show empty collection
-    void reloadLayout(profileState.active?.name ?? '');
-  }
-
-  function switchCollection(id: string): void {
-    activeCollectionId = id;
-    void reloadLayout(profileState.active?.name ?? '');
-  }
-
-  function collectionWidgetCount(id: string): number {
-    return dashboardState.widgets.filter(w => w.collectionId === id).length;
-  }
-
-  function promptNewCollection(): void {
-    const name = window.prompt('Collection name?');
-    if (name?.trim()) addCollection(name.trim());
-  }
-
   function visibleWidgets(): WidgetInstance[] {
-    const all = dashboardState.widgets;
-    if (!activeCollectionId && collections.length === 0) return all;
-    const cid = activeCollectionId ?? collections[0]?.id ?? null;
-    if (!cid) return all;
-    // If no widgets have a collectionId, show all (backwards compatibility)
-    const hasCollectionWidgets = all.some(w => w.collectionId);
-    if (!hasCollectionWidgets) return all;
-    return all.filter(w => !w.collectionId || w.collectionId === cid);
+    return dashboardState.widgets;
   }
 
   const WIDGET_MAP: Record<WidgetKind, any> = {
@@ -257,14 +213,11 @@
     const a = await getApi();
     if (a) {
       try {
-        const layout = dashboardState.layout;
         await a.SaveDashboardLayout(
           profileState.active?.name ?? '',
           JSON.stringify({
             version: 1,
             widgets: updated,
-            collections: layout?.collections ?? [],
-            activeCollectionId: activeCollectionId ?? undefined,
           }),
         );
       } catch {}
@@ -291,11 +244,8 @@
 
   function handleAddWidget(w: WidgetInstance): void {
     if (!grid) return;
-    // Stamp the active collection onto new widgets
-    const cid = activeCollectionId ?? collections[0]?.id;
-    const stamped: WidgetInstance = cid ? { ...w, collectionId: cid } : w;
-    dashboardState.updateWidgets([...dashboardState.widgets, stamped]);
-    mountWidget(stamped);
+    dashboardState.updateWidgets([...dashboardState.widgets, w]);
+    mountWidget(w);
     drawerOpen = false;
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(saveLayout, 800);
@@ -332,13 +282,6 @@
       }
     }
     dashboardState.layout = layout;
-
-    // Restore active collection from saved layout
-    if (layout.activeCollectionId) {
-      activeCollectionId = layout.activeCollectionId;
-    } else if (layout.collections?.length) {
-      activeCollectionId = layout.collections[0].id;
-    }
 
     for (const w of visibleWidgets()) mountWidget(w);
   }
@@ -426,13 +369,6 @@
     dashboardState.layout = layout;
     _trackedProfile = profileState.active?.name ?? '';
 
-    // Restore active collection
-    if (layout.activeCollectionId) {
-      activeCollectionId = layout.activeCollectionId;
-    } else if (layout.collections?.length) {
-      activeCollectionId = layout.collections[0].id;
-    }
-
     grid = GridStack.init({
       column: 12,
       cellHeight: 60,
@@ -477,26 +413,14 @@
     <div class="datestamp">[ {formatDate(now)} ]</div>
   </div>
 
-  <div class="collections-bar">
-    <span class="collections-label">collections</span>
-    <div class="collection-pills">
-      {#each collections as c}
-        <button
-          class="ds-btn sm {activeCollectionId === c.id ? 'soft' : 'ghost'}"
-          onclick={() => switchCollection(c.id)}
-        >{c.name}<span class="pill-count">{collectionWidgetCount(c.id)}</span></button>
-      {/each}
-      <button class="ds-btn ghost sm icon-only" onclick={promptNewCollection} title="new collection">+</button>
-    </div>
-    <div class="collections-actions">
-      {#if arrangeMode}
-        <button class="ds-btn sm" onclick={() => drawerOpen = true}>+ widget</button>
-      {/if}
-      <button
-        class="ds-btn sm {arrangeMode ? 'primary' : ''}"
-        onclick={() => { arrangeMode = !arrangeMode; if (!arrangeMode) drawerOpen = false; }}
-      >{arrangeMode ? 'done' : 'arrange'}</button>
-    </div>
+  <div class="dashboard-actions">
+    {#if arrangeMode}
+      <button class="ds-btn sm" onclick={() => drawerOpen = true}>+ widget</button>
+    {/if}
+    <button
+      class="ds-btn sm {arrangeMode ? 'primary' : ''}"
+      onclick={() => { arrangeMode = !arrangeMode; if (!arrangeMode) drawerOpen = false; }}
+    >{arrangeMode ? 'done' : 'arrange'}</button>
   </div>
 
   <div class="grid-wrap" class:arrange={arrangeMode}>
@@ -570,46 +494,14 @@
     letter-spacing: 0.04em;
   }
 
-  .collections-bar {
+  .dashboard-actions {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
     padding: 8px var(--panel-padding);
     border-bottom: 1px solid var(--border, var(--color-border-primary));
     flex-shrink: 0;
-    flex-wrap: wrap;
-  }
-
-  .collections-label {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-faint, var(--color-text-tertiary));
-    flex-shrink: 0;
-  }
-
-  .collection-pills {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    flex: 1;
-  }
-
-  .pill-count {
-    opacity: 0.55;
-    margin-left: 5px;
-  }
-
-  .ds-btn.icon-only {
-    padding: 3px 8px;
-  }
-
-  .collections-actions {
-    display: flex;
-    gap: 8px;
-    margin-left: auto;
-    flex-shrink: 0;
+    justify-content: flex-end;
   }
 
   .grid-wrap {
