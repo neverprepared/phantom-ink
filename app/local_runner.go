@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -110,18 +111,69 @@ func (r *localRunner) run(ctx context.Context) {
 	}
 }
 
+// outboundIP returns the local IP this machine uses to reach external hosts.
+// It dials a UDP socket (no actual traffic) to discover which interface is used.
+func outboundIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String()
+}
+
+// ollamaPort probes the local Ollama HTTP server and returns the port it's
+// listening on (default 11434), or 0 if Ollama is not reachable on the
+// outbound network interface (i.e. OLLAMA_HOST=0.0.0.0 is not set).
+//
+// We probe via the outbound IP — not localhost — because the brainbox API
+// must reach Ollama from a remote host. If Ollama is only bound to 127.0.0.1
+// (the default), it is unreachable from the API server and we must not
+// advertise the capability.
+func ollamaPort(outbound string) int {
+	if outbound == "" || outbound == "local-process" {
+		return 0
+	}
+	const port = 11434
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://%s:%d/", outbound, port))
+	if err != nil {
+		fmt.Printf("local runner: ollama not reachable on %s:%d (set OLLAMA_HOST=0.0.0.0 to enable): %v\n", outbound, port, err)
+		return 0
+	}
+	resp.Body.Close()
+	if resp.StatusCode == 200 {
+		return port
+	}
+	return 0
+}
+
 func (r *localRunner) registerWithBackoff(ctx context.Context) bool {
-	req := brainbox.RegisterRunnerRequest{
-		Name: r.name,
+	caps := map[string]bool{
 		// "docker" is the capability key the API validates against the backend
 		// field — it means "can handle docker-backend session.create work items".
 		// The actual execution is a local process, not a container.
-		Capabilities: map[string]bool{
-			"docker": true,
-		},
-		Host:          "local-process",
+		"docker": true,
+	}
+
+	host := outboundIP()
+	if host == "" {
+		host = "local-process"
+	}
+
+	var ollamaAdvertisePort int
+	if port := ollamaPort(host); port > 0 {
+		caps["ollama"] = true
+		ollamaAdvertisePort = port
+	}
+
+	req := brainbox.RegisterRunnerRequest{
+		Name:          r.name,
+		Capabilities:  caps,
+		Host:          host,
 		MachineID:     r.machineID,
 		MaxConcurrent: 4,
+		OllamaPort:    ollamaAdvertisePort,
 	}
 	delay := 5 * time.Second
 	const maxDelay = 30 * time.Second

@@ -50,6 +50,7 @@ type RegisterRunnerRequest struct {
 	Host          string          `json:"host,omitempty"`
 	MachineID     string          `json:"machine_id,omitempty"`
 	MaxConcurrent int             `json:"max_concurrent,omitempty"`
+	OllamaPort    int             `json:"ollama_port,omitempty"`
 }
 
 // RunnerWorkItem is a single unit of work returned by GET /api/runners/{name}/pending.
