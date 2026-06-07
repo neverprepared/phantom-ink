@@ -164,22 +164,37 @@ class OllamaPool:
         inst = self._instances.get(runner_name)
         if not inst:
             return
-        try:
-            async with httpx.AsyncClient(timeout=5.0, verify=inst.verify_tls) as client:
-                resp = await client.get(inst.url + "/api/tags", headers=inst.request_headers())
-                if resp.status_code == 200:
-                    data = resp.json()
-                    inst.models = [m["name"] for m in data.get("models", [])]
-                    inst.healthy = True
-                else:
-                    inst.healthy = False
-                    inst.models = []
-                    log.warning(
-                        "ollama_pool.health_non200",
-                        metadata={"runner": runner_name, "status": resp.status_code,
-                                  "url": inst.url, "body": resp.text[:200]},
-                    )
-        except Exception as exc:
+        # Retry once with a fresh client. Long-running daemons see sporadic
+        # EHOSTUNREACH on the first connection attempt to some LAN hosts on
+        # macOS; a fresh attempt almost always succeeds immediately.
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=5.0, verify=inst.verify_tls) as client:
+                    resp = await client.get(inst.url + "/api/tags", headers=inst.request_headers())
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        inst.models = [m["name"] for m in data.get("models", [])]
+                        inst.healthy = True
+                        last_exc = None
+                        break
+                    else:
+                        inst.healthy = False
+                        inst.models = []
+                        log.warning(
+                            "ollama_pool.health_non200",
+                            metadata={"runner": runner_name, "status": resp.status_code,
+                                      "url": inst.url, "body": resp.text[:200],
+                                      "attempt": attempt},
+                        )
+                        last_exc = None
+                        break
+            except Exception as exc:
+                last_exc = exc
+                if attempt == 0:
+                    await asyncio.sleep(0.3)
+                    continue
+        if last_exc is not None:
             inst.healthy = False
             inst.models = []
             import traceback
@@ -187,10 +202,10 @@ class OllamaPool:
                 "ollama_pool.health_exception",
                 metadata={
                     "runner": runner_name, "url": inst.url,
-                    "exc_type": type(exc).__name__,
+                    "exc_type": type(last_exc).__name__,
                     "exc_chain": [
                         f"{type(e).__name__}: {e!r}"[:200]
-                        for e in _exception_chain(exc)
+                        for e in _exception_chain(last_exc)
                     ],
                     "tb": traceback.format_exc().splitlines()[-6:],
                 },
