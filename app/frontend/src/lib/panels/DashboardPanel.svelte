@@ -157,6 +157,10 @@
   let grid: GridStack | null = null;
   const mountedWidgets = new Map<string, any>();
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  // Set to true while we are programmatically (re)mounting widgets so the
+  // grid 'change' handler doesn't capture transient reflow positions and
+  // save them as the canonical layout.
+  let suppressSave = false;
   let drawerOpen = $state(false);
   let editTarget = $state<WidgetInstance | null>(null);
 
@@ -201,6 +205,7 @@
     const contentEl = itemEl.querySelector('.grid-stack-item-content') as HTMLElement;
     const props: Record<string, unknown> = { config: w.config };
     if (w.kind === 'script-metric' || w.kind === 'http-metric') {
+      props.widgetId = w.id;
       props.onConfigUpdate = (patch: Record<string, unknown>) => patchWidgetConfig(w.id, patch);
     }
     const instance = mount(WIDGET_MAP[w.kind], { target: contentEl, props });
@@ -261,10 +266,20 @@
     'opensearch-metric': 'OpenSearch Metric',
   };
 
-  async function saveLayout(): Promise<void> {
+  // Locked-in profile name used by saveLayout. Set when the panel mounts
+  // and updated explicitly during profile switch — never reads from the
+  // live profileState, so a debounced save can't write to the wrong key
+  // when the user switches profiles mid-debounce.
+  let saveProfile = '';
+
+  async function saveLayout(profileNameOverride?: string): Promise<void> {
     if (!grid) return;
     const saved = grid.save(false) as any[];
     const current = dashboardState.widgets;
+    // Hard safety net: never persist an empty layout when state still
+    // believes there are widgets. This would otherwise fall back to
+    // DEFAULT_LAYOUT on next load and effectively reset the dashboard.
+    if (saved.length === 0 && current.length > 0) return;
     const updated: WidgetInstance[] = saved
       .map((item: any) => {
         const orig = current.find(w => w.id === item.id);
@@ -277,7 +292,7 @@
     if (a) {
       try {
         await a.SaveDashboardLayout(
-          profileState.active?.name ?? '',
+          profileNameOverride ?? saveProfile,
           JSON.stringify({
             version: 1,
             widgets: updated,
@@ -301,7 +316,12 @@
       const cardHeader = contentEl.querySelector('.widget-card-header');
       // Clear everything except the header before re-mounting.
       Array.from(contentEl.childNodes).forEach(n => { if (n !== cardHeader) contentEl.removeChild(n); });
-      const newInst = mount(WIDGET_MAP[w.kind], { target: contentEl, props: { config: w.config } });
+      const reProps: Record<string, unknown> = { config: w.config };
+      if (w.kind === 'script-metric' || w.kind === 'http-metric') {
+        reProps.widgetId = w.id;
+        reProps.onConfigUpdate = (patch: Record<string, unknown>) => patchWidgetConfig(w.id, patch);
+      }
+      const newInst = mount(WIDGET_MAP[w.kind], { target: contentEl, props: reProps });
       mountedWidgets.set(w.id, newInst);
       // Update the title in case the user changed config.label.
       const titleEl = cardHeader?.querySelector('.widget-card-title') as HTMLElement | null;
@@ -314,16 +334,70 @@
 
   function handleAddWidget(w: WidgetInstance): void {
     if (!grid) return;
-    dashboardState.updateWidgets([...dashboardState.widgets, w]);
-    mountWidget(w);
+    // Drawer creates new widgets with y=999 expecting GridStack to compact.
+    // With float=true that no longer happens, so place the widget at the
+    // first column on the row directly below all existing widgets.
+    const maxBottom = dashboardState.widgets.reduce(
+      (acc, ex) => Math.max(acc, (ex.y ?? 0) + (ex.h ?? 1)),
+      0,
+    );
+    const placed: WidgetInstance = { ...w, x: 0, y: maxBottom };
+    dashboardState.updateWidgets([...dashboardState.widgets, placed]);
+    mountWidget(placed);
     // Drawer stays open so the user can add multiple widgets in one session.
     // Backdrop click / close button still dismisses it.
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(saveLayout, 800);
   }
 
-  function handleRemoveWidget(id: string): void {
+  async function pruneDuplicateMetricJobs(widgets: WidgetInstance[]): Promise<void> {
+    const a = await getApi();
+    if (!a) return;
+    const profile = profileState.active?.name ?? '';
+    // Build a map of widgetId → kept jobId for every metric widget on
+    // this dashboard. Also collect legacy (name, command) fingerprints
+    // so we can still match older jobs that have no owner_widget_id.
+    const byWidget = new Map<string, string>();         // widgetId → keepJobId
+    const byFingerprint = new Map<string, string>();    // key → keepJobId
+    for (const w of widgets) {
+      if (w.kind !== 'script-metric' && w.kind !== 'http-metric') continue;
+      const cfg = w.config as any;
+      const jobId = cfg?.jobId as string | undefined;
+      if (!jobId) continue;
+      byWidget.set(w.id, jobId);
+      let command = cfg.command as string | undefined;
+      if (w.kind === 'http-metric') {
+        command = `op run -- curl -sf${cfg.header ? ` -H "${cfg.header}"` : ''} "${cfg.url}"` +
+          (cfg.path ? ` | jq -r '.${cfg.path}'` : '');
+      }
+      if (command) byFingerprint.set(`${cfg.label}::${command}`, jobId);
+    }
+    if (byWidget.size === 0 && byFingerprint.size === 0) return;
+    let jobs: any[] = [];
+    try { jobs = (await (a as any).ListCollectJobs(profile)) ?? []; } catch { return; }
+    for (const job of jobs) {
+      // Prefer the direct id link.
+      if (job.owner_widget_id) {
+        const keepId = byWidget.get(job.owner_widget_id);
+        if (keepId && job.id !== keepId) {
+          try { await (a as any).DeleteCollectJob(job.id); } catch {}
+        }
+        continue;
+      }
+      // Legacy fingerprint match — same widget's keep id wins.
+      const keepId = byFingerprint.get(`${job.name}::${job.command}`);
+      if (keepId && job.id !== keepId) {
+        try { await (a as any).DeleteCollectJob(job.id); } catch {}
+      }
+    }
+  }
+
+  async function handleRemoveWidget(id: string): Promise<void> {
     if (!grid) return;
+    // If this widget owns a collect job, delete it so the scheduler stops
+    // running it and orphaned entries don't accumulate.
+    const removed = dashboardState.widgets.find(w => w.id === id);
+    const jobId = (removed?.config as any)?.jobId as string | undefined;
     const inst = mountedWidgets.get(id);
     if (inst) { unmount(inst); mountedWidgets.delete(id); }
     const el = gridEl.querySelector(`[gs-id="${id}"]`) as HTMLElement | null;
@@ -331,30 +405,47 @@
     dashboardState.updateWidgets(dashboardState.widgets.filter(w => w.id !== id));
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(saveLayout, 800);
+    if (jobId) {
+      const a = await getApi();
+      try { await (a as any)?.DeleteCollectJob?.(jobId); } catch {}
+    }
   }
 
   async function reloadLayout(profileName: string): Promise<void> {
     if (!grid) return;
-    for (const [, inst] of mountedWidgets) unmount(inst);
-    mountedWidgets.clear();
-    grid.removeAll();
+    // Suppress save BEFORE we tear the grid down — removeAll() fires
+    // 'change' events that would otherwise schedule a save against a
+    // transiently-empty grid and persist widgets: [] (which falls back
+    // to DEFAULT_LAYOUT on the next load).
+    suppressSave = true;
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    try {
+      for (const [, inst] of mountedWidgets) unmount(inst);
+      mountedWidgets.clear();
+      grid.removeAll();
 
-    const a = await getApi();
-    let layout: typeof dashboardState.layout = { version: 1, widgets: [...DEFAULT_LAYOUT.widgets] };
-    if (a) {
-      const stored = await a.GetDashboardLayout(profileName).catch(() => '');
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          if (parsed?.version === 1 && Array.isArray(parsed.widgets) && parsed.widgets.length > 0) {
-            layout = parsed;
-          }
-        } catch {}
+      const a = await getApi();
+      let layout: typeof dashboardState.layout = { version: 1, widgets: [...DEFAULT_LAYOUT.widgets] };
+      if (a) {
+        const stored = await a.GetDashboardLayout(profileName).catch(() => '');
+        if (stored) {
+          try {
+            const parsed = JSON.parse(stored);
+            if (parsed?.version === 1 && Array.isArray(parsed.widgets) && parsed.widgets.length > 0) {
+              layout = parsed;
+            }
+          } catch {}
+        }
       }
-    }
-    dashboardState.layout = layout;
+      dashboardState.layout = layout;
 
-    for (const w of visibleWidgets()) mountWidget(w);
+      for (const w of visibleWidgets()) mountWidget(w);
+    } finally {
+      // Wait a frame so any deferred 'change' events fire while
+      // suppression is still active.
+      await new Promise<void>((r) => requestAnimationFrame(() => r()));
+      suppressSave = false;
+    }
   }
 
   function handleReset(): void {
@@ -396,12 +487,21 @@
     }
   }
 
-  // Reload layout and data when profile changes (after initial mount)
+  // Reload layout and data when profile changes (after initial mount).
+  // Crucially: flush any pending save under the OLD profile name FIRST
+  // so unsaved changes don't bleed into the new profile's key.
   let _trackedProfile = '';
   $effect(() => {
     const name = profileState.active?.name ?? '';
     if (name !== _trackedProfile && grid) {
+      const prev = _trackedProfile;
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+        void saveLayout(prev);
+      }
       _trackedProfile = name;
+      saveProfile = name;
       void reloadLayout(name);
       void load();
     }
@@ -439,6 +539,7 @@
 
     dashboardState.layout = layout;
     _trackedProfile = profileState.active?.name ?? '';
+    saveProfile = _trackedProfile;
 
     grid = GridStack.init({
       column: 12,
@@ -446,13 +547,25 @@
       cellHeightUnit: 'px',
       margin: 8,
       animate: true,
+      // float=true keeps widgets where the user placed them. Without
+      // it, GridStack auto-compacts toward the top on every mount,
+      // which drifts positions across navigations.
+      float: true,
       draggable: { handle: '.widget-drag-handle' },
       resizable: { handles: 'se' },
     }, gridEl);
 
+    suppressSave = true;
     for (const w of layout.widgets) mountWidget(w);
+    requestAnimationFrame(() => { suppressSave = false; });
+
+    // Prune duplicate collect jobs that share (profile, name, command)
+    // with a widget-bound job. These accumulated when earlier widget
+    // mounts created a new job each time before the jobId was persisted.
+    void pruneDuplicateMetricJobs(layout.widgets);
 
     grid.on('change', () => {
+      if (suppressSave) return;
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(saveLayout, 800);
     });
@@ -592,15 +705,15 @@
   :global(.widget-card-header) {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
+    gap: 4px;
+    padding: 4px 8px;
     background: var(--bg-sunken, var(--color-surface-subtle));
     border-bottom: 1px solid var(--border, var(--color-border-primary));
     color: var(--text-faint, var(--color-text-tertiary));
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.03em;
     cursor: grab;
     user-select: none;
     flex-shrink: 0;
@@ -610,8 +723,10 @@
     display: inline-flex;
     align-items: center;
     color: var(--text-faint, var(--color-text-tertiary));
-    opacity: 0.7;
+    opacity: 0.6;
+    flex-shrink: 0;
   }
+  :global(.widget-card-grip svg) { width: 11px; height: 11px; }
   :global(.widget-card-title) {
     flex: 1;
     min-width: 0;

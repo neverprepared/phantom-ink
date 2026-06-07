@@ -1,17 +1,31 @@
+<script lang="ts" module>
+  // Module-level cache so values survive widget unmount when the user
+  // navigates away from the dashboard. Keyed by collect-job id.
+  const valueCache = new Map<string, string>();
+  // Per-job last-trigger timestamps so opening the dashboard fires the
+  // job immediately (fresh values via collect:update) without spamming
+  // when the user quickly bounces between panels.
+  const lastTriggeredMs = new Map<string, number>();
+  const TRIGGER_DEBOUNCE_MS = 1500;
+</script>
+
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
+  import { onCollectUpdate } from '../utils/collectEvents';
   import { profileState } from '../stores.svelte';
   import type { HttpMetricConfig } from './types';
 
-  let { config, onConfigUpdate }: {
+  let { config, widgetId, onConfigUpdate }: {
     config: HttpMetricConfig;
+    widgetId?: string;
     onConfigUpdate?: (patch: Partial<HttpMetricConfig>) => void;
   } = $props();
 
-  let value   = $state<string | null>(null);
+  const cached = config.jobId ? valueCache.get(config.jobId) ?? null : null;
+  let value   = $state<string | null>(cached);
   let error   = $state(false);
-  let loading = $state(true);
+  let loading = $state(cached === null);
 
   const isString = $derived(config.valueType === 'string');
   const profile  = $derived(profileState.active?.name ?? '');
@@ -28,10 +42,11 @@
 
     if (config.jobId) {
       try {
-        const entry = await a.GetLatestCollectedEntry(config.jobId, config.url);
+        const entry = await a.GetLatestCollectedEntry(config.jobId, config.label);
         if (entry) {
           value = entry.value || null;
           error = false;
+          if (value != null) valueCache.set(config.jobId, value);
         }
       } catch {
         error = true;
@@ -47,12 +62,26 @@
       error = false;
       if (onConfigUpdate) {
         try {
-          const job = await a.SaveCollectJob({
-            id: '', profile, name: config.label, command: syntheticCommand,
-            interval_s: config.interval ?? 60, enabled: true,
-            default_actions: '[]', last_error: '', created_at: 0,
-          });
-          onConfigUpdate({ jobId: job.id });
+          const all: any[] = (await (a as any).ListCollectJobs(profile)) ?? [];
+          let existing = widgetId ? all.find(j => j.owner_widget_id === widgetId) : null;
+          if (!existing) {
+            existing = all.find(j => j.name === config.label && j.command === syntheticCommand);
+          }
+          if (existing) {
+            onConfigUpdate({ jobId: existing.id });
+            const needsBackfill = !existing.source || (widgetId && existing.owner_widget_id !== widgetId);
+            if (needsBackfill) {
+              try { await (a as any).SaveCollectJob({ ...existing, source: 'widget', owner_widget_id: widgetId ?? '' }); } catch {}
+            }
+          } else {
+            const job = await a.SaveCollectJob({
+              id: '', profile, name: config.label, command: syntheticCommand,
+              interval_s: config.interval ?? 60, enabled: true,
+              default_actions: '[]', last_error: '', created_at: 0,
+              source: 'widget', owner_widget_id: widgetId ?? '',
+            } as any);
+            onConfigUpdate({ jobId: job.id });
+          }
         } catch { /* non-fatal */ }
       }
     } catch {
@@ -62,16 +91,26 @@
     }
   }
 
+  async function triggerJobIfStale() {
+    if (!config.jobId) return;
+    const now = Date.now();
+    const last = lastTriggeredMs.get(config.jobId) ?? 0;
+    if (now - last < TRIGGER_DEBOUNCE_MS) return;
+    lastTriggeredMs.set(config.jobId, now);
+    const a = await getApi();
+    try { await (a as any)?.RunCollectJobNow?.(config.jobId); } catch {}
+  }
+
   onMount(() => {
     void fetchValue();
+    void triggerJobIfStale();
     const ms = (config.interval ?? 60) * 1000;
     const interval = setInterval(fetchValue, ms);
 
-    const handler = () => void fetchValue();
-    window.runtime?.EventsOn('collect:update', handler);
+    const off = onCollectUpdate(() => void fetchValue());
     return () => {
       clearInterval(interval);
-      window.runtime?.EventsOff('collect:update');
+      off();
     };
   });
 </script>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getApi } from '../utils/api';
+  import { onCollectUpdate } from '../utils/collectEvents';
   import { onMount } from 'svelte';
   import { profileState, dashboardState } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
@@ -41,7 +42,6 @@
   let loading      = $state(false);
   let editingId    = $state<string | null>(null); // null=none, 'new'=create, id=edit
   let runningId    = $state<string | null>(null);
-  let addedId      = $state<string | null>(null);
   let statusMsg    = $state('');
   let filterProfile = $state('');
   $effect(() => { filterProfile = profile; });
@@ -152,6 +152,22 @@
     if (!a) return;
     try {
       await (a.DeleteCollectJob as any)(id);
+      // If any dashboard widget references this job, remove it from the
+      // layout and persist — otherwise the widget would auto-recreate
+      // the job on its next mount.
+      const layout = dashboardState.layout;
+      if (layout) {
+        const filtered = layout.widgets.filter(w => (w.config as any)?.jobId !== id);
+        if (filtered.length !== layout.widgets.length) {
+          dashboardState.updateWidgets(filtered);
+          try {
+            await (a as any).SaveDashboardLayout(
+              profileState.active?.name ?? '',
+              JSON.stringify({ version: 1, widgets: filtered }),
+            );
+          } catch {}
+        }
+      }
       await load();
     } catch (e: any) {
       notifications.error(`Failed to delete job: ${e?.message ?? 'unknown error'}`);
@@ -212,25 +228,6 @@
     setTimeout(() => { statusMsg = ''; }, 3000);
   }
 
-  async function addToWidget(job: CollectJob) {
-    const a = await getApi();
-    if (!a) return;
-    const id = `w-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const widget = {
-      id, kind: 'script-metric' as const,
-      config: { label: job.name, command: job.command, interval: job.interval_s,
-                jobId: job.id, valueType: 'number' as const },
-      x: 0, y: 0, w: 3, h: 2, minW: 2, minH: 2,
-    };
-    const updated = [...dashboardState.widgets, widget];
-    dashboardState.updateWidgets(updated);
-    try {
-      await a.SaveDashboardLayout(profile, JSON.stringify({ version: 1, widgets: updated }));
-      addedId = job.id;
-      setTimeout(() => { addedId = null; }, 2500);
-    } catch {}
-  }
-
   // ── Format helpers ─────────────────────────────────────────────────────
 
   function fmtSchedule(job: CollectJob): string {
@@ -277,8 +274,8 @@
 
   onMount(() => {
     void load();
-    window.runtime?.EventsOn('collect:update', () => void load());
-    return () => window.runtime?.EventsOff('collect:update');
+    const off = onCollectUpdate(() => void load());
+    return () => off();
   });
 </script>
 
@@ -509,6 +506,9 @@
                     <span class="job-profile">{job.profile}</span>
                   {/if}
                   <span class="job-type-badge type-{job.target_type || 'shell'}">{job.target_type || 'shell'}</span>
+                  {#if job.source === 'widget'}
+                    <span class="job-source-badge" title="created by a dashboard widget">widget</span>
+                  {/if}
                   <span class="job-meta">{fmtSchedule(job)}</span>
                   <span class="job-meta">last run: {fmtLastRun(job)}</span>
                   {#if job.last_error}
@@ -517,12 +517,6 @@
                 </div>
               </div>
               <div class="job-btns">
-                {#if (job.target_type || 'shell') === 'shell'}
-                  <button class="job-btn" onclick={() => addToWidget(job)} title="add to dashboard"
-                    class:added={addedId === job.id}>
-                    {addedId === job.id ? '✓' : '+'}
-                  </button>
-                {/if}
                 <button class="job-btn" onclick={() => runNow(job.id)} disabled={runningId === job.id} title="run now">
                   {runningId === job.id ? '…' : '▶'}
                 </button>
@@ -611,6 +605,15 @@
   .job-type-badge.type-chain    { color: #10b981; border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.06); }
   .job-type-badge.type-runner   { color: #f59e0b; border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.06); }
 
+  .job-source-badge {
+    font-family: var(--font-mono); font-size: 10px;
+    padding: 1px 6px; border-radius: 999px;
+    color: var(--accent, var(--color-accent));
+    border: 1px solid color-mix(in srgb, var(--accent, var(--color-accent)) 30%, transparent);
+    background: color-mix(in srgb, var(--accent, var(--color-accent)) 8%, transparent);
+  }
+
+
   .job-btns { display: flex; gap: 4px; flex-shrink: 0; }
   .job-btn {
     background: none; border: 1px solid var(--color-border-primary);
@@ -621,7 +624,6 @@
   .job-btn:hover:not(:disabled) { border-color: var(--color-accent); color: var(--color-accent); }
   .job-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .job-btn.danger:hover:not(:disabled) { border-color: var(--color-error); color: var(--color-error); }
-  .job-btn.added { border-color: var(--color-success); color: var(--color-success); }
 
   /* Form */
   .job-form {
