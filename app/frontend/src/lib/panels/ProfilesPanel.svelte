@@ -171,6 +171,17 @@
     try { backups = (await a.ListBackups()) ?? []; } catch { backups = []; }
   }
 
+  async function toggleHidden(name: string) {
+    const next = profileState.setHidden(name, !profileState.isHidden(name));
+    const a = await getApi();
+    if (!a) return;
+    try {
+      await (a as any).SetHiddenProfiles?.(Array.from(next));
+    } catch (err: any) {
+      notifications.error(`Failed to update profile visibility: ${err?.message ?? err}`);
+    }
+  }
+
   async function handleDelete(name: string, backup: boolean) {
     const a = await getApi();
     if (!a) return;
@@ -352,7 +363,8 @@
         {@const building = imageBuilding[p.name] ?? false}
         {@const logs = imageLogs[p.name] ?? []}
         {@const logsOpen = imageLogsOpen[p.name] ?? false}
-        <div class="profile-card" class:active={isActive}>
+        {@const isHidden = profileState.isHidden(p.name)}
+        <div class="profile-card" class:active={isActive} class:hidden={isHidden}>
           <div class="profile-row">
             <span class="profile-dot" style="background: {pColor.text};"></span>
             <button
@@ -363,6 +375,9 @@
             >
               <span class="profile-name" style={isActive ? `color: ${pColor.text};` : ''}>{p.name}</span>
               <span class="profile-meta">
+                {#if isHidden}
+                  <span class="secrets-badge plain">hidden</span>
+                {/if}
                 {#if profileDiskMap.has(p.name)}
                   <span class="disk-badge">{profileDiskMap.get(p.name)}</span>
                 {/if}
@@ -370,6 +385,13 @@
                   <span class="secrets-badge plain">backup</span>
                 {/if}
               </span>
+            </button>
+            <button class="btn-hide-profile" onclick={() => toggleHidden(p.name)} title={isHidden ? `Show ${p.name} in the picker` : `Hide ${p.name} from the picker`} aria-label="{isHidden ? 'Show' : 'Hide'} profile {p.name}">
+              {#if isHidden}
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              {:else}
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+              {/if}
             </button>
             <button class="btn-delete-profile" onclick={() => confirmDelete = confirmDelete === p.name ? null : p.name} title="Delete profile" aria-label="Delete profile {p.name}">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -702,6 +724,22 @@
   }
   .profile-row:hover .btn-delete-profile { opacity: 1; }
   .btn-delete-profile:hover { color: var(--color-error); background: rgba(239, 68, 68, 0.1); }
+
+  .btn-hide-profile {
+    background: transparent; border: none; color: var(--color-text-tertiary);
+    padding: 6px; border-radius: var(--radius-sm); display: flex;
+    opacity: 0; transition: all 0.15s;
+  }
+  .profile-row:hover .btn-hide-profile { opacity: 1; }
+  .btn-hide-profile:hover {
+    color: var(--accent, var(--color-accent));
+    background: var(--accent-soft, color-mix(in srgb, var(--accent, var(--color-accent)) 10%, transparent));
+  }
+  .profile-card.hidden .btn-hide-profile { opacity: 0.6; }
+
+  /* Hidden profiles get dimmed but stay manageable. */
+  .profile-card.hidden .profile-item { opacity: 0.55; }
+  .profile-card.hidden .profile-name { font-style: italic; }
 
   .confirm-delete {
     display: flex; align-items: center; gap: 6px; padding: 6px 12px; margin-bottom: 4px;

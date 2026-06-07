@@ -2,7 +2,7 @@
   import { profileState } from '../stores.svelte';
 
   let { selected = $bindable(''), label = 'profile' }: { selected: string; label?: string } = $props();
-  let profiles = $derived(profileState.profiles);
+  let profiles = $derived(profileState.visible);
 </script>
 
 <div class="field">

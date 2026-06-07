@@ -133,12 +133,28 @@ export interface Profile {
 
 let _profiles = $state<Profile[]>([]);
 let _activeProfile = $state<Profile | null>(null);
+// Names of profiles the user has chosen to hide from picker UI.
+// UI-only: the profile still exists on disk.
+let _hiddenProfiles = $state<Set<string>>(new Set());
 
 export const profileState = {
   get profiles() { return _profiles; },
   set profiles(v: Profile[]) { _profiles = v; },
   get active() { return _activeProfile; },
   set active(v: Profile | null) { _activeProfile = v; },
+  get hidden() { return _hiddenProfiles; },
+  set hidden(v: Set<string>) { _hiddenProfiles = v; },
+  /** Profiles minus the ones the user has hidden — what UI should show. */
+  get visible(): Profile[] {
+    return _profiles.filter(p => !_hiddenProfiles.has(p.name));
+  },
+  isHidden(name: string): boolean { return _hiddenProfiles.has(name); },
+  setHidden(name: string, hide: boolean): Set<string> {
+    const next = new Set(_hiddenProfiles);
+    if (hide) next.add(name); else next.delete(name);
+    _hiddenProfiles = next;
+    return next;
+  },
 };
 
 // ---------------------------------------------------------------------------

@@ -4,8 +4,15 @@
   import { notifications } from '../notifications.svelte';
 
   let connected = $derived(connectionState.connected);
-  let profiles = $derived(profileState.profiles);
+  let profiles = $derived(profileState.visible);
   let activeProfile = $derived(profileState.active);
+
+  // If the active profile gets hidden, drop back to "all".
+  $effect(() => {
+    if (activeProfile && profileState.hidden.has(activeProfile.name)) {
+      void selectProfile(null);
+    }
+  });
   let restarting = $state(false);
 
   async function restartAPI() {
@@ -136,6 +143,7 @@
     border: 1px solid var(--border, var(--color-border-primary));
     border-radius: 99px;
     padding: 4px;
+    margin-left: 48px;
     flex-shrink: 1;
     min-width: 0;
     overflow-x: auto;

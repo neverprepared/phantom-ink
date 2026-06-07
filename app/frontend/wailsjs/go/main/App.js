@@ -198,6 +198,10 @@ export function GetDockerStats() {
   return window['go']['main']['App']['GetDockerStats']();
 }
 
+export function GetHiddenProfiles() {
+  return window['go']['main']['App']['GetHiddenProfiles']();
+}
+
 export function GetHubState() {
   return window['go']['main']['App']['GetHubState']();
 }
@@ -496,6 +500,10 @@ export function SetAgentEnabled(arg1, arg2) {
 
 export function SetConfig(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetConfig'](arg1, arg2, arg3);
+}
+
+export function SetHiddenProfiles(arg1) {
+  return window['go']['main']['App']['SetHiddenProfiles'](arg1);
 }
 
 export function SetOTLPHost(arg1) {
