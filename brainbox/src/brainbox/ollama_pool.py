@@ -164,25 +164,36 @@ class OllamaPool:
         inst = self._instances.get(runner_name)
         if not inst:
             return
-        # DEBUG: also try curl as a comparison
-        if inst.runner_name != "__fallback__":
+        # Health check via SYNC httpx in a thread. On Python 3.14 + macOS
+        # the async httpx transport hits a spurious EHOSTUNREACH for some
+        # LAN destinations even though curl and sync httpx work fine.
+        def _sync_check() -> tuple[bool, list[str], str | None]:
             try:
-                import subprocess
-                proc = await asyncio.create_subprocess_exec(
-                    "curl", "-sk", "-m", "5", "-o", "/dev/null", "-w", "%{http_code}",
-                    "-H", f"X-API-Key: {inst.api_key}",
-                    inst.url + "/api/tags",
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                )
-                stdout, _ = await proc.communicate()
-                log.warning("ollama_pool.debug_curl", metadata={
-                    "runner": runner_name, "code": stdout.decode().strip(), "rc": proc.returncode,
-                })
+                with httpx.Client(timeout=5.0, verify=inst.verify_tls) as client:
+                    r = client.get(inst.url + "/api/tags", headers=inst.request_headers())
+                    if r.status_code == 200:
+                        data = r.json()
+                        return True, [m["name"] for m in data.get("models", [])], None
+                    return False, [], f"HTTP {r.status_code}"
             except Exception as exc:
-                log.warning("ollama_pool.debug_curl_exc", metadata={"reason": str(exc)})
-        # Retry once with a fresh client. Long-running daemons see sporadic
-        # EHOSTUNREACH on the first connection attempt to some LAN hosts on
-        # macOS; a fresh attempt almost always succeeds immediately.
+                return False, [], f"{type(exc).__name__}: {exc}"
+        loop = asyncio.get_running_loop()
+        healthy, models, err = await loop.run_in_executor(None, _sync_check)
+        inst.healthy = healthy
+        inst.models = models
+        if err and not healthy:
+            log.warning(
+                "ollama_pool.health_exception",
+                metadata={"runner": runner_name, "url": inst.url, "reason": err},
+            )
+        inst.last_checked = time.time()
+        log.debug(
+            "ollama_pool.health_checked",
+            metadata={"runner": runner_name, "healthy": inst.healthy, "models": len(inst.models)},
+        )
+        return
+        # Below is the original async path — retained as dead code so we can
+        # restore it once httpx's async transport on 3.14 stops misbehaving.
         last_exc: Exception | None = None
         for attempt in range(2):
             try:
