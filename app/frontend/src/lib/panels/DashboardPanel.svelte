@@ -5,24 +5,25 @@
   import { mount, unmount, onMount } from 'svelte';
   import { getApi } from '../utils/api';
   import { brainboxEvents } from '../events.svelte';
-  import { profileState, dashboardState, dashboardDataStore } from '../stores.svelte';
+  import { profileState, dashboardState, dashboardDataStore, featureFlags } from '../stores.svelte';
   import { DEFAULT_LAYOUT } from '../widgets/defaultLayout';
-  import type { WidgetInstance, WidgetKind, ActionItem } from '../widgets/types';
+  import type { WidgetInstance, WidgetKind, ActionItem, OpenSearchOverview } from '../widgets/types';
 
-  import StatCounterWidget     from '../widgets/StatCounterWidget.svelte';
-  import DispatchFormWidget    from '../widgets/DispatchFormWidget.svelte';
-  import ChainsListWidget      from '../widgets/ChainsListWidget.svelte';
-  import ActionItemsWidget     from '../widgets/ActionItemsWidget.svelte';
-  import ResourceMonitorWidget from '../widgets/ResourceMonitorWidget.svelte';
-  import CustomCounterWidget   from '../widgets/CustomCounterWidget.svelte';
-  import ScriptMetricWidget    from '../widgets/ScriptMetricWidget.svelte';
-  import HttpMetricWidget      from '../widgets/HttpMetricWidget.svelte';
-  import StreamWidget          from '../widgets/StreamWidget.svelte';
-  import CalendarWidget        from '../widgets/CalendarWidget.svelte';
-  import TasksWidget           from '../widgets/TasksWidget.svelte';
-  import NotesWidget           from '../widgets/NotesWidget.svelte';
-  import SessionsMiniWidget    from '../widgets/SessionsMiniWidget.svelte';
-  import WidgetDrawer          from '../components/WidgetDrawer.svelte';
+  import StatCounterWidget       from '../widgets/StatCounterWidget.svelte';
+  import DispatchFormWidget      from '../widgets/DispatchFormWidget.svelte';
+  import ChainsListWidget        from '../widgets/ChainsListWidget.svelte';
+  import ActionItemsWidget       from '../widgets/ActionItemsWidget.svelte';
+  import ResourceMonitorWidget   from '../widgets/ResourceMonitorWidget.svelte';
+  import CustomCounterWidget     from '../widgets/CustomCounterWidget.svelte';
+  import ScriptMetricWidget      from '../widgets/ScriptMetricWidget.svelte';
+  import HttpMetricWidget        from '../widgets/HttpMetricWidget.svelte';
+  import StreamWidget            from '../widgets/StreamWidget.svelte';
+  import CalendarWidget          from '../widgets/CalendarWidget.svelte';
+  import TasksWidget             from '../widgets/TasksWidget.svelte';
+  import NotesWidget             from '../widgets/NotesWidget.svelte';
+  import SessionsMiniWidget      from '../widgets/SessionsMiniWidget.svelte';
+  import OpenSearchMetricWidget  from '../widgets/OpenSearchMetricWidget.svelte';
+  import WidgetDrawer            from '../components/WidgetDrawer.svelte';
 
 
   // --- Data state ---
@@ -96,6 +97,9 @@
     return items;
   });
 
+  // --- OpenSearch overview (shared poll for opensearch-metric widgets) ---
+  let opensearchOverview = $state<OpenSearchOverview | null>(null);
+
   // Sync computed data into shared store so widget components can read reactively
   $effect(() => {
     dashboardDataStore.value = {
@@ -107,6 +111,44 @@
       runningTasks: runningHubTasks.length + (taskStats?.running ?? 0),
       failedTasks: failedHubTasks.length + (taskStats?.failed ?? 0),
       loading, refreshing,
+      opensearch: opensearchOverview,
+    };
+  });
+
+  // Poll OpenSearch overview only when (a) opensearch is enabled AND
+  // (b) at least one opensearch-metric widget is on the dashboard.
+  let opensearchPoll: ReturnType<typeof setInterval> | null = null;
+  const OPENSEARCH_POLL_MS = 15_000;
+  let opensearchNeeded = $derived(
+    featureFlags.isEnabled('opensearch')
+      && dashboardState.widgets.some(w => w.kind === 'opensearch-metric')
+  );
+  let opensearchWorkspace = $derived(profileState.active?.name ?? '');
+
+  async function refreshOpenSearch(): Promise<void> {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      opensearchOverview = (await a.GetObservabilityOverview(opensearchWorkspace)) as OpenSearchOverview;
+    } catch {
+      // leave previous value in place; widgets render '—' on null
+    }
+  }
+
+  $effect(() => {
+    // Re-run whenever needed/workspace change.
+    const need = opensearchNeeded;
+    const ws = opensearchWorkspace;
+    void ws;  // dependency
+    if (opensearchPoll) { clearInterval(opensearchPoll); opensearchPoll = null; }
+    if (!need) {
+      opensearchOverview = null;
+      return;
+    }
+    void refreshOpenSearch();
+    opensearchPoll = setInterval(refreshOpenSearch, OPENSEARCH_POLL_MS);
+    return () => {
+      if (opensearchPoll) { clearInterval(opensearchPoll); opensearchPoll = null; }
     };
   });
 
@@ -137,6 +179,7 @@
     'tasks':            TasksWidget,
     'notes':            NotesWidget,
     'sessions-mini':    SessionsMiniWidget,
+    'opensearch-metric': OpenSearchMetricWidget,
   };
 
   function patchWidgetConfig(id: string, patch: Record<string, unknown>): void {
@@ -246,7 +289,8 @@
     if (!grid) return;
     dashboardState.updateWidgets([...dashboardState.widgets, w]);
     mountWidget(w);
-    drawerOpen = false;
+    // Drawer stays open so the user can add multiple widgets in one session.
+    // Backdrop click / close button still dismisses it.
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(saveLayout, 800);
   }

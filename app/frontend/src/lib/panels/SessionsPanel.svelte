@@ -101,6 +101,7 @@
   ];
 
   const CLAUDE_MODELS = [
+    'claude-opus-4-7',
     'claude-opus-4-6',
     'claude-sonnet-4-6',
     'claude-haiku-4-5-20251001',
@@ -121,6 +122,7 @@
   let localRunnerName = $state('');
   let localRunnerActive = $state(false);
   let localWorkDir = $state('');
+  let localWorkDirTouched = $state(false);
   let localRecentDirs = $state<string[]>([]);
 
   function loadLocalRecents() {
@@ -142,9 +144,22 @@
     if (!a) return;
     try {
       const dir = await a.BrowseFolder();
-      if (dir) localWorkDir = dir;
+      if (dir) { localWorkDir = dir; localWorkDirTouched = true; }
     } catch {}
   }
+
+  // Track when the user customizes the working dir so we stop auto-syncing
+  // it to the selected profile's workspace_home.
+  function markWorkDirTouched() { localWorkDirTouched = true; }
+
+  // Keep localWorkDir in sync with the selected profile's workspace_home
+  // while the modal is open and the user hasn't typed their own value.
+  $effect(() => {
+    if (!showNewModal || localWorkDirTouched) return;
+    const p = profiles.find(pp => pp.name === newProfile);
+    const home = p?.workspace_home ?? '';
+    if (home && home !== localWorkDir) localWorkDir = home;
+  });
 
   // Task (optional — runs after session starts)
   let newTask = $state('');
@@ -355,13 +370,18 @@
     }
   }
 
+  let ollamaModelError = $state('');
   async function loadOllamaModels() {
     const a = await getApi();
     if (!a) return;
     try {
       const models = (await a.ListOllamaModels()) ?? [];
       ollamaModels = models.map((m: any) => m.name ?? m);
-    } catch {}
+      ollamaModelError = '';
+    } catch (err: any) {
+      ollamaModels = [];
+      ollamaModelError = `${err?.message ?? err}`;
+    }
   }
 
   $effect(() => {
@@ -480,6 +500,12 @@
     newProfile = activeProfile?.name ?? profiles[0]?.name ?? '';
     mountPaths = [];
     newTask = '';
+    // Reset the working-dir override so the $effect picks the chosen
+    // profile's workspace_home on open.
+    localWorkDirTouched = false;
+    localWorkDir = '';
+    // Refresh ollama models in case the integration was just started.
+    loadOllamaModels();
     showNewModal = true;
   }
 
@@ -505,8 +531,12 @@
     if (newLLM !== prevLLM) {
       prevLLM = newLLM;
       if (newLLM === 'codex') newModel = 'gpt-5.4';
-      else if (newLLM === 'ollama') newModel = ollamaModels[0] ?? '';
-      else newModel = '';
+      else if (newLLM === 'ollama') {
+        // Always re-fetch when switching to ollama — the user may have just
+        // started the service or pulled a new model.
+        loadOllamaModels().then(() => { newModel = ollamaModels[0] ?? ''; });
+      }
+      else newModel = CLAUDE_MODELS[0] ?? '';
     }
   });
 
@@ -949,13 +979,13 @@
         <div class="field">
           <label for="slocaldir">working directory</label>
           <div class="input-row">
-            <input id="slocaldir" type="text" bind:value={localWorkDir} placeholder="~/workspaces/profiles/personal" />
+            <input id="slocaldir" type="text" bind:value={localWorkDir} oninput={markWorkDirTouched} placeholder="~/workspaces/profiles/personal" />
             <button class="btn-browse" onclick={browseLocalWorkDir}>browse</button>
           </div>
           {#if localRecentDirs.length > 0}
             <div class="recent-dirs">
               {#each localRecentDirs as dir (dir)}
-                <button class="recent-dir" onclick={() => localWorkDir = dir} title={dir}>
+                <button class="recent-dir" onclick={() => { localWorkDir = dir; localWorkDirTouched = true; }} title={dir}>
                   {truncatePath(dir, 40)}
                 </button>
               {/each}
@@ -1045,6 +1075,13 @@
               <option value={newModel}>{newModel}</option>
             {/if}
           </select>
+          {#if ollamaModels.length === 0}
+            <p class="field-hint" style="color: var(--color-error, #c33); font-size: 11px; margin-top: 4px;">
+              {ollamaModelError
+                ? `No models — ${ollamaModelError}`
+                : 'No models found. Pull one from Integrations → Ollama, or check the service is running.'}
+            </p>
+          {/if}
         </div>
       {/if}
 

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { WidgetInstance, WidgetKind, StatCounterConfig, CustomCounterConfig, ScriptMetricConfig, HttpMetricConfig, StreamWidgetConfig } from '../widgets/types';
+  import type { WidgetInstance, WidgetKind, StatCounterConfig, CustomCounterConfig, ScriptMetricConfig, HttpMetricConfig, StreamWidgetConfig, OpenSearchMetricConfig, OpenSearchMetric } from '../widgets/types';
+  import { featureFlags } from '../stores.svelte';
 
   let {
     open,
@@ -59,7 +60,19 @@
   let stLimit   = $state('20');
   let stSources = $state<('task' | 'event')[]>(['task', 'event']);
 
-  const WIDGET_KINDS: { kind: WidgetKind; label: string; desc: string }[] = [
+  // opensearch-metric fields
+  let osMetric = $state<OpenSearchMetric>('cost-today');
+  let osLabel  = $state('');
+  let osColor  = $state<OpenSearchMetricConfig['color']>('default');
+
+  const OS_METRICS: { val: OpenSearchMetric; label: string }[] = [
+    { val: 'cost-today',      label: 'Cost Today (USD)' },
+    { val: 'tokens-today',    label: 'Tokens Today' },
+    { val: 'api-requests-1h', label: 'API Requests (1h)' },
+    { val: 'avg-latency-1h',  label: 'Avg API Latency (1h)' },
+  ];
+
+  const ALL_WIDGET_KINDS: { kind: WidgetKind; label: string; desc: string; requires?: string }[] = [
     { kind: 'stat-counter',     label: 'Stat Counter',       desc: 'Shows a live count from shared dashboard data.' },
     { kind: 'custom-counter',   label: 'Custom Counter',     desc: 'Fetches a count from any API endpoint.' },
     { kind: 'calendar',         label: 'Calendar',           desc: 'Today / This Week / Overdue task counts with drilldown.' },
@@ -73,7 +86,18 @@
     { kind: 'script-metric',    label: 'Script Metric',      desc: 'Run a shell command, display its output as a number or string.' },
     { kind: 'http-metric',      label: 'HTTP Metric',        desc: 'Poll a JSON endpoint, extract a number or string.' },
     { kind: 'stream',           label: 'Stream',             desc: 'Chronological feed of tasks and collected events.' },
+    { kind: 'opensearch-metric', label: 'OpenSearch Metric', desc: 'Cost, tokens, requests, or latency from Claude Code telemetry.', requires: 'opensearch' },
   ];
+
+  // Hide widgets whose required integration is not enabled.
+  let WIDGET_KINDS = $derived(
+    ALL_WIDGET_KINDS.filter(w => !w.requires || featureFlags.isEnabled(w.requires))
+  );
+
+  // If the currently selected addKind gets filtered out (flag went off), fall back.
+  $effect(() => {
+    if (!WIDGET_KINDS.some(w => w.kind === addKind)) addKind = 'stat-counter';
+  });
 
   const DATA_KEYS: { key: StatCounterConfig['dataKey']; label: string }[] = [
     { key: 'activeSessions', label: 'Active Sessions' },
@@ -128,21 +152,28 @@
         config: { label: stLabel || 'stream', profile: stProfile || undefined, tag: stTag || undefined, sources: stSources, limit: parseInt(stLimit) || 20 } satisfies StreamWidgetConfig,
         x: 0, y: 999, w: 4, h: 5, minW: 3, minH: 3,
       };
+    } else if (addKind === 'opensearch-metric') {
+      widget = {
+        id, kind: 'opensearch-metric',
+        config: { metric: osMetric, label: osLabel.trim() || undefined, color: osColor } satisfies OpenSearchMetricConfig,
+        x: 0, y: 999, w: 2, h: 2, minW: 2, minH: 2,
+      };
     } else {
       const SIZE: Record<WidgetKind, { w: number; h: number; minW: number; minH: number }> = {
-        'stat-counter':     { w: 2, h: 2, minW: 2, minH: 2 },
-        'custom-counter':   { w: 2, h: 2, minW: 2, minH: 2 },
-        'script-metric':    { w: 2, h: 2, minW: 2, minH: 2 },
-        'http-metric':      { w: 2, h: 2, minW: 2, minH: 2 },
-        'calendar':         { w: 4, h: 4, minW: 3, minH: 3 },
-        'tasks':            { w: 4, h: 5, minW: 3, minH: 3 },
-        'sessions-mini':    { w: 3, h: 4, minW: 2, minH: 3 },
-        'notes':            { w: 3, h: 4, minW: 2, minH: 2 },
-        'dispatch-form':    { w: 6, h: 4, minW: 4, minH: 3 },
-        'chains-list':      { w: 3, h: 4, minW: 2, minH: 2 },
-        'action-items':     { w: 3, h: 4, minW: 2, minH: 2 },
-        'resource-monitor': { w: 12, h: 4, minW: 4, minH: 3 },
-        'stream':           { w: 4, h: 5, minW: 3, minH: 3 },
+        'stat-counter':      { w: 2, h: 2, minW: 2, minH: 2 },
+        'custom-counter':    { w: 2, h: 2, minW: 2, minH: 2 },
+        'script-metric':     { w: 2, h: 2, minW: 2, minH: 2 },
+        'http-metric':       { w: 2, h: 2, minW: 2, minH: 2 },
+        'calendar':          { w: 4, h: 4, minW: 3, minH: 3 },
+        'tasks':             { w: 4, h: 5, minW: 3, minH: 3 },
+        'sessions-mini':     { w: 3, h: 4, minW: 2, minH: 3 },
+        'notes':             { w: 3, h: 4, minW: 2, minH: 2 },
+        'dispatch-form':     { w: 6, h: 4, minW: 4, minH: 3 },
+        'chains-list':       { w: 3, h: 4, minW: 2, minH: 2 },
+        'action-items':      { w: 3, h: 4, minW: 2, minH: 2 },
+        'resource-monitor':  { w: 12, h: 4, minW: 4, minH: 3 },
+        'stream':            { w: 4, h: 5, minW: 3, minH: 3 },
+        'opensearch-metric': { w: 2, h: 2, minW: 2, minH: 2 },
       };
       widget = { id, kind: addKind, config: {}, x: 0, y: 999, ...SIZE[addKind] };
     }
@@ -158,6 +189,7 @@
     smLabel = ''; smCommand = ''; smValueType = 'number'; smColor = ''; smInterval = '60';
     hmLabel = ''; hmUrl = ''; hmPath = ''; hmHeader = ''; hmValueType = 'number'; hmColor = ''; hmInterval = '60';
     stLabel = 'stream'; stProfile = ''; stTag = ''; stLimit = '20'; stSources = ['task', 'event'];
+    osMetric = 'cost-today'; osLabel = ''; osColor = 'default';
   }
 
   function startEdit(w: WidgetInstance) {
@@ -174,6 +206,8 @@
       ccLabel = c.label ?? ''; ccApi = c.api ?? 'hub_tasks'; ccStatus = c.filter?.status ?? ''; ccColor = c.color ?? '';
     } else if (w.kind === 'stream') {
       stLabel = c.label ?? 'stream'; stProfile = c.profile ?? ''; stTag = c.tag ?? ''; stLimit = String(c.limit ?? 20); stSources = c.sources ?? ['task', 'event'];
+    } else if (w.kind === 'opensearch-metric') {
+      osMetric = c.metric ?? 'cost-today'; osLabel = c.label ?? ''; osColor = c.color ?? 'default';
     }
   }
 
@@ -191,6 +225,8 @@
       config = { label: ccLabel || 'Count', api: ccApi, filter: ccStatus ? { status: ccStatus } : {}, color: ccColor || undefined };
     } else if (w.kind === 'stream') {
       config = { label: stLabel || 'stream', profile: stProfile || undefined, tag: stTag || undefined, sources: stSources, limit: parseInt(stLimit) || 20 };
+    } else if (w.kind === 'opensearch-metric') {
+      config = { metric: osMetric, label: osLabel.trim() || undefined, color: osColor };
     } else {
       config = w.config;
     }
@@ -199,19 +235,20 @@
   }
 
   const KIND_LABELS: Record<WidgetKind, string> = {
-    'stat-counter':     'Stat Counter',
-    'custom-counter':   'Custom Counter',
-    'script-metric':    'Script Metric',
-    'http-metric':      'HTTP Metric',
-    'calendar':         'Calendar',
-    'tasks':            'Tasks',
-    'sessions-mini':    'Live Sessions',
-    'notes':            'Scratchpad',
-    'dispatch-form':    'Dispatch Form',
-    'chains-list':      'Scheduled Chains',
-    'action-items':     'Action Items',
-    'resource-monitor': 'Resource Monitor',
-    'stream':           'Stream',
+    'stat-counter':      'Stat Counter',
+    'custom-counter':    'Custom Counter',
+    'script-metric':     'Script Metric',
+    'http-metric':       'HTTP Metric',
+    'calendar':          'Calendar',
+    'tasks':             'Tasks',
+    'sessions-mini':     'Live Sessions',
+    'notes':             'Scratchpad',
+    'dispatch-form':     'Dispatch Form',
+    'chains-list':       'Scheduled Chains',
+    'action-items':      'Action Items',
+    'resource-monitor':  'Resource Monitor',
+    'stream':            'Stream',
+    'opensearch-metric': 'OpenSearch Metric',
   };
 </script>
 
@@ -377,6 +414,27 @@
               <label>Max items</label>
               <input type="number" bind:value={stLimit} min="5" max="100" />
             </div>
+          {:else if addKind === 'opensearch-metric'}
+            <div class="field">
+              <label>Metric</label>
+              <select bind:value={osMetric}>
+                {#each OS_METRICS as m}
+                  <option value={m.val}>{m.label}</option>
+                {/each}
+              </select>
+            </div>
+            <div class="field">
+              <label>Label (optional)</label>
+              <input type="text" bind:value={osLabel} placeholder="leave blank for default" />
+            </div>
+            <div class="field">
+              <label>Color</label>
+              <select bind:value={osColor}>
+                {#each COLORS as c}
+                  <option value={c.val}>{c.label}</option>
+                {/each}
+              </select>
+            </div>
           {:else}
             <p class="no-config">No configuration needed.</p>
           {/if}
@@ -429,6 +487,10 @@
                 </div>
               </div>
               <div class="field"><label>Max items</label><input type="number" bind:value={stLimit} min="5" max="100" /></div>
+            {:else if editingWidget.kind === 'opensearch-metric'}
+              <div class="field"><label>Metric</label><select bind:value={osMetric}>{#each OS_METRICS as m (m.val)}<option value={m.val}>{m.label}</option>{/each}</select></div>
+              <div class="field"><label>Label (optional)</label><input type="text" bind:value={osLabel} placeholder="leave blank for default" /></div>
+              <div class="field"><label>Color</label><select bind:value={osColor}>{#each COLORS as c (c.val)}<option value={c.val}>{c.label}</option>{/each}</select></div>
             {:else}
               <p class="no-config">No editable configuration for this widget type.</p>
             {/if}
