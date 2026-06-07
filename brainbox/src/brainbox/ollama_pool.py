@@ -195,22 +195,20 @@ class OllamaPool:
                     "tb": traceback.format_exc().splitlines()[-6:],
                 },
             )
-
-
-def _exception_chain(exc: BaseException) -> list[BaseException]:
-    out = []
-    cur: BaseException | None = exc
-    while cur is not None:
-        out.append(cur)
-        cur = cur.__cause__ or cur.__context__
-        if cur in out:
-            break
-    return out
         inst.last_checked = time.time()
         log.debug(
             "ollama_pool.health_checked",
             metadata={"runner": runner_name, "healthy": inst.healthy, "models": len(inst.models)},
         )
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    out: list[BaseException] = []
+    cur: BaseException | None = exc
+    while cur is not None and cur not in out:
+        out.append(cur)
+        cur = cur.__cause__ or cur.__context__
+    return out
 
 
 # Module-level singleton
