@@ -1,4 +1,9 @@
-"""Ollama API client for chat completions, model management, and health checks."""
+"""Ollama API client for chat completions, model management, and health checks.
+
+Each function takes optional ``base_url``, ``headers``, and ``verify``
+parameters so callers can talk to either the local Ollama (no auth, http)
+or a runner's HTTPS proxy (X-API-Key auth, self-signed cert).
+"""
 
 from __future__ import annotations
 
@@ -12,10 +17,10 @@ from .log import get_logger
 _log = get_logger()
 
 # ---------------------------------------------------------------------------
-# Cached HTTPx clients — one per base_url for connection pooling
+# Cached HTTPx clients — one per (base_url, verify) pair for connection pooling
 # ---------------------------------------------------------------------------
 
-_httpx_clients: dict[str, httpx.Client] = {}
+_httpx_clients: dict[tuple[str, bool], httpx.Client] = {}
 
 
 class OllamaError(RuntimeError):
@@ -47,18 +52,24 @@ class ModelInfo:
     digest: str
 
 
-def _client(base_url: str | None = None) -> httpx.Client:
-    """Get a cached httpx client for the given base_url (defaults to settings.ollama.host)."""
+def _client(base_url: str | None = None, *, verify: bool = True) -> httpx.Client:
+    """Cached httpx client per (base_url, verify) pair."""
     url = base_url or settings.ollama.host
-    if url not in _httpx_clients:
-        _httpx_clients[url] = httpx.Client(base_url=url, timeout=300.0)
-    return _httpx_clients[url]
+    key = (url, verify)
+    if key not in _httpx_clients:
+        _httpx_clients[key] = httpx.Client(base_url=url, timeout=300.0, verify=verify)
+    return _httpx_clients[key]
 
 
-def health_check(base_url: str | None = None) -> bool:
+def health_check(
+    base_url: str | None = None,
+    *,
+    headers: dict[str, str] | None = None,
+    verify: bool = True,
+) -> bool:
     """Check if Ollama is reachable."""
     try:
-        resp = _client(base_url).get("/")
+        resp = _client(base_url, verify=verify).get("/", headers=headers)
         return resp.status_code == 200
     except Exception as exc:
         _log.debug("ollama.health_check_failed", metadata={"reason": str(exc)})
@@ -69,6 +80,9 @@ def chat(
     messages: list[dict],
     model: str | None = None,
     base_url: str | None = None,
+    *,
+    headers: dict[str, str] | None = None,
+    verify: bool = True,
 ) -> ChatResult:
     """Send a chat completion request to Ollama."""
     resolved_model = model or settings.ollama.model
@@ -79,7 +93,7 @@ def chat(
         "stream": False,
     }
     try:
-        resp = _client(base_url).post("/api/chat", json=payload)
+        resp = _client(base_url, verify=verify).post("/api/chat", json=payload, headers=headers)
         resp.raise_for_status()
         body = resp.json()
     except httpx.ConnectError as exc:
@@ -101,11 +115,16 @@ def chat(
         raise OllamaError("chat", f"unexpected response structure: {exc}")
 
 
-def list_models(base_url: str | None = None) -> list[ModelInfo]:
+def list_models(
+    base_url: str | None = None,
+    *,
+    headers: dict[str, str] | None = None,
+    verify: bool = True,
+) -> list[ModelInfo]:
     """List models available on the Ollama server."""
     url = base_url or settings.ollama.host
     try:
-        resp = _client(base_url).get("/api/tags")
+        resp = _client(base_url, verify=verify).get("/api/tags", headers=headers)
         resp.raise_for_status()
         data = resp.json()
     except httpx.ConnectError as exc:
@@ -124,11 +143,19 @@ def list_models(base_url: str | None = None) -> list[ModelInfo]:
     ]
 
 
-def pull_model(name: str, base_url: str | None = None) -> str:
+def pull_model(
+    name: str,
+    base_url: str | None = None,
+    *,
+    headers: dict[str, str] | None = None,
+    verify: bool = True,
+) -> str:
     """Pull a model from the Ollama registry."""
     url = base_url or settings.ollama.host
     try:
-        resp = _client(base_url).post("/api/pull", json={"name": name, "stream": False})
+        resp = _client(base_url, verify=verify).post(
+            "/api/pull", json={"name": name, "stream": False}, headers=headers
+        )
         resp.raise_for_status()
         return resp.json().get("status", "success")
     except httpx.ConnectError as exc:
@@ -137,11 +164,19 @@ def pull_model(name: str, base_url: str | None = None) -> str:
         raise OllamaError("pull_model", str(exc))
 
 
-def delete_model(name: str, base_url: str | None = None) -> str:
+def delete_model(
+    name: str,
+    base_url: str | None = None,
+    *,
+    headers: dict[str, str] | None = None,
+    verify: bool = True,
+) -> str:
     """Delete a model from the Ollama server."""
     url = base_url or settings.ollama.host
     try:
-        resp = _client(base_url).request("DELETE", "/api/delete", json={"name": name})
+        resp = _client(base_url, verify=verify).request(
+            "DELETE", "/api/delete", json={"name": name}, headers=headers
+        )
         resp.raise_for_status()
         return "deleted"
     except httpx.ConnectError as exc:

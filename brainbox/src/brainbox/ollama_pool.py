@@ -1,10 +1,13 @@
 """Ollama instance pool — routes requests across all healthy Ollama backends.
 
 Instances are sourced from two places:
-  1. The configured fallback (settings.ollama.host) — always present.
-  2. Runners that register with capabilities["ollama"] = True and a host field.
-     The Ollama port defaults to 11434 but runners can advertise a custom port
-     via the ollama_port field on registration.
+  1. The configured fallback (settings.ollama.host) — always present, plain
+     HTTP, no auth.
+  2. Runners that register with capabilities["ollama"] = True and an
+     ``ollama_proxy_port`` field. These are reached over HTTPS at
+     ``https://{host}:{ollama_proxy_port}`` and authenticated with the
+     brainbox API key (``X-API-Key`` header). The runner's self-signed cert
+     is not verified — auth is gated by the API key.
 
 The pool background task health-checks every instance every 30 seconds and
 marks them healthy/unhealthy. pick() returns the healthy instance with the
@@ -32,11 +35,19 @@ _FALLBACK_NAME = "__fallback__"
 @dataclass
 class OllamaInstance:
     runner_name: str
-    url: str           # e.g. "http://192.168.1.10:11434"
+    url: str           # e.g. "https://192.168.1.10:11435" (runner proxy)
     healthy: bool = False
     models: list[str] = field(default_factory=list)
     last_checked: float = 0.0
     in_flight: int = 0
+    # Auth header value sent on every request — empty for the fallback.
+    api_key: str = ""
+    # Whether to verify the upstream TLS cert. False for self-signed
+    # runner proxies; True (default) for everything else.
+    verify_tls: bool = True
+
+    def request_headers(self) -> dict[str, str]:
+        return {"X-API-Key": self.api_key} if self.api_key else {}
 
 
 class OllamaPool:
@@ -68,13 +79,27 @@ class OllamaPool:
     # Runner integration                                                   #
     # ------------------------------------------------------------------ #
 
-    async def add_runner(self, runner_name: str, host: str, port: int = 11434) -> None:
-        url = f"http://{host}:{port}"
+    async def add_runner(
+        self,
+        runner_name: str,
+        host: str,
+        port: int,
+        *,
+        api_key: str = "",
+        scheme: str = "https",
+        verify_tls: bool = False,
+    ) -> None:
+        url = f"{scheme}://{host}:{port}"
         async with self._lock:
             existing = self._instances.get(runner_name)
-            if existing and existing.url == url:
+            if existing and existing.url == url and existing.api_key == api_key:
                 return  # no change
-            self._instances[runner_name] = OllamaInstance(runner_name=runner_name, url=url)
+            self._instances[runner_name] = OllamaInstance(
+                runner_name=runner_name,
+                url=url,
+                api_key=api_key,
+                verify_tls=verify_tls,
+            )
         log.info("ollama_pool.runner_added", metadata={"runner": runner_name, "url": url})
         # Eagerly health-check the new instance
         asyncio.create_task(self._check_one(runner_name))
@@ -140,8 +165,8 @@ class OllamaPool:
         if not inst:
             return
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(inst.url + "/api/tags")
+            async with httpx.AsyncClient(timeout=5.0, verify=inst.verify_tls) as client:
+                resp = await client.get(inst.url + "/api/tags", headers=inst.request_headers())
                 if resp.status_code == 200:
                     data = resp.json()
                     inst.models = [m["name"] for m in data.get("models", [])]

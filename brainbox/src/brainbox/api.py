@@ -955,7 +955,9 @@ async def runners_register(request: Request, _key=Depends(require_api_key)):
     max_concurrent = int(body.get("max_concurrent") or 4)
     host = (body.get("host") or "").strip() or None
     machine_id = (body.get("machine_id") or "").strip() or None
-    ollama_port = int(body["ollama_port"]) if body.get("ollama_port") else None
+    ollama_proxy_port = (
+        int(body["ollama_proxy_port"]) if body.get("ollama_proxy_port") else None
+    )
     # If a stable machine_id is provided and a runner with that ID already
     # exists under a different name, remove the old entry so the rename is
     # seamless rather than creating a duplicate.
@@ -970,11 +972,18 @@ async def runners_register(request: Request, _key=Depends(require_api_key)):
         in_flight=in_flight,
         max_concurrent=max_concurrent,
         machine_id=machine_id,
-        ollama_port=ollama_port,
+        ollama_proxy_port=ollama_proxy_port,
     )
-    # If runner advertises Ollama and we know its host, add it to the pool.
-    if caps.get("ollama") and host:
-        await get_pool().add_runner(name, host, ollama_port or 11434)
+    # If runner advertises Ollama and we know its proxy host+port, add it
+    # to the pool. The runner authenticates incoming proxy requests with
+    # brainbox's API key (shared secret) over HTTPS with a self-signed cert.
+    if caps.get("ollama") and host and ollama_proxy_port:
+        await get_pool().add_runner(
+            name, host, ollama_proxy_port,
+            api_key=load_or_create_key(),
+            scheme="https",
+            verify_tls=False,
+        )
     return {
         "ok": True,
         "runner": {
@@ -3197,7 +3206,10 @@ async def api_ollama_health():
     if inst is None:
         return {"healthy": False, "host": settings.ollama.host}
     loop = asyncio.get_running_loop()
-    healthy = await loop.run_in_executor(None, lambda: ollama_health_check(inst.url))
+    healthy = await loop.run_in_executor(
+        None,
+        lambda: ollama_health_check(inst.url, headers=inst.request_headers(), verify=inst.verify_tls),
+    )
     return {"healthy": healthy, "host": inst.url, "runner": inst.runner_name}
 
 
@@ -3231,7 +3243,11 @@ async def api_ollama_chat(body: OllamaChatRequest, _key=Depends(require_api_key)
     try:
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
-            None, lambda: ollama_chat(body.messages, body.model, inst.url)
+            None,
+            lambda: ollama_chat(
+                body.messages, body.model, inst.url,
+                headers=inst.request_headers(), verify=inst.verify_tls,
+            ),
         )
         return {
             "model": result.model,
@@ -3255,7 +3271,10 @@ async def api_ollama_models(_key=Depends(require_api_key)):
         raise HTTPException(status_code=503, detail="no Ollama instances available")
     try:
         loop = asyncio.get_running_loop()
-        models = await loop.run_in_executor(None, lambda: ollama_list_models(inst.url))
+        models = await loop.run_in_executor(
+            None,
+            lambda: ollama_list_models(inst.url, headers=inst.request_headers(), verify=inst.verify_tls),
+        )
         return {
             "models": [
                 {
@@ -3282,7 +3301,10 @@ async def api_ollama_pull(body: OllamaPullRequest, _key=Depends(require_api_key)
     pool.acquire(inst)
     try:
         loop = asyncio.get_running_loop()
-        status = await loop.run_in_executor(None, lambda: ollama_pull_model(body.name, inst.url))
+        status = await loop.run_in_executor(
+            None,
+            lambda: ollama_pull_model(body.name, inst.url, headers=inst.request_headers(), verify=inst.verify_tls),
+        )
         return {"status": status, "model": body.name, "runner": inst.runner_name}
     except OllamaError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
@@ -3299,7 +3321,10 @@ async def api_ollama_delete_model(name: str, _key=Depends(require_api_key)):
         raise HTTPException(status_code=503, detail="no Ollama instances available")
     try:
         loop = asyncio.get_running_loop()
-        status = await loop.run_in_executor(None, lambda: ollama_delete_model(name, inst.url))
+        status = await loop.run_in_executor(
+            None,
+            lambda: ollama_delete_model(name, inst.url, headers=inst.request_headers(), verify=inst.verify_tls),
+        )
         return {"status": status, "model": name, "runner": inst.runner_name}
     except OllamaError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
