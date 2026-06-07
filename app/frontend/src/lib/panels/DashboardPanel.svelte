@@ -274,19 +274,32 @@
 
   async function saveLayout(profileNameOverride?: string): Promise<void> {
     if (!grid) return;
-    const saved = grid.save(false) as any[];
     const current = dashboardState.widgets;
+    // Read positions from the DOM directly — more reliable than
+    // grid.save() which historically drops ids in some scenarios.
+    const updated: WidgetInstance[] = [];
+    for (const orig of current) {
+      const el = gridEl?.querySelector(`[gs-id="${orig.id}"]`) as HTMLElement | null;
+      if (!el) {
+        // Element not in the grid right now — keep stored values.
+        updated.push(orig);
+        continue;
+      }
+      const xRaw = el.getAttribute('gs-x');
+      const yRaw = el.getAttribute('gs-y');
+      const wRaw = el.getAttribute('gs-w');
+      const hRaw = el.getAttribute('gs-h');
+      updated.push({
+        ...orig,
+        x: xRaw !== null ? Number(xRaw) : orig.x,
+        y: yRaw !== null ? Number(yRaw) : orig.y,
+        w: wRaw !== null ? Number(wRaw) : orig.w,
+        h: hRaw !== null ? Number(hRaw) : orig.h,
+      });
+    }
     // Hard safety net: never persist an empty layout when state still
-    // believes there are widgets. This would otherwise fall back to
-    // DEFAULT_LAYOUT on next load and effectively reset the dashboard.
-    if (saved.length === 0 && current.length > 0) return;
-    const updated: WidgetInstance[] = saved
-      .map((item: any) => {
-        const orig = current.find(w => w.id === item.id);
-        if (!orig) return null;
-        return { ...orig, x: item.x ?? orig.x, y: item.y ?? orig.y, w: item.w ?? orig.w, h: item.h ?? orig.h };
-      })
-      .filter(Boolean) as WidgetInstance[];
+    // believes there are widgets.
+    if (updated.length === 0 && current.length > 0) return;
     dashboardState.updateWidgets(updated);
     const a = await getApi();
     if (a) {
@@ -564,11 +577,18 @@
     // mounts created a new job each time before the jobId was persisted.
     void pruneDuplicateMetricJobs(layout.widgets);
 
-    grid.on('change', () => {
+    // 'change' covers drag + resize + add + remove. Listen to 'resizestop'
+    // and 'dragstop' as well — in some GridStack versions a resize that
+    // ends at the same grid-cell boundary it started near does not emit a
+    // 'change', causing the new (smaller) size to be lost.
+    const scheduleSave = () => {
       if (suppressSave) return;
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(saveLayout, 800);
-    });
+    };
+    grid.on('change', scheduleSave);
+    grid.on('resizestop', scheduleSave);
+    grid.on('dragstop', scheduleSave);
 
     void load();
 
