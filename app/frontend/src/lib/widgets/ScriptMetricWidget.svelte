@@ -1,17 +1,36 @@
+<script lang="ts" module>
+  // Module-level cache so values survive widget unmount when the user
+  // navigates away from the dashboard. Keyed by collect-job id.
+  const valueCache = new Map<string, string>();
+  // Per-job last-trigger timestamps so opening the dashboard fires the
+  // job immediately (fresh values via collect:update) without spamming
+  // when the user quickly bounces between panels.
+  const lastTriggeredMs = new Map<string, number>();
+  // Short window — only suppress rapid back-to-back triggers (e.g. layout
+  // remounts that re-mount the same widget). Anything beyond 1.5s should
+  // still fire so profile switches and panel re-entry refresh the value.
+  const TRIGGER_DEBOUNCE_MS = 1500;
+</script>
+
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
+  import { onCollectUpdate } from '../utils/collectEvents';
   import { profileState } from '../stores.svelte';
   import type { ScriptMetricConfig } from './types';
 
-  let { config, onConfigUpdate }: {
+  let { config, widgetId, onConfigUpdate }: {
     config: ScriptMetricConfig;
+    widgetId?: string;
     onConfigUpdate?: (patch: Partial<ScriptMetricConfig>) => void;
   } = $props();
 
-  let value   = $state<string | null>(null);
+  // Seed from cache so navigation back to the dashboard shows the last
+  // known value instantly instead of flashing `…`.
+  const cached = config.jobId ? valueCache.get(config.jobId) ?? null : null;
+  let value   = $state<string | null>(cached);
   let error   = $state<string | null>(null);
-  let loading = $state(true);
+  let loading = $state(cached === null);
 
   const isString = $derived(config.valueType === 'string');
   const profile  = $derived(profileState.active?.name ?? '');
@@ -27,6 +46,7 @@
         if (entry) {
           value = entry.value || null;
           error = null;
+          if (value != null) valueCache.set(config.jobId, value);
         }
       } catch (e: any) {
         error = e?.message ?? String(e);
@@ -40,15 +60,31 @@
     try {
       value = await a.RunMetricScript(profile, config.command);
       error = null;
-      // Auto-register so future renders read from store
+      // Auto-register so future renders read from store. Prefer matching
+      // by owner_widget_id (stable across renames); fall back to legacy
+      // (name+command) fingerprint and backfill the link.
       if (config.command && onConfigUpdate) {
         try {
-          const job = await a.SaveCollectJob({
-            id: '', profile, name: config.label, command: config.command,
-            interval_s: config.interval ?? 60, enabled: true,
-            default_actions: '[]', last_error: '', created_at: 0,
-          });
-          onConfigUpdate({ jobId: job.id });
+          const all: any[] = (await (a as any).ListCollectJobs(profile)) ?? [];
+          let existing = widgetId ? all.find(j => j.owner_widget_id === widgetId) : null;
+          if (!existing) {
+            existing = all.find(j => j.name === config.label && j.command === config.command);
+          }
+          if (existing) {
+            onConfigUpdate({ jobId: existing.id });
+            const needsBackfill = !existing.source || (widgetId && existing.owner_widget_id !== widgetId);
+            if (needsBackfill) {
+              try { await (a as any).SaveCollectJob({ ...existing, source: 'widget', owner_widget_id: widgetId ?? '' }); } catch {}
+            }
+          } else {
+            const job = await a.SaveCollectJob({
+              id: '', profile, name: config.label, command: config.command,
+              interval_s: config.interval ?? 60, enabled: true,
+              default_actions: '[]', last_error: '', created_at: 0,
+              source: 'widget', owner_widget_id: widgetId ?? '',
+            } as any);
+            onConfigUpdate({ jobId: job.id });
+          }
         } catch { /* non-fatal */ }
       }
     } catch (e: any) {
@@ -58,17 +94,29 @@
     }
   }
 
+  // Fire the underlying collect job so the widget shows fresh data shortly
+  // after mount. Debounced so quick panel-switching doesn't trigger storms.
+  async function triggerJobIfStale() {
+    if (!config.jobId) return;
+    const now = Date.now();
+    const last = lastTriggeredMs.get(config.jobId) ?? 0;
+    if (now - last < TRIGGER_DEBOUNCE_MS) return;
+    lastTriggeredMs.set(config.jobId, now);
+    const a = await getApi();
+    try { await (a as any)?.RunCollectJobNow?.(config.jobId); } catch {}
+  }
+
   onMount(() => {
     void fetchValue();
+    void triggerJobIfStale();
     const ms = (config.interval ?? 60) * 1000;
     const interval = setInterval(fetchValue, ms);
 
     // Also refresh when the collect scheduler emits an update
-    const handler = () => void fetchValue();
-    window.runtime?.EventsOn('collect:update', handler);
+    const off = onCollectUpdate(() => void fetchValue());
     return () => {
       clearInterval(interval);
-      window.runtime?.EventsOff('collect:update');
+      off();
     };
   });
 </script>

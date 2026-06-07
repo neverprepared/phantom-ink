@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
+  import { onCollectUpdate } from '../utils/collectEvents';
   import { profileState } from '../stores.svelte';
   import { brainboxEvents } from '../events.svelte';
   import Icon from '../components/Icon.svelte';
@@ -113,9 +114,8 @@
 
   onMount(() => {
     void load();
-    const handler = () => void load();
-    window.runtime?.EventsOn('collect:update', handler);
-    return () => window.runtime?.EventsOff('collect:update');
+    const off = onCollectUpdate(() => void load());
+    return () => off();
   });
 
   let _lastEv = $derived(brainboxEvents.last);

@@ -35,6 +35,29 @@
     }
   });
 
+  // Disable browser autocorrect / spellcheck / autocomplete on all
+  // freeform inputs inside the drawer. Easier than touching every
+  // <input> markup site. Runs whenever the drawer opens or the tab
+  // changes.
+  let drawerEl: HTMLDivElement | undefined = $state();
+  $effect(() => {
+    if (!open || !drawerEl) return;
+    // void-track tab and editingWidget so this re-runs after re-renders.
+    void tab; void editingWidget;
+    queueMicrotask(() => {
+      if (!drawerEl) return;
+      const fields = drawerEl.querySelectorAll('input[type="text"], textarea');
+      fields.forEach((el) => {
+        const e = el as HTMLInputElement | HTMLTextAreaElement;
+        e.setAttribute('spellcheck', 'false');
+        e.setAttribute('autocomplete', 'off');
+        if (!e.hasAttribute('autocorrect')) e.setAttribute('autocorrect', 'off');
+        // Don't override per-input autocapitalize (metric labels set "characters").
+        if (!e.hasAttribute('autocapitalize')) e.setAttribute('autocapitalize', 'off');
+      });
+    });
+  });
+
   // --- add form state ---
   let addKind = $state<WidgetKind>('stat-counter');
 
@@ -77,6 +100,11 @@
   let osMetric = $state<OpenSearchMetric>('cost-today');
   let osLabel  = $state('');
   let osColor  = $state<OpenSearchMetricConfig['color']>('default');
+
+  // Metric labels are stored and displayed uppercase for visual consistency
+  // with the rest of the dashboard header style.
+  const metricLabel = (raw: string, fallback: string): string =>
+    (raw?.trim() || fallback).toUpperCase();
 
   const OS_METRICS: { val: OpenSearchMetric; label: string }[] = [
     { val: 'cost-today',      label: 'Cost Today (USD)' },
@@ -138,25 +166,25 @@
     if (addKind === 'stat-counter') {
       widget = {
         id, kind: 'stat-counter',
-        config: { label: scLabel || 'Counter', color: scColor, navTarget: scNavTarget || undefined, dataKey: scDataKey },
+        config: { label: metricLabel(scLabel, 'COUNTER'), color: scColor, navTarget: scNavTarget || undefined, dataKey: scDataKey },
         x: 0, y: 999, w: 2, h: 2, minW: 2, minH: 2,
       };
     } else if (addKind === 'custom-counter') {
       widget = {
         id, kind: 'custom-counter',
-        config: { label: ccLabel || 'Count', api: ccApi, filter: ccStatus ? { status: ccStatus } : {}, color: ccColor || undefined },
+        config: { label: metricLabel(ccLabel, 'COUNT'), api: ccApi, filter: ccStatus ? { status: ccStatus } : {}, color: ccColor || undefined },
         x: 0, y: 999, w: 2, h: 2, minW: 2, minH: 2,
       };
     } else if (addKind === 'script-metric') {
       widget = {
         id, kind: 'script-metric',
-        config: { label: smLabel || 'METRIC', command: smCommand, valueType: smValueType, color: smColor || undefined, interval: parseInt(smInterval) || 60 } satisfies ScriptMetricConfig,
+        config: { label: metricLabel(smLabel, 'METRIC'), command: smCommand, valueType: smValueType, color: smColor || undefined, interval: parseInt(smInterval) || 60 } satisfies ScriptMetricConfig,
         x: 0, y: 999, w: 2, h: 2, minW: 2, minH: 2,
       };
     } else if (addKind === 'http-metric') {
       widget = {
         id, kind: 'http-metric',
-        config: { label: hmLabel || 'METRIC', url: hmUrl, path: hmPath || undefined, header: hmHeader || undefined, valueType: hmValueType, color: hmColor || undefined, interval: parseInt(hmInterval) || 60 } satisfies HttpMetricConfig,
+        config: { label: metricLabel(hmLabel, 'METRIC'), url: hmUrl, path: hmPath || undefined, header: hmHeader || undefined, valueType: hmValueType, color: hmColor || undefined, interval: parseInt(hmInterval) || 60 } satisfies HttpMetricConfig,
         x: 0, y: 999, w: 2, h: 2, minW: 2, minH: 2,
       };
     } else if (addKind === 'stream') {
@@ -168,7 +196,7 @@
     } else if (addKind === 'opensearch-metric') {
       widget = {
         id, kind: 'opensearch-metric',
-        config: { metric: osMetric, label: osLabel.trim() || undefined, color: osColor } satisfies OpenSearchMetricConfig,
+        config: { metric: osMetric, label: osLabel.trim() ? osLabel.trim().toUpperCase() : undefined, color: osColor } satisfies OpenSearchMetricConfig,
         x: 0, y: 999, w: 2, h: 2, minW: 2, minH: 2,
       };
     } else {
@@ -229,17 +257,17 @@
     const w = editingWidget;
     let config: any;
     if (w.kind === 'script-metric') {
-      config = { label: smLabel || 'METRIC', command: smCommand, valueType: smValueType, color: smColor || undefined, interval: parseInt(smInterval) || 60 };
+      config = { label: metricLabel(smLabel, 'METRIC'), command: smCommand, valueType: smValueType, color: smColor || undefined, interval: parseInt(smInterval) || 60 };
     } else if (w.kind === 'http-metric') {
-      config = { label: hmLabel || 'METRIC', url: hmUrl, path: hmPath || undefined, header: hmHeader || undefined, valueType: hmValueType, color: hmColor || undefined, interval: parseInt(hmInterval) || 60 };
+      config = { label: metricLabel(hmLabel, 'METRIC'), url: hmUrl, path: hmPath || undefined, header: hmHeader || undefined, valueType: hmValueType, color: hmColor || undefined, interval: parseInt(hmInterval) || 60 };
     } else if (w.kind === 'stat-counter') {
-      config = { label: scLabel || 'Counter', color: scColor, navTarget: scNavTarget || undefined, dataKey: scDataKey };
+      config = { label: metricLabel(scLabel, 'COUNTER'), color: scColor, navTarget: scNavTarget || undefined, dataKey: scDataKey };
     } else if (w.kind === 'custom-counter') {
-      config = { label: ccLabel || 'Count', api: ccApi, filter: ccStatus ? { status: ccStatus } : {}, color: ccColor || undefined };
+      config = { label: metricLabel(ccLabel, 'COUNT'), api: ccApi, filter: ccStatus ? { status: ccStatus } : {}, color: ccColor || undefined };
     } else if (w.kind === 'stream') {
       config = { label: stLabel || 'stream', profile: stProfile || undefined, tag: stTag || undefined, sources: stSources, limit: parseInt(stLimit) || 20 };
     } else if (w.kind === 'opensearch-metric') {
-      config = { metric: osMetric, label: osLabel.trim() || undefined, color: osColor };
+      config = { metric: osMetric, label: osLabel.trim() ? osLabel.trim().toUpperCase() : undefined, color: osColor };
     } else {
       config = w.config;
     }
@@ -269,7 +297,7 @@
   <!-- backdrop -->
   <div class="backdrop" onclick={onClose} aria-hidden="true"></div>
 
-  <div class="drawer" role="dialog" aria-label="Widget settings">
+  <div class="drawer" role="dialog" aria-label="Widget settings" bind:this={drawerEl}>
     <div class="drawer-header">
       <span class="drawer-title">Widgets</span>
       <button class="close-btn" onclick={onClose} aria-label="Close">✕</button>
@@ -301,7 +329,7 @@
           {#if addKind === 'stat-counter'}
             <div class="field">
               <label>Label</label>
-              <input type="text" bind:value={scLabel} placeholder="MY COUNTER" />
+              <input class="metric-label" type="text" bind:value={scLabel} placeholder="MY COUNTER" autocorrect="off" autocapitalize="characters" spellcheck="false" autocomplete="off" />
             </div>
             <div class="field">
               <label>Data</label>
@@ -330,7 +358,7 @@
           {:else if addKind === 'custom-counter'}
             <div class="field">
               <label>Label</label>
-              <input type="text" bind:value={ccLabel} placeholder="MY METRIC" />
+              <input class="metric-label" type="text" bind:value={ccLabel} placeholder="MY METRIC" autocorrect="off" autocapitalize="characters" spellcheck="false" autocomplete="off" />
             </div>
             <div class="field">
               <label>API</label>
@@ -350,7 +378,7 @@
           {:else if addKind === 'script-metric'}
             <div class="field">
               <label>Label</label>
-              <input type="text" bind:value={smLabel} placeholder="UNREAD EMAILS" />
+              <input class="metric-label" type="text" bind:value={smLabel} placeholder="UNREAD EMAILS" autocorrect="off" autocapitalize="characters" spellcheck="false" autocomplete="off" />
             </div>
             <div class="field">
               <label>Command</label>
@@ -374,7 +402,7 @@
           {:else if addKind === 'http-metric'}
             <div class="field">
               <label>Label</label>
-              <input type="text" bind:value={hmLabel} placeholder="OPEN PRS" />
+              <input class="metric-label" type="text" bind:value={hmLabel} placeholder="OPEN PRS" autocorrect="off" autocapitalize="characters" spellcheck="false" autocomplete="off" />
             </div>
             <div class="field">
               <label>URL</label>
@@ -438,7 +466,7 @@
             </div>
             <div class="field">
               <label>Label (optional)</label>
-              <input type="text" bind:value={osLabel} placeholder="leave blank for default" />
+              <input class="metric-label" type="text" bind:value={osLabel} placeholder="leave blank for default" autocorrect="off" autocapitalize="characters" spellcheck="false" autocomplete="off" />
             </div>
             <div class="field">
               <label>Color</label>
@@ -686,6 +714,14 @@
   .field input:focus,
   .field select:focus,
   .field textarea:focus { border-color: var(--color-accent); }
+
+  .field input.metric-label {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .field input.metric-label::placeholder {
+    text-transform: uppercase;
+  }
   .field textarea { resize: vertical; font-family: var(--font-mono); }
 
   .no-config {

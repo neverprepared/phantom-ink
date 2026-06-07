@@ -347,6 +347,19 @@ var migrations = []migration{
 			dismissed_at INTEGER NOT NULL DEFAULT 0
 		);
 	`},
+	// v20: collect_jobs.source — identifies where a job came from
+	// ("widget" for dashboard-widget-bound, "" for manually created).
+	// Used by the Jobs panel to badge widget jobs and by the dashboard
+	// to safely dedupe widget-owned collect jobs.
+	{version: 20, fn: func(conn *sql.DB) error {
+		return addColumnIfMissing(conn, "collect_jobs", "source", "TEXT NOT NULL DEFAULT ''")
+	}},
+	// v21: collect_jobs.owner_widget_id — direct id-based link from a
+	// dashboard widget to its bound job. Replaces the fragile name+command
+	// fingerprint when looking up the owning widget.
+	{version: 21, fn: func(conn *sql.DB) error {
+		return addColumnIfMissing(conn, "collect_jobs", "owner_widget_id", "TEXT NOT NULL DEFAULT ''")
+	}},
 }
 
 func (db *DB) migrate() error {

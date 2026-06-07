@@ -37,6 +37,12 @@ type CollectJob struct {
 	// time-of-day scheduling (overrides interval_s when set)
 	RunAt string `json:"run_at"` // "HH:MM", e.g. "08:30"
 	Days  string `json:"days"`  // "daily" | "weekdays"
+	// Source identifies where the job was created. "widget" means it is
+	// owned by a dashboard widget; "" means user-created via the Jobs panel.
+	Source string `json:"source"`
+	// OwnerWidgetID links a widget-sourced job to the dashboard widget that
+	// owns it. Empty when source != "widget" or for legacy jobs.
+	OwnerWidgetID string `json:"owner_widget_id"`
 }
 
 type CollectedEntry struct {
@@ -78,7 +84,7 @@ type scriptEntry struct {
 func (db *DB) ListCollectJobs(profile string) ([]CollectJob, error) {
 	q := `SELECT id, profile, name, command, interval_s, enabled, default_actions,
 	             last_run_at, last_error, created_at,
-	             target_type, target_id, target_prompt, run_at, days
+	             target_type, target_id, target_prompt, run_at, days, source, owner_widget_id
 	      FROM collect_jobs`
 	args := []any{}
 	if profile != "" {
@@ -97,7 +103,7 @@ func (db *DB) ListCollectJobs(profile string) ([]CollectJob, error) {
 		var lastRunAt sql.NullInt64
 		if err := rows.Scan(&j.ID, &j.Profile, &j.Name, &j.Command, &j.IntervalS,
 			&j.Enabled, &j.DefaultActions, &lastRunAt, &j.LastError, &j.CreatedAt,
-			&j.TargetType, &j.TargetID, &j.TargetPrompt, &j.RunAt, &j.Days); err != nil {
+			&j.TargetType, &j.TargetID, &j.TargetPrompt, &j.RunAt, &j.Days, &j.Source, &j.OwnerWidgetID); err != nil {
 			return nil, err
 		}
 		if lastRunAt.Valid {
@@ -113,11 +119,11 @@ func (db *DB) GetCollectJob(id string) (CollectJob, bool) {
 	var lastRunAt sql.NullInt64
 	err := db.conn.QueryRow(`SELECT id, profile, name, command, interval_s, enabled,
 		default_actions, last_run_at, last_error, created_at,
-		target_type, target_id, target_prompt, run_at, days
+		target_type, target_id, target_prompt, run_at, days, source, owner_widget_id
 		FROM collect_jobs WHERE id = ?`, id).
 		Scan(&j.ID, &j.Profile, &j.Name, &j.Command, &j.IntervalS, &j.Enabled,
 			&j.DefaultActions, &lastRunAt, &j.LastError, &j.CreatedAt,
-			&j.TargetType, &j.TargetID, &j.TargetPrompt, &j.RunAt, &j.Days)
+			&j.TargetType, &j.TargetID, &j.TargetPrompt, &j.RunAt, &j.Days, &j.Source, &j.OwnerWidgetID)
 	if err != nil {
 		return CollectJob{}, false
 	}
@@ -137,8 +143,8 @@ func (db *DB) UpsertCollectJob(j CollectJob) error {
 	_, err := db.conn.Exec(`
 		INSERT INTO collect_jobs
 			(id, profile, name, command, interval_s, enabled, default_actions, last_error, created_at,
-			 target_type, target_id, target_prompt, run_at, days)
-		VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)
+			 target_type, target_id, target_prompt, run_at, days, source, owner_widget_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			profile         = excluded.profile,
 			name            = excluded.name,
@@ -150,10 +156,12 @@ func (db *DB) UpsertCollectJob(j CollectJob) error {
 			target_id       = excluded.target_id,
 			target_prompt   = excluded.target_prompt,
 			run_at          = excluded.run_at,
-			days            = excluded.days`,
+			days            = excluded.days,
+			source          = excluded.source,
+			owner_widget_id = excluded.owner_widget_id`,
 		j.ID, j.Profile, j.Name, j.Command, j.IntervalS, boolToInt(j.Enabled),
 		j.DefaultActions, j.CreatedAt,
-		j.TargetType, j.TargetID, j.TargetPrompt, j.RunAt, j.Days)
+		j.TargetType, j.TargetID, j.TargetPrompt, j.RunAt, j.Days, j.Source, j.OwnerWidgetID)
 	return err
 }
 
@@ -418,6 +426,11 @@ func (s *collectScheduler) runJob(job CollectJob) {
 // Shell jobs return timeline entries; playbook/chain/runner jobs manage their
 // own output and return nil entries (last_run_at is still recorded).
 func (a *App) dispatchCollectJob(job CollectJob) ([]CollectedEntry, error) {
+	// Dashboard-widget jobs emit a scalar value, not a timeline-entries
+	// array. Take the simpler dispatch path.
+	if job.Source == "widget" {
+		return a.runWidgetCommand(job)
+	}
 	switch job.TargetType {
 	case "playbook":
 		_, err := a.RunPlaybook(job.TargetID, job.Profile, "")
@@ -433,6 +446,51 @@ func (a *App) dispatchCollectJob(job CollectJob) ([]CollectedEntry, error) {
 	default: // "shell" or legacy empty
 		return a.runCollectCommand(job)
 	}
+}
+
+// runWidgetCommand runs the job's shell command and stores its stdout as a
+// single CollectedEntry — no JSON-entries-array contract. EntryID matches
+// the widget's GetLatestCollectedEntry lookup key (job.Name == config.label).
+func (a *App) runWidgetCommand(job CollectJob) ([]CollectedEntry, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	var cmd *exec.Cmd
+	if job.Profile != "" {
+		if wh := a.profileWorkspaceHome(job.Profile); wh != "" {
+			if direnvBin := findDirenv(); direnvBin != "" {
+				cmd = exec.CommandContext(ctx, direnvBin, "exec", wh, "/bin/sh", "-c", job.Command)
+				cmd.Env = os.Environ()
+			}
+		}
+	}
+	if cmd == nil {
+		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", job.Command)
+		cmd.Env = profileEnv(job.Profile)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return nil, fmt.Errorf("exit %d: %s", exitErr.ExitCode(), strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return nil, fmt.Errorf("command failed: %w", err)
+	}
+	value := strings.TrimSpace(string(out))
+	now := time.Now().UnixMilli()
+	entry := CollectedEntry{
+		JobID:       job.ID,
+		EntryID:     job.Name,
+		Profile:     job.Profile,
+		Kind:        "metric",
+		Title:       job.Name,
+		Value:       value,
+		Status:      "active",
+		CollectedAt: now,
+		Metadata:    json.RawMessage(`{}`),
+		Actions:     json.RawMessage(`[]`),
+	}
+	return []CollectedEntry{entry}, nil
 }
 
 // runCollectCommand executes the job's command and parses the JSON output.
