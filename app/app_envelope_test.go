@@ -92,7 +92,7 @@ func (c *capturingDeliverer) waitFor(t *testing.T, n int, within time.Duration) 
 
 func TestRecordActionWritesSuccessEnvelope(t *testing.T) {
 	a, cap := newAppWithOutbox(t)
-	err := a.RecordAction("task:t1", "retry", ActorUser, func() error { return nil })
+	err := a.recordAction("task:t1", "retry", ActorUser, func() error { return nil })
 	if err != nil {
 		t.Fatalf("fn err: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestRecordActionWritesSuccessEnvelope(t *testing.T) {
 
 func TestRecordActionCapturesFailure(t *testing.T) {
 	a, cap := newAppWithOutbox(t)
-	got := a.RecordAction("hub-task:abc", "respond", ActorUser, func() error {
+	got := a.recordAction("hub-task:abc", "respond", ActorUser, func() error {
 		return errors.New("boom")
 	})
 	if got == nil || got.Error() != "boom" {
@@ -142,7 +142,7 @@ func TestRecordActionCapturesFailure(t *testing.T) {
 func TestRecordActionWithoutOutboxStillRunsFn(t *testing.T) {
 	a := &App{} // no outbox
 	ran := false
-	err := a.RecordAction("x", "noop", ActorSystem, func() error {
+	err := a.recordAction("x", "noop", ActorSystem, func() error {
 		ran = true
 		return nil
 	})

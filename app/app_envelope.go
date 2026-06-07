@@ -186,18 +186,19 @@ const (
 	ActorSystem = "system"
 )
 
-// RecordAction runs fn, times it, and writes an `action.<name>` envelope to
+// recordAction runs fn, times it, and writes an `action.<name>` envelope to
 // the outbox with parent_id linking back to the target. The action envelope
 // itself always has status="done" — its `outcome.ok` tells the consumer
 // whether the underlying action succeeded.
 //
 // Returns whatever fn returned, so call sites stay simple:
 //
-//	return a.RecordAction("task:"+id, "retry", ActorUser, func() error { return a.doRetry(id) })
+//	return a.recordAction("task:"+id, "retry", ActorUser, func() error { return a.doRetry(id) })
 //
 // Use ActorUser for UI-driven clicks, ActorSystem for daemon-fired actions,
-// and "agent:<name>" for automation rules.
-func (a *App) RecordAction(targetID, actionName, actor string, fn func() error) error {
+// and "agent:<name>" for automation rules. Unexported so it doesn't get
+// auto-bound to JS — UI must call the wrapped methods, never forge actions.
+func (a *App) recordAction(targetID, actionName, actor string, fn func() error) error {
 	start := nowMillis()
 	err := fn()
 	duration := nowMillis() - start

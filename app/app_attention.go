@@ -202,7 +202,7 @@ func busActions(it brainbox.AgentStateItem) []string {
 // DismissAttention resolves producer-driven items (removes from active queue)
 // or persists a legacy dismissal for scraped items.
 func (a *App) DismissAttention(id string) error {
-	return a.RecordAction(id, "dismiss", ActorUser, func() error {
+	return a.recordAction(id, "dismiss", ActorUser, func() error {
 		if a.db == nil {
 			return fmt.Errorf("database not available")
 		}
@@ -217,7 +217,7 @@ func (a *App) DismissAttention(id string) error {
 
 // RestoreAttention removes a legacy dismissal — used by an "undo" UI.
 func (a *App) RestoreAttention(id string) error {
-	return a.RecordAction(id, "restore", ActorUser, func() error {
+	return a.recordAction(id, "restore", ActorUser, func() error {
 		if a.db == nil {
 			return fmt.Errorf("database not available")
 		}
@@ -229,7 +229,7 @@ func (a *App) RestoreAttention(id string) error {
 // resolves it. task:* items retry the local queue task; chain:* items
 // re-enqueue a new task with the original chain input.
 func (a *App) AttentionRetry(id string) error {
-	return a.RecordAction(id, "retry", ActorUser, func() error {
+	return a.recordAction(id, "retry", ActorUser, func() error {
 		if a.db == nil {
 			return fmt.Errorf("database not available")
 		}
@@ -273,7 +273,7 @@ func (a *App) AttentionRetry(id string) error {
 // automations can hook into it. The item is not auto-resolved — the user
 // dismisses explicitly after following up.
 func (a *App) AttentionRespond(id, text string) error {
-	return a.RecordAction(id, "respond", ActorUser, func() error {
+	return a.recordAction(id, "respond", ActorUser, func() error {
 		if a.db == nil {
 			return fmt.Errorf("database not available")
 		}
