@@ -102,6 +102,8 @@ export function GetDiskOverview():Promise<main.DiskOverview>;
 
 export function GetDockerStats():Promise<Array<main.ContainerStat>>;
 
+export function GetHiddenProfiles():Promise<Array<string>>;
+
 export function GetHubState():Promise<main.HubStateView>;
 
 export function GetLANIP():Promise<string>;
@@ -251,6 +253,8 @@ export function SetActiveProfile(arg1:string):Promise<void>;
 export function SetAgentEnabled(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetConfig(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function SetHiddenProfiles(arg1:Array<string>):Promise<void>;
 
 export function SetOTLPHost(arg1:string):Promise<void>;
 

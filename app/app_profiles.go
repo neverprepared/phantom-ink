@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,46 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+// ---------------------------------------------------------------------------
+// Hidden profiles (UI-only visibility toggle)
+// ---------------------------------------------------------------------------
+
+const hiddenProfilesKey = "hidden_profiles"
+
+// GetHiddenProfiles returns the names of profiles the user has chosen to
+// hide from the UI. Hidden profiles still exist on disk and can be
+// reactivated at any time — this is purely a Wails-side visibility flag.
+func (a *App) GetHiddenProfiles() []string {
+	if a.db == nil {
+		return []string{}
+	}
+	raw := a.db.GetSetting(hiddenProfilesKey, "")
+	if raw == "" {
+		return []string{}
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(raw), &names); err != nil {
+		return []string{}
+	}
+	return names
+}
+
+// SetHiddenProfiles replaces the hidden-profiles list with the provided one.
+// Pass an empty slice to clear all overrides.
+func (a *App) SetHiddenProfiles(names []string) error {
+	if a.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	if names == nil {
+		names = []string{}
+	}
+	data, err := json.Marshal(names)
+	if err != nil {
+		return err
+	}
+	return a.db.SetSetting(hiddenProfilesKey, string(data))
+}
 
 // ---------------------------------------------------------------------------
 // Profile helpers

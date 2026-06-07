@@ -26,6 +26,11 @@
       document.documentElement.dataset.theme = (cfg.theme === 'muse' ? 'brew' : cfg.theme) || 'dark';
       profileState.profiles = scanned ?? [];
       profileState.active = active?.name ? active : null;
+      // Load hidden-profile preferences (UI-only visibility).
+      try {
+        const hidden = await (mod as any).GetHiddenProfiles?.();
+        profileState.hidden = new Set<string>(hidden ?? []);
+      } catch {}
       featureFlags.services = (services ?? []).map((s: any) => ({
         name: s.name,
         enabled: s.enabled,
