@@ -164,36 +164,61 @@ class OllamaPool:
         inst = self._instances.get(runner_name)
         if not inst:
             return
-        # Health check via SYNC httpx in a thread. On Python 3.14 + macOS
-        # the async httpx transport hits a spurious EHOSTUNREACH for some
-        # LAN destinations even though curl and sync httpx work fine.
-        def _sync_check() -> tuple[bool, list[str], str | None]:
-            try:
-                with httpx.Client(timeout=5.0, verify=inst.verify_tls) as client:
-                    r = client.get(inst.url + "/api/tags", headers=inst.request_headers())
-                    if r.status_code == 200:
-                        data = r.json()
-                        return True, [m["name"] for m in data.get("models", [])], None
-                    return False, [], f"HTTP {r.status_code}"
-            except Exception as exc:
-                return False, [], f"{type(exc).__name__}: {exc}"
-        loop = asyncio.get_running_loop()
-        healthy, models, err = await loop.run_in_executor(None, _sync_check)
-        inst.healthy = healthy
-        inst.models = models
-        if err and not healthy:
-            log.warning(
-                "ollama_pool.health_exception",
-                metadata={"runner": runner_name, "url": inst.url, "reason": err},
+        # On Python 3.14 + macOS, both sync and async httpx hit a spurious
+        # EHOSTUNREACH for some LAN destinations from inside the daemon
+        # process even though curl from the same process succeeds. Use
+        # curl as the transport until that's understood. The request is
+        # small and infrequent so the process-spawn cost is negligible.
+        import json as _json
+        import shlex
+        args = ["curl", "-sk", "-m", "5",
+                "-w", "\n%{http_code}",
+                inst.url + "/api/tags"]
+        for k, v in inst.request_headers().items():
+            args += ["-H", f"{k}: {v}"]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=8.0)
+            text = stdout.decode("utf-8", errors="replace")
+            # Last line is the status code; everything before is the body.
+            body, _, code = text.rpartition("\n")
+            if code.strip() == "200":
+                try:
+                    data = _json.loads(body)
+                    inst.models = [m["name"] for m in data.get("models", [])]
+                    inst.healthy = True
+                except Exception:
+                    inst.healthy = False
+                    inst.models = []
+                    log.warning("ollama_pool.health_parse_failed",
+                                metadata={"runner": runner_name, "body": body[:200]})
+            else:
+                inst.healthy = False
+                inst.models = []
+                log.warning("ollama_pool.health_non200", metadata={
+                    "runner": runner_name, "url": inst.url, "code": code.strip(),
+                    "stderr": stderr.decode(errors="replace")[:200],
+                })
+        except Exception as exc:
+            inst.healthy = False
+            inst.models = []
+            log.warning("ollama_pool.health_exception", metadata={
+                "runner": runner_name, "url": inst.url,
+                "reason": f"{type(exc).__name__}: {exc}",
+                "cmd": " ".join(shlex.quote(a) for a in args)[:200],
+            })
         inst.last_checked = time.time()
         log.debug(
             "ollama_pool.health_checked",
             metadata={"runner": runner_name, "healthy": inst.healthy, "models": len(inst.models)},
         )
         return
-        # Below is the original async path — retained as dead code so we can
-        # restore it once httpx's async transport on 3.14 stops misbehaving.
+        # Below is the original async-httpx path — retained for the day
+        # we move off Python 3.14 or httpx ships a fix.
         last_exc: Exception | None = None
         for attempt in range(2):
             try:
