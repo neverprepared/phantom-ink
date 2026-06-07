@@ -158,6 +158,7 @@
   const mountedWidgets = new Map<string, any>();
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let drawerOpen = $state(false);
+  let editTarget = $state<WidgetInstance | null>(null);
 
   let arrangeMode = $state(false);
 
@@ -205,6 +206,17 @@
     const instance = mount(WIDGET_MAP[w.kind], { target: contentEl, props });
     mountedWidgets.set(w.id, instance);
 
+    const editBtn = document.createElement('button');
+    editBtn.className = 'widget-edit-btn';
+    editBtn.textContent = '✎';
+    editBtn.setAttribute('aria-label', 'Edit widget');
+    editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const current = dashboardState.widgets.find(x => x.id === w.id);
+      if (current) { editTarget = current; drawerOpen = true; }
+    });
+    itemEl.appendChild(editBtn);
+
     const btn = document.createElement('button');
     btn.className = 'widget-remove-btn';
     btn.textContent = '✕';
@@ -212,9 +224,10 @@
     btn.addEventListener('click', (e) => { e.stopPropagation(); handleRemoveWidget(w.id); });
     itemEl.appendChild(btn);
 
-    // Inject grip into the widget header if one exists, otherwise overlay top-left.
-    // Uses the verbatim `drag` glyph from icons.jsx (2 cols × 3 rows, cx=9/15, cy=6/12/18).
-    const dragSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+    // Uniform card header — title + drag handle. Replaces the previous
+    // grip overlay and supersedes any internal widget-header (suppressed
+    // via CSS below) so every card looks consistent.
+    const dragSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
       <circle cx="9" cy="6" r="1.4" fill="currentColor" stroke="none"/>
       <circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/>
       <circle cx="9" cy="18" r="1.4" fill="currentColor" stroke="none"/>
@@ -222,24 +235,31 @@
       <circle cx="15" cy="12" r="1.4" fill="currentColor" stroke="none"/>
       <circle cx="15" cy="18" r="1.4" fill="currentColor" stroke="none"/>
     </svg>`;
-
-    const header = contentEl.querySelector('.widget-header');
-    if (header) {
-      // Header widget: prepend grip span as first child of the header row
-      const grip = document.createElement('span');
-      grip.className = 'widget-grip widget-drag-handle';
-      grip.setAttribute('aria-hidden', 'true');
-      grip.innerHTML = dragSvg;
-      header.prepend(grip);
-    } else {
-      // Drag-strip widget: overlay grip at top-left of the card
-      const grip = document.createElement('div');
-      grip.className = 'widget-grip widget-grip-overlay widget-drag-handle';
-      grip.setAttribute('aria-hidden', 'true');
-      grip.innerHTML = dragSvg;
-      itemEl.appendChild(grip);
-    }
+    const title = ((w.config as any).label?.trim()) || KIND_TITLES[w.kind];
+    const cardHeader = document.createElement('div');
+    cardHeader.className = 'widget-card-header widget-drag-handle';
+    cardHeader.innerHTML = `<span class="widget-card-grip" aria-hidden="true">${dragSvg}</span><span class="widget-card-title">${title}</span>`;
+    contentEl.prepend(cardHeader);
   }
+
+  // Display titles when the widget config has no `label`. Mirrors
+  // KIND_LABELS in WidgetDrawer.
+  const KIND_TITLES: Record<WidgetKind, string> = {
+    'stat-counter':      'Stat Counter',
+    'custom-counter':    'Custom Counter',
+    'script-metric':     'Script Metric',
+    'http-metric':       'HTTP Metric',
+    'calendar':          'Task Calendar',
+    'tasks':             'Tasks',
+    'sessions-mini':     'Live Sessions',
+    'notes':             'Scratchpad',
+    'dispatch-form':     'Dispatch Form',
+    'chains-list':       'Scheduled Chains',
+    'action-items':      'Action Items',
+    'resource-monitor':  'Resource Monitor',
+    'stream':            'Stream',
+    'opensearch-metric': 'OpenSearch Metric',
+  };
 
   async function saveLayout(): Promise<void> {
     if (!grid) return;
@@ -277,8 +297,15 @@
     if (inst && el) {
       unmount(inst);
       const contentEl = el.querySelector('.grid-stack-item-content') as HTMLElement;
+      // Preserve the injected header — it lives outside the widget body.
+      const cardHeader = contentEl.querySelector('.widget-card-header');
+      // Clear everything except the header before re-mounting.
+      Array.from(contentEl.childNodes).forEach(n => { if (n !== cardHeader) contentEl.removeChild(n); });
       const newInst = mount(WIDGET_MAP[w.kind], { target: contentEl, props: { config: w.config } });
       mountedWidgets.set(w.id, newInst);
+      // Update the title in case the user changed config.label.
+      const titleEl = cardHeader?.querySelector('.widget-card-title') as HTMLElement | null;
+      if (titleEl) titleEl.textContent = ((w.config as any).label?.trim()) || KIND_TITLES[w.kind];
     }
 
     if (saveTimer) clearTimeout(saveTimer);
@@ -474,12 +501,14 @@
 
 <WidgetDrawer
   open={drawerOpen}
-  onClose={() => drawerOpen = false}
+  onClose={() => { drawerOpen = false; editTarget = null; }}
   onAdd={handleAddWidget}
   onUpdate={handleUpdateWidget}
   onRemove={handleRemoveWidget}
   onReset={handleReset}
   widgets={dashboardState.widgets}
+  editTarget={editTarget}
+  onEditConsumed={() => editTarget = null}
 />
 
 <style>
@@ -554,8 +583,61 @@
     padding: 8px;
   }
 
-  /* In arrange mode, always show widget remove buttons */
+  /* In arrange mode, always show widget edit + remove buttons */
   .grid-wrap.arrange :global(.widget-remove-btn) { opacity: 1; }
+  .grid-wrap.arrange :global(.widget-edit-btn) { opacity: 1; }
+
+  /* Uniform card header injected into every widget. Styled to match the
+     runner-panel table header (uppercase, tertiary text, subtle bg). */
+  :global(.widget-card-header) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: var(--bg-sunken, var(--color-surface-subtle));
+    border-bottom: 1px solid var(--border, var(--color-border-primary));
+    color: var(--text-faint, var(--color-text-tertiary));
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: grab;
+    user-select: none;
+    flex-shrink: 0;
+  }
+  :global(.widget-card-header:active) { cursor: grabbing; }
+  :global(.widget-card-grip) {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-faint, var(--color-text-tertiary));
+    opacity: 0.7;
+  }
+  :global(.widget-card-title) {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Suppress widgets' internal headers and inline labels since the card
+     header carries the title now. Each widget keeps its own layout below. */
+  :global(.grid-stack-item .widget-header) { display: none !important; }
+  :global(.grid-stack-item .stat-label) { display: none !important; }
+  :global(.grid-stack-item .drag-strip) { display: none !important; }
+
+  /* Widgets must not auto-scroll. If content doesn't fit, the user
+     should resize the widget. Override per-widget overflow rules. */
+  :global(.grid-stack-item .widget-body),
+  :global(.grid-stack-item .session-list),
+  :global(.grid-stack-item .task-list),
+  :global(.grid-stack-item .item-list),
+  :global(.grid-stack-item .scroll),
+  :global(.grid-stack-item [class*="-list"]),
+  :global(.grid-stack-item [class*="-body"]) {
+    overflow: hidden !important;
+    overflow-y: hidden !important;
+  }
 
   /* gridstack overrides */
   :global(.grid-stack-item-content) {
@@ -564,6 +646,14 @@
     border-radius: var(--r-lg, var(--radius-lg));
     overflow: hidden;
     box-shadow: var(--shadow-sm, var(--shadow-card));
+    display: flex;
+    flex-direction: column;
+  }
+  /* Widget root element (the first non-header child) fills remaining height. */
+  :global(.grid-stack-item-content > *:not(.widget-card-header):not(.widget-edit-btn):not(.widget-remove-btn)) {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
   }
 
   :global(.grid-stack-item > .ui-resizable-se) {
@@ -603,29 +693,32 @@
     color: #fff;
   }
 
-  /* Grip handle — header variant (flows inside .widget-header as first child) */
-  :global(.widget-grip) {
-    display: none;
-    align-items: center;
-    color: var(--text-faint);
-    cursor: grab;
-    flex-shrink: 0;
-    margin-right: 2px;
-    margin-left: -2px;
-    transition: color 120ms ease;
-    user-select: none;
-  }
-  :global(.widget-grip:active) { cursor: grabbing; }
-  :global(.widget-grip:hover) { color: var(--text-muted); }
-  .grid-wrap.arrange :global(.widget-grip) { display: flex; }
-
-  /* Grip handle — overlay variant (drag-strip widgets, no visible header) */
-  :global(.widget-grip-overlay) {
+  :global(.widget-edit-btn) {
     position: absolute;
-    top: 7px;
-    left: 7px;
-    z-index: 20;
-    margin: 0;
+    top: 6px;
+    right: 30px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border-primary);
+    color: var(--color-text-muted);
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    opacity: 0;
+    transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+  }
+  :global(.grid-stack-item:hover .widget-edit-btn) { opacity: 1; }
+  :global(.widget-edit-btn:hover) {
+    background: var(--accent, var(--color-accent));
+    border-color: var(--accent, var(--color-accent));
+    color: #fff;
   }
 
   :global(.grid-stack) { background: transparent; }

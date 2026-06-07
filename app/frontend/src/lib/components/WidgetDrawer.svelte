@@ -10,6 +10,8 @@
     onRemove,
     onReset,
     widgets,
+    editTarget,
+    onEditConsumed,
   }: {
     open: boolean;
     onClose: () => void;
@@ -18,9 +20,20 @@
     onRemove: (id: string) => void;
     onReset: () => void;
     widgets: WidgetInstance[];
+    editTarget?: WidgetInstance | null;
+    onEditConsumed?: () => void;
   } = $props();
 
   let tab = $state<'add' | 'manage'>('add');
+
+  // When parent passes a widget to edit, jump straight into the edit form.
+  $effect(() => {
+    if (open && editTarget) {
+      tab = 'manage';
+      startEdit(editTarget);
+      onEditConsumed?.();
+    }
+  });
 
   // --- add form state ---
   let addKind = $state<WidgetKind>('stat-counter');
