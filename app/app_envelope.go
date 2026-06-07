@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -80,14 +81,24 @@ func chainEnvelopeStatus(chainStatus string) string {
 	return chainStatus
 }
 
+// chainContext is the retry context the AttentionRetry handler needs to
+// re-enqueue a failed chain run. Threaded through emitChainEnvelope so the
+// failure envelope carries it in metadata.
+type chainContext struct {
+	Input string
+	Cwd   string
+}
+
 // emitChainEnvelope converts a ChainRunEvent into one (or two) bus envelopes:
 //   - run:start / run:done → envelope id=chain:<runID>
 //   - step:start / step:done → envelope id=chain-step:<runID>:<index>,
 //     with parent_id=chain:<runID>
 //
 // Stable IDs ensure brainbox upserts the same row across state transitions
-// and dedup keeps at-least-once delivery safe.
-func (a *App) emitChainEnvelope(ev ChainRunEvent, workspace string) {
+// and dedup keeps at-least-once delivery safe. The chainContext is embedded
+// in run-level envelope metadata so AttentionRetry can rebuild the
+// EnqueueTaskRequest without a separate side table.
+func (a *App) emitChainEnvelope(ev ChainRunEvent, workspace string, cc chainContext) {
 	if a == nil || a.outbox == nil {
 		return
 	}
@@ -108,11 +119,19 @@ func (a *App) emitChainEnvelope(ev ChainRunEvent, workspace string) {
 			Workspace: workspace,
 			Tags:      []string{"chain"},
 			StartAt:   &now,
-			Metadata:  map[string]interface{}{"chain_id": ev.ChainID},
+			Metadata: map[string]interface{}{
+				"chain_id": ev.ChainID,
+				"input":    cc.Input,
+				"cwd":      cc.Cwd,
+			},
 		})
 	case "run:done":
 		var endAt *int64 = &now
-		meta := map[string]interface{}{"chain_id": ev.ChainID}
+		meta := map[string]interface{}{
+			"chain_id": ev.ChainID,
+			"input":    cc.Input,
+			"cwd":      cc.Cwd,
+		}
 		if ev.Error != "" {
 			meta["error"] = ev.Error
 		}
@@ -176,6 +195,52 @@ func (a *App) emitChainEnvelope(ev ChainRunEvent, workspace string) {
 
 func nowMillis() int64 {
 	return timeNowUnixMilli()
+}
+
+// emitCollectedEntryEnvelope bridges collection-script output into the bus.
+// Entries with a non-empty actions[] become attention-eligible (needs_action);
+// other entries don't go to the bus because the existing collected_entries
+// table is the right home for non-actionable timeline data.
+//
+// Status mapping follows entryStatusToAttention so terminal failures land as
+// `failed` rather than `needs_action` if the script set that explicitly.
+func (a *App) emitCollectedEntryEnvelope(job CollectJob, e CollectedEntry) {
+	if a == nil || a.outbox == nil {
+		return
+	}
+	if !hasActions(e.Actions) {
+		return
+	}
+	id := "entry:" + e.JobID + "/" + e.EntryID
+	now := nowMillis()
+	envStatus := entryStatusToAttention(e.Status)
+
+	var actionsList []map[string]any
+	if len(e.Actions) > 0 {
+		_ = json.Unmarshal(e.Actions, &actionsList)
+	}
+
+	meta := map[string]interface{}{
+		"job_id":      e.JobID,
+		"entry_id":    e.EntryID,
+		"job_name":    job.Name,
+		"entry_kind":  e.Kind,
+	}
+	a.emitEnvelope(outbox.Envelope{
+		ID:        id,
+		Kind:      "event",
+		Source:    envelopeSource,
+		Type:      "entry.collected",
+		Status:    envStatus,
+		Title:     firstNonEmpty(e.Title, e.EntryID),
+		Subtitle:  fmt.Sprintf("%s · %s", e.Kind, job.Name),
+		Workspace: e.Profile,
+		URL:       e.URL,
+		StartAt:   &now,
+		Tags:      append([]string{"entry"}, e.Tags...),
+		Metadata:  meta,
+		Actions:   actionsList,
+	})
 }
 
 // ── Action outcome recording ──────────────────────────────────────────────────

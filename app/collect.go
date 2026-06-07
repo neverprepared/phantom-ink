@@ -396,6 +396,10 @@ func (s *collectScheduler) runJob(job CollectJob) {
 		if err := s.app.db.UpsertCollectedEntry(e); err != nil {
 			fmt.Fprintf(os.Stderr, "collect: upsert entry %s/%s: %v\n", job.ID, e.EntryID, err)
 		}
+		// P5: entries that carry actions[] become attention-eligible bus rows.
+		// The bus is the single attention source; the legacy scrape of
+		// collected_entries in app_attention.go has been retired.
+		s.app.emitCollectedEntryEnvelope(job, e)
 	}
 	if len(entries) > 0 {
 		s.app.emitCollectUpdate(job.Profile)

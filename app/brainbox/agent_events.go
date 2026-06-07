@@ -68,6 +68,35 @@ type agentStateResp struct {
 	Count int              `json:"count"`
 }
 
+// GetAgentState fetches one envelope by id. Returns ok=false when brainbox
+// returned 404 (envelope unknown to the bus).
+func (c *Client) GetAgentState(id string) (AgentStateItem, bool, error) {
+	if id == "" {
+		return AgentStateItem{}, false, fmt.Errorf("empty envelope id")
+	}
+	var item AgentStateItem
+	err := c.get("/api/agent_state/"+id, &item)
+	if err != nil {
+		// Detect a 404 — Client.do returns a *http error with the status code
+		// in its message. The simplest signal is a string contains check.
+		if err.Error() != "" && contains404(err.Error()) {
+			return AgentStateItem{}, false, nil
+		}
+		return AgentStateItem{}, false, fmt.Errorf("get agent state: %w", err)
+	}
+	return item, true, nil
+}
+
+func contains404(s string) bool {
+	// brainbox returns 404 as "HTTP 404: ..." from the do helper
+	for i := 0; i+3 <= len(s); i++ {
+		if s[i] == '4' && s[i+1] == '0' && s[i+2] == '4' {
+			return true
+		}
+	}
+	return false
+}
+
 // ListAgentState fetches current-state envelopes from brainbox, filtered.
 func (c *Client) ListAgentState(opts ListAgentStateOptions) ([]AgentStateItem, error) {
 	q := "?"

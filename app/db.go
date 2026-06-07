@@ -382,6 +382,17 @@ var migrations = []migration{
 		CREATE INDEX IF NOT EXISTS idx_outbox_eligible
 			ON outbox_events(next_attempt_at);
 	`},
+	// v23: attention_replies — overlay for envelope-id-keyed user replies.
+	// Replaces the user_reply column on attention_items now that attention
+	// reads from the bus (P5). Local table because replies are UI-state that
+	// doesn't need to round-trip to brainbox.
+	{version: 23, sql: `
+		CREATE TABLE IF NOT EXISTS attention_replies (
+			id         TEXT PRIMARY KEY,
+			reply      TEXT NOT NULL,
+			replied_at INTEGER NOT NULL
+		);
+	`},
 }
 
 func (db *DB) migrate() error {

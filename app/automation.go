@@ -194,6 +194,7 @@ func (e *AutomationEngine) fireAction(rule AutomationRule, evt AutomationEvent) 
 		_ = e.app.db.markCollectJobRun(job.ID, now, errStr)
 		for _, entry := range entries {
 			_ = e.app.db.UpsertCollectedEntry(entry)
+			e.app.emitCollectedEntryEnvelope(job, entry)
 		}
 		if len(entries) > 0 {
 			e.app.emitCollectUpdate(evt.Profile)
