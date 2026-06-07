@@ -264,6 +264,71 @@ async def async_ingest_batch(envelopes: list[AgentEnvelope | dict[str, Any]]) ->
 
 
 # ---------------------------------------------------------------------------
+# Action outcome recording
+# ---------------------------------------------------------------------------
+
+# Standard actor strings. Use ACTOR_USER for HTTP requests originating from a
+# human, ACTOR_SYSTEM for daemon/scheduler internals, and "agent:<name>" for
+# automation rules.
+ACTOR_USER = "user"
+ACTOR_SYSTEM = "system"
+
+
+async def arecord_action(
+    target_id: str,
+    action_name: str,
+    actor: str,
+    fn: Callable[[], Any],
+) -> Any:
+    """Run an action coroutine, time it, and write an `action.<name>` envelope
+    to the bus with parent_id linking back to `target_id`. The envelope's
+    `status` is always 'done'; `outcome.ok` tells the consumer whether the
+    underlying action succeeded.
+
+    Returns whatever `fn` returned; re-raises any exception fn raised after
+    recording the failure outcome.
+    """
+    start_ms = int(time.time() * 1000)
+    err_msg: str | None = None
+    ok = True
+    try:
+        result = fn()
+        if asyncio.iscoroutine(result):
+            result = await result
+        return result
+    except Exception as exc:
+        ok = False
+        err_msg = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        end_ms = int(time.time() * 1000)
+        duration = end_ms - start_ms
+        try:
+            await async_ingest(AgentEnvelope(
+                id=f"action:{target_id}:{action_name}:{start_ms}",
+                kind="event",
+                source="brainbox-hub",
+                type=f"action.{action_name}",
+                status="done",
+                title=f"action {action_name}",
+                parent_id=target_id,
+                tags=["action", action_name],
+                start_at=start_ms,
+                end_at=end_ms,
+                metadata={"target": target_id},
+                outcome=ActionOutcome(
+                    ok=ok,
+                    actor=actor,
+                    error=err_msg,
+                    duration_ms=duration,
+                ),
+            ))
+        except Exception:
+            # Recording must not break the action itself.
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Adapters: brainbox-internal producers → envelope
 # ---------------------------------------------------------------------------
 

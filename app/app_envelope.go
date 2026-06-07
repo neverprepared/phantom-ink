@@ -178,3 +178,59 @@ func nowMillis() int64 {
 	return timeNowUnixMilli()
 }
 
+// ── Action outcome recording ──────────────────────────────────────────────────
+
+// Default actors used by the convenience wrappers below.
+const (
+	ActorUser   = "user"
+	ActorSystem = "system"
+)
+
+// RecordAction runs fn, times it, and writes an `action.<name>` envelope to
+// the outbox with parent_id linking back to the target. The action envelope
+// itself always has status="done" — its `outcome.ok` tells the consumer
+// whether the underlying action succeeded.
+//
+// Returns whatever fn returned, so call sites stay simple:
+//
+//	return a.RecordAction("task:"+id, "retry", ActorUser, func() error { return a.doRetry(id) })
+//
+// Use ActorUser for UI-driven clicks, ActorSystem for daemon-fired actions,
+// and "agent:<name>" for automation rules.
+func (a *App) RecordAction(targetID, actionName, actor string, fn func() error) error {
+	start := nowMillis()
+	err := fn()
+	duration := nowMillis() - start
+
+	if a == nil || a.outbox == nil {
+		return err
+	}
+
+	outcome := &outbox.Outcome{
+		OK:         err == nil,
+		Actor:      actor,
+		DurationMs: &duration,
+	}
+	if err != nil {
+		outcome.Error = err.Error()
+	}
+
+	endAt := start + duration
+	title := fmt.Sprintf("action %s", actionName)
+	a.emitEnvelope(outbox.Envelope{
+		ID:       fmt.Sprintf("action:%s:%s:%d", targetID, actionName, start),
+		Kind:     "event",
+		Source:   envelopeSource,
+		Type:     "action." + actionName,
+		Status:   "done",
+		Title:    title,
+		ParentID: targetID,
+		Tags:     []string{"action", actionName},
+		StartAt:  &start,
+		EndAt:    &endAt,
+		Outcome:  outcome,
+		Metadata: map[string]interface{}{"target": targetID},
+	})
+	return err
+}
+

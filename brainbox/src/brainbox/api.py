@@ -2505,14 +2505,27 @@ async def hub_get_task(task_id: str, _key=Depends(require_api_key)):
 @app.delete("/api/hub/tasks/{task_id}")
 async def hub_cancel_task(task_id: str, request: Request):
     """Cancel a task. Accepts API key (full trust) or the owning agent's bearer token."""
-    if not _is_api_key_valid(request):
+    # Determine actor before doing the work so the recorded outcome reflects
+    # whether this came from the human-key path or from the task's own token.
+    actor = agent_store.ACTOR_USER if _is_api_key_valid(request) else None
+    if actor is None:
         token = get_bearer_token(request)
         if not token:
             raise HTTPException(status_code=401, detail="Missing or invalid API key or Bearer token")
         if token.task_id != task_id:
             raise HTTPException(status_code=403, detail="Token is not the owner of this task")
+        actor = f"agent:{token.agent_name}" if getattr(token, "agent_name", None) else agent_store.ACTOR_SYSTEM
+
+    async def _do_cancel():
+        return await cancel_task(task_id)
+
     try:
-        task = await cancel_task(task_id)
+        task = await agent_store.arecord_action(
+            target_id=f"hub-task:{task_id}",
+            action_name="cancel",
+            actor=actor,
+            fn=_do_cancel,
+        )
         _broadcast_sse(json.dumps({"action": "task.cancel", "task_id": task_id}))
         return task.model_dump()
     except ValueError as exc:
