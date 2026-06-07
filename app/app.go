@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"phantom-ink/brainbox"
+	"phantom-ink/internal/outbox"
 	goruntime "runtime"
 	"strings"
 	"sync"
@@ -36,6 +37,8 @@ type App struct {
 	automationsStop  context.CancelFunc
 	localRunner      *localRunner
 	localRunnerStop  context.CancelFunc
+	outbox           *outbox.Outbox
+	outboxStop       context.CancelFunc
 }
 
 // NewApp creates a new App instance.
@@ -80,20 +83,33 @@ func (a *App) startup(ctx context.Context) {
 	a.client = brainbox.NewClient(a.config.BaseURL, a.config.APIKey)
 	a.sse = brainbox.NewSSEListener(a.client, func(event string) {
 		runtime.EventsEmit(ctx, "brainbox:event", event)
+
+		// Inspect the wrapper once. brainbox /api/events broadcasts every
+		// listener as JSON; agent.event wraps {"event":"agent.event","data":{...envelope}}
+		// while webhook events use {"action":"webhook.trigger",...}.
+		var probe struct {
+			Event   string                 `json:"event"`
+			Data    map[string]interface{} `json:"data"`
+			Action  string                 `json:"action"`
+			Key     string                 `json:"key"`
+			Payload map[string]interface{} `json:"payload"`
+		}
+		if json.Unmarshal([]byte(event), &probe) != nil {
+			return
+		}
+
+		// Fan-out agent.event so the Stream panel gets typed envelope deltas.
+		if probe.Event == "agent.event" && probe.Data != nil {
+			runtime.EventsEmit(ctx, "agent:event", probe.Data)
+		}
+
 		// Route webhook.trigger events to the automation engine.
-		if a.automations != nil {
-			var env struct {
-				Action  string                 `json:"action"`
-				Key     string                 `json:"key"`
-				Payload map[string]interface{} `json:"payload"`
-			}
-			if json.Unmarshal([]byte(event), &env) == nil && env.Action == "webhook.trigger" && env.Key != "" {
-				a.automations.Emit(AutomationEvent{
-					Type:           "webhook",
-					WebhookKey:     env.Key,
-					WebhookPayload: env.Payload,
-				})
-			}
+		if a.automations != nil && probe.Action == "webhook.trigger" && probe.Key != "" {
+			a.automations.Emit(AutomationEvent{
+				Type:           "webhook",
+				WebhookKey:     probe.Key,
+				WebhookPayload: probe.Payload,
+			})
 		}
 	})
 	a.sse.Start()
@@ -105,6 +121,27 @@ func (a *App) startup(ctx context.Context) {
 			logErr("warning: initial agent rescan failed: %v", err)
 		}
 	}()
+
+	// Start the agent-event-bus outbox. Producers (queue, chain executor) append
+	// envelopes; the flush loop ships batches to brainbox /api/agent_events with
+	// exponential backoff. Brainbox dedups by envelope id.
+	if a.db != nil {
+		outboxCtx, outboxCancel := context.WithCancel(ctx)
+		a.outboxStop = outboxCancel
+		a.outbox = outbox.New(a.db.Conn(), func(_ context.Context, batch []outbox.Envelope) error {
+			raws := make([]json.RawMessage, len(batch))
+			for i, env := range batch {
+				b, err := json.Marshal(env)
+				if err != nil {
+					return err
+				}
+				raws[i] = b
+			}
+			_, err := a.client.IngestAgentEvents(raws)
+			return err
+		}, outbox.Options{})
+		a.outbox.Start(outboxCtx)
+	}
 
 	// Start the task queue worker. Stopped during shutdown via workerStop.
 	if a.db != nil {
@@ -163,6 +200,12 @@ func (a *App) shutdown(_ context.Context) {
 	}
 	if a.localRunnerStop != nil {
 		a.localRunnerStop()
+	}
+	if a.outboxStop != nil {
+		a.outboxStop()
+	}
+	if a.outbox != nil {
+		a.outbox.Stop()
 	}
 	if a.worker != nil {
 		a.worker.Wait()

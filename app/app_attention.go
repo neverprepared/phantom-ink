@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"phantom-ink/brainbox"
 )
 
 // AttentionItem is one card in the Stream panel's "Attention" tab. It comes
@@ -15,11 +17,12 @@ import (
 // dismissals and resolutions persist across app restarts.
 type AttentionItem struct {
 	ID        string   `json:"id"`        // "<source>:<sourceID>"
-	Source    string   `json:"source"`    // "task" | "chain" | "entry" | "hub"
+	Source    string   `json:"source"`    // "task" | "chain" | "entry" | "hub" | "bus"
 	SourceID  string   `json:"source_id"` // raw id within the source
+	Status    string   `json:"status"`    // "failed" | "blocked" | "needs_action" — drives badge
 	Title     string   `json:"title"`
 	Subtitle  string   `json:"subtitle"`
-	Reason    string   `json:"reason"`    // why this needs attention
+	Reason    string   `json:"reason"`    // why this needs attention (often the error message)
 	Workspace string   `json:"workspace"` // for profile filter
 	Time      int64    `json:"time"`      // epoch ms (sort key, newest first)
 	URL       string   `json:"url,omitempty"`
@@ -34,176 +37,207 @@ type OpenTarget struct {
 }
 
 // ListAttention returns items requiring user focus, filtered by workspace
-// (empty string = all). Active producer-driven items are unioned with the two
-// legacy scraped sources; dismissed items are excluded.
+// (empty string = all). Bus-only as of P5: queries brainbox /api/agent_state
+// for envelopes whose status is attention-eligible, then overlays local
+// dismissals and user replies.
 func (a *App) ListAttention(workspace string) ([]AttentionItem, error) {
 	if a.db == nil {
 		return nil, fmt.Errorf("database not available")
 	}
+	if a.client == nil {
+		return nil, nil // brainbox unreachable — no bus, no attention
+	}
+
 	dismissed, err := a.db.DismissedAttentionSet()
 	if err != nil {
 		return nil, fmt.Errorf("dismissed set: %w", err)
 	}
+	replies, _ := a.db.AttentionReplies()
 
-	var items []AttentionItem
-
-	// ── Source 1: producer-driven attention_items ─────────────────────────────
-	rows, err := a.db.ListActiveAttention(workspace)
-	if err == nil {
-		for _, r := range rows {
-			items = append(items, AttentionItem{
-				ID:        r.ID,
-				Source:    r.Source,
-				SourceID:  r.SourceID,
-				Title:     r.Title,
-				Subtitle:  r.Subtitle,
-				Reason:    r.Reason,
-				Workspace: r.Workspace,
-				Time:      r.CreatedAt,
-				URL:       r.URL,
-				Actions:   r.Actions,
-				UserReply: r.UserReply,
-			})
-		}
+	busItems, err := a.client.ListAgentState(brainbox.ListAgentStateOptions{
+		Status:    "failed,blocked,needs_action",
+		Workspace: workspace,
+		Limit:     200,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list agent_state: %w", err)
 	}
 
-	// ── Source 2: failed hub tasks (legacy scrape) ────────────────────────────
-	if a.client != nil {
-		tasks, err := a.client.ListTasks("failed", workspace)
-		if err == nil {
-			for _, t := range tasks {
-				id := "hub:" + t.ID
-				if dismissed[id] {
-					continue
-				}
-				actions := []string{"open", "dismiss"}
-				items = append(items, AttentionItem{
-					ID:       id,
-					Source:   "hub",
-					SourceID: t.ID,
-					Title:    truncate(t.Description, 80),
-					Subtitle: fmt.Sprintf("%s · %s", t.AgentName, t.SessionName),
-					Reason:   errString(t.Error),
-					Workspace: t.WorkspaceProfile,
-					Time:     coerceMillis(t.UpdatedAt),
-					Actions:  actions,
-				})
-			}
+	items := make([]AttentionItem, 0, len(busItems))
+	for _, it := range busItems {
+		if dismissed[it.ID] {
+			continue
 		}
-	}
-
-	// ── Source 3: collected entries with actions[] (legacy scrape) ────────────
-	entries, err := a.db.ListCollectedEntries(workspace, "", "")
-	if err == nil {
-		for _, e := range entries {
-			if !hasActions(e.Actions) {
-				continue
-			}
-			id := "entry:" + e.JobID + "/" + e.EntryID
-			if dismissed[id] {
-				continue
-			}
-			actions := []string{"dismiss"}
-			if e.URL != "" {
-				actions = []string{"open", "dismiss"}
-			}
-			items = append(items, AttentionItem{
-				ID:       id,
-				Source:   "entry",
-				SourceID: e.EntryID,
-				Title:    firstNonEmpty(e.Title, e.EntryID),
-				Subtitle: fmt.Sprintf("%s · %s", e.Kind, e.JobID),
-				Reason:   statusReason(e.Status),
-				Workspace: e.Profile,
-				Time:     timeFromEntry(e),
-				URL:      e.URL,
-				Actions:  actions,
-			})
-		}
+		items = append(items, AttentionItem{
+			ID:        it.ID,
+			Source:    "bus",
+			SourceID:  it.ID,
+			Status:    it.Status,
+			Title:     it.Title,
+			Subtitle:  it.Subtitle,
+			Reason:    busReason(it),
+			Workspace: it.Workspace,
+			Time:      it.UpdatedAt,
+			URL:       it.URL,
+			Actions:   busActions(it),
+			UserReply: replies[it.ID],
+		})
 	}
 
 	sort.Slice(items, func(i, j int) bool { return items[i].Time > items[j].Time })
 	return items, nil
 }
 
-// DismissAttention resolves producer-driven items (removes from active queue)
-// or persists a legacy dismissal for scraped items.
+// busReason extracts the human-readable error from a bus envelope's metadata.
+// Returns "" when no error is present — the status badge already conveys the
+// lifecycle state, so we don't echo it as the reason text.
+func busReason(it brainbox.AgentStateItem) string {
+	if it.Metadata != nil {
+		if v, ok := it.Metadata["last_error"].(string); ok && v != "" {
+			return truncate(v, 200)
+		}
+		if v, ok := it.Metadata["error"].(string); ok && v != "" {
+			return truncate(v, 200)
+		}
+		if v, ok := it.Metadata["reason"].(string); ok && v != "" {
+			return truncate(v, 200)
+		}
+	}
+	return ""
+}
+
+// entryStatusToAttention maps a collected_entries status string into one of
+// the three attention-eligible statuses. Anything we don't recognise is
+// surfaced as "needs_action" (the most neutral catch-all for entries with
+// pending actions).
+func entryStatusToAttention(s string) string {
+	switch strings.ToLower(s) {
+	case "failed", "error":
+		return "failed"
+	case "blocked":
+		return "blocked"
+	case "action_needed", "action-needed":
+		return "needs_action"
+	}
+	return "needs_action"
+}
+
+// busActions returns the action slugs surfaced on a bus card. We keep the
+// existing four (retry/open/respond/dismiss) and let producers narrow via
+// the envelope's `actions[]` field in a later phase.
+func busActions(it brainbox.AgentStateItem) []string {
+	if len(it.Actions) > 0 {
+		out := make([]string, 0, len(it.Actions))
+		for _, a := range it.Actions {
+			if lbl, ok := a["kind"].(string); ok && lbl != "" {
+				out = append(out, lbl)
+			}
+		}
+		if len(out) > 0 {
+			out = append(out, "dismiss")
+			return out
+		}
+	}
+	return []string{"open", "dismiss"}
+}
+
+// DismissAttention records the envelope id in the local dismissed_attention
+// table so the bus aggregator filters it out on the next ListAttention call.
+// Per P5 the bus is the single attention source; the legacy attention_items
+// resolve path is gone.
 func (a *App) DismissAttention(id string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not available")
-	}
-	if resolved, err := a.db.ResolveAttentionItem(id); err != nil {
-		return err
-	} else if resolved {
-		return nil
-	}
-	return a.db.DismissAttentionRow(id)
+	return a.recordAction(id, "dismiss", ActorUser, func() error {
+		if a.db == nil {
+			return fmt.Errorf("database not available")
+		}
+		return a.db.DismissAttentionRow(id)
+	})
 }
 
-// RestoreAttention removes a legacy dismissal — used by an "undo" UI.
+// RestoreAttention removes a dismissal — used by an "undo" UI.
 func (a *App) RestoreAttention(id string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not available")
-	}
-	return a.db.UndismissAttentionRow(id)
+	return a.recordAction(id, "restore", ActorUser, func() error {
+		if a.db == nil {
+			return fmt.Errorf("database not available")
+		}
+		return a.db.UndismissAttentionRow(id)
+	})
 }
 
-// AttentionRetry re-dispatches the work that caused the attention item and
-// resolves it. task:* items retry the local queue task; chain:* items
-// re-enqueue a new task with the original chain input.
+// AttentionRetry re-dispatches the work that caused the bus item and dismisses
+// it. The retry path is driven entirely by the envelope id prefix and the
+// envelope's metadata:
+//   - task:*  → local queue task; calls RetryTask with the stripped id
+//   - chain:* → reads chain_id/input/cwd from metadata and re-enqueues
+//   - other   → returns an error (the source doesn't support retry today)
+//
+// On success the row is dismissed so it falls out of the attention list. The
+// underlying job will surface a fresh bus envelope as it runs.
 func (a *App) AttentionRetry(id string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not available")
-	}
-	row, ok := a.db.GetAttentionItem(id)
-	if !ok {
-		return fmt.Errorf("attention item %q not found", id)
-	}
-	switch row.Source {
-	case "task":
-		if err := a.RetryTask(row.SourceID); err != nil {
-			return fmt.Errorf("retry task: %w", err)
+	return a.recordAction(id, "retry", ActorUser, func() error {
+		if a.db == nil || a.client == nil {
+			return fmt.Errorf("database or brainbox not available")
 		}
-	case "chain":
-		var ctx map[string]any
-		_ = json.Unmarshal([]byte(row.ContextJSON), &ctx)
-		chainID, _ := ctx["chain_id"].(string)
-		input, _ := ctx["input"].(string)
-		cwd, _ := ctx["cwd"].(string)
-		profile, _ := ctx["workspace_profile"].(string)
-		if chainID == "" {
-			return fmt.Errorf("chain attention item missing context")
+
+		switch {
+		case strings.HasPrefix(id, "task:"):
+			taskID := strings.TrimPrefix(id, "task:")
+			if err := a.RetryTask(taskID); err != nil {
+				return fmt.Errorf("retry task: %w", err)
+			}
+
+		case strings.HasPrefix(id, "chain:"):
+			env, ok, err := a.client.GetAgentState(id)
+			if err != nil {
+				return fmt.Errorf("fetch chain envelope: %w", err)
+			}
+			if !ok {
+				return fmt.Errorf("chain envelope %q not found", id)
+			}
+			chainID, _ := env.Metadata["chain_id"].(string)
+			input, _ := env.Metadata["input"].(string)
+			cwd, _ := env.Metadata["cwd"].(string)
+			if chainID == "" {
+				return fmt.Errorf("chain envelope missing chain_id metadata")
+			}
+			if _, err := a.EnqueueTask(EnqueueTaskRequest{
+				ChainID:          chainID,
+				Input:            input,
+				Cwd:              cwd,
+				Trigger:          TriggerManual,
+				WorkspaceProfile: env.Workspace,
+			}); err != nil {
+				return fmt.Errorf("re-enqueue chain: %w", err)
+			}
+
+		default:
+			return fmt.Errorf("envelope %q does not support retry", id)
 		}
-		if _, err := a.EnqueueTask(EnqueueTaskRequest{
-			ChainID:          chainID,
-			Input:            input,
-			Cwd:              cwd,
-			Trigger:          TriggerManual,
-			WorkspaceProfile: profile,
-		}); err != nil {
-			return fmt.Errorf("re-enqueue chain: %w", err)
-		}
-	default:
-		return fmt.Errorf("source %q does not support retry", row.Source)
-	}
-	_, err := a.db.ResolveAttentionItem(id)
-	return err
+
+		// Hide the card now that we've dispatched a follow-up.
+		return a.db.DismissAttentionRow(id)
+	})
 }
 
-// AttentionRespond stores the user's reply on the item and emits an event so
-// automations can hook into it. The item is not auto-resolved — the user
-// dismisses explicitly after following up.
+// AttentionRespond stores the user's reply against the envelope id and emits
+// an event so automations can hook into it. The item is not auto-dismissed —
+// the user dismisses explicitly after following up.
+//
+// P5 note: replies live in attention_replies (local overlay), keyed by
+// envelope id; the bus envelope itself is not mutated.
 func (a *App) AttentionRespond(id, text string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not available")
-	}
-	if err := a.db.SetAttentionUserReply(id, text); err != nil {
-		return err
-	}
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "attention:responded", map[string]string{"id": id, "text": text})
-	}
-	return nil
+	return a.recordAction(id, "respond", ActorUser, func() error {
+		if a.db == nil {
+			return fmt.Errorf("database not available")
+		}
+		if err := a.db.SetAttentionReply(id, text); err != nil {
+			return err
+		}
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "attention:responded", map[string]string{"id": id, "text": text})
+		}
+		return nil
+	})
 }
 
 // AttentionOpenTarget returns the panel and ref the frontend should navigate to
@@ -288,14 +322,9 @@ func coerceMillis(v any) int64 {
 	return 0
 }
 
-func timeFromEntry(e CollectedEntry) int64 {
-	if e.StartAt != nil {
-		return *e.StartAt * 1000
-	}
-	return e.CollectedAt * 1000
-}
-
-// hasActions returns true when the entry's Actions JSON is a non-empty array.
+// hasActions returns true when an entry's Actions JSON is a non-empty array.
+// Used by the bus bridge in app_envelope.go to decide whether a collected
+// entry warrants an envelope.
 func hasActions(raw json.RawMessage) bool {
 	if len(raw) == 0 {
 		return false
@@ -305,21 +334,6 @@ func hasActions(raw json.RawMessage) bool {
 		return false
 	}
 	return len(arr) > 0
-}
-
-func statusReason(status string) string {
-	switch strings.ToLower(status) {
-	case "action_needed", "action-needed":
-		return "needs action"
-	case "blocked":
-		return "blocked"
-	case "failed", "error":
-		return "failed"
-	case "":
-		return "has pending actions"
-	default:
-		return status
-	}
 }
 
 // chainNameOrID returns the chain's human-readable name, falling back to the

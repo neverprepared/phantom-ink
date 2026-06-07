@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -159,21 +158,10 @@ func (w *worker) tickOnce(ctx context.Context) {
 	if requeued {
 		w.app.emitTaskEvent(task.ID, task.ChainID, TaskPending, task.Attempts, runErr.Error())
 	} else {
+		// Terminal failure. emitTaskEvent dual-emits a task:<id> envelope with
+		// status=failed; the bus is now the only attention source (P5), so no
+		// attention_items row is needed here.
 		w.app.emitTaskEvent(task.ID, task.ChainID, TaskFailed, task.Attempts, runErr.Error())
-		// Terminal failure — surface in the attention queue so the user can act.
-		ctxJSON, _ := json.Marshal(map[string]string{"task_id": task.ID})
-		_ = w.app.db.InsertAttentionItem(AttentionItemRow{
-			ID:          "task:" + task.ID,
-			Source:      "task",
-			SourceID:    task.ID,
-			Workspace:   task.WorkspaceProfile,
-			Title:       fmt.Sprintf("Task failed after %d attempt(s)", task.Attempts),
-			Subtitle:    chainNameOrID(w.app.db, task.ChainID),
-			Reason:      truncate(runErr.Error(), 200),
-			Actions:     []string{"retry", "open", "respond", "dismiss"},
-			ContextJSON: string(ctxJSON),
-			CreatedAt:   time.Now().UnixMilli(),
-		})
 	}
 }
 

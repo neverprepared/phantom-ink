@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "phantom-ink:timeline-entry",
-  "description": "Output contract for phantom-ink collection scripts. Scripts must write a JSON array of these objects to stdout. The scheduler upserts each item by (job_id, id) — a stable id means reruns update the existing row rather than inserting a duplicate.",
+  "$id": "phantom-ink:timeline-entry/v2",
+  "description": "Unified envelope for phantom-ink collection scripts AND the cross-machine agent event bus. Collection scripts emit an array of these to stdout (upserted by (job_id, id)). Agents emit them individually to POST /api/events (upserted by id, also appended to the audit log). Stable id means reruns / state transitions mutate the existing row rather than inserting a duplicate.",
   "type": "array",
   "items": {
     "type": "object",
@@ -10,12 +10,24 @@
     "properties": {
       "id": {
         "type": "string",
-        "description": "Upsert key — source-provided, must be stable across runs. For calendar events use the source event ID. For metrics use a fixed slug like 'unread-email-count'."
+        "description": "Upsert key — source-provided, must be stable across runs and across state transitions. For calendar events use the source event ID. For metrics use a fixed slug like 'unread-email-count'. For agent events use a stable composite like 'task:<task_id>' or 'chain:<run_id>'."
       },
       "kind": {
         "type": "string",
         "enum": ["metric", "event"],
         "description": "Controls how consumers render the entry. 'metric' displays value prominently; 'event' uses start_at/end_at for timeline positioning."
+      },
+      "source": {
+        "type": ["string", "null"],
+        "description": "Producer + machine identifier — required for agent-event envelopes. Format '<producer>@<machine>' (e.g. 'wails-queue@laptop', 'runner:mac-1', 'brainbox-hub'). Optional for collection-script entries (job_id provides equivalent context)."
+      },
+      "type": {
+        "type": ["string", "null"],
+        "description": "Dotted event type — required for agent-event envelopes. Examples: 'task.queued', 'task.failed', 'chain.step.done', 'action.retry', 'runner.heartbeat'. Optional for collection-script entries."
+      },
+      "parent_id": {
+        "type": ["string", "null"],
+        "description": "Optional link to another envelope. Used by agent events to express: action → target, chain step → chain run, child task → parent task. Enables cascading resolution and history drill-down."
       },
       "title": {
         "type": "string",
@@ -43,9 +55,24 @@
       },
       "status": {
         "type": "string",
-        "enum": ["upcoming", "active", "done", "failed"],
+        "enum": ["upcoming", "active", "done", "failed", "blocked", "needs_action"],
         "default": "active",
-        "description": "Drives visual treatment in the timeline. 'upcoming' = future event; 'active' = in progress or current metric; 'done' = completed; 'failed' = error state."
+        "description": "Drives visual treatment in the timeline AND attention surfacing for agent events. 'upcoming' = future/queued; 'active' = in progress; 'done' = completed; 'failed' = terminal error; 'blocked' = waiting on dependency / runner offline (attention-eligible); 'needs_action' = waiting on human input (attention-eligible)."
+      },
+      "outcome": {
+        "type": ["object", "null"],
+        "description": "Populated when this envelope IS an action result (type='action.*'). The parent_id then points at the target the action was taken against.",
+        "additionalProperties": false,
+        "properties": {
+          "ok": { "type": "boolean" },
+          "error": { "type": ["string", "null"] },
+          "duration_ms": { "type": ["integer", "null"] },
+          "actor": {
+            "type": "string",
+            "description": "Who performed the action. Format 'user', 'agent:<name>', or 'system'."
+          }
+        },
+        "required": ["ok", "actor"]
       },
       "tags": {
         "type": "array",
@@ -97,6 +124,10 @@
             "template": {
               "type": "string",
               "description": "For kind=prompt: pre-filled prompt template opened for user review. Supports {field} and {metadata.field} substitution."
+            },
+            "actor": {
+              "type": "string",
+              "description": "Optional — restricts which actor may perform this action. 'user', 'agent:<name>', or 'system'. Omit to allow any actor."
             }
           }
         }

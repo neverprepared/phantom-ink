@@ -36,3 +36,32 @@ func (db *DB) DismissedAttentionSet() (map[string]bool, error) {
 	}
 	return out, nil
 }
+
+// SetAttentionReply stores the user's reply text for an envelope id (P5).
+// Replaces attention_items.user_reply now that attention reads from the bus.
+func (db *DB) SetAttentionReply(id, reply string) error {
+	_, err := db.conn.Exec(
+		`INSERT INTO attention_replies (id, reply, replied_at) VALUES (?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET reply = excluded.reply, replied_at = excluded.replied_at`,
+		id, reply, time.Now().UnixMilli())
+	return err
+}
+
+// AttentionReplies returns the map of envelope id → reply text. Used by the
+// aggregator to overlay replies on bus-sourced rows.
+func (db *DB) AttentionReplies() (map[string]string, error) {
+	rows, err := db.conn.Query(`SELECT id, reply FROM attention_replies`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]string)
+	for rows.Next() {
+		var id, reply string
+		if err := rows.Scan(&id, &reply); err != nil {
+			continue
+		}
+		out[id] = reply
+	}
+	return out, nil
+}

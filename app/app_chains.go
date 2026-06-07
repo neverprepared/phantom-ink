@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"phantom-ink/internal/outbox"
 )
 
 // playbookPollInterval is how often we check playbook status while waiting
@@ -248,6 +250,7 @@ func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps [
 	ctx := context.Background()
 	log := make([]ChainRunEvent, 0, len(steps)*2+2)
 
+	cc := chainContext{Input: initialInput, Cwd: baseCwd}
 	emit := func(ev ChainRunEvent) {
 		ev.At = time.Now().UTC().Format(time.RFC3339)
 		ev.RunID = runID
@@ -256,6 +259,7 @@ func (a *App) executeChain(runID, chainID, initialInput, baseCwd string, steps [
 		if a.ctx != nil {
 			runtime.EventsEmit(a.ctx, chainRunEvent, ev)
 		}
+		a.emitChainEnvelope(ev, profileName, cc)
 	}
 
 	emit(ChainRunEvent{Phase: "run:start", Status: "running"})
@@ -339,27 +343,9 @@ done:
 		logErr("failed to persist chain run %s: %v", runID, err)
 	}
 
-	if status == "failed" && a.db != nil {
-		ctxJSON, _ := json.Marshal(map[string]any{
-			"chain_id":          chainID,
-			"input":             initialInput,
-			"cwd":               baseCwd,
-			"workspace_profile": profileName,
-		})
-		_ = a.db.InsertAttentionItem(AttentionItemRow{
-			ID:          "chain:" + runID,
-			Source:      "chain",
-			SourceID:    runID,
-			Workspace:   profileName,
-			Title:       "Chain step failed",
-			Subtitle:    chainNameOrID(a.db, chainID),
-			Reason:      truncate(failure, 200),
-			Actions:     []string{"retry", "open", "dismiss"},
-			ContextJSON: string(ctxJSON),
-			CreatedAt:   time.Now().UnixMilli(),
-		})
-	}
-
+	// Chain failure attention now flows through the bus: the run:done envelope
+	// below carries status=failed and metadata (chain_id, input, cwd) needed
+	// for AttentionRetry. No attention_items row needed (P5).
 	emit(ChainRunEvent{Phase: "run:done", Status: status, Error: failure})
 	if status != "success" {
 		return fmt.Errorf("%s", failure)
@@ -499,6 +485,10 @@ func (a *App) renderFilesArg(profileName string, files []string) (string, error)
 
 // emitTaskEvent pushes a state change to the frontend, mirroring the chain
 // event pattern. The Tasks panel listens on task:event for live updates.
+//
+// Also dual-emits an agent-event-bus envelope so cross-machine consumers see
+// the same state transition. Producers keep using emitTaskEvent — the
+// envelope emission is implicit.
 func (a *App) emitTaskEvent(taskID, chainID, status string, attempts int, errMsg string) {
 	if a.ctx == nil {
 		return
@@ -507,6 +497,60 @@ func (a *App) emitTaskEvent(taskID, chainID, status string, attempts int, errMsg
 		TaskID: taskID, ChainID: chainID, Status: status,
 		Attempts: attempts, Error: errMsg,
 		At: time.Now().UTC().Format(time.RFC3339),
+	})
+	a.emitTaskEnvelope(taskID, chainID, status, attempts, errMsg)
+}
+
+// emitTaskEnvelope builds and queues the bus envelope for a task state change.
+// Kept private to this file; emitTaskEvent is the public producer entry point.
+func (a *App) emitTaskEnvelope(taskID, chainID, status string, attempts int, errMsg string) {
+	if a == nil || a.outbox == nil || a.db == nil {
+		return
+	}
+	var (
+		title     = fmt.Sprintf("Task %s", status)
+		subtitle  = chainNameOrID(a.db, chainID)
+		workspace string
+		maxAttempts = 1
+	)
+	if row, ok := a.db.GetTask(taskID); ok {
+		workspace = row.WorkspaceProfile
+		maxAttempts = row.MaxAttempts
+		if row.Input != "" {
+			d := strings.TrimSpace(row.Input)
+			if len(d) > 120 {
+				d = d[:119] + "…"
+			}
+			title = d
+		}
+	}
+	meta := map[string]interface{}{
+		"chain_id":      chainID,
+		"attempts":      attempts,
+		"max_attempts":  maxAttempts,
+	}
+	if errMsg != "" {
+		meta["last_error"] = errMsg
+	}
+	envStatus := taskEnvelopeStatus(status)
+	now := time.Now().UnixMilli()
+	var endAt *int64
+	if envStatus == "done" || envStatus == "failed" {
+		endAt = &now
+	}
+	a.emitEnvelope(outbox.Envelope{
+		ID:        "task:" + taskID,
+		Kind:      "event",
+		Source:    envelopeSource,
+		Type:      taskEnvelopeType(status),
+		Status:    envStatus,
+		Title:     title,
+		Subtitle:  subtitle,
+		Workspace: workspace,
+		ParentID:  "chain:" + chainID,
+		Tags:      []string{"task"},
+		Metadata:  meta,
+		EndAt:     endAt,
 	})
 }
 

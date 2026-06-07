@@ -130,6 +130,8 @@ class TaskStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    BLOCKED = "blocked"            # waiting on dependency / external resource (attention-eligible)
+    NEEDS_ACTION = "needs_action"  # waiting on human input (attention-eligible)
 
 
 class TaskCreate(BaseModel):
