@@ -112,6 +112,53 @@ def init_db() -> None:
                 ON audit_log(ts);
             CREATE INDEX IF NOT EXISTS idx_audit_event
                 ON audit_log(event);
+
+            -- Cross-machine agent event bus: current state (upsert by envelope id).
+            -- One row per logical thing (a task, a chain run, a collected entry).
+            -- Status mutates in place as events arrive.
+            CREATE TABLE IF NOT EXISTS agent_state (
+                id          TEXT PRIMARY KEY,
+                kind        TEXT NOT NULL,            -- 'metric' | 'event'
+                source      TEXT,                     -- '<producer>@<machine>'
+                type        TEXT,                     -- last-seen dotted event type
+                status      TEXT,                     -- upcoming|active|done|failed|blocked|needs_action
+                title       TEXT NOT NULL,
+                subtitle    TEXT,
+                workspace   TEXT,
+                parent_id   TEXT,
+                url         TEXT,
+                start_at    INTEGER,
+                end_at      INTEGER,
+                tags_json     TEXT NOT NULL DEFAULT '[]',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                actions_json  TEXT NOT NULL DEFAULT '[]',
+                outcome_json  TEXT,
+                created_at  INTEGER NOT NULL,
+                updated_at  INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_state_status
+                ON agent_state(status, workspace, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_agent_state_parent
+                ON agent_state(parent_id);
+
+            -- Append-only audit log of every envelope received. Same envelope id
+            -- can appear many times (one per state transition).
+            CREATE TABLE IF NOT EXISTS agent_events (
+                seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          TEXT NOT NULL,
+                source      TEXT,
+                type        TEXT,
+                status      TEXT,
+                parent_id   TEXT,
+                ts          INTEGER NOT NULL,
+                envelope    TEXT NOT NULL              -- full JSON envelope as received
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_events_id
+                ON agent_events(id, seq);
+            CREATE INDEX IF NOT EXISTS idx_agent_events_parent
+                ON agent_events(parent_id, seq);
+            CREATE INDEX IF NOT EXISTS idx_agent_events_ts
+                ON agent_events(ts);
         """)
 
 

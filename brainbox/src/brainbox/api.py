@@ -75,6 +75,7 @@ from .router import (
     on_event,
     submit_task,
 )
+from . import agent_store
 from .langfuse_client import (
     LangfuseError,
     health_check as langfuse_health_check,
@@ -312,6 +313,28 @@ async def lifespan(app: FastAPI):
             )
         )
     )
+
+    # Forward hub task lifecycle into the agent event bus (P1: in-process producer).
+    def _on_hub_task_event(event: str, task: object) -> None:
+        try:
+            envelope = agent_store.envelope_from_hub_task(event, task)
+            agent_store.ingest(envelope)
+        except Exception as exc:
+            log.warning("agent_bus.ingest_failed", metadata={"event": event, "reason": str(exc)})
+
+    on_event(_on_hub_task_event)
+
+    # Forward every successful ingest into the SSE bus as a unified 'agent.event'.
+    def _on_agent_envelope(env: object) -> None:
+        try:
+            _broadcast_sse(json.dumps({
+                "event": "agent.event",
+                "data": env.model_dump() if hasattr(env, "model_dump") else env,
+            }))
+        except Exception:
+            pass
+
+    agent_store.on_event(_on_agent_envelope)
 
     # Forward channel events to per-channel SSE queues
     def _on_channel_event(event: str, data: object) -> None:
@@ -821,6 +844,118 @@ async def sse_events(
             _sse_queues.discard(queue)
 
     return EventSourceResponse(event_generator())
+
+
+# ---------------------------------------------------------------------------
+# Agent event bus (cross-machine envelopes)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/agent_events")
+async def agent_events_ingest(request: Request, _key=Depends(require_api_key)):
+    """Ingest one or more envelopes into the cross-machine agent event bus.
+
+    Body forms:
+        - single envelope: { id, kind, title, ... }
+        - batch:           { "events": [ {...}, {...} ] }
+
+    Each envelope is upserted into `agent_state` (mutates current snapshot) and
+    appended to `agent_events` (audit log). Successful ingest fans out to the
+    SSE bus as a unified `agent.event` message.
+
+    Returns: { ingested: N, ids: [...] }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    if isinstance(body, dict) and "events" in body:
+        items = body["events"]
+        if not isinstance(items, list):
+            raise HTTPException(status_code=400, detail="'events' must be an array")
+    elif isinstance(body, dict):
+        items = [body]
+    elif isinstance(body, list):
+        items = body
+    else:
+        raise HTTPException(status_code=400, detail="Body must be an envelope or {events: [...]}")
+
+    # Validate up front so schema errors become 422, not 500.
+    # NB: ValidationError imported above is brainbox.validation; envelope validation
+    # uses pydantic's ValidationError instead.
+    from pydantic import ValidationError as _PydanticValidationError
+    validated: list[agent_store.AgentEnvelope] = []
+    for raw in items:
+        try:
+            validated.append(agent_store.AgentEnvelope(**raw) if isinstance(raw, dict) else raw)
+        except _PydanticValidationError as exc:
+            raise HTTPException(status_code=422, detail=f"Envelope validation: {exc}")
+
+    results = []
+    for env in validated:
+        try:
+            stored = await agent_store.async_ingest(env)
+            results.append(stored.id)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Ingest failed: {exc}")
+
+    return {"ingested": len(results), "ids": results}
+
+
+@app.get("/api/agent_events")
+async def agent_events_list(
+    id: str | None = Query(None, description="Filter to events for this envelope id"),
+    parent_id: str | None = Query(None, description="Filter to events whose parent matches"),
+    limit: int = Query(200, ge=1, le=2000),
+    _key=Depends(require_api_key),
+):
+    """List append-only audit log entries. Provide `id` or `parent_id` (or both)
+    to scope to a single thing / family. Returns rows ordered by seq ascending
+    (oldest first)."""
+    rows = await asyncio.to_thread(
+        agent_store.list_events,
+        envelope_id=id,
+        parent_id=parent_id,
+        limit=limit,
+    )
+    return {"events": rows, "count": len(rows)}
+
+
+@app.get("/api/agent_state")
+async def agent_state_list(
+    status: str | None = Query(None, description="Comma-separated statuses, e.g. failed,blocked"),
+    workspace: str | None = Query(None),
+    source: str | None = Query(None),
+    parent_id: str | None = Query(None),
+    limit: int = Query(200, ge=1, le=2000),
+    _key=Depends(require_api_key),
+):
+    """Current-state snapshot of every envelope id known to the bus. Filterable
+    by status (single or comma-list), workspace, source, parent_id."""
+    status_filter: str | list[str] | None
+    if status:
+        parts = [s.strip() for s in status.split(",") if s.strip()]
+        status_filter = parts if len(parts) > 1 else (parts[0] if parts else None)
+    else:
+        status_filter = None
+    rows = await asyncio.to_thread(
+        agent_store.list_state,
+        status=status_filter,
+        workspace=workspace,
+        source=source,
+        parent_id=parent_id,
+        limit=limit,
+    )
+    return {"items": rows, "count": len(rows)}
+
+
+@app.get("/api/agent_state/{envelope_id}")
+async def agent_state_get(envelope_id: str, _key=Depends(require_api_key)):
+    row = await asyncio.to_thread(agent_store.get_state, envelope_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Envelope not found")
+    return row
 
 
 @app.post("/api/sessions/preview")
