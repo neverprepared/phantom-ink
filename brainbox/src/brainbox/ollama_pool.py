@@ -164,6 +164,22 @@ class OllamaPool:
         inst = self._instances.get(runner_name)
         if not inst:
             return
+        # DEBUG: also try curl as a comparison
+        if inst.runner_name != "__fallback__":
+            try:
+                import subprocess
+                proc = await asyncio.create_subprocess_exec(
+                    "curl", "-sk", "-m", "5", "-o", "/dev/null", "-w", "%{http_code}",
+                    "-H", f"X-API-Key: {inst.api_key}",
+                    inst.url + "/api/tags",
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                stdout, _ = await proc.communicate()
+                log.warning("ollama_pool.debug_curl", metadata={
+                    "runner": runner_name, "code": stdout.decode().strip(), "rc": proc.returncode,
+                })
+            except Exception as exc:
+                log.warning("ollama_pool.debug_curl_exc", metadata={"reason": str(exc)})
         # Retry once with a fresh client. Long-running daemons see sporadic
         # EHOSTUNREACH on the first connection attempt to some LAN hosts on
         # macOS; a fresh attempt almost always succeeds immediately.
