@@ -10,8 +10,9 @@
 
   interface AttentionItem {
     id: string;
-    source: 'task' | 'chain' | 'entry' | 'hub';
+    source: 'task' | 'chain' | 'entry' | 'hub' | 'bus';
     source_id: string;
+    status: 'failed' | 'blocked' | 'needs_action' | '';
     title: string;
     subtitle: string;
     reason: string;
@@ -288,7 +289,12 @@
             <li class="attn-row src-{item.source}">
               <div class="attn-meta">
                 <span class="attn-source">{item.source}</span>
-                <span class="attn-reason">{item.reason}</span>
+                {#if item.status}
+                  <span class="attn-status status-{item.status}">{item.status.replace('_', ' ')}</span>
+                {/if}
+                {#if item.reason}
+                  <span class="attn-reason">{item.reason}</span>
+                {/if}
                 {#if item.workspace}<span class="attn-ws">{item.workspace}</span>{/if}
                 <span class="attn-time">{fmtAgo(item.time)}</span>
               </div>
@@ -482,6 +488,7 @@
   .attn-row.src-chain { border-left-color: #ce93d8; }
   .attn-row.src-hub   { border-left-color: #e57373; }
   .attn-row.src-entry { border-left-color: #ffb74d; }
+  .attn-row.src-bus   { border-left-color: #4fc3f7; }
 
   .attn-meta {
     display: flex;
@@ -493,6 +500,15 @@
     color: var(--text-faint, var(--color-text-tertiary));
   }
   .attn-source { font-weight: 700; }
+  .attn-status {
+    padding: 1px 7px;
+    border-radius: var(--r-sm, var(--radius-sm));
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+  .attn-status.status-failed       { color: #b71c1c; background: rgba(244, 67, 54, 0.12); }
+  .attn-status.status-blocked      { color: #6a1b9a; background: rgba(156, 39, 176, 0.12); }
+  .attn-status.status-needs_action { color: #ef6c00; background: rgba(255, 152, 0, 0.14); }
   .attn-reason { color: var(--text-muted, var(--color-text-secondary)); }
   .attn-ws {
     padding: 1px 7px;

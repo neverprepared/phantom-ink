@@ -909,6 +909,7 @@ export namespace main {
 	    id: string;
 	    source: string;
 	    source_id: string;
+	    status: string;
 	    title: string;
 	    subtitle: string;
 	    reason: string;
@@ -927,6 +928,7 @@ export namespace main {
 	        this.id = source["id"];
 	        this.source = source["source"];
 	        this.source_id = source["source_id"];
+	        this.status = source["status"];
 	        this.title = source["title"];
 	        this.subtitle = source["subtitle"];
 	        this.reason = source["reason"];

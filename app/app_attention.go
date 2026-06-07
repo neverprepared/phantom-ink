@@ -17,11 +17,12 @@ import (
 // dismissals and resolutions persist across app restarts.
 type AttentionItem struct {
 	ID        string   `json:"id"`        // "<source>:<sourceID>"
-	Source    string   `json:"source"`    // "task" | "chain" | "entry" | "hub"
+	Source    string   `json:"source"`    // "task" | "chain" | "entry" | "hub" | "bus"
 	SourceID  string   `json:"source_id"` // raw id within the source
+	Status    string   `json:"status"`    // "failed" | "blocked" | "needs_action" — drives badge
 	Title     string   `json:"title"`
 	Subtitle  string   `json:"subtitle"`
-	Reason    string   `json:"reason"`    // why this needs attention
+	Reason    string   `json:"reason"`    // why this needs attention (often the error message)
 	Workspace string   `json:"workspace"` // for profile filter
 	Time      int64    `json:"time"`      // epoch ms (sort key, newest first)
 	URL       string   `json:"url,omitempty"`
@@ -57,6 +58,7 @@ func (a *App) ListAttention(workspace string) ([]AttentionItem, error) {
 				ID:        r.ID,
 				Source:    r.Source,
 				SourceID:  r.SourceID,
+				Status:    "failed", // producer-driven rows are always terminal failures today
 				Title:     r.Title,
 				Subtitle:  r.Subtitle,
 				Reason:    r.Reason,
@@ -83,6 +85,7 @@ func (a *App) ListAttention(workspace string) ([]AttentionItem, error) {
 					ID:       id,
 					Source:   "hub",
 					SourceID: t.ID,
+					Status:   "failed",
 					Title:    truncate(t.Description, 80),
 					Subtitle: fmt.Sprintf("%s · %s", t.AgentName, t.SessionName),
 					Reason:   errString(t.Error),
@@ -113,9 +116,10 @@ func (a *App) ListAttention(workspace string) ([]AttentionItem, error) {
 				ID:       id,
 				Source:   "entry",
 				SourceID: e.EntryID,
+				Status:   entryStatusToAttention(e.Status),
 				Title:    firstNonEmpty(e.Title, e.EntryID),
 				Subtitle: fmt.Sprintf("%s · %s", e.Kind, e.JobID),
-				Reason:   statusReason(e.Status),
+				Reason:   "", // entries don't carry an error message; status pill conveys state
 				Workspace: e.Profile,
 				Time:     timeFromEntry(e),
 				URL:      e.URL,
@@ -150,6 +154,7 @@ func (a *App) ListAttention(workspace string) ([]AttentionItem, error) {
 					ID:        it.ID,
 					Source:    "bus",
 					SourceID:  it.ID,
+					Status:    it.Status,
 					Title:     it.Title,
 					Subtitle:  it.Subtitle,
 					Reason:    busReason(it),
@@ -166,8 +171,9 @@ func (a *App) ListAttention(workspace string) ([]AttentionItem, error) {
 	return items, nil
 }
 
-// busReason extracts a short human reason from a bus envelope. Falls back to
-// the status when no error metadata is present.
+// busReason extracts the human-readable error from a bus envelope's metadata.
+// Returns "" when no error is present — the status badge already conveys the
+// lifecycle state, so we don't echo it as the reason text.
 func busReason(it brainbox.AgentStateItem) string {
 	if it.Metadata != nil {
 		if v, ok := it.Metadata["last_error"].(string); ok && v != "" {
@@ -176,8 +182,27 @@ func busReason(it brainbox.AgentStateItem) string {
 		if v, ok := it.Metadata["error"].(string); ok && v != "" {
 			return truncate(v, 200)
 		}
+		if v, ok := it.Metadata["reason"].(string); ok && v != "" {
+			return truncate(v, 200)
+		}
 	}
-	return statusReason(it.Status)
+	return ""
+}
+
+// entryStatusToAttention maps a collected_entries status string into one of
+// the three attention-eligible statuses. Anything we don't recognise is
+// surfaced as "needs_action" (the most neutral catch-all for entries with
+// pending actions).
+func entryStatusToAttention(s string) string {
+	switch strings.ToLower(s) {
+	case "failed", "error":
+		return "failed"
+	case "blocked":
+		return "blocked"
+	case "action_needed", "action-needed":
+		return "needs_action"
+	}
+	return "needs_action"
 }
 
 // busActions returns the action slugs surfaced on a bus card. We keep the
