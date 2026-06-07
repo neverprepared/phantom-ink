@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"phantom-ink/brainbox"
 )
 
 // AttentionItem is one card in the Stream panel's "Attention" tab. It comes
@@ -122,8 +124,79 @@ func (a *App) ListAttention(workspace string) ([]AttentionItem, error) {
 		}
 	}
 
+	// ── Source 4: brainbox agent_state (P2 — agent event bus) ────────────────
+	// Pulls every envelope whose status is attention-eligible. We dedup by
+	// the local composite id so legacy and bus-sourced rows don't double-up
+	// during the transition window.
+	seen := make(map[string]bool, len(items))
+	for _, it := range items {
+		seen[it.ID] = true
+	}
+	if a.client != nil {
+		busItems, err := a.client.ListAgentState(brainbox.ListAgentStateOptions{
+			Status:    "failed,blocked,needs_action",
+			Workspace: workspace,
+			Limit:     200,
+		})
+		if err == nil {
+			for _, it := range busItems {
+				if dismissed[it.ID] {
+					continue
+				}
+				if seen[it.ID] {
+					continue
+				}
+				items = append(items, AttentionItem{
+					ID:        it.ID,
+					Source:    "bus",
+					SourceID:  it.ID,
+					Title:     it.Title,
+					Subtitle:  it.Subtitle,
+					Reason:    busReason(it),
+					Workspace: it.Workspace,
+					Time:      it.UpdatedAt,
+					URL:       it.URL,
+					Actions:   busActions(it),
+				})
+			}
+		}
+	}
+
 	sort.Slice(items, func(i, j int) bool { return items[i].Time > items[j].Time })
 	return items, nil
+}
+
+// busReason extracts a short human reason from a bus envelope. Falls back to
+// the status when no error metadata is present.
+func busReason(it brainbox.AgentStateItem) string {
+	if it.Metadata != nil {
+		if v, ok := it.Metadata["last_error"].(string); ok && v != "" {
+			return truncate(v, 200)
+		}
+		if v, ok := it.Metadata["error"].(string); ok && v != "" {
+			return truncate(v, 200)
+		}
+	}
+	return statusReason(it.Status)
+}
+
+// busActions returns the action slugs surfaced on a bus card. We keep the
+// existing four (retry/open/respond/dismiss) and let producers narrow via
+// the envelope's `actions[]` field in a later phase.
+func busActions(it brainbox.AgentStateItem) []string {
+	if len(it.Actions) > 0 {
+		out := make([]string, 0, len(it.Actions))
+		for _, a := range it.Actions {
+			if lbl, ok := a["kind"].(string); ok && lbl != "" {
+				out = append(out, lbl)
+			}
+		}
+		if len(out) > 0 {
+			out = append(out, "dismiss")
+			return out
+		}
+	}
+	return []string{"open", "dismiss"}
 }
 
 // DismissAttention resolves producer-driven items (removes from active queue)

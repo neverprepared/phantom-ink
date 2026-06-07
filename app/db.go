@@ -19,6 +19,12 @@ type DB struct {
 	conn *sql.DB
 }
 
+// Conn returns the underlying *sql.DB for packages that need direct access
+// (e.g. internal/outbox, which manages its own table). Use sparingly.
+func (db *DB) Conn() *sql.DB {
+	return db.conn
+}
+
 // OpenDB opens (or creates) the phantom-ink database and runs migrations.
 func OpenDB() (*DB, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
@@ -360,6 +366,22 @@ var migrations = []migration{
 	{version: 21, fn: func(conn *sql.DB) error {
 		return addColumnIfMissing(conn, "collect_jobs", "owner_widget_id", "TEXT NOT NULL DEFAULT ''")
 	}},
+	// v22: outbox_events — durable queue of agent-event-bus envelopes pending
+	// delivery to brainbox. Survives brainbox restarts and network blips; the
+	// outbox flush loop drains it with exponential backoff.
+	{version: 22, sql: `
+		CREATE TABLE IF NOT EXISTS outbox_events (
+			rowid           INTEGER PRIMARY KEY AUTOINCREMENT,
+			envelope_id     TEXT    NOT NULL,
+			envelope_json   TEXT    NOT NULL,
+			created_at      INTEGER NOT NULL,
+			attempts        INTEGER NOT NULL DEFAULT 0,
+			next_attempt_at INTEGER NOT NULL DEFAULT 0,
+			last_error      TEXT    NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_outbox_eligible
+			ON outbox_events(next_attempt_at);
+	`},
 }
 
 func (db *DB) migrate() error {

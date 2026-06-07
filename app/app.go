@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"phantom-ink/brainbox"
+	"phantom-ink/internal/outbox"
 	goruntime "runtime"
 	"strings"
 	"sync"
@@ -36,6 +37,8 @@ type App struct {
 	automationsStop  context.CancelFunc
 	localRunner      *localRunner
 	localRunnerStop  context.CancelFunc
+	outbox           *outbox.Outbox
+	outboxStop       context.CancelFunc
 }
 
 // NewApp creates a new App instance.
@@ -106,6 +109,27 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}()
 
+	// Start the agent-event-bus outbox. Producers (queue, chain executor) append
+	// envelopes; the flush loop ships batches to brainbox /api/agent_events with
+	// exponential backoff. Brainbox dedups by envelope id.
+	if a.db != nil {
+		outboxCtx, outboxCancel := context.WithCancel(ctx)
+		a.outboxStop = outboxCancel
+		a.outbox = outbox.New(a.db.Conn(), func(_ context.Context, batch []outbox.Envelope) error {
+			raws := make([]json.RawMessage, len(batch))
+			for i, env := range batch {
+				b, err := json.Marshal(env)
+				if err != nil {
+					return err
+				}
+				raws[i] = b
+			}
+			_, err := a.client.IngestAgentEvents(raws)
+			return err
+		}, outbox.Options{})
+		a.outbox.Start(outboxCtx)
+	}
+
 	// Start the task queue worker. Stopped during shutdown via workerStop.
 	if a.db != nil {
 		workerCtx, cancel := context.WithCancel(ctx)
@@ -163,6 +187,12 @@ func (a *App) shutdown(_ context.Context) {
 	}
 	if a.localRunnerStop != nil {
 		a.localRunnerStop()
+	}
+	if a.outboxStop != nil {
+		a.outboxStop()
+	}
+	if a.outbox != nil {
+		a.outbox.Stop()
 	}
 	if a.worker != nil {
 		a.worker.Wait()
