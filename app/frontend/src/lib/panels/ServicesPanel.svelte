@@ -207,6 +207,18 @@
     } finally { ollamaPulling = false; }
   }
 
+  // Curated quick-pick models. Clicking fills the pull input so the user can
+  // edit the tag (e.g. add `:8b`) before submitting.
+  const OLLAMA_SUGGESTIONS = [
+    'qwen3',
+    'mistral',
+    'gemma3',
+    'deepseek-r1',
+    'llama3',
+    'gemma4',
+    'deepseek-coder-v2',
+  ];
+
   async function handleOllamaDelete(name: string) {
     ollamaDeleting = new Set([...ollamaDeleting, name]);
     const a = await getApi();
@@ -412,6 +424,11 @@
                   <button class="btn-primary btn-sm" onclick={handleOllamaPull} disabled={ollamaPulling || !ollamaPullName.trim()}>
                     {ollamaPulling ? 'pulling...' : 'pull'}
                   </button>
+                </div>
+                <div class="ollama-suggestions">
+                  {#each OLLAMA_SUGGESTIONS as s (s)}
+                    <button class="ollama-suggest-chip" onclick={() => ollamaPullName = s} disabled={ollamaPulling}>{s}</button>
+                  {/each}
                 </div>
                 {#if ollamaLoading}
                   <p class="hint">loading models...</p>
@@ -643,6 +660,25 @@
   }
   .ollama-pull-input:disabled { opacity: 0.5; }
   .ollama-pull-input::placeholder { color: var(--color-text-tertiary); }
+
+  .ollama-suggestions {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;
+  }
+  .ollama-suggest-chip {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 8px;
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+  .ollama-suggest-chip:hover:not(:disabled) {
+    color: var(--color-text-primary);
+    border-color: var(--color-accent, var(--color-text-primary));
+  }
+  .ollama-suggest-chip:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .ollama-model-list { display: flex; flex-direction: column; gap: 2px; }
   .ollama-model-row {

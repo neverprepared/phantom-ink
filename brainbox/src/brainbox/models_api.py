@@ -220,7 +220,7 @@ class CreateAgentRequest(BaseModel):
     hardened: bool = Field(False, description="Enable security hardening")
     persistent: bool = Field(False, description="Auto-restart on exit")
     role_prompt_content: str | None = Field(None, description="Markdown role prompt content")
-    claude_model: str | None = Field(None, description="Default Claude model (e.g. claude-opus-4-5)")
+    claude_model: str | None = Field(None, description="Default Claude model (e.g. claude-opus-4-7)")
     claude_effort: str | None = Field(None, description="Claude reasoning effort: low | medium | high")
     codex_model: str | None = Field(None, description="Default Codex model (e.g. codex-mini-latest)")
     ollama_model: str | None = Field(None, description="Default Ollama model (e.g. qwen3:8b)")

@@ -1,6 +1,6 @@
 /* ============================================================
    PhantomInk — theme tokens + base styles
-   Themes: paper (default), light, dark, muse, vision
+   Themes: paper (default), light, dark, brew, vision
    SOURCE: styles.css from design handoff — copied verbatim.
    ============================================================ */
 
@@ -109,35 +109,35 @@
   color-scheme: dark;
 }
 
-/* -------- MUSE (lavender, dreamy) -------- */
-[data-theme="muse"] {
-  --bg:           #f3f0fa;
-  --bg-elev:      #ffffff;
-  --bg-sunken:    #ebe6f6;
-  --bg-hover:     #f6f3fc;
-  --sidebar:      #fbfaff;
-  --titlebar:     #f6f2fc;
-  --border:       #e7e0f2;
-  --border-strong:#d8cdee;
-  --text:         #2a2438;
-  --text-muted:   #8f87a4;
-  --text-faint:   #bcb4d0;
-  --accent:       #9b6dd8;
-  --accent-2:     #c45ea6;
-  --accent-soft:  #f0e7fb;
-  --accent-line:  #ddc9f3;
-  --run:          #5fb98f;
-  --run-soft:     #e6f4ee;
-  --task:         #5b95e0;
-  --task-soft:    #e8f0fc;
-  --fail:         #e25b8a;
-  --fail-soft:    #fae6ef;
-  --sched:        #9b6dd8;
-  --shadow-sm:    0 1px 2px rgba(58,42,96,.06);
-  --shadow-md:    0 6px 22px -8px rgba(58,42,96,.16);
-  --shadow-lg:    0 26px 64px -14px rgba(58,42,96,.30);
-  --grid-dot:     rgba(58,42,96,.045);
-  color-scheme: light;
+/* -------- BREW (homebrew — roasted-malt brown + beer-gold) -------- */
+[data-theme="brew"] {
+  --bg:           #261a0c;
+  --bg-elev:      #322512;
+  --bg-sunken:    #1c1308;
+  --bg-hover:     #3a2c17;
+  --sidebar:      #211710;
+  --titlebar:     #1a110a;
+  --border:       #3a2c1a;
+  --border-strong:#5a4429;
+  --text:         #ead4a4;
+  --text-muted:   #b39a6e;
+  --text-faint:   #786448;
+  --accent:       #f4b81f;
+  --accent-2:     #d99316;
+  --accent-soft:  #2f2415;
+  --accent-line:  #4a3920;
+  --run:          #9bc25b;
+  --run-soft:     #1f2a14;
+  --task:         #f4b81f;
+  --task-soft:    #2f2415;
+  --fail:         #e06846;
+  --fail-soft:    #2e1a14;
+  --sched:        #f4b81f;
+  --shadow-sm:    0 1px 2px rgba(0,0,0,.50);
+  --shadow-md:    0 6px 22px -8px rgba(0,0,0,.65);
+  --shadow-lg:    0 26px 64px -14px rgba(0,0,0,.80);
+  --grid-dot:     rgba(244,184,31,.05);
+  color-scheme: dark;
 }
 
 /* -------- VISION (deep ink-blue, cyan) -------- */

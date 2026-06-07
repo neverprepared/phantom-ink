@@ -23,7 +23,7 @@
         mod.ListServices(),
       ]);
       document.documentElement.dataset.platform = platform;
-      document.documentElement.dataset.theme = cfg.theme || 'dark';
+      document.documentElement.dataset.theme = (cfg.theme === 'muse' ? 'brew' : cfg.theme) || 'dark';
       profileState.profiles = scanned ?? [];
       profileState.active = active?.name ? active : null;
       featureFlags.services = (services ?? []).map((s: any) => ({

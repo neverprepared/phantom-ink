@@ -11,7 +11,20 @@ export type WidgetKind =
   | 'calendar'
   | 'tasks'
   | 'notes'
-  | 'sessions-mini';
+  | 'sessions-mini'
+  | 'opensearch-metric';
+
+export type OpenSearchMetric =
+  | 'cost-today'
+  | 'tokens-today'
+  | 'api-requests-1h'
+  | 'avg-latency-1h';
+
+export interface OpenSearchMetricConfig {
+  metric: OpenSearchMetric;
+  label?: string;
+  color?: 'green' | 'blue' | 'red' | 'orange' | 'muted' | 'default';
+}
 
 export interface StatCounterConfig {
   label: string;
@@ -59,7 +72,7 @@ export interface NotesWidgetConfig {
   widgetId?: string;
 }
 
-export type WidgetConfig = StatCounterConfig | CustomCounterConfig | ScriptMetricConfig | HttpMetricConfig | StreamWidgetConfig | NotesWidgetConfig | Record<string, never>;
+export type WidgetConfig = StatCounterConfig | CustomCounterConfig | ScriptMetricConfig | HttpMetricConfig | StreamWidgetConfig | NotesWidgetConfig | OpenSearchMetricConfig | Record<string, never>;
 
 export interface WidgetInstance {
   id: string;
@@ -138,6 +151,16 @@ export interface LocalProcess {
   [key: string]: unknown;
 }
 
+export interface OpenSearchOverview {
+  cost_today_usd: number;
+  tokens_today: number;
+  api_requests_1h: number;
+  avg_latency_ms_1h: number;
+  as_of: string;
+  workspace: string;
+  matched_workspace: boolean;
+}
+
 export interface DashboardData {
   sessions: SessionSummary[];
   hubTasks: HubTask[];
@@ -152,4 +175,5 @@ export interface DashboardData {
   failedTasks: number;
   loading: boolean;
   refreshing: boolean;
+  opensearch?: OpenSearchOverview | null;
 }
