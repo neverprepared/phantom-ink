@@ -32,8 +32,10 @@ class RunnerInfo:
     host: str | None = None
     # Stable UUID from the runner's UserDefaults — survives name changes.
     machine_id: str | None = None
-    # Ollama port if this runner advertises ollama capability (default 11434).
-    ollama_port: int | None = None
+    # Port the runner's HTTPS proxy listens on for Ollama traffic. Brainbox
+    # connects to https://{host}:{ollama_proxy_port}/api/... and the runner
+    # forwards to its local Ollama. None when no proxy is running.
+    ollama_proxy_port: int | None = None
     # Load metrics — reported by the runner on register / heartbeat.
     queue_depth: int = 0     # items queued but not yet picked up
     in_flight: int = 0       # sessions currently provisioning on this runner
@@ -85,7 +87,7 @@ class RunnerRegistry:
         in_flight: int = 0,
         max_concurrent: int = 4,
         machine_id: str | None = None,
-        ollama_port: int | None = None,
+        ollama_proxy_port: int | None = None,
     ) -> RunnerInfo:
         now = int(time.time() * 1000)
         info = RunnerInfo(
@@ -99,7 +101,7 @@ class RunnerRegistry:
             in_flight=max(0, in_flight),
             max_concurrent=max(1, max_concurrent),
             machine_id=machine_id,
-            ollama_port=ollama_port,
+            ollama_proxy_port=ollama_proxy_port,
         )
         async with self._lock:
             self._runners[name] = info
