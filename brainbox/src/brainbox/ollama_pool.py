@@ -182,11 +182,30 @@ class OllamaPool:
         except Exception as exc:
             inst.healthy = False
             inst.models = []
+            import traceback
             log.warning(
                 "ollama_pool.health_exception",
-                metadata={"runner": runner_name, "url": inst.url,
-                          "exc_type": type(exc).__name__, "reason": str(exc)[:200]},
+                metadata={
+                    "runner": runner_name, "url": inst.url,
+                    "exc_type": type(exc).__name__,
+                    "exc_chain": [
+                        f"{type(e).__name__}: {e!r}"[:200]
+                        for e in _exception_chain(exc)
+                    ],
+                    "tb": traceback.format_exc().splitlines()[-6:],
+                },
             )
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    out = []
+    cur: BaseException | None = exc
+    while cur is not None:
+        out.append(cur)
+        cur = cur.__cause__ or cur.__context__
+        if cur in out:
+            break
+    return out
         inst.last_checked = time.time()
         log.debug(
             "ollama_pool.health_checked",
