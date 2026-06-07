@@ -38,6 +38,78 @@ export namespace brainbox {
 	        this.ollama_model = source["ollama_model"];
 	    }
 	}
+	export class AgentEventEntry {
+	    seq: number;
+	    id: string;
+	    source: string;
+	    type: string;
+	    status: string;
+	    parent_id: string;
+	    ts: number;
+	    envelope: Record<string, any>;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentEventEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.seq = source["seq"];
+	        this.id = source["id"];
+	        this.source = source["source"];
+	        this.type = source["type"];
+	        this.status = source["status"];
+	        this.parent_id = source["parent_id"];
+	        this.ts = source["ts"];
+	        this.envelope = source["envelope"];
+	    }
+	}
+	export class AgentStateItem {
+	    id: string;
+	    kind: string;
+	    source: string;
+	    type: string;
+	    status: string;
+	    title: string;
+	    subtitle: string;
+	    workspace: string;
+	    parent_id: string;
+	    url: string;
+	    start_at?: number;
+	    end_at?: number;
+	    tags: string[];
+	    metadata: Record<string, any>;
+	    actions: any[];
+	    outcome: Record<string, any>;
+	    created_at: number;
+	    updated_at: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentStateItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.kind = source["kind"];
+	        this.source = source["source"];
+	        this.type = source["type"];
+	        this.status = source["status"];
+	        this.title = source["title"];
+	        this.subtitle = source["subtitle"];
+	        this.workspace = source["workspace"];
+	        this.parent_id = source["parent_id"];
+	        this.url = source["url"];
+	        this.start_at = source["start_at"];
+	        this.end_at = source["end_at"];
+	        this.tags = source["tags"];
+	        this.metadata = source["metadata"];
+	        this.actions = source["actions"];
+	        this.outcome = source["outcome"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	    }
+	}
 	export class ChannelParticipant {
 	    name: string;
 	    type: string;
@@ -903,6 +975,26 @@ export namespace main {
 	        this.prompt_mode = source["prompt_mode"];
 	        this.accepts_cwd = source["accepts_cwd"];
 	        this.output_mode = source["output_mode"];
+	    }
+	}
+	export class AgentStateFilter {
+	    status: string;
+	    workspace: string;
+	    source: string;
+	    parent_id: string;
+	    limit: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentStateFilter(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.status = source["status"];
+	        this.workspace = source["workspace"];
+	        this.source = source["source"];
+	        this.parent_id = source["parent_id"];
+	        this.limit = source["limit"];
 	    }
 	}
 	export class AttentionItem {

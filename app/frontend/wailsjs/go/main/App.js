@@ -158,6 +158,10 @@ export function GetAgentRole(arg1) {
   return window['go']['main']['App']['GetAgentRole'](arg1);
 }
 
+export function GetAgentState(arg1) {
+  return window['go']['main']['App']['GetAgentState'](arg1);
+}
+
 export function GetAppLogs() {
   return window['go']['main']['App']['GetAppLogs']();
 }
@@ -318,8 +322,16 @@ export function LaunchTeam(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['LaunchTeam'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
+export function ListAgentEvents(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListAgentEvents'](arg1, arg2, arg3);
+}
+
 export function ListAgentRoles() {
   return window['go']['main']['App']['ListAgentRoles']();
+}
+
+export function ListAgentState(arg1) {
+  return window['go']['main']['App']['ListAgentState'](arg1);
 }
 
 export function ListAgents() {
@@ -400,6 +412,10 @@ export function ListUpcomingFires(arg1) {
 
 export function OpenLocalSession(arg1) {
   return window['go']['main']['App']['OpenLocalSession'](arg1);
+}
+
+export function OutboxPending() {
+  return window['go']['main']['App']['OutboxPending']();
 }
 
 export function PostChannelMessage(arg1, arg2) {

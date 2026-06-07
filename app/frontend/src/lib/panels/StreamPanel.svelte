@@ -37,36 +37,88 @@
     duration_ms?: number;
   }
 
-  type Tab = 'attention' | 'live';
+  // Bus envelope (mirrors brainbox.AgentStateItem). Used in Live tab and
+  // History drill-down.
+  interface AgentStateItem {
+    id: string;
+    kind: string;
+    source: string;
+    type: string;
+    status: string;
+    title: string;
+    subtitle: string;
+    workspace: string;
+    parent_id: string;
+    url: string;
+    start_at: number | null;
+    end_at: number | null;
+    tags: string[];
+    metadata: Record<string, any>;
+    actions: Record<string, any>[];
+    outcome: Record<string, any> | null;
+    created_at: number;
+    updated_at: number;
+  }
+
+  interface AgentEventEntry {
+    seq: number;
+    id: string;
+    source: string;
+    type: string;
+    status: string;
+    parent_id: string;
+    ts: number;
+    envelope: Record<string, any>;
+  }
+
+  type Tab = 'live' | 'attention' | 'logs';
 
   // ── State ──────────────────────────────────────────────────────────────────
 
   let tab = $state<Tab>('attention');
   let attention = $state<AttentionItem[]>([]);
+  let live = $state<AgentStateItem[]>([]);
   let logs = $state<LogEntry[]>([]);
   let attentionLoading = $state(true);
+  let liveLoading = $state(true);
   let logsLoading = $state(false);
   let attentionError = $state<string | null>(null);
+  let liveError = $state<string | null>(null);
   let logsError = $state<string | null>(null);
 
   // Inline respond expander state
   let respondingId = $state<string | null>(null);
   let respondText = $state('');
 
+  // History drill-down state — keyed by envelope id, holds the fetched event
+  // sequence. Card is expanded when its id is in this map.
+  let history = $state<Record<string, AgentEventEntry[]>>({});
+  let historyLoading = $state<Record<string, boolean>>({});
+
+  // Outbox pending indicator, polled separately from list refresh.
+  let outboxPending = $state(0);
+
   let attentionPoll: number | undefined;
+  let livePoll: number | undefined;
   let logsPoll: number | undefined;
+  let outboxPoll: number | undefined;
   let sseCleanup: Array<() => void> = [];
 
   const ATTN_POLL_MS = 5_000;
+  const LIVE_POLL_MS = 5_000;     // SSE drives instant updates; this is a safety net
   const LOGS_POLL_MS = 3_000;
+  const OUTBOX_POLL_MS = 5_000;
   const LOGS_LIMIT = 1000;
+
+  // Active-state statuses queried for the Live tab.
+  const LIVE_STATUSES = 'upcoming,active,blocked,needs_action';
 
   let opensearchActive = $derived(featureFlags.isActive('opensearch'));
   let activeProfile    = $derived(profileState.active);
   let workspaceFilter  = $derived(activeProfile?.name ?? '');
 
   $effect(() => {
-    if (tab === 'live' && !opensearchActive) tab = 'attention';
+    if (tab === 'logs' && !opensearchActive) tab = 'attention';
   });
 
   // ── Loaders ────────────────────────────────────────────────────────────────
@@ -81,6 +133,35 @@
       attentionError = `${err?.message ?? err}`;
     } finally {
       attentionLoading = false;
+    }
+  }
+
+  async function refreshLive() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      live = ((await a.ListAgentState({
+        status: LIVE_STATUSES,
+        workspace: workspaceFilter,
+        source: '',
+        parent_id: '',
+        limit: 200,
+      })) ?? []) as AgentStateItem[];
+      liveError = null;
+    } catch (err: any) {
+      liveError = `${err?.message ?? err}`;
+    } finally {
+      liveLoading = false;
+    }
+  }
+
+  async function refreshOutbox() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      outboxPending = (await a.OutboxPending()) ?? 0;
+    } catch {
+      // outbox poll is best-effort; ignore transient errors
     }
   }
 
@@ -99,26 +180,115 @@
     }
   }
 
+  // Apply one bus envelope delta into the live list without a full reload.
+  // Matches the brainbox upsert semantics: same id mutates in place; new ids
+  // append; terminal/done statuses drop off the live view.
+  function applyAgentEvent(env: any) {
+    if (!env || typeof env !== 'object') return;
+    if (env.workspace && workspaceFilter && env.workspace !== workspaceFilter) return;
+
+    const activeStatuses = ['upcoming', 'active', 'blocked', 'needs_action'];
+    const isActive = activeStatuses.includes(env.status);
+
+    // Always nudge attention — it might be a failed/blocked/needs_action delta.
+    void refreshAttention();
+
+    const idx = live.findIndex(i => i.id === env.id);
+    if (!isActive) {
+      if (idx >= 0) live = live.filter((_, i) => i !== idx);
+      return;
+    }
+
+    // ListAgentState returns rows enriched by brainbox (created_at, updated_at,
+    // full metadata maps). The SSE payload is the envelope itself; merge the
+    // fields we need for display and re-sort by updated_at desc.
+    const merged: AgentStateItem = {
+      id: env.id,
+      kind: env.kind ?? 'event',
+      source: env.source ?? '',
+      type: env.type ?? '',
+      status: env.status ?? '',
+      title: env.title ?? '',
+      subtitle: env.subtitle ?? '',
+      workspace: env.workspace ?? '',
+      parent_id: env.parent_id ?? '',
+      url: env.url ?? '',
+      start_at: env.start_at ?? null,
+      end_at: env.end_at ?? null,
+      tags: env.tags ?? [],
+      metadata: env.metadata ?? {},
+      actions: env.actions ?? [],
+      outcome: env.outcome ?? null,
+      created_at: idx >= 0 ? live[idx].created_at : Date.now(),
+      updated_at: Date.now(),
+    };
+    if (idx >= 0) {
+      const next = [...live];
+      next[idx] = merged;
+      live = next.sort((a, b) => b.updated_at - a.updated_at);
+    } else {
+      live = [merged, ...live];
+    }
+  }
+
+  // Lazy-load the audit log for one envelope when the user expands a card.
+  async function toggleHistory(id: string) {
+    if (history[id]) {
+      const next = { ...history };
+      delete next[id];
+      history = next;
+      return;
+    }
+    historyLoading = { ...historyLoading, [id]: true };
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const events = ((await a.ListAgentEvents(id, '', 200)) ?? []) as AgentEventEntry[];
+      history = { ...history, [id]: events };
+    } catch (err: any) {
+      notifications.error(`Failed to load history: ${err?.message ?? err}`);
+    } finally {
+      historyLoading = { ...historyLoading, [id]: false };
+    }
+  }
+
   onMount(() => {
     void refreshAttention();
+    void refreshLive();
+    void refreshOutbox();
     attentionPoll = window.setInterval(refreshAttention, ATTN_POLL_MS);
+    livePoll      = window.setInterval(refreshLive, LIVE_POLL_MS);
+    outboxPoll    = window.setInterval(refreshOutbox, OUTBOX_POLL_MS);
 
-    // SSE-driven immediate refresh — supplements the 5s safety net poll.
-    const sseEvents = ['task:event', 'chain:run:event', 'brainbox:event'];
-    for (const ev of sseEvents) {
-      const off = (window as any).runtime?.EventsOn?.(ev, () => void refreshAttention());
+    // SSE-driven instant updates. agent:event is the typed envelope stream we
+    // emit in app.go from the brainbox /api/events SSE wrapper.
+    const offAgent = (window as any).runtime?.EventsOn?.('agent:event', (env: any) => {
+      applyAgentEvent(env);
+    });
+    if (typeof offAgent === 'function') sseCleanup.push(offAgent);
+
+    // Legacy events still poke a refresh so anything not yet on the bus stays
+    // current (P5 retired most, but defense-in-depth is cheap).
+    const legacy = ['task:event', 'chain:run:event', 'brainbox:event'];
+    for (const ev of legacy) {
+      const off = (window as any).runtime?.EventsOn?.(ev, () => {
+        void refreshAttention();
+        void refreshLive();
+      });
       if (typeof off === 'function') sseCleanup.push(off);
     }
   });
 
   onDestroy(() => {
     if (attentionPoll !== undefined) window.clearInterval(attentionPoll);
+    if (livePoll      !== undefined) window.clearInterval(livePoll);
     if (logsPoll      !== undefined) window.clearInterval(logsPoll);
+    if (outboxPoll    !== undefined) window.clearInterval(outboxPoll);
     sseCleanup.forEach(fn => fn());
   });
 
   $effect(() => {
-    if (tab === 'live' && opensearchActive) {
+    if (tab === 'logs' && opensearchActive) {
       void refreshLogs();
       if (logsPoll === undefined) {
         logsPoll = window.setInterval(refreshLogs, LOGS_POLL_MS);
@@ -134,9 +304,23 @@
     if (workspaceFilter !== lastFilter) {
       lastFilter = workspaceFilter;
       void refreshAttention();
-      if (tab === 'live') void refreshLogs();
+      void refreshLive();
+      if (tab === 'logs') void refreshLogs();
     }
   });
+
+  // ── Status / formatting helpers ────────────────────────────────────────────
+
+  function statusLabel(s: string): string { return s ? s.replace('_', ' ') : ''; }
+  function shortId(id: string): string {
+    if (!id) return '';
+    return id.length > 40 ? id.slice(0, 39) + '…' : id;
+  }
+  function fmtMs(ms: number): string {
+    if (!ms) return '';
+    try { return new Date(ms).toLocaleTimeString(undefined, { hour12: false }); }
+    catch { return ''; }
+  }
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
@@ -242,6 +426,11 @@
   <header class="panel-header">
     <h1 class="page-title">stream</h1>
     <div class="header-actions">
+      {#if outboxPending > 0}
+        <div class="outbox-indicator" title="Envelopes queued locally awaiting delivery to brainbox">
+          ⤴ {outboxPending} pending
+        </div>
+      {/if}
       <div class="scope">
         scope:
         <span class="scope-value">{workspaceFilter || 'all'}</span>
@@ -250,6 +439,15 @@
   </header>
 
   <div class="tabs">
+    <button
+      class="tab"
+      class:active={tab === 'live'}
+      onclick={() => (tab = 'live')}>
+      live
+      {#if live.length > 0}
+        <span class="badge badge-mute">{live.length}</span>
+      {/if}
+    </button>
     <button
       class="tab"
       class:active={tab === 'attention'}
@@ -261,19 +459,81 @@
     </button>
     <button
       class="tab"
-      class:active={tab === 'live'}
+      class:active={tab === 'logs'}
       class:disabled={!opensearchActive}
       disabled={!opensearchActive}
-      onclick={() => (tab = 'live')}
+      onclick={() => (tab = 'logs')}
       title={opensearchActive ? '' : 'Enable OpenSearch to view live logs'}>
-      live
-      {#if tab === 'live' && logsLoading}
+      logs
+      {#if tab === 'logs' && logsLoading}
         <Spinner />
       {/if}
     </button>
   </div>
 
-  {#if tab === 'attention'}
+  {#if tab === 'live'}
+    <section class="tab-body">
+      {#if liveError}
+        <EmptyState title="Failed to load live state" message={liveError} />
+      {:else if liveLoading && live.length === 0}
+        <div class="empty">loading…</div>
+      {:else if live.length === 0}
+        <EmptyState
+          title="Nothing currently running"
+          message="Live shows envelopes whose status is upcoming, active, blocked, or needs_action across every machine." />
+      {:else}
+        <ul class="attn-list">
+          {#each live as item (item.id)}
+            <li class="attn-row src-bus">
+              <div class="attn-meta">
+                <span class="attn-source">{item.source || 'bus'}</span>
+                {#if item.status}
+                  <span class="attn-status status-{item.status}">{statusLabel(item.status)}</span>
+                {/if}
+                {#if item.type}<span class="attn-type">{item.type}</span>{/if}
+                {#if item.workspace}<span class="attn-ws">{item.workspace}</span>{/if}
+                <span class="attn-time">{fmtAgo(item.updated_at)}</span>
+              </div>
+              <div class="attn-title">{item.title}</div>
+              {#if item.subtitle}
+                <div class="attn-sub">{item.subtitle}</div>
+              {/if}
+              <div class="attn-actions">
+                <button class="btn ghost small" onclick={() => toggleHistory(item.id)}>
+                  {history[item.id] ? 'hide history' : 'history'}
+                </button>
+              </div>
+              {#if history[item.id]}
+                <div class="history-box">
+                  {#if historyLoading[item.id]}
+                    <div class="history-loading">loading audit log…</div>
+                  {:else if history[item.id].length === 0}
+                    <div class="history-loading">no audit entries yet</div>
+                  {:else}
+                    <ol class="history-list">
+                      {#each history[item.id] as ev (ev.seq)}
+                        <li class="history-row">
+                          <span class="history-time">{fmtMs(ev.ts)}</span>
+                          <span class="history-type">{ev.type}</span>
+                          {#if ev.status}<span class="history-status status-{ev.status}">{statusLabel(ev.status)}</span>{/if}
+                          {#if ev.envelope?.outcome}
+                            <span class="history-outcome" class:ok={ev.envelope.outcome.ok} class:bad={!ev.envelope.outcome.ok}>
+                              {ev.envelope.outcome.actor}{ev.envelope.outcome.ok ? ' · ok' : ' · failed'}
+                              {ev.envelope.outcome.duration_ms ? ' · ' + ev.envelope.outcome.duration_ms + 'ms' : ''}
+                            </span>
+                          {/if}
+                        </li>
+                      {/each}
+                    </ol>
+                  {/if}
+                </div>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {:else if tab === 'attention'}
     <section class="tab-body">
       {#if attentionError}
         <EmptyState title="Failed to load attention items" message={attentionError} />
@@ -322,7 +582,38 @@
                     <button class="btn ghost small" onclick={() => dismiss(item)}>dismiss</button>
                   {/if}
                 {/each}
+                {#if item.source === 'bus'}
+                  <button class="btn ghost small" onclick={() => toggleHistory(item.id)}>
+                    {history[item.id] ? 'hide history' : 'history'}
+                  </button>
+                {/if}
               </div>
+
+              {#if history[item.id]}
+                <div class="history-box">
+                  {#if historyLoading[item.id]}
+                    <div class="history-loading">loading audit log…</div>
+                  {:else if history[item.id].length === 0}
+                    <div class="history-loading">no audit entries yet</div>
+                  {:else}
+                    <ol class="history-list">
+                      {#each history[item.id] as ev (ev.seq)}
+                        <li class="history-row">
+                          <span class="history-time">{fmtMs(ev.ts)}</span>
+                          <span class="history-type">{ev.type}</span>
+                          {#if ev.status}<span class="history-status status-{ev.status}">{statusLabel(ev.status)}</span>{/if}
+                          {#if ev.envelope?.outcome}
+                            <span class="history-outcome" class:ok={ev.envelope.outcome.ok} class:bad={!ev.envelope.outcome.ok}>
+                              {ev.envelope.outcome.actor}{ev.envelope.outcome.ok ? ' · ok' : ' · failed'}
+                              {ev.envelope.outcome.duration_ms ? ' · ' + ev.envelope.outcome.duration_ms + 'ms' : ''}
+                            </span>
+                          {/if}
+                        </li>
+                      {/each}
+                    </ol>
+                  {/if}
+                </div>
+              {/if}
 
               {#if respondingId === item.id}
                 <div class="respond-box">
@@ -342,7 +633,7 @@
         </ul>
       {/if}
     </section>
-  {:else if tab === 'live'}
+  {:else if tab === 'logs'}
     <section class="tab-body">
       {#if !opensearchActive}
         <EmptyState
@@ -468,6 +759,76 @@
     font-weight: 700;
     letter-spacing: 0;
   }
+  .badge.badge-mute {
+    background: var(--bg-elev, var(--color-bg-tertiary));
+    color: var(--text-muted, var(--color-text-secondary));
+  }
+
+  .outbox-indicator {
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #ef6c00;
+    background: rgba(255, 152, 0, 0.10);
+    padding: 2px 8px;
+    border-radius: var(--r-sm, var(--radius-sm));
+    font-weight: 700;
+  }
+
+  .attn-type {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    color: var(--text-muted, var(--color-text-secondary));
+    letter-spacing: 0;
+    text-transform: none;
+    font-size: 10.5px;
+  }
+
+  .history-box {
+    margin-top: 6px;
+    padding: 8px 10px;
+    background: var(--bg, var(--color-bg-primary));
+    border: 1px solid var(--border, var(--color-border-primary));
+    border-radius: var(--r-sm, var(--radius-sm));
+  }
+  .history-loading {
+    font-size: 12px;
+    color: var(--text-faint, var(--color-text-tertiary));
+    padding: 4px 0;
+  }
+  .history-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11.5px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .history-row {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    color: var(--text-muted, var(--color-text-secondary));
+  }
+  .history-time { color: var(--text-faint, var(--color-text-tertiary)); }
+  .history-type { color: var(--text, var(--color-text-primary)); font-weight: 600; }
+  .history-status {
+    padding: 0 6px;
+    border-radius: var(--r-sm, var(--radius-sm));
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .history-status.status-failed       { color: #b71c1c; background: rgba(244, 67, 54, 0.12); }
+  .history-status.status-blocked      { color: #6a1b9a; background: rgba(156, 39, 176, 0.12); }
+  .history-status.status-needs_action { color: #ef6c00; background: rgba(255, 152, 0, 0.14); }
+  .history-status.status-active       { color: #1565c0; background: rgba(33, 150, 243, 0.12); }
+  .history-status.status-upcoming     { color: #455a64; background: rgba(96, 125, 139, 0.12); }
+  .history-status.status-done         { color: #2e7d32; background: rgba(76, 175, 80, 0.12); }
+  .history-outcome { margin-left: auto; font-size: 11px; }
+  .history-outcome.ok  { color: #2e7d32; }
+  .history-outcome.bad { color: #b71c1c; }
 
   .tab-body { flex: 1; min-height: 0; overflow-y: auto; }
 

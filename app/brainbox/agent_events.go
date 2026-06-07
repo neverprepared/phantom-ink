@@ -68,6 +68,52 @@ type agentStateResp struct {
 	Count int              `json:"count"`
 }
 
+// AgentEventEntry is one row from GET /api/agent_events — an append-only
+// audit-log entry. `Envelope` is the full envelope as it was received at the
+// time `seq` was assigned, so consumers can replay history without consulting
+// agent_state separately.
+type AgentEventEntry struct {
+	Seq      int64                  `json:"seq"`
+	ID       string                 `json:"id"`
+	Source   string                 `json:"source"`
+	Type     string                 `json:"type"`
+	Status   string                 `json:"status"`
+	ParentID string                 `json:"parent_id"`
+	Ts       int64                  `json:"ts"`
+	Envelope map[string]interface{} `json:"envelope"`
+}
+
+type agentEventsResp struct {
+	Events []AgentEventEntry `json:"events"`
+	Count  int               `json:"count"`
+}
+
+// ListAgentEvents fetches the audit log filtered by envelope id and/or
+// parent_id. Pass empty strings to skip a filter. Returns events ordered by
+// seq ascending (oldest first), matching the brainbox query contract.
+func (c *Client) ListAgentEvents(envelopeID, parentID string, limit int) ([]AgentEventEntry, error) {
+	q := "?"
+	add := func(k, v string) {
+		if v == "" {
+			return
+		}
+		if len(q) > 1 {
+			q += "&"
+		}
+		q += k + "=" + v
+	}
+	add("id", envelopeID)
+	add("parent_id", parentID)
+	if limit > 0 {
+		add("limit", fmt.Sprintf("%d", limit))
+	}
+	var resp agentEventsResp
+	if err := c.get("/api/agent_events"+q, &resp); err != nil {
+		return nil, fmt.Errorf("list agent events: %w", err)
+	}
+	return resp.Events, nil
+}
+
 // GetAgentState fetches one envelope by id. Returns ok=false when brainbox
 // returned 404 (envelope unknown to the bus).
 func (c *Client) GetAgentState(id string) (AgentStateItem, bool, error) {

@@ -82,6 +82,8 @@ export function GetActiveProfile():Promise<main.Profile>;
 
 export function GetAgentRole(arg1:string):Promise<brainbox.AgentDefinition>;
 
+export function GetAgentState(arg1:string):Promise<brainbox.AgentStateItem>;
+
 export function GetAppLogs():Promise<Array<string>>;
 
 export function GetChannel(arg1:string):Promise<brainbox.Channel>;
@@ -162,7 +164,11 @@ export function GetWidgetCount(arg1:string,arg2:string):Promise<number>;
 
 export function LaunchTeam(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<brainbox.SessionActionResponse>;
 
+export function ListAgentEvents(arg1:string,arg2:string,arg3:number):Promise<Array<brainbox.AgentEventEntry>>;
+
 export function ListAgentRoles():Promise<Array<brainbox.AgentDefinition>>;
+
+export function ListAgentState(arg1:main.AgentStateFilter):Promise<Array<brainbox.AgentStateItem>>;
 
 export function ListAgents():Promise<Array<main.DetectedAgent>>;
 
@@ -203,6 +209,8 @@ export function ListTasks(arg1:string,arg2:string,arg3:number):Promise<Array<mai
 export function ListUpcomingFires(arg1:number):Promise<Array<main.UpcomingFire>>;
 
 export function OpenLocalSession(arg1:string):Promise<void>;
+
+export function OutboxPending():Promise<number>;
 
 export function PostChannelMessage(arg1:string,arg2:brainbox.PostChannelMessageRequest):Promise<brainbox.ChannelMessage>;
 

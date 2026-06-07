@@ -83,20 +83,33 @@ func (a *App) startup(ctx context.Context) {
 	a.client = brainbox.NewClient(a.config.BaseURL, a.config.APIKey)
 	a.sse = brainbox.NewSSEListener(a.client, func(event string) {
 		runtime.EventsEmit(ctx, "brainbox:event", event)
+
+		// Inspect the wrapper once. brainbox /api/events broadcasts every
+		// listener as JSON; agent.event wraps {"event":"agent.event","data":{...envelope}}
+		// while webhook events use {"action":"webhook.trigger",...}.
+		var probe struct {
+			Event   string                 `json:"event"`
+			Data    map[string]interface{} `json:"data"`
+			Action  string                 `json:"action"`
+			Key     string                 `json:"key"`
+			Payload map[string]interface{} `json:"payload"`
+		}
+		if json.Unmarshal([]byte(event), &probe) != nil {
+			return
+		}
+
+		// Fan-out agent.event so the Stream panel gets typed envelope deltas.
+		if probe.Event == "agent.event" && probe.Data != nil {
+			runtime.EventsEmit(ctx, "agent:event", probe.Data)
+		}
+
 		// Route webhook.trigger events to the automation engine.
-		if a.automations != nil {
-			var env struct {
-				Action  string                 `json:"action"`
-				Key     string                 `json:"key"`
-				Payload map[string]interface{} `json:"payload"`
-			}
-			if json.Unmarshal([]byte(event), &env) == nil && env.Action == "webhook.trigger" && env.Key != "" {
-				a.automations.Emit(AutomationEvent{
-					Type:           "webhook",
-					WebhookKey:     env.Key,
-					WebhookPayload: env.Payload,
-				})
-			}
+		if a.automations != nil && probe.Action == "webhook.trigger" && probe.Key != "" {
+			a.automations.Emit(AutomationEvent{
+				Type:           "webhook",
+				WebhookKey:     probe.Key,
+				WebhookPayload: probe.Payload,
+			})
 		}
 	})
 	a.sse.Start()
