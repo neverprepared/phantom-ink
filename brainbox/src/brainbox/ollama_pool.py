@@ -132,7 +132,13 @@ class OllamaPool:
             # Nothing healthy — return fallback anyway so callers get a 502
             # from the real error rather than a confusing "no instances" message
             return self._instances.get(_FALLBACK_NAME)
-        return min(candidates, key=lambda i: i.in_flight)
+        # Prefer instances that actually have models loaded over an empty
+        # fallback, then pick the least-loaded among them. Without this,
+        # an empty localhost fallback would consistently steal traffic from
+        # runner-backed pools that have real models.
+        with_models = [i for i in candidates if i.models]
+        pool_set = with_models or candidates
+        return min(pool_set, key=lambda i: i.in_flight)
 
     def all_instances(self) -> list[OllamaInstance]:
         return list(self._instances.values())
