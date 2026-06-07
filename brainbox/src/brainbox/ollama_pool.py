@@ -13,6 +13,10 @@ The pool background task health-checks every instance every 30 seconds and
 marks them healthy/unhealthy. pick() returns the healthy instance with the
 lowest in-flight request count, falling back to the configured host if the
 runner pool is empty or all unhealthy.
+
+Transport: the health check uses :func:`brainbox.ollama.acurl_request`
+(curl subprocess) instead of httpx — see ``ollama.py`` docstring for the
+Python 3.14 + macOS EHOSTUNREACH gotcha.
 """
 
 from __future__ import annotations
@@ -20,8 +24,6 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-
-import httpx
 
 from .config import settings
 from .log import get_logger
@@ -164,44 +166,25 @@ class OllamaPool:
         inst = self._instances.get(runner_name)
         if not inst:
             return
-        # On Python 3.14 + macOS, both sync and async httpx hit a spurious
-        # EHOSTUNREACH for some LAN destinations from inside the daemon
-        # process even though curl from the same process succeeds. Use
-        # curl as the transport until that's understood. The request is
-        # small and infrequent so the process-spawn cost is negligible.
-        import json as _json
-        import shlex
-        args = ["curl", "-sk", "-m", "5",
-                "-w", "\n%{http_code}",
-                inst.url + "/api/tags"]
-        for k, v in inst.request_headers().items():
-            args += ["-H", f"{k}: {v}"]
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            from .ollama import acurl_request
+            status, body = await acurl_request(
+                "GET", inst.url, "/api/tags",
+                headers=inst.request_headers(),
+                verify=inst.verify_tls,
+                timeout=5,
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=8.0)
-            text = stdout.decode("utf-8", errors="replace")
-            # Last line is the status code; everything before is the body.
-            body, _, code = text.rpartition("\n")
-            if code.strip() == "200":
-                try:
-                    data = _json.loads(body)
-                    inst.models = [m["name"] for m in data.get("models", [])]
-                    inst.healthy = True
-                except Exception:
-                    inst.healthy = False
-                    inst.models = []
-                    log.warning("ollama_pool.health_parse_failed",
-                                metadata={"runner": runner_name, "body": body[:200]})
+            if status == 200:
+                import json as _json
+                data = _json.loads(body)
+                inst.models = [m["name"] for m in data.get("models", [])]
+                inst.healthy = True
             else:
                 inst.healthy = False
                 inst.models = []
                 log.warning("ollama_pool.health_non200", metadata={
-                    "runner": runner_name, "url": inst.url, "code": code.strip(),
-                    "stderr": stderr.decode(errors="replace")[:200],
+                    "runner": runner_name, "url": inst.url,
+                    "status": status, "body": body[:200],
                 })
         except Exception as exc:
             inst.healthy = False
@@ -209,73 +192,12 @@ class OllamaPool:
             log.warning("ollama_pool.health_exception", metadata={
                 "runner": runner_name, "url": inst.url,
                 "reason": f"{type(exc).__name__}: {exc}",
-                "cmd": " ".join(shlex.quote(a) for a in args)[:200],
             })
         inst.last_checked = time.time()
         log.debug(
             "ollama_pool.health_checked",
             metadata={"runner": runner_name, "healthy": inst.healthy, "models": len(inst.models)},
         )
-        return
-        # Below is the original async-httpx path — retained for the day
-        # we move off Python 3.14 or httpx ships a fix.
-        last_exc: Exception | None = None
-        for attempt in range(2):
-            try:
-                async with httpx.AsyncClient(timeout=5.0, verify=inst.verify_tls) as client:
-                    resp = await client.get(inst.url + "/api/tags", headers=inst.request_headers())
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        inst.models = [m["name"] for m in data.get("models", [])]
-                        inst.healthy = True
-                        last_exc = None
-                        break
-                    else:
-                        inst.healthy = False
-                        inst.models = []
-                        log.warning(
-                            "ollama_pool.health_non200",
-                            metadata={"runner": runner_name, "status": resp.status_code,
-                                      "url": inst.url, "body": resp.text[:200],
-                                      "attempt": attempt},
-                        )
-                        last_exc = None
-                        break
-            except Exception as exc:
-                last_exc = exc
-                if attempt == 0:
-                    await asyncio.sleep(0.3)
-                    continue
-        if last_exc is not None:
-            inst.healthy = False
-            inst.models = []
-            import traceback
-            log.warning(
-                "ollama_pool.health_exception",
-                metadata={
-                    "runner": runner_name, "url": inst.url,
-                    "exc_type": type(last_exc).__name__,
-                    "exc_chain": [
-                        f"{type(e).__name__}: {e!r}"[:200]
-                        for e in _exception_chain(last_exc)
-                    ],
-                    "tb": traceback.format_exc().splitlines()[-6:],
-                },
-            )
-        inst.last_checked = time.time()
-        log.debug(
-            "ollama_pool.health_checked",
-            metadata={"runner": runner_name, "healthy": inst.healthy, "models": len(inst.models)},
-        )
-
-
-def _exception_chain(exc: BaseException) -> list[BaseException]:
-    out: list[BaseException] = []
-    cur: BaseException | None = exc
-    while cur is not None and cur not in out:
-        out.append(cur)
-        cur = cur.__cause__ or cur.__context__
-    return out
 
 
 # Module-level singleton

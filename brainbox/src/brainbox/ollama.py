@@ -1,26 +1,43 @@
-"""Ollama API client for chat completions, model management, and health checks.
+"""Ollama API client.
 
-Each function takes optional ``base_url``, ``headers``, and ``verify``
-parameters so callers can talk to either the local Ollama (no auth, http)
-or a runner's HTTPS proxy (X-API-Key auth, self-signed cert).
+Implementation note (do not "fix" this back to httpx without reading):
+====================================================================
+On macOS + Python 3.14 + httpx, outbound connections from the running
+brainbox daemon to LAN destinations (e.g. a runner's Ollama HTTPS proxy
+at 192.168.x.y) fail with ``OSError(65, 'No route to host')`` even
+though:
+
+  - curl from the same daemon process succeeds
+  - a plain stdlib ``socket.connect()`` from the same daemon succeeds
+  - httpx from a standalone python script on the same host succeeds
+
+The failure reproduces with both ``httpx.AsyncClient`` and
+``httpx.Client`` (in a thread). The httpcore / anyio socket creation
+path inside the long-running daemon process picks up some state — likely
+related to dual-stack/happy-eyeballs interaction with macOS's routing
+table — that the bare-socket and curl paths avoid.
+
+Workaround: shell out to ``curl`` for every Ollama call. Per-call
+overhead is one process spawn (~5ms); inconsequential next to the
+seconds-long completion times of Ollama operations.
+
+Re-evaluate when (a) Python ships a fix in 3.14.x, or (b) we move the
+daemon off Python 3.14. See app/CLAUDE.md "Known issues" for the
+broader gotcha listing.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
+import shlex
+import subprocess
 from dataclasses import dataclass
-
-import httpx
 
 from .config import settings
 from .log import get_logger
 
 _log = get_logger()
-
-# ---------------------------------------------------------------------------
-# Cached HTTPx clients — one per (base_url, verify) pair for connection pooling
-# ---------------------------------------------------------------------------
-
-_httpx_clients: dict[tuple[str, bool], httpx.Client] = {}
 
 
 class OllamaError(RuntimeError):
@@ -52,13 +69,55 @@ class ModelInfo:
     digest: str
 
 
-def _client(base_url: str | None = None, *, verify: bool = True) -> httpx.Client:
-    """Cached httpx client per (base_url, verify) pair."""
-    url = base_url or settings.ollama.host
-    key = (url, verify)
-    if key not in _httpx_clients:
-        _httpx_clients[key] = httpx.Client(base_url=url, timeout=300.0, verify=verify)
-    return _httpx_clients[key]
+# ---------------------------------------------------------------------------
+# Curl-based transport (see module docstring)
+# ---------------------------------------------------------------------------
+
+
+def _curl_request(
+    method: str,
+    base_url: str | None,
+    path: str,
+    *,
+    body: dict | None = None,
+    headers: dict[str, str] | None = None,
+    verify: bool = True,
+    timeout: float = 300.0,
+) -> tuple[int, str]:
+    """Execute an HTTP request via curl. Returns (status_code, body_text).
+
+    Raises OSError when curl itself fails to run.
+    """
+    url = (base_url or settings.ollama.host).rstrip("/") + path
+    args: list[str] = [
+        "curl", "-s",
+        "-X", method,
+        "-m", str(int(timeout)),
+        "-w", "\n%{http_code}",
+        url,
+    ]
+    if not verify:
+        args.append("-k")
+    for k, v in (headers or {}).items():
+        args += ["-H", f"{k}: {v}"]
+    if body is not None:
+        args += ["-H", "Content-Type: application/json",
+                 "--data-binary", json.dumps(body)]
+    proc = subprocess.run(args, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise OSError(f"curl failed (rc={proc.returncode}): {proc.stderr.strip()[:200]}")
+    text = proc.stdout
+    body_text, _, code = text.rpartition("\n")
+    try:
+        status = int(code.strip() or "0")
+    except ValueError:
+        status = 0
+    return status, body_text
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 
 def health_check(
@@ -69,8 +128,8 @@ def health_check(
 ) -> bool:
     """Check if Ollama is reachable."""
     try:
-        resp = _client(base_url, verify=verify).get("/", headers=headers)
-        return resp.status_code == 200
+        status, _ = _curl_request("GET", base_url, "/", headers=headers, verify=verify, timeout=5)
+        return status == 200
     except Exception as exc:
         _log.debug("ollama.health_check_failed", metadata={"reason": str(exc)})
         return False
@@ -86,24 +145,23 @@ def chat(
 ) -> ChatResult:
     """Send a chat completion request to Ollama."""
     resolved_model = model or settings.ollama.model
-    url = base_url or settings.ollama.host
+    url_display = base_url or settings.ollama.host
     payload = {
         "model": resolved_model,
         "messages": messages,
         "stream": False,
     }
     try:
-        resp = _client(base_url, verify=verify).post("/api/chat", json=payload, headers=headers)
-        resp.raise_for_status()
-        body = resp.json()
-    except httpx.ConnectError as exc:
-        raise OllamaError("chat", f"could not connect to Ollama at {url}: {exc}")
-    except httpx.HTTPStatusError as exc:
-        raise OllamaError("chat", f"HTTP {exc.response.status_code}: {exc.response.text}")
-    except httpx.HTTPError as exc:
-        raise OllamaError("chat", str(exc))
-
+        status, text = _curl_request(
+            "POST", base_url, "/api/chat",
+            body=payload, headers=headers, verify=verify, timeout=300,
+        )
+    except OSError as exc:
+        raise OllamaError("chat", f"could not connect to Ollama at {url_display}: {exc}")
+    if status != 200:
+        raise OllamaError("chat", f"HTTP {status}: {text[:200]}")
     try:
+        body = json.loads(text)
         msg = body["message"]
         return ChatResult(
             model=body.get("model", resolved_model),
@@ -111,7 +169,7 @@ def chat(
             total_duration=body.get("total_duration", 0),
             eval_count=body.get("eval_count", 0),
         )
-    except (KeyError, TypeError) as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         raise OllamaError("chat", f"unexpected response structure: {exc}")
 
 
@@ -122,16 +180,20 @@ def list_models(
     verify: bool = True,
 ) -> list[ModelInfo]:
     """List models available on the Ollama server."""
-    url = base_url or settings.ollama.host
+    url_display = base_url or settings.ollama.host
     try:
-        resp = _client(base_url, verify=verify).get("/api/tags", headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
-    except httpx.ConnectError as exc:
-        raise OllamaError("list_models", f"could not connect to Ollama at {url}: {exc}")
-    except httpx.HTTPError as exc:
-        raise OllamaError("list_models", str(exc))
-
+        status, text = _curl_request(
+            "GET", base_url, "/api/tags",
+            headers=headers, verify=verify, timeout=10,
+        )
+    except OSError as exc:
+        raise OllamaError("list_models", f"could not connect to Ollama at {url_display}: {exc}")
+    if status != 200:
+        raise OllamaError("list_models", f"HTTP {status}: {text[:200]}")
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        raise OllamaError("list_models", f"invalid JSON: {exc}")
     return [
         ModelInfo(
             name=m.get("name", ""),
@@ -151,17 +213,21 @@ def pull_model(
     verify: bool = True,
 ) -> str:
     """Pull a model from the Ollama registry."""
-    url = base_url or settings.ollama.host
+    url_display = base_url or settings.ollama.host
     try:
-        resp = _client(base_url, verify=verify).post(
-            "/api/pull", json={"name": name, "stream": False}, headers=headers
+        status, text = _curl_request(
+            "POST", base_url, "/api/pull",
+            body={"name": name, "stream": False},
+            headers=headers, verify=verify, timeout=1800,
         )
-        resp.raise_for_status()
-        return resp.json().get("status", "success")
-    except httpx.ConnectError as exc:
-        raise OllamaError("pull_model", f"could not connect to Ollama at {url}: {exc}")
-    except httpx.HTTPError as exc:
-        raise OllamaError("pull_model", str(exc))
+    except OSError as exc:
+        raise OllamaError("pull_model", f"could not connect to Ollama at {url_display}: {exc}")
+    if status != 200:
+        raise OllamaError("pull_model", f"HTTP {status}: {text[:200]}")
+    try:
+        return json.loads(text).get("status", "success")
+    except ValueError as exc:
+        raise OllamaError("pull_model", f"invalid JSON: {exc}")
 
 
 def delete_model(
@@ -172,14 +238,31 @@ def delete_model(
     verify: bool = True,
 ) -> str:
     """Delete a model from the Ollama server."""
-    url = base_url or settings.ollama.host
+    url_display = base_url or settings.ollama.host
     try:
-        resp = _client(base_url, verify=verify).request(
-            "DELETE", "/api/delete", json={"name": name}, headers=headers
+        status, text = _curl_request(
+            "DELETE", base_url, "/api/delete",
+            body={"name": name}, headers=headers, verify=verify, timeout=30,
         )
-        resp.raise_for_status()
-        return "deleted"
-    except httpx.ConnectError as exc:
-        raise OllamaError("delete_model", f"could not connect to Ollama at {url}: {exc}")
-    except httpx.HTTPError as exc:
-        raise OllamaError("delete_model", str(exc))
+    except OSError as exc:
+        raise OllamaError("delete_model", f"could not connect to Ollama at {url_display}: {exc}")
+    if status != 200:
+        raise OllamaError("delete_model", f"HTTP {status}: {text[:200]}")
+    return "deleted"
+
+
+# ---------------------------------------------------------------------------
+# Async wrapper (for code that wants to await but the underlying transport
+# is sync subprocess).
+# ---------------------------------------------------------------------------
+
+
+async def acurl_request(*args, **kwargs) -> tuple[int, str]:
+    """Async wrapper around _curl_request — runs in a thread."""
+    return await asyncio.get_running_loop().run_in_executor(
+        None, lambda: _curl_request(*args, **kwargs)
+    )
+
+
+def _format_command_for_log(args: list[str]) -> str:
+    return " ".join(shlex.quote(a) for a in args)[:200]
