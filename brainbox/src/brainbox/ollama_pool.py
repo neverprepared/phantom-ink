@@ -174,9 +174,19 @@ class OllamaPool:
                 else:
                     inst.healthy = False
                     inst.models = []
-        except Exception:
+                    log.warning(
+                        "ollama_pool.health_non200",
+                        metadata={"runner": runner_name, "status": resp.status_code,
+                                  "url": inst.url, "body": resp.text[:200]},
+                    )
+        except Exception as exc:
             inst.healthy = False
             inst.models = []
+            log.warning(
+                "ollama_pool.health_exception",
+                metadata={"runner": runner_name, "url": inst.url,
+                          "exc_type": type(exc).__name__, "reason": str(exc)[:200]},
+            )
         inst.last_checked = time.time()
         log.debug(
             "ollama_pool.health_checked",
