@@ -30,7 +30,14 @@ export interface StatCounterConfig {
   label: string;
   color: 'green' | 'blue' | 'red' | 'orange' | 'muted' | 'default';
   navTarget?: string;
-  dataKey: 'activeSessions' | 'runningTasks' | 'failedTasks' | 'scheduledFires' | 'actionItems';
+  dataKey:
+    | 'activeSessions'
+    | 'runningTasks'
+    | 'failedTasks'
+    | 'scheduledFires'
+    | 'actionItems'
+    | 'attentionItems'
+    | 'offlineRunners';
 }
 
 export interface CustomCounterConfig {
@@ -105,6 +112,11 @@ export interface ActionItem {
   desc: string;
   severity: 'urgent' | 'warning' | 'info';
   ref?: string;
+  /** Optional navigation target panel id. Defaults to 'stream'. */
+  navTarget?: string;
+  /** When set, clicking the row calls AttentionOpenTarget(refId) instead of
+   *  a simple panel switch. Lets bus-attention items drill into their owner. */
+  openAttentionId?: string;
 }
 
 export interface SessionSummary {
@@ -173,6 +185,8 @@ export interface DashboardData {
   activeSessions: number;
   runningTasks: number;
   failedTasks: number;
+  attentionItems: number;
+  offlineRunners: number;
   loading: boolean;
   refreshing: boolean;
   opensearch?: OpenSearchOverview | null;

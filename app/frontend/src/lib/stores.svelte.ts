@@ -204,6 +204,7 @@ export const profileColorStore = {
 // ---------------------------------------------------------------------------
 
 import type { DashboardLayout, DashboardData, WidgetInstance } from './widgets/types';
+import { getApi } from './utils/api';
 
 let _dashboardLayout = $state<DashboardLayout | null>(null);
 
@@ -223,6 +224,102 @@ let _dashboardData = $state<DashboardData | null>(null);
 export const dashboardDataStore = {
   get value() { return _dashboardData; },
   set value(v: DashboardData | null) { _dashboardData = v; },
+};
+
+// ---------------------------------------------------------------------------
+// Attention queue — singleton 5s poll of ListAttention. Exposed so the sidebar
+// can badge the Stream entry and the Dashboard can fold attention items into
+// its ActionItems widget without each consumer re-polling. StreamPanel itself
+// reads from this store too, so a profile switch reflects everywhere in one
+// tick instead of waiting on each panel's own timer.
+// ---------------------------------------------------------------------------
+
+export interface AttentionItemLite {
+  id: string;
+  source: string;
+  source_id: string;
+  status: string;
+  title: string;
+  subtitle: string;
+  reason: string;
+  workspace: string;
+  time: number;
+  url?: string;
+  actions: string[];
+  user_reply?: string;
+  session_name?: string;
+  runner_name?: string;
+}
+
+let _attention = $state<AttentionItemLite[]>([]);
+let _attentionLoaded = $state(false);
+let _attentionPoll: number | undefined;
+let _attentionWorkspace = '';
+const ATTENTION_POLL_MS = 5_000;
+
+async function _refreshAttention(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  const api = await getApi();
+  if (!api?.ListAttention) return;
+  try {
+    const items = (await api.ListAttention(_attentionWorkspace)) ?? [];
+    _attention = items as AttentionItemLite[];
+    _attentionLoaded = true;
+  } catch {
+    // best-effort: leave previous value in place
+  }
+}
+
+export const attentionStore = {
+  get items(): AttentionItemLite[] { return _attention; },
+  get count(): number { return _attention.length; },
+  get loaded(): boolean { return _attentionLoaded; },
+  /** Force-refresh (e.g. after the user dismisses or retries an item). */
+  refresh(): Promise<void> { return _refreshAttention(); },
+  /** Update the workspace filter; safe to call repeatedly. */
+  setWorkspace(ws: string): void {
+    if (_attentionWorkspace === ws) return;
+    _attentionWorkspace = ws;
+    void _refreshAttention();
+  },
+  /** Locally apply a dismissal so the count updates instantly. */
+  removeLocal(id: string): void {
+    _attention = _attention.filter(i => i.id !== id);
+  },
+  /** Bootstrap the poll. Idempotent — safe to call from multiple places. */
+  start(): void {
+    if (typeof window === 'undefined' || _attentionPoll !== undefined) return;
+    void _refreshAttention();
+    _attentionPoll = window.setInterval(_refreshAttention, ATTENTION_POLL_MS);
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Stream panel focus — one-shot signal so other panels (Dashboard, OpenSearch
+// metric widget) can ask Stream to land on a particular tab with an optional
+// preset filter (e.g. logs sorted by cost).
+// ---------------------------------------------------------------------------
+
+export interface StreamFocus {
+  tab: 'live' | 'attention' | 'logs';
+  sortBy?: 'cost' | 'duration' | 'tokens';
+}
+
+let _streamFocus = $state<StreamFocus | null>(null);
+
+export const streamFocus = {
+  get value(): StreamFocus | null { return _streamFocus; },
+  /** Navigate to Stream with the given tab/filter intent. */
+  focus(target: StreamFocus): void {
+    _streamFocus = target;
+    currentPanel.value = 'stream';
+  },
+  /** Read once and clear — StreamPanel calls this on mount/effect. */
+  consume(): StreamFocus | null {
+    const f = _streamFocus;
+    _streamFocus = null;
+    return f;
+  },
 };
 
 // ---------------------------------------------------------------------------

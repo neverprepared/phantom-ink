@@ -1,6 +1,11 @@
 <script lang="ts">
   import { panels } from '../panels';
-  import { currentPanel, sidebarCollapsed, debugState } from '../stores.svelte';
+  import { currentPanel, sidebarCollapsed, debugState, attentionStore } from '../stores.svelte';
+
+  let attentionCount = $derived(attentionStore.count);
+  function badgeFor(id: string): number {
+    return id === 'stream' ? attentionCount : 0;
+  }
 
   let search = $state('');
 
@@ -48,10 +53,17 @@
           aria-label={panel.label}
           aria-current={currentPanel.value === panel.id ? 'page' : undefined}
         >
-          <span class="nav-icon" aria-hidden="true">{@html panel.icon}</span>
+          <span class="nav-icon" aria-hidden="true">
+            {@html panel.icon}
+            {#if sidebarCollapsed.value && badgeFor(panel.id) > 0}
+              <span class="nav-dot" aria-hidden="true"></span>
+            {/if}
+          </span>
           {#if !sidebarCollapsed.value}
             <span class="nav-label">{panel.label}</span>
-            {#if panel.shortcut}
+            {#if badgeFor(panel.id) > 0}
+              <span class="nav-badge" aria-label="{badgeFor(panel.id)} items need attention">{badgeFor(panel.id)}</span>
+            {:else if panel.shortcut}
               <span class="nav-shortcut">{panel.shortcut}</span>
             {/if}
           {/if}
@@ -72,9 +84,17 @@
             aria-label={panel.label}
             aria-current={currentPanel.value === panel.id ? 'page' : undefined}
           >
-            <span class="nav-icon" aria-hidden="true">{@html panel.icon}</span>
+            <span class="nav-icon" aria-hidden="true">
+              {@html panel.icon}
+              {#if sidebarCollapsed.value && badgeFor(panel.id) > 0}
+                <span class="nav-dot" aria-hidden="true"></span>
+              {/if}
+            </span>
             {#if !sidebarCollapsed.value}
               <span class="nav-label">{panel.label}</span>
+              {#if badgeFor(panel.id) > 0}
+                <span class="nav-badge" aria-label="{badgeFor(panel.id)} items need attention">{badgeFor(panel.id)}</span>
+              {/if}
             {/if}
           </button>
         </li>
@@ -240,6 +260,32 @@
     font-size: 11px;
     color: var(--text-faint, var(--color-text-tertiary));
     flex-shrink: 0;
+  }
+
+  .nav-badge {
+    flex-shrink: 0;
+    min-width: 18px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--color-warning, #ef6c00);
+    color: white;
+    font-size: 10.5px;
+    font-weight: 700;
+    text-align: center;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .nav-icon { position: relative; }
+  .nav-dot {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--color-warning, #ef6c00);
+    border: 1.5px solid var(--sidebar, var(--color-bg-sidebar));
   }
 
   .sidebar-footer {

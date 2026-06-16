@@ -1,8 +1,19 @@
 <script lang="ts">
-  import { dashboardDataStore, featureFlags, profileState } from '../stores.svelte';
+  import { dashboardDataStore, featureFlags, profileState, streamFocus } from '../stores.svelte';
   import type { OpenSearchMetricConfig } from './types';
 
   let { config }: { config: OpenSearchMetricConfig } = $props();
+
+  const SORT_BY: Record<OpenSearchMetricConfig['metric'], 'cost' | 'duration' | 'tokens'> = {
+    'cost-today':      'cost',
+    'tokens-today':    'tokens',
+    'api-requests-1h': 'duration',
+    'avg-latency-1h':  'duration',
+  };
+
+  function drill() {
+    streamFocus.focus({ tab: 'logs', sortBy: SORT_BY[config.metric] });
+  }
 
   let data = $derived(dashboardDataStore.value);
   let enabled = $derived(featureFlags.isEnabled('opensearch'));
@@ -41,21 +52,25 @@
 
 <div class="drag-strip widget-drag-handle" aria-hidden="true"></div>
 
-<div class="stat-card">
-  <span class="stat-label">» {label}</span>
-
-  {#if !enabled}
-    <span class="stat-value muted">—</span>
-    <span class="footnote">opensearch disabled</span>
-  {:else if !overview}
-    <span class="stat-value muted">…</span>
-  {:else if workspaceMissing}
-    <span class="stat-value muted">—</span>
-    <span class="footnote">no telemetry for <code>{profileState.active?.name}</code></span>
-  {:else}
+{#if enabled && overview && !workspaceMissing}
+  <button class="stat-card clickable" onclick={drill} title="Open Stream → Logs">
+    <span class="stat-label">» {label}</span>
     <span class="stat-value {colorClass}">{value}</span>
-  {/if}
-</div>
+  </button>
+{:else}
+  <div class="stat-card">
+    <span class="stat-label">» {label}</span>
+    {#if !enabled}
+      <span class="stat-value muted">—</span>
+      <span class="footnote">opensearch disabled</span>
+    {:else if !overview}
+      <span class="stat-value muted">…</span>
+    {:else}
+      <span class="stat-value muted">—</span>
+      <span class="footnote">no telemetry for <code>{profileState.active?.name}</code></span>
+    {/if}
+  </div>
+{/if}
 
 <style>
   .drag-strip {
@@ -72,6 +87,16 @@
     gap: var(--spacing-sm);
     padding: var(--spacing-lg) var(--spacing-xl);
     color: inherit;
+    background: transparent;
+    border: none;
+    text-align: left;
+  }
+  .stat-card.clickable {
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .stat-card.clickable:hover {
+    background: var(--color-surface-hover, rgba(0,0,0,0.04));
   }
 
   .stat-label {

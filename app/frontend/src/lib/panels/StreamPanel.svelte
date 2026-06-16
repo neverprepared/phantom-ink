@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { getApi, openInBrowser } from '../utils/api';
-  import { featureFlags, profileState, currentPanel } from '../stores.svelte';
+  import { featureFlags, profileState, currentPanel, attentionStore, streamFocus } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -21,6 +21,8 @@
     url?: string;
     actions: string[]; // "retry" | "open" | "respond" | "dismiss"
     user_reply?: string;
+    session_name?: string;
+    runner_name?: string;
   }
 
   interface OpenTarget {
@@ -76,10 +78,21 @@
   // ── State ──────────────────────────────────────────────────────────────────
 
   let tab = $state<Tab>('attention');
-  let attention = $state<AttentionItem[]>([]);
+  // Attention list is sourced from the singleton attentionStore so the sidebar
+  // badge, dashboard ActionItems widget, and this panel always agree without
+  // duplicating polls.
+  let attention = $derived<AttentionItem[]>(attentionStore.items as unknown as AttentionItem[]);
+  let attentionLoading = $derived(!attentionStore.loaded);
   let live = $state<AgentStateItem[]>([]);
   let logs = $state<LogEntry[]>([]);
-  let attentionLoading = $state(true);
+  // Optional sort key for the logs tab. Set via cross-panel streamFocus signal
+  // (e.g. the OpenSearch cost widget jumps in with sortBy='cost').
+  let logsSortBy = $state<'cost' | 'duration' | 'tokens' | null>(null);
+  let displayLogs = $derived.by(() => {
+    if (!logsSortBy) return logs;
+    const key = logsSortBy === 'duration' ? 'duration_ms' : logsSortBy;
+    return [...logs].sort((a, b) => ((b as any)[key] ?? 0) - ((a as any)[key] ?? 0));
+  });
   let liveLoading = $state(true);
   let logsLoading = $state(false);
   let attentionError = $state<string | null>(null);
@@ -98,13 +111,11 @@
   // Outbox pending indicator, polled separately from list refresh.
   let outboxPending = $state(0);
 
-  let attentionPoll: number | undefined;
   let livePoll: number | undefined;
   let logsPoll: number | undefined;
   let outboxPoll: number | undefined;
   let sseCleanup: Array<() => void> = [];
 
-  const ATTN_POLL_MS = 5_000;
   const LIVE_POLL_MS = 5_000;     // SSE drives instant updates; this is a safety net
   const LOGS_POLL_MS = 3_000;
   const OUTBOX_POLL_MS = 5_000;
@@ -121,19 +132,20 @@
     if (tab === 'logs' && !opensearchActive) tab = 'attention';
   });
 
+  // If the user clicks an OpenSearch widget while Stream is already mounted,
+  // the streamFocus store fires after onMount — pick it up reactively.
+  $effect(() => {
+    const f = streamFocus.value;
+    if (!f) return;
+    if (f.tab) tab = f.tab;
+    if (f.sortBy) logsSortBy = f.sortBy;
+    streamFocus.consume();
+  });
+
   // ── Loaders ────────────────────────────────────────────────────────────────
 
   async function refreshAttention() {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      attention = ((await a.ListAttention(workspaceFilter)) ?? []) as AttentionItem[];
-      attentionError = null;
-    } catch (err: any) {
-      attentionError = `${err?.message ?? err}`;
-    } finally {
-      attentionLoading = false;
-    }
+    await attentionStore.refresh();
   }
 
   async function refreshLive() {
@@ -253,10 +265,14 @@
   }
 
   onMount(() => {
-    void refreshAttention();
+    // Consume any cross-panel focus signal first so other tabs can land us
+    // here on the right tab (e.g. an OpenSearch metric widget jumping to logs).
+    const f = streamFocus.consume();
+    if (f?.tab) tab = f.tab;
+    if (f?.sortBy) logsSortBy = f.sortBy;
+
     void refreshLive();
     void refreshOutbox();
-    attentionPoll = window.setInterval(refreshAttention, ATTN_POLL_MS);
     livePoll      = window.setInterval(refreshLive, LIVE_POLL_MS);
     outboxPoll    = window.setInterval(refreshOutbox, OUTBOX_POLL_MS);
 
@@ -280,7 +296,6 @@
   });
 
   onDestroy(() => {
-    if (attentionPoll !== undefined) window.clearInterval(attentionPoll);
     if (livePoll      !== undefined) window.clearInterval(livePoll);
     if (logsPoll      !== undefined) window.clearInterval(logsPoll);
     if (outboxPoll    !== undefined) window.clearInterval(outboxPoll);
@@ -325,27 +340,25 @@
   // ── Actions ────────────────────────────────────────────────────────────────
 
   async function dismiss(item: AttentionItem) {
-    const prev = attention;
-    attention = attention.filter(i => i.id !== item.id);
+    attentionStore.removeLocal(item.id);
     const a = await getApi();
     if (!a) return;
     try {
       await a.DismissAttention(item.id);
     } catch (err: any) {
-      attention = prev;
+      void attentionStore.refresh(); // restore canonical state
       notifications.error(`Failed to dismiss: ${err?.message ?? err}`);
     }
   }
 
   async function retry(item: AttentionItem) {
-    const prev = attention;
-    attention = attention.filter(i => i.id !== item.id);
+    attentionStore.removeLocal(item.id);
     const a = await getApi();
     if (!a) return;
     try {
       await a.AttentionRetry(item.id);
     } catch (err: any) {
-      attention = prev;
+      void attentionStore.refresh();
       notifications.error(`Retry failed: ${err?.message ?? err}`);
     }
   }
@@ -556,6 +569,18 @@
                   <span class="attn-reason">{item.reason}</span>
                 {/if}
                 {#if item.workspace}<span class="attn-ws">{item.workspace}</span>{/if}
+                {#if item.session_name}
+                  <button
+                    class="attn-chip chip-session"
+                    title="Open session"
+                    onclick={() => currentPanel.value = 'sessions'}>{item.session_name}</button>
+                {/if}
+                {#if item.runner_name}
+                  <button
+                    class="attn-chip chip-runner"
+                    title="Open runners"
+                    onclick={() => currentPanel.value = 'runners'}>{item.runner_name}</button>
+                {/if}
                 <span class="attn-time">{fmtAgo(item.time)}</span>
               </div>
               <div class="attn-title">{item.title}</div>
@@ -646,8 +671,14 @@
           title="No logs in the last 24h"
           message="Start a Claude Code session or widen your workspace filter." />
       {:else}
+        {#if logsSortBy}
+          <div class="log-sort-chip">
+            sorted by <strong>{logsSortBy === 'duration' ? 'latency' : logsSortBy}</strong> desc
+            <button class="link-btn" onclick={() => logsSortBy = null}>clear</button>
+          </div>
+        {/if}
         <ol class="log-list">
-          {#each logs as l, i (l.time + ':' + i)}
+          {#each displayLogs as l, i (l.time + ':' + i)}
             <li class="log-row">
               <span class="log-time">{fmtTime(l.time)}</span>
               <span class="log-body">{l.body}</span>
@@ -880,6 +911,26 @@
   }
   .attn-time { margin-left: auto; }
 
+  .attn-chip {
+    background: var(--bg, var(--color-bg-primary));
+    border: 1px solid var(--border, var(--color-border-primary));
+    color: var(--text-muted, var(--color-text-secondary));
+    padding: 1px 7px;
+    border-radius: var(--r-sm, var(--radius-sm));
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 10.5px;
+    letter-spacing: 0;
+    text-transform: none;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .attn-chip:hover {
+    color: var(--text, var(--color-text-primary));
+    border-color: var(--accent, var(--color-accent));
+  }
+  .chip-session { border-left: 2px solid var(--color-info, #1565c0); }
+  .chip-runner  { border-left: 2px solid var(--color-warning, #ef6c00); }
+
   .attn-title { font-size: 14px; font-weight: 600; color: var(--text, var(--color-text-primary)); }
   .attn-sub   { font-size: 12.5px; color: var(--text-muted, var(--color-text-secondary)); }
   .attn-reply {
@@ -949,6 +1000,20 @@
   .tag-ws   { color: var(--accent, var(--color-accent)); }
   .tag-sess { font-family: var(--font-mono, ui-monospace, monospace); }
   .log-dur  { color: var(--text-faint, var(--color-text-tertiary)); margin-left: auto; }
+
+  .log-sort-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding: 3px 10px;
+    font-size: 11.5px;
+    background: var(--bg-elev, var(--color-bg-tertiary));
+    border: 1px solid var(--border, var(--color-border-primary));
+    border-radius: var(--r-sm, var(--radius-sm));
+    color: var(--text-muted, var(--color-text-secondary));
+  }
+  .log-sort-chip strong { color: var(--text, var(--color-text-primary)); font-weight: 700; }
 
   .log-footer {
     margin-top: 12px;

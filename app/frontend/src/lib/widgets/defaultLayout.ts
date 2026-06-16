@@ -19,22 +19,34 @@ export const DEFAULT_LAYOUT: DashboardLayout = {
       x: 2, y: 0, w: 2, h: 2, minW: 2, minH: 2,
     },
     {
+      id: 'stat-attention',
+      kind: 'stat-counter',
+      config: { label: 'NEEDS ATTENTION', color: 'orange', navTarget: 'stream', dataKey: 'attentionItems' },
+      x: 4, y: 0, w: 2, h: 2, minW: 2, minH: 2,
+    },
+    {
       id: 'stat-failed',
       kind: 'stat-counter',
       config: { label: 'FAILED (24h)', color: 'red', navTarget: 'stream', dataKey: 'failedTasks' },
-      x: 4, y: 0, w: 2, h: 2, minW: 2, minH: 2,
+      x: 6, y: 0, w: 2, h: 2, minW: 2, minH: 2,
+    },
+    {
+      id: 'stat-runners-offline',
+      kind: 'stat-counter',
+      config: { label: 'RUNNERS OFFLINE', color: 'orange', navTarget: 'runners', dataKey: 'offlineRunners' },
+      x: 8, y: 0, w: 2, h: 2, minW: 2, minH: 2,
     },
     {
       id: 'action-items',
       kind: 'action-items',
       config: {},
-      x: 6, y: 0, w: 6, h: 2, minW: 3, minH: 2,
+      x: 0, y: 2, w: 12, h: 3, minW: 3, minH: 2,
     },
     {
       id: 'calendar',
       kind: 'calendar',
       config: {},
-      x: 0, y: 2, w: 12, h: 4, minW: 3, minH: 3,
+      x: 0, y: 5, w: 12, h: 4, minW: 3, minH: 3,
     },
   ],
 };

@@ -5,7 +5,7 @@
   import { mount, unmount, onMount } from 'svelte';
   import { getApi } from '../utils/api';
   import { brainboxEvents } from '../events.svelte';
-  import { profileState, dashboardState, dashboardDataStore, featureFlags } from '../stores.svelte';
+  import { profileState, dashboardState, dashboardDataStore, featureFlags, attentionStore, currentPanel } from '../stores.svelte';
   import { DEFAULT_LAYOUT } from '../widgets/defaultLayout';
   import type { WidgetInstance, WidgetKind, ActionItem, OpenSearchOverview } from '../widgets/types';
 
@@ -33,9 +33,21 @@
   let taskStats   = $state<any>(null);
   let dockerStats = $state<any[]>([]);
   let localProcs  = $state<any[]>([]);
+  let runners     = $state<any[]>([]);
   let systemInfo  = $state<{ cpu_cores: number; mem_total_gib: number }>({ cpu_cores: 0, mem_total_gib: 0 });
   let loading     = $state(true);
   let refreshing  = $state(false);
+
+  // Runners are global (not profile-scoped). Threshold matches the server's
+  // dispatcher eligibility window so the count matches what brainbox routes.
+  const RUNNER_ONLINE_WINDOW_MS = 90_000;
+  let nowMs = $state(Date.now());
+  const _nowTick = setInterval(() => { nowMs = Date.now(); }, 10_000);
+  $effect(() => () => clearInterval(_nowTick));
+
+  let offlineRunners = $derived(
+    runners.filter((r: any) => (nowMs - (r.last_seen ?? 0)) >= RUNNER_ONLINE_WINDOW_MS).length
+  );
 
   let activeProfile = $derived(profileState.active);
 
@@ -70,10 +82,34 @@
   let runningHubTasks = $derived(filteredTasks.filter((t: any) => t.status === 'running'));
   let failedHubTasks  = $derived(filteredTasks.filter((t: any) => t.status === 'failed'));
 
+  // Parse a "12.3%" cpu_perc / "45.6%" mem_perc string from docker stats.
+  function parsePct(s: any): number {
+    if (typeof s !== 'string') return 0;
+    const n = parseFloat(s.replace('%', '').trim());
+    return Number.isFinite(n) ? n : 0;
+  }
+
   let actionItems = $derived.by((): ActionItem[] => {
     const items: ActionItem[] = [];
     const now = Date.now();
 
+    // 1) Bus attention envelopes — the highest-signal item per row. Wired
+    // through AttentionOpenTarget so clicking jumps to the owning session /
+    // chain / job, not just the Stream panel.
+    for (const att of attentionStore.items.slice(0, 5)) {
+      const sev: ActionItem['severity'] =
+        att.status === 'failed' || att.status === 'blocked' ? 'urgent' : 'warning';
+      items.push({
+        kind: 'bus_attention',
+        title: att.title || (att.status ? att.status.replace('_', ' ') : 'attention'),
+        desc: att.reason || att.subtitle || '',
+        severity: sev,
+        ref: att.id,
+        openAttentionId: att.id,
+      });
+    }
+
+    // 2) Long-running hub tasks ("stuck").
     for (const t of runningHubTasks) {
       const ageMin = Math.floor((now - (t.created_at ?? 0)) / 60_000);
       if (ageMin > 30) {
@@ -86,11 +122,50 @@
       }
     }
 
+    // 3) Recent failed hub tasks (cap at 3 — anything more belongs in Stream).
     for (const t of failedHubTasks.slice(0, 3)) {
       items.push({
         kind: 'task_failed', title: 'task failed',
         desc: (t.error ?? '').slice(0, 100) || (t.description ?? '').slice(0, 100) || t.id.slice(0, 12),
         severity: 'warning', ref: t.id,
+      });
+    }
+
+    // 4) Resource threshold alerts. Raw bar charts in widgets are passive;
+    //    threshold-derived items convert them into focus signals.
+    for (const d of filteredDockerStats) {
+      const cpu = parsePct(d.cpu_perc);
+      const mem = parsePct(d.mem_perc);
+      if (cpu > 80) {
+        items.push({
+          kind: 'resource_cpu',
+          title: `${d.name} CPU ${cpu.toFixed(0)}%`,
+          desc: 'sustained above 80% — investigate',
+          severity: 'warning',
+          ref: d.name,
+          navTarget: 'sessions',
+        });
+      }
+      if (mem > 80) {
+        items.push({
+          kind: 'resource_mem',
+          title: `${d.name} memory ${mem.toFixed(0)}%`,
+          desc: mem > 90 ? 'near container limit' : 'high memory pressure',
+          severity: mem > 90 ? 'urgent' : 'warning',
+          ref: d.name,
+          navTarget: 'sessions',
+        });
+      }
+    }
+
+    // 5) Offline runner alert — at most one item, drills into Runners panel.
+    if (offlineRunners > 0 && runners.length > 0) {
+      items.push({
+        kind: 'runner_offline',
+        title: `${offlineRunners} runner${offlineRunners === 1 ? '' : 's'} offline`,
+        desc: `${runners.length - offlineRunners}/${runners.length} reachable`,
+        severity: 'warning',
+        navTarget: 'runners',
       });
     }
 
@@ -110,6 +185,8 @@
       activeSessions: activeSessions.length,
       runningTasks: runningHubTasks.length + (taskStats?.running ?? 0),
       failedTasks: failedHubTasks.length + (taskStats?.failed ?? 0),
+      attentionItems: attentionStore.count,
+      offlineRunners,
       loading, refreshing,
       opensearch: opensearchOverview,
     };
@@ -480,13 +557,14 @@
     if (!a) return;
     if (!silent) loading = true; else refreshing = true;
     try {
-      const [s, tasks, f, ts, ds, procs] = await Promise.all([
+      const [s, tasks, f, ts, ds, procs, rs] = await Promise.all([
         (a.GetSessions(profileState.active?.name ?? '') as Promise<any>).catch(() => []),
         (a.ListHubTasks('', profileState.active?.name ?? '') as Promise<any>).catch(() => []),
         (a.ListUpcomingFires(5) as Promise<any>).catch(() => []),
         (a.GetTaskStats(24) as Promise<any>).catch(() => null),
         (a.GetDockerStats() as Promise<any>).catch(() => []),
         (a.FindClaudeProcesses() as Promise<any>).catch(() => []),
+        (a.ListRunners() as Promise<any>).catch(() => []),
       ]);
       sessions    = s ?? [];
       hubTasks    = tasks ?? [];
@@ -494,6 +572,7 @@
       taskStats   = ts;
       dockerStats = ds ?? [];
       localProcs  = procs ?? [];
+      runners     = rs ?? [];
     } finally {
       loading    = false;
       refreshing = false;

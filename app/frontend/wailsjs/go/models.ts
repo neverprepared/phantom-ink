@@ -1010,6 +1010,8 @@ export namespace main {
 	    url?: string;
 	    actions: string[];
 	    user_reply?: string;
+	    session_name?: string;
+	    runner_name?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AttentionItem(source);
@@ -1029,6 +1031,8 @@ export namespace main {
 	        this.url = source["url"];
 	        this.actions = source["actions"];
 	        this.user_reply = source["user_reply"];
+	        this.session_name = source["session_name"];
+	        this.runner_name = source["runner_name"];
 	    }
 	}
 	export class AutomationRule {
