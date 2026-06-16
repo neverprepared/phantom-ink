@@ -37,6 +37,12 @@ export const DEFAULT_LAYOUT: DashboardLayout = {
       x: 8, y: 0, w: 2, h: 2, minW: 2, minH: 2,
     },
     {
+      id: 'stat-peak-queue-1h',
+      kind: 'stat-counter',
+      config: { label: 'PEAK QUEUE 1H', color: 'blue', navTarget: 'runners', dataKey: 'peakQueue1h' },
+      x: 10, y: 0, w: 2, h: 2, minW: 2, minH: 2,
+    },
+    {
       id: 'action-items',
       kind: 'action-items',
       config: {},

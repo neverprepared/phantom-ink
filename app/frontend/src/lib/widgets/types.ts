@@ -37,7 +37,8 @@ export interface StatCounterConfig {
     | 'scheduledFires'
     | 'actionItems'
     | 'attentionItems'
-    | 'offlineRunners';
+    | 'offlineRunners'
+    | 'peakQueue1h';
 }
 
 export interface CustomCounterConfig {
@@ -187,6 +188,7 @@ export interface DashboardData {
   failedTasks: number;
   attentionItems: number;
   offlineRunners: number;
+  peakQueue1h: number;
   loading: boolean;
   refreshing: boolean;
   opensearch?: OpenSearchOverview | null;

@@ -6,10 +6,91 @@
 
   const AGENTS = ['supervisor','worker','reviewer','linter','qa','python','golang','typescript','assistant'];
 
+  // Dispatch history is stored per profile in localStorage. Click a chip to
+  // dispatch the same task again; shift-click to edit before sending. Cap
+  // intentionally small — older entries fade off the chip strip.
+  const HISTORY_KEY = 'pi-dispatch-history-v1';
+  const HISTORY_MAX = 5;
+  interface DispatchEntry {
+    agent: string;
+    description: string;
+    repo: string;
+    profile: string;
+    ts: number;
+  }
+
   let dispatchAgent = $state('supervisor');
   let dispatchDesc  = $state('');
   let dispatchRepo  = $state('');
   let dispatching   = $state(false);
+  let history       = $state<DispatchEntry[]>(loadHistory());
+
+  let activeProfile = $derived(profileState.active?.name ?? '');
+  let profileHistory = $derived(
+    history.filter(h => h.profile === activeProfile).slice(0, HISTORY_MAX)
+  );
+
+  function loadHistory(): DispatchEntry[] {
+    if (typeof localStorage === 'undefined') return [];
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY);
+      return raw ? (JSON.parse(raw) as DispatchEntry[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveHistory(next: DispatchEntry[]): void {
+    history = next;
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(next)); } catch {}
+  }
+
+  function recordDispatch(entry: DispatchEntry): void {
+    // Drop any prior copy with the same agent + description for this profile
+    // to keep the chip strip dense and avoid stuttering "did I just send that?"
+    const filtered = history.filter(
+      h => !(h.profile === entry.profile && h.agent === entry.agent && h.description === entry.description)
+    );
+    saveHistory([entry, ...filtered].slice(0, HISTORY_MAX * 4));
+  }
+
+  function summarize(d: string): string {
+    const s = d.trim().split('\n')[0];
+    return s.length > 36 ? s.slice(0, 35) + '…' : s;
+  }
+
+  function loadIntoForm(entry: DispatchEntry): void {
+    dispatchAgent = entry.agent;
+    dispatchDesc  = entry.description;
+    dispatchRepo  = entry.repo;
+  }
+
+  async function replay(entry: DispatchEntry, evt: MouseEvent): Promise<void> {
+    if (evt.shiftKey) {
+      // Edit-then-send: just hydrate the form and let the user tweak before
+      // hitting [run].
+      loadIntoForm(entry);
+      return;
+    }
+    if (dispatching) return;
+    dispatching = true;
+    try {
+      const a = await getApi();
+      if (!a) return;
+      await a.SubmitTask({
+        description: entry.description,
+        agent_name: entry.agent,
+        repo_url: entry.repo || undefined,
+        workspace_profile: entry.profile || profileState.active?.name || '',
+      });
+      recordDispatch({ ...entry, ts: Date.now() });
+      notifications.success('Task re-dispatched');
+    } catch (err: any) {
+      notifications.error(`Dispatch failed: ${err?.message ?? err}`);
+    } finally {
+      dispatching = false;
+    }
+  }
 
   async function handleDispatch() {
     if (!dispatchDesc.trim()) return;
@@ -17,12 +98,20 @@
     try {
       const a = await getApi();
       if (!a) return;
-      await a.SubmitTask({
+      const entry: DispatchEntry = {
+        agent: dispatchAgent,
         description: dispatchDesc.trim(),
-        agent_name: dispatchAgent,
-        repo_url: dispatchRepo.trim() || undefined,
-        workspace_profile: profileState.active?.name ?? '',
+        repo: dispatchRepo.trim(),
+        profile: profileState.active?.name ?? '',
+        ts: Date.now(),
+      };
+      await a.SubmitTask({
+        description: entry.description,
+        agent_name: entry.agent,
+        repo_url: entry.repo || undefined,
+        workspace_profile: entry.profile,
       });
+      recordDispatch(entry);
       dispatchDesc = '';
       dispatchRepo = '';
       notifications.success('Task dispatched');
@@ -40,6 +129,20 @@
     <span class="widget-title">» DISPATCH AGENT</span>
   </div>
   <div class="widget-body">
+    {#if profileHistory.length > 0}
+      <div class="recent-row" title="Click to re-dispatch · Shift-click to edit">
+        {#each profileHistory as entry (entry.ts)}
+          <button
+            class="recent-chip"
+            onclick={(e) => replay(entry, e)}
+            disabled={dispatching}
+            title={`${entry.agent} · ${entry.description}`}>
+            <span class="recent-agent">{entry.agent}</span>
+            <span class="recent-desc">{summarize(entry.description)}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
     <div class="dispatch-row">
       <select bind:value={dispatchAgent} class="dispatch-select">
         {#each AGENTS as a (a)}
@@ -155,4 +258,43 @@
   }
   .dispatch-btn:hover:not(:disabled) { background: rgba(234, 179, 8, 0.08); }
   .dispatch-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  .recent-row {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    border-bottom: 1px dashed var(--color-border-primary);
+    margin-bottom: 2px;
+  }
+  .recent-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-secondary);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    padding: 2px 8px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 120ms ease;
+  }
+  .recent-chip:hover:not(:disabled) {
+    background: var(--color-surface-hover);
+    color: var(--color-text-primary);
+  }
+  .recent-chip:disabled { opacity: 0.4; cursor: not-allowed; }
+  .recent-agent {
+    color: var(--color-accent);
+    font-weight: 600;
+  }
+  .recent-desc {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 </style>

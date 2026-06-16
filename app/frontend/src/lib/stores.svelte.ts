@@ -38,20 +38,47 @@ function panelFromHash(): string {
 }
 
 let _panel = $state(panelFromHash());
+// Recent-panel stack drives ⌘[ / ⌘] cycling. Newest at the front; capped
+// at 8 to avoid stale entries piling up. Excludes the current panel.
+let _panelHistory = $state<string[]>([]);
+const PANEL_HISTORY_MAX = 8;
+
+function _pushPanelHistory(prev: string, next: string) {
+  if (!prev || prev === next) return;
+  // Move prev to the front; remove any existing copy first.
+  const filtered = _panelHistory.filter(p => p !== prev && p !== next);
+  _panelHistory = [prev, ...filtered].slice(0, PANEL_HISTORY_MAX);
+}
 
 export const currentPanel = {
   get value() { return _panel; },
   set value(id: string) {
+    const prev = _panel;
     _panel = id;
+    _pushPanelHistory(prev, id);
     if (typeof window !== 'undefined') {
       history.replaceState(null, '', `#${id}`);
     }
   },
+  /** Step back to the most-recent panel. ⌘[ */
+  cyclePrev(): void {
+    if (_panelHistory.length === 0) return;
+    this.value = _panelHistory[0];
+  },
+  /** Step forward — opposite end of the stack. ⌘] */
+  cycleNext(): void {
+    if (_panelHistory.length === 0) return;
+    this.value = _panelHistory[_panelHistory.length - 1];
+  },
+  get history() { return _panelHistory; },
 };
 
 if (typeof window !== 'undefined') {
   window.addEventListener('hashchange', () => {
-    _panel = panelFromHash();
+    const next = panelFromHash();
+    const prev = _panel;
+    _panel = next;
+    _pushPanelHistory(prev, next);
   });
 }
 
@@ -319,6 +346,74 @@ export const streamFocus = {
     const f = _streamFocus;
     _streamFocus = null;
     return f;
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Playbook seed — used by Stream's "save as playbook" flow to hand off a
+// markdown body + suggested name to the Playbooks panel's create modal.
+// ---------------------------------------------------------------------------
+
+export interface PlaybookSeed {
+  name: string;
+  markdown: string;
+  scope?: 'profile' | 'global';
+}
+
+let _playbookSeed = $state<PlaybookSeed | null>(null);
+
+export const playbookSeed = {
+  get value(): PlaybookSeed | null { return _playbookSeed; },
+  seed(target: PlaybookSeed): void {
+    _playbookSeed = target;
+    currentPanel.value = 'playbooks';
+  },
+  consume(): PlaybookSeed | null {
+    const f = _playbookSeed;
+    _playbookSeed = null;
+    return f;
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Outbox health — singleton 10s poll of OutboxPending so the StatusBar chip,
+// any future detail panel, and panel-level diagnostics all share one source.
+// ---------------------------------------------------------------------------
+
+let _outboxPending = $state(0);
+let _outboxLastError = $state<string>('');
+let _outboxLastSuccessAt = $state<number>(0);
+let _outboxPoll: number | undefined;
+const OUTBOX_POLL_MS = 10_000;
+
+async function _refreshOutbox(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  const api = await getApi();
+  if (!api?.OutboxPending) return;
+  try {
+    _outboxPending = (await api.OutboxPending()) ?? 0;
+    _outboxLastError = '';
+    _outboxLastSuccessAt = Date.now();
+  } catch (err: any) {
+    _outboxLastError = `${err?.message ?? err}`;
+  }
+}
+
+export const outboxStore = {
+  get pending(): number { return _outboxPending; },
+  get lastError(): string { return _outboxLastError; },
+  get lastSuccessAt(): number { return _outboxLastSuccessAt; },
+  /** Heuristic: stuck if pending stays > 0 and no successful poll in last 2min. */
+  get stuck(): boolean {
+    return _outboxPending > 0
+      && _outboxLastSuccessAt > 0
+      && Date.now() - _outboxLastSuccessAt > 120_000;
+  },
+  refresh(): Promise<void> { return _refreshOutbox(); },
+  start(): void {
+    if (typeof window === 'undefined' || _outboxPoll !== undefined) return;
+    void _refreshOutbox();
+    _outboxPoll = window.setInterval(_refreshOutbox, OUTBOX_POLL_MS);
   },
 };
 

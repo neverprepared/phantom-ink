@@ -6,6 +6,7 @@
   import { getApi } from '../utils/api';
   import { brainboxEvents } from '../events.svelte';
   import { profileState, dashboardState, dashboardDataStore, featureFlags, attentionStore, currentPanel } from '../stores.svelte';
+  import { runnerQueueHistory } from '../metricsHistory.svelte';
   import { DEFAULT_LAYOUT } from '../widgets/defaultLayout';
   import type { WidgetInstance, WidgetKind, ActionItem, OpenSearchOverview } from '../widgets/types';
 
@@ -48,6 +49,16 @@
   let offlineRunners = $derived(
     runners.filter((r: any) => (nowMs - (r.last_seen ?? 0)) >= RUNNER_ONLINE_WINDOW_MS).length
   );
+
+  // Peak queue depth observed across all runners in the last hour. Source is
+  // runnerQueueHistory which is populated by RunnersPanel's 5s poll; we also
+  // top it up here whenever DashboardPanel reloads so the card stays warm
+  // when the user hasn't visited Runners.
+  let peakQueue1h = $derived.by(() => {
+    void nowMs; // recompute on the 10s tick so 1h window stays current
+    void runners; // and whenever the runner list changes
+    return runnerQueueHistory.peakAll(60 * 60_000);
+  });
 
   let activeProfile = $derived(profileState.active);
 
@@ -187,6 +198,7 @@
       failedTasks: failedHubTasks.length + (taskStats?.failed ?? 0),
       attentionItems: attentionStore.count,
       offlineRunners,
+      peakQueue1h,
       loading, refreshing,
       opensearch: opensearchOverview,
     };
@@ -573,6 +585,19 @@
       dockerStats = ds ?? [];
       localProcs  = procs ?? [];
       runners     = rs ?? [];
+      // Feed runner queue history from here too — keeps the peak-1h card
+      // current even when the user hasn't opened Runners.
+      const ts2 = Date.now();
+      const active = new Set<string>();
+      for (const r of runners) {
+        active.add(r.name);
+        runnerQueueHistory.update(r.name, {
+          ts: ts2,
+          depth: r.queue_depth || 0,
+          inflight: r.in_flight || 0,
+        });
+      }
+      runnerQueueHistory.pruneKeys(active);
     } finally {
       loading    = false;
       refreshing = false;

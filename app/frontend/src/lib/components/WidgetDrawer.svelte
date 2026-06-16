@@ -148,6 +148,7 @@
     { key: 'actionItems',    label: 'Action Items' },
     { key: 'attentionItems', label: 'Needs Attention' },
     { key: 'offlineRunners', label: 'Offline Runners' },
+    { key: 'peakQueue1h',    label: 'Peak Queue (1h)' },
   ];
 
   const COLORS: { val: StatCounterConfig['color']; label: string }[] = [

@@ -16,6 +16,7 @@
       case 'actionItems':     return data.actionItems.length;
       case 'attentionItems':  return data.attentionItems;
       case 'offlineRunners':  return data.offlineRunners;
+      case 'peakQueue1h':     return data.peakQueue1h;
       default:                return 0;
     }
   });

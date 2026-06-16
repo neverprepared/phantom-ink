@@ -52,6 +52,50 @@ export const diskHistory = {
   },
 };
 
+// Per-runner queue depth history keyed by runner name. Records each sample
+// from the RunnersPanel 5s poll so the table can render a sparkline and a
+// dashboard widget can surface the 1h peak without server-side history.
+export interface RunnerQueueSample {
+  ts: number;    // Date.now() ms
+  depth: number; // queue_depth at the time
+  inflight: number;
+}
+
+let _runnerQueueHistory = $state<Record<string, RunnerQueueSample[]>>({});
+
+export const runnerQueueHistory = {
+  get value() { return _runnerQueueHistory; },
+  update(name: string, sample: RunnerQueueSample) {
+    const prev = _runnerQueueHistory[name] ?? [];
+    _runnerQueueHistory = { ..._runnerQueueHistory, [name]: [...prev, sample].slice(-MAX_SAMPLES) };
+  },
+  pruneKeys(activeKeys: Set<string>) {
+    const next: Record<string, RunnerQueueSample[]> = {};
+    for (const k of activeKeys) {
+      if (_runnerQueueHistory[k]) next[k] = _runnerQueueHistory[k];
+    }
+    _runnerQueueHistory = next;
+  },
+  /** Max queue depth observed for `name` within the last `windowMs`. */
+  peak(name: string, windowMs: number): number {
+    const cutoff = Date.now() - windowMs;
+    return (_runnerQueueHistory[name] ?? [])
+      .filter(s => s.ts >= cutoff)
+      .reduce((acc, s) => Math.max(acc, s.depth), 0);
+  },
+  /** Peak across all runners — convenience for dashboard widgets. */
+  peakAll(windowMs: number): number {
+    let peak = 0;
+    for (const samples of Object.values(_runnerQueueHistory)) {
+      const cutoff = Date.now() - windowMs;
+      for (const s of samples) {
+        if (s.ts >= cutoff && s.depth > peak) peak = s.depth;
+      }
+    }
+    return peak;
+  },
+};
+
 // Per-process history keyed by TTY (or PID fallback).
 let _localHistory = $state<Record<string, LocalSample[]>>({});
 
