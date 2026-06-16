@@ -1,7 +1,5 @@
 <script lang="ts">
-  import { scaleTime, scaleLinear } from 'd3-scale';
-  import { line, curveMonotoneX } from 'd3-shape';
-  import { extent, max } from 'd3-array';
+  import { linearScale, extent, arrayMax, niceCeiling, ticks, monotonePath } from './chartMath';
 
   interface Sample {
     ts: number;        // unix seconds
@@ -47,44 +45,45 @@
 
   let xScale = $derived.by(() => {
     if (data.length < 2) return null;
-    const [t0, t1] = extent(data, d => d.ts * 1000) as [number, number];
-    return scaleTime().domain([t0, t1]).range([0, innerW]);
+    const [t0, t1] = extent(data, d => d.ts * 1000);
+    return linearScale(t0, t1, 0, innerW);
+  });
+
+  let yCeiling = $derived.by(() => {
+    const maxVal = arrayMax(data, d => d.value);
+    return niceCeiling(maxVal > 0 ? maxVal * 1.1 : 1);
   });
 
   let yScale = $derived.by(() => {
     if (data.length < 2) return null;
-    const maxVal = max(data, d => d.value) ?? 0;
-    const ceiling = maxVal > 0 ? maxVal * 1.1 : 1; // avoid zero-range scale
-    return scaleLinear().domain([0, ceiling]).range([innerH, 0]).nice();
+    return linearScale(0, yCeiling, innerH, 0);
   });
 
-  let pathD = $derived.by(() => {
-    if (!xScale || !yScale || data.length < 2) return '';
-    const gen = line<Sample>()
-      .x(d => xScale!(d.ts * 1000))
-      .y(d => yScale!(d.value))
-      .curve(curveMonotoneX);
-    return gen(data) ?? '';
+  let points = $derived.by(() => {
+    if (!xScale || !yScale) return [];
+    return data.map(d => ({ x: xScale(d.ts * 1000), y: yScale(d.value) }));
   });
+
+  let pathD = $derived(monotonePath(points));
 
   let areaD = $derived.by(() => {
-    if (!xScale || !yScale || data.length < 2) return '';
-    const top = pathD;
-    const last = data[data.length - 1];
-    const first = data[0];
-    return `${top}L${xScale(last.ts * 1000)},${innerH}L${xScale(first.ts * 1000)},${innerH}Z`;
+    if (points.length < 2) return '';
+    const last = points[points.length - 1];
+    const first = points[0];
+    return `${pathD}L${last.x},${innerH}L${first.x},${innerH}Z`;
   });
 
-  // Y axis ticks — 3 evenly spaced
+  // Y axis ticks — 3 evenly spaced over [0, yCeiling]
   let yTicks = $derived.by(() => {
     if (!yScale) return [];
-    return yScale.ticks(3).map(v => ({ v, y: yScale!(v) }));
+    return ticks(0, yCeiling, 3).map(v => ({ v, y: yScale!(v) }));
   });
 
-  // X axis ticks — time labels
+  // X axis ticks — time labels at 4 evenly spaced points
   let xTicks = $derived.by(() => {
-    if (!xScale) return [];
-    return xScale.ticks(4).map(t => ({
+    if (!xScale || data.length < 2) return [];
+    const [t0, t1] = extent(data, d => d.ts * 1000);
+    return ticks(t0, t1, 4).map(t => ({
       t,
       x: xScale!(t),
       label: new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -104,8 +103,6 @@
     const rect = svg.getBoundingClientRect();
     // Convert rendered-pixel mouse position into SVG viewBox units before
     // subtracting the PAD (which is expressed in SVG units, not pixels).
-    // Without this scaling, charts whose CSS width differs from the viewBox
-    // width compute the wrong index and emit misaligned hover positions.
     const scaleX = rect.width > 0 ? width / rect.width : 1;
     const mx = (e.clientX - rect.left) * scaleX - PAD.left;
     const ratio = mx / innerW;
