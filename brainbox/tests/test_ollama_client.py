@@ -1,10 +1,17 @@
-"""Tests for Ollama API client."""
+"""Tests for the sync Ollama client surface (chat / health_check / list_models / pull_model).
+
+These tests mock ``brainbox.ollama._curl_request`` — the single subprocess
+wrapper that every sync public function goes through. The legacy httpx
+``_client`` attribute was removed when ollama.py moved to a curl-subprocess
+transport (see the module's "Implementation note" for the macOS+py3.14
+rationale); these tests were rewritten to match the current surface.
+"""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import json
+from unittest.mock import patch
 
-import httpx
 import pytest
 
 from brainbox.ollama import (
@@ -17,6 +24,16 @@ from brainbox.ollama import (
     list_models,
     pull_model,
 )
+
+
+def _ok(body: dict | str) -> tuple[int, str]:
+    """200-status curl response with the given JSON body (or raw string)."""
+    text = json.dumps(body) if isinstance(body, dict) else body
+    return 200, text
+
+
+def _err(status: int, text: str = "") -> tuple[int, str]:
+    return status, text
 
 
 # ---------------------------------------------------------------------------
@@ -92,55 +109,41 @@ class TestOllamaError:
 
 
 # ---------------------------------------------------------------------------
-# health_check
+# health_check — never raises; returns bool. Maps any non-200 / OSError to False.
 # ---------------------------------------------------------------------------
 
 
 class TestHealthCheck:
-    @patch("brainbox.ollama._client")
-    def test_healthy(self, mock_client_fn):
-        mock_client = MagicMock()
-        mock_client.get.return_value = MagicMock(status_code=200)
-        mock_client_fn.return_value = mock_client
-
+    @patch("brainbox.ollama._curl_request")
+    def test_healthy(self, mock_curl):
+        mock_curl.return_value = _ok({})
         assert health_check() is True
 
-    @patch("brainbox.ollama._client")
-    def test_unhealthy(self, mock_client_fn):
-        mock_client = MagicMock()
-        mock_client.get.side_effect = httpx.ConnectError("refused")
-        mock_client_fn.return_value = mock_client
-
+    @patch("brainbox.ollama._curl_request")
+    def test_unhealthy(self, mock_curl):
+        mock_curl.side_effect = OSError("curl failed (rc=7): Connection refused")
         assert health_check() is False
 
-    @patch("brainbox.ollama._client")
-    def test_non_200(self, mock_client_fn):
-        mock_client = MagicMock()
-        mock_client.get.return_value = MagicMock(status_code=503)
-        mock_client_fn.return_value = mock_client
-
+    @patch("brainbox.ollama._curl_request")
+    def test_non_200(self, mock_curl):
+        mock_curl.return_value = _err(503, "")
         assert health_check() is False
 
 
 # ---------------------------------------------------------------------------
-# chat
+# chat — raises OllamaError on connect/HTTP/parse failure; returns ChatResult on success.
 # ---------------------------------------------------------------------------
 
 
 class TestChat:
-    @patch("brainbox.ollama._client")
-    def test_success(self, mock_client_fn):
-        mock_client = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {
+    @patch("brainbox.ollama._curl_request")
+    def test_success(self, mock_curl):
+        mock_curl.return_value = _ok({
             "model": "qwen3:8b",
             "message": {"role": "assistant", "content": "Hello!"},
             "total_duration": 5000,
             "eval_count": 42,
-        }
-        mock_resp.raise_for_status = MagicMock()
-        mock_client.post.return_value = mock_resp
-        mock_client_fn.return_value = mock_client
+        })
 
         result = chat([{"role": "user", "content": "Hi"}])
 
@@ -150,57 +153,38 @@ class TestChat:
         assert result.total_duration == 5000
         assert result.eval_count == 42
 
-    @patch("brainbox.ollama._client")
-    def test_custom_model(self, mock_client_fn):
-        mock_client = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {
+    @patch("brainbox.ollama._curl_request")
+    def test_custom_model(self, mock_curl):
+        mock_curl.return_value = _ok({
             "model": "llama3.2",
             "message": {"role": "assistant", "content": "ok"},
-        }
-        mock_resp.raise_for_status = MagicMock()
-        mock_client.post.return_value = mock_resp
-        mock_client_fn.return_value = mock_client
+        })
 
         result = chat([{"role": "user", "content": "test"}], model="llama3.2")
 
-        # Verify the model was passed in the request
-        call_args = mock_client.post.call_args
-        assert call_args[1]["json"]["model"] == "llama3.2"
+        # Verify the body payload sent over curl carried the requested model
+        call_kwargs = mock_curl.call_args.kwargs
+        sent_body = call_kwargs["body"]
+        assert sent_body["model"] == "llama3.2"
         assert result.model == "llama3.2"
 
-    @patch("brainbox.ollama._client")
-    def test_connect_error(self, mock_client_fn):
-        mock_client = MagicMock()
-        mock_client.post.side_effect = httpx.ConnectError("refused")
-        mock_client_fn.return_value = mock_client
+    @patch("brainbox.ollama._curl_request")
+    def test_connect_error(self, mock_curl):
+        mock_curl.side_effect = OSError("curl failed (rc=7): Connection refused")
 
         with pytest.raises(OllamaError, match="chat"):
             chat([{"role": "user", "content": "Hi"}])
 
-    @patch("brainbox.ollama._client")
-    def test_http_status_error(self, mock_client_fn):
-        mock_client = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 500
-        mock_resp.text = "Internal Server Error"
-        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "500", request=MagicMock(), response=mock_resp
-        )
-        mock_client.post.return_value = mock_resp
-        mock_client_fn.return_value = mock_client
+    @patch("brainbox.ollama._curl_request")
+    def test_http_status_error(self, mock_curl):
+        mock_curl.return_value = _err(500, "Internal Server Error")
 
         with pytest.raises(OllamaError, match="chat"):
             chat([{"role": "user", "content": "Hi"}])
 
-    @patch("brainbox.ollama._client")
-    def test_malformed_response(self, mock_client_fn):
-        mock_client = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"unexpected": "structure"}
-        mock_resp.raise_for_status = MagicMock()
-        mock_client.post.return_value = mock_resp
-        mock_client_fn.return_value = mock_client
+    @patch("brainbox.ollama._curl_request")
+    def test_malformed_response(self, mock_curl):
+        mock_curl.return_value = _ok({"unexpected": "structure"})
 
         with pytest.raises(OllamaError, match="unexpected response"):
             chat([{"role": "user", "content": "Hi"}])
@@ -212,11 +196,9 @@ class TestChat:
 
 
 class TestListModels:
-    @patch("brainbox.ollama._client")
-    def test_success(self, mock_client_fn):
-        mock_client = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {
+    @patch("brainbox.ollama._curl_request")
+    def test_success(self, mock_curl):
+        mock_curl.return_value = _ok({
             "models": [
                 {
                     "name": "llama3.2:latest",
@@ -231,10 +213,7 @@ class TestListModels:
                     "digest": "def456",
                 },
             ]
-        }
-        mock_resp.raise_for_status = MagicMock()
-        mock_client.get.return_value = mock_resp
-        mock_client_fn.return_value = mock_client
+        })
 
         models = list_models()
 
@@ -242,22 +221,14 @@ class TestListModels:
         assert models[0].name == "llama3.2:latest"
         assert models[1].name == "qwen3:8b"
 
-    @patch("brainbox.ollama._client")
-    def test_empty(self, mock_client_fn):
-        mock_client = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"models": []}
-        mock_resp.raise_for_status = MagicMock()
-        mock_client.get.return_value = mock_resp
-        mock_client_fn.return_value = mock_client
-
+    @patch("brainbox.ollama._curl_request")
+    def test_empty(self, mock_curl):
+        mock_curl.return_value = _ok({"models": []})
         assert list_models() == []
 
-    @patch("brainbox.ollama._client")
-    def test_connect_error(self, mock_client_fn):
-        mock_client = MagicMock()
-        mock_client.get.side_effect = httpx.ConnectError("refused")
-        mock_client_fn.return_value = mock_client
+    @patch("brainbox.ollama._curl_request")
+    def test_connect_error(self, mock_curl):
+        mock_curl.side_effect = OSError("curl failed (rc=7): Connection refused")
 
         with pytest.raises(OllamaError, match="list_models"):
             list_models()
@@ -269,23 +240,14 @@ class TestListModels:
 
 
 class TestPullModel:
-    @patch("brainbox.ollama._client")
-    def test_success(self, mock_client_fn):
-        mock_client = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"status": "success"}
-        mock_resp.raise_for_status = MagicMock()
-        mock_client.post.return_value = mock_resp
-        mock_client_fn.return_value = mock_client
+    @patch("brainbox.ollama._curl_request")
+    def test_success(self, mock_curl):
+        mock_curl.return_value = _ok({"status": "success"})
+        assert pull_model("llama3.2") == "success"
 
-        status = pull_model("llama3.2")
-        assert status == "success"
-
-    @patch("brainbox.ollama._client")
-    def test_connect_error(self, mock_client_fn):
-        mock_client = MagicMock()
-        mock_client.post.side_effect = httpx.ConnectError("refused")
-        mock_client_fn.return_value = mock_client
+    @patch("brainbox.ollama._curl_request")
+    def test_connect_error(self, mock_curl):
+        mock_curl.side_effect = OSError("curl failed (rc=7): Connection refused")
 
         with pytest.raises(OllamaError, match="pull_model"):
             pull_model("llama3.2")
