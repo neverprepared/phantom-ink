@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from .config import settings
 from .log import get_logger
-from .models import SessionState, Task, TaskStatus
+from .models import SessionState, SuspensionKind, Task, TaskStatus
 from .policy import evaluate_task_assignment
 from .registry import get_agent, issue_token, revoke_token
 from .utils import now_ms as _now_ms
@@ -256,11 +256,114 @@ async def fail_task(task_id: str, error: str | None = None) -> Task:
     return task
 
 
+# ---------------------------------------------------------------------------
+# Suspension primitive — the WAITING_* substrate for Loop iteration handoff,
+# human-in-the-loop pauses, scheduled wakes, and join barriers. See
+# SuspensionKind in models.py for the four shapes.
+#
+# Suspended tasks drop the queue slot (they're invisible to _select_next),
+# but remain in router._tasks so the scheduler can observe and resume them.
+# ---------------------------------------------------------------------------
+
+
+def suspend_task(
+    task_id: str,
+    kind: SuspensionKind,
+    *,
+    resume_at_ms: int | None = None,
+    resume_on_children: list[str] | None = None,
+    resume_payload: dict | None = None,
+) -> Task:
+    """Move a task into a suspended state.
+
+    HUMAN → NEEDS_ACTION (only an explicit resume_task() call wakes it).
+    JOIN / SCHEDULE / CHILD → BLOCKED (the scheduler auto-resumes when the
+    condition fires).
+
+    Argument requirements per kind:
+      - SCHEDULE      requires resume_at_ms
+      - JOIN, CHILD   require resume_on_children (CHILD = list of length 1)
+      - HUMAN         neither required
+    """
+    task = _tasks.get(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+    if task.status not in (TaskStatus.PENDING, TaskStatus.RUNNING):
+        raise ValueError(
+            f"Task '{task_id}' cannot be suspended from status '{task.status}'"
+        )
+
+    if kind == SuspensionKind.SCHEDULE and resume_at_ms is None:
+        raise ValueError("SCHEDULE suspension requires resume_at_ms")
+    if kind in (SuspensionKind.JOIN, SuspensionKind.CHILD) and not resume_on_children:
+        raise ValueError(f"{kind.value} suspension requires resume_on_children")
+    if kind == SuspensionKind.CHILD and len(resume_on_children) != 1:
+        raise ValueError("CHILD suspension takes exactly one child id")
+
+    task.status = (
+        TaskStatus.NEEDS_ACTION if kind == SuspensionKind.HUMAN else TaskStatus.BLOCKED
+    )
+    task.suspension_kind = kind
+    task.resume_at_ms = resume_at_ms
+    task.resume_on_children = list(resume_on_children or [])
+    if resume_payload:
+        task.resume_payload = {**task.resume_payload, **resume_payload}
+    task.updated_at = _now_ms()
+
+    log.info(
+        "router.task_suspended",
+        metadata={"task_id": task_id, "kind": kind.value},
+    )
+    _emit("task.suspended", task)
+    return task
+
+
+def resume_task(task_id: str, payload: dict | None = None) -> Task:
+    """Wake a suspended task: BLOCKED/NEEDS_ACTION → PENDING.
+
+    Payload (if any) is merged into the task's resume_payload so the next
+    dispatch can read whatever the human/upstream supplied. Clears the
+    suspension fields and pokes the scheduler.
+    """
+    from . import scheduler
+
+    task = _tasks.get(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+    if task.status not in (TaskStatus.BLOCKED, TaskStatus.NEEDS_ACTION):
+        raise ValueError(
+            f"Task '{task_id}' is not suspended (status: {task.status})"
+        )
+
+    if payload:
+        task.resume_payload = {**task.resume_payload, **payload}
+
+    prior_kind = task.suspension_kind
+    task.status = TaskStatus.PENDING
+    task.suspension_kind = None
+    task.resume_at_ms = None
+    task.resume_on_children = []
+    task.updated_at = _now_ms()
+
+    log.info(
+        "router.task_resumed",
+        metadata={"task_id": task_id, "kind": prior_kind.value if prior_kind else None},
+    )
+    _emit("task.resumed", task)
+    scheduler.notify()
+    return task
+
+
 async def cancel_task(task_id: str) -> Task:
     task = _tasks.get(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
-    if task.status not in (TaskStatus.RUNNING, TaskStatus.PENDING):
+    if task.status not in (
+        TaskStatus.RUNNING,
+        TaskStatus.PENDING,
+        TaskStatus.BLOCKED,
+        TaskStatus.NEEDS_ACTION,
+    ):
         raise ValueError(f"Task '{task_id}' cannot be cancelled (status: {task.status})")
 
     task.status = TaskStatus.CANCELLED
