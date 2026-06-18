@@ -431,6 +431,49 @@ def _terminate(
 # ---------------------------------------------------------------------------
 
 
+async def cancel_loop(loop_id: str, reason: str = "operator cancelled") -> LoopInstance:
+    """Operator-initiated termination of an in-flight loop.
+
+    Transitions the LoopInstance to CANCELLED, marks the parent task
+    CANCELLED, and best-effort cancels the current iteration child task.
+    Idempotent: cancelling an already-terminal loop returns it unchanged.
+
+    Child cancellation is best-effort because a running brainbox session
+    may not respond synchronously to a queue-level cancel — recycling
+    happens via router._finalize_task, which is async and can fail if
+    the runner is gone. We accept partial cleanup here; the bridge's
+    failure path will catch any orphaned state when the child eventually
+    completes or fails.
+    """
+    from . import router
+
+    inst = _instances.get(loop_id)
+    if inst is None:
+        raise ValueError(f"Loop '{loop_id}' not found")
+    if inst.status not in (LoopStatus.RUNNING, LoopStatus.PENDING):
+        return inst  # already terminal — no-op
+
+    # Cancel the in-flight child first so it doesn't fire a stale
+    # task.completed event after the loop is marked cancelled.
+    child_id = inst.current_child_id
+    if child_id is not None:
+        child = router._tasks.get(child_id)
+        if child is not None and child.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
+            try:
+                await router.cancel_task(child_id)
+            except Exception as exc:
+                log.warning(
+                    "loop.cancel_child_failed",
+                    metadata={"loop_id": loop_id, "child_id": child_id, "reason": str(exc)},
+                )
+
+    inst.error = reason
+    _terminate(inst, LoopStatus.CANCELLED, parent_status=TaskStatus.CANCELLED, error=reason)
+    await _persist_instance(inst)
+    log.info("loop.cancelled", metadata={"loop_id": loop_id, "reason": reason})
+    return inst
+
+
 async def on_iteration_failed(child_task_id: str, error: str) -> LoopInstance | None:
     """Called when an iteration child task transitions to FAILED.
 

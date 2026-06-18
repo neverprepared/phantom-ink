@@ -322,6 +322,43 @@ class TestAdvanceThrashing:
 # ---------------------------------------------------------------------------
 
 
+class TestCancelLoop:
+    @pytest.mark.asyncio
+    async def test_cancel_running_loop(self, reviewer_agent):
+        from brainbox.loop_runner import cancel_loop
+
+        spec = _spec()
+        inst = await start_loop(spec, HandoffEnvelope())
+        child_id = inst.current_child_id
+
+        result = await cancel_loop(inst.id, reason="test")
+        assert result.status == LoopStatus.CANCELLED
+        assert result.error == "test"
+        parent = router_module._tasks[result.parent_task_id]
+        assert parent.status == TaskStatus.CANCELLED
+        # The child was cancelled too (or was already terminal)
+        child = router_module._tasks[child_id]
+        assert child.status == TaskStatus.CANCELLED
+
+    @pytest.mark.asyncio
+    async def test_cancel_terminal_loop_is_noop(self, reviewer_agent):
+        from brainbox.loop_runner import cancel_loop
+
+        spec = _spec()
+        inst = await start_loop(spec, HandoffEnvelope())
+        await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": []}))
+        # Already CONVERGED — cancel should return unchanged
+        result = await cancel_loop(inst.id)
+        assert result.status == LoopStatus.CONVERGED
+
+    @pytest.mark.asyncio
+    async def test_cancel_unknown_loop_raises(self):
+        from brainbox.loop_runner import cancel_loop
+
+        with pytest.raises(ValueError, match="not found"):
+            await cancel_loop("ghost")
+
+
 class TestIterationFailed:
     @pytest.mark.asyncio
     async def test_child_failure_fails_loop(self, reviewer_agent):

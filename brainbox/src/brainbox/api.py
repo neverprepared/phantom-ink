@@ -3738,6 +3738,158 @@ async def profile_image_status(name: str):
         return {"configured": True, "profile": name, "exists": False, "tag": tag, "digest": None, "error": str(exc)}
 
 
+# ---------------------------------------------------------------------------
+# Loops — manual trigger + monitor surface for the Phase B loop runner.
+# Operators use these to start a pr-review-loop (or any other template) on
+# a PR, watch it iterate, and cancel/escalate. Webhook-driven Phase C will
+# call /api/loops/start from a HTTP handler later.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/loops/templates", dependencies=[Depends(require_api_key)])
+async def api_list_loop_templates():
+    """Return the names of every Loop template visible to this brainbox install.
+    User templates at ~/.config/phantom-ink/brainbox/loop-templates/ shadow
+    built-in templates of the same name (loader picks user first)."""
+    from .loop_template import list_templates
+
+    return {"templates": list_templates()}
+
+
+@app.post("/api/loops/start", dependencies=[Depends(require_api_key)])
+async def api_start_loop(request: Request):
+    """Start a Loop from a template.
+
+    Body shape:
+      {
+        "template_name": "pr-review-loop",
+        "envelope": {
+          "artifact_refs": {"pr_number": 117, "repo": "owner/name"},
+          "observations": {...},  // optional
+          "findings": {...}        // optional, for resuming/seeding
+        },
+        "workspace_profile": "...",   // optional
+        "workspace_home": "..."       // optional
+      }
+    Returns the new LoopInstance.
+    """
+    from . import loop_runner
+    from .loop_template import TemplateError, load_template
+    from .loops import HandoffEnvelope
+
+    body = await request.json()
+    template_name = body.get("template_name", "")
+    if not template_name:
+        raise HTTPException(status_code=400, detail="template_name is required")
+
+    try:
+        spec = load_template(template_name)
+    except TemplateError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    envelope_data = body.get("envelope") or {}
+    if not isinstance(envelope_data, dict):
+        raise HTTPException(status_code=400, detail="envelope must be an object")
+    try:
+        envelope = HandoffEnvelope.model_validate(envelope_data)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid envelope: {exc}")
+
+    try:
+        inst = await loop_runner.start_loop(
+            spec,
+            envelope,
+            workspace_profile=body.get("workspace_profile"),
+            workspace_home=body.get("workspace_home"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return inst.model_dump()
+
+
+def _loop_summary(inst) -> dict:
+    """Slim LoopInstance projection for list views — drops the full spec
+    snapshot (can be 5-10KB) and keeps the operator-facing fields."""
+    return {
+        "id": inst.id,
+        "name": inst.spec_snapshot.name,
+        "status": inst.status.value,
+        "iteration": inst.iteration,
+        "max_iterations": inst.spec_snapshot.max_iterations,
+        "parent_task_id": inst.parent_task_id,
+        "current_child_id": inst.current_child_id,
+        "metric_history": inst.metric_history,
+        "stop_reason": inst.stop_reason,
+        "error": inst.error,
+        "workspace_profile": inst.workspace_profile,
+        "created_at": inst.created_at,
+        "updated_at": inst.updated_at,
+    }
+
+
+@app.get("/api/loops", dependencies=[Depends(require_api_key)])
+async def api_list_loops(status: str | None = None):
+    """List loops, optionally filtered by status (e.g. ?status=running)."""
+    from . import loop_runner
+    from .loops import LoopStatus
+
+    insts = loop_runner.list_instances()
+    if status:
+        try:
+            want = LoopStatus(status)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"unknown status '{status}'")
+        insts = [i for i in insts if i.status == want]
+    insts.sort(key=lambda i: i.updated_at, reverse=True)
+    return {"loops": [_loop_summary(i) for i in insts]}
+
+
+@app.get("/api/loops/{loop_id}", dependencies=[Depends(require_api_key)])
+async def api_get_loop(loop_id: str):
+    """Return the full LoopInstance including the pinned template snapshot."""
+    from . import loop_runner, store
+
+    inst = loop_runner.get_instance(loop_id)
+    if inst is None:
+        # Fall back to the DB — terminal loops are not in memory but are
+        # still queryable for post-hoc audit.
+        inst = store.get_loop_instance(loop_id)
+    if inst is None:
+        raise HTTPException(status_code=404, detail=f"loop '{loop_id}' not found")
+    return inst.model_dump()
+
+
+@app.get("/api/loops/{loop_id}/iterations", dependencies=[Depends(require_api_key)])
+async def api_get_loop_iterations(loop_id: str):
+    """Return the per-iteration metric rows for a loop. Feeds the convergence
+    trend chart in the future Loops Panel."""
+    from . import store
+
+    rows = store.query_loop_iteration_metrics(loop_id)
+    return {"loop_id": loop_id, "iterations": rows}
+
+
+@app.post("/api/loops/{loop_id}/cancel", dependencies=[Depends(require_api_key)])
+async def api_cancel_loop(loop_id: str, request: Request):
+    """Cancel an in-flight loop. Idempotent — terminal loops return their
+    current state unchanged."""
+    from . import loop_runner
+
+    reason = "operator cancelled"
+    try:
+        body = await request.json()
+        if isinstance(body, dict) and isinstance(body.get("reason"), str):
+            reason = body["reason"]
+    except Exception:
+        pass
+
+    try:
+        inst = await loop_runner.cancel_loop(loop_id, reason=reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return inst.model_dump()
+
+
 if _dashboard_dist.is_dir():
     # Serve static assets (JS, CSS, etc.)
     app.mount("/assets", StaticFiles(directory=str(_dashboard_dist / "assets")), name="assets")
