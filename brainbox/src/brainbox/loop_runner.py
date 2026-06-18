@@ -29,6 +29,7 @@ See ~/.claude/plans/okay-the-idea-of-replicated-popcorn.md.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import uuid
 from typing import Any
@@ -57,12 +58,6 @@ _instances: dict[str, LoopInstance] = {}
 # Reverse index: child_task_id → loop_id. Lets the router event listener
 # (A3c) find the loop a completing task belongs to in O(1).
 _child_to_loop: dict[str, str] = {}
-
-
-def reset_for_tests() -> None:
-    """Clear runner state. Called from the autouse fixture in conftest."""
-    _instances.clear()
-    _child_to_loop.clear()
 
 
 def get_instance(loop_id: str) -> LoopInstance | None:
@@ -171,6 +166,8 @@ async def start_loop(
     inst.current_child_id = child_id
     inst.updated_at = _now_ms()
 
+    await _persist_instance(inst)
+
     log.info(
         "loop.started",
         metadata={
@@ -226,6 +223,11 @@ async def advance_loop(
     # Record the convergence metric for this iteration. Missing field is 0.0
     # (matches the Go side coercion); we let that through so charts can
     # render iteration N even when no findings populated.
+    #
+    # The metric row is PERSISTED after the status decision below so
+    # ``state_at_end`` carries the correct terminal status (CONVERGED,
+    # THRASHING, etc.) instead of stale RUNNING. ``metric_history`` is
+    # updated here because thrash detection reads it before the persist.
     metric_value = (
         eval_metric(stamped, spec.convergence_metric)
         if spec.convergence_metric
@@ -236,6 +238,8 @@ async def advance_loop(
     # 1. Convergence — the happy path
     if eval_predicate(stamped, spec.convergence_predicate):
         _terminate(inst, LoopStatus.CONVERGED, parent_status=TaskStatus.COMPLETED)
+        await _persist_iteration_metric(inst, iteration, metric_value)
+        await _persist_instance(inst)
         log.info(
             "loop.converged",
             metadata={"loop_id": loop_id, "iteration": iteration, "metric": metric_value},
@@ -247,6 +251,8 @@ async def advance_loop(
     if matched is not None:
         inst.stop_reason = matched.reason or matched.predicate
         _terminate(inst, LoopStatus.STOPPED_BY_CONDITION, parent_status=TaskStatus.FAILED)
+        await _persist_iteration_metric(inst, iteration, metric_value)
+        await _persist_instance(inst)
         log.info(
             "loop.stopped_by_condition",
             metadata={"loop_id": loop_id, "iteration": iteration, "reason": inst.stop_reason},
@@ -256,6 +262,8 @@ async def advance_loop(
     # 3. Iteration cap — last line of defense against runaway
     if iteration >= spec.max_iterations:
         _terminate(inst, LoopStatus.MAX_ITER, parent_status=TaskStatus.FAILED)
+        await _persist_iteration_metric(inst, iteration, metric_value)
+        await _persist_instance(inst)
         log.info(
             "loop.max_iter",
             metadata={"loop_id": loop_id, "iteration": iteration, "cap": spec.max_iterations},
@@ -267,11 +275,17 @@ async def advance_loop(
     # Cheap heuristic that catches 80% of "agent is editing without converging."
     if _is_thrashing(inst.metric_history):
         _terminate(inst, LoopStatus.THRASHING, parent_status=TaskStatus.FAILED)
+        await _persist_iteration_metric(inst, iteration, metric_value)
+        await _persist_instance(inst)
         log.info(
             "loop.thrashing",
             metadata={"loop_id": loop_id, "iteration": iteration, "history": inst.metric_history},
         )
         return inst
+
+    # Non-terminal: write the iteration row with state RUNNING before
+    # enqueueing the next child.
+    await _persist_iteration_metric(inst, iteration, metric_value)
 
     # 5. Continue — enqueue iteration N+1
     next_iter = iteration + 1
@@ -287,6 +301,8 @@ async def advance_loop(
     inst.iteration = next_iter
     inst.current_child_id = next_child_id
     inst.updated_at = _now_ms()
+
+    await _persist_instance(inst)
 
     log.info(
         "loop.advanced",
@@ -433,8 +449,211 @@ async def on_iteration_failed(child_task_id: str, error: str) -> LoopInstance | 
         parent_status=TaskStatus.FAILED,
         error=f"iteration {inst.iteration} failed: {error}",
     )
+    await _persist_instance(inst)
     log.info(
         "loop.iteration_failed",
         metadata={"loop_id": loop_id, "iteration": inst.iteration, "error": error},
     )
     return inst
+
+
+# ---------------------------------------------------------------------------
+# Persistence — async wrappers around store helpers
+# ---------------------------------------------------------------------------
+
+
+async def _persist_instance(inst: LoopInstance) -> None:
+    """Persist on every state transition (start, advance, terminate).
+    Catches and logs errors so a transient DB problem doesn't lose the
+    in-memory loop. The in-memory state is the source of truth between ticks.
+    """
+    from . import store
+
+    try:
+        await store.async_upsert_loop_instance(inst)
+    except Exception as exc:
+        log.warning(
+            "loop.persist_instance_failed",
+            metadata={"loop_id": inst.id, "reason": str(exc)},
+        )
+
+
+async def _persist_iteration_metric(
+    inst: LoopInstance,
+    iteration: int,
+    metric_value: float,
+) -> None:
+    """Write one iteration row. UPSERT on (loop_id, iteration) so re-running
+    an iteration during restart-recovery overwrites rather than duplicates.
+    """
+    from . import store
+
+    try:
+        await store.async_insert_loop_iteration_metric(
+            loop_id=inst.id,
+            iteration=iteration,
+            convergence_metric_value=metric_value,
+            timestamp_ms=_now_ms(),
+            state_at_end=inst.status.value,
+        )
+    except Exception as exc:
+        log.warning(
+            "loop.persist_metric_failed",
+            metadata={"loop_id": inst.id, "iteration": iteration, "reason": str(exc)},
+        )
+
+
+async def rehydrate_from_store() -> int:
+    """Load every active LoopInstance from the DB into the in-memory map.
+
+    Called from hub.init on daemon startup. Rebuilds the child_to_loop reverse
+    index too so a newly-arriving task.completed event finds its loop.
+    Returns the number of instances rehydrated.
+    """
+    from . import store
+
+    actives = await store.async_load_active_loop_instances()
+    for inst in actives:
+        _instances[inst.id] = inst
+        if inst.current_child_id is not None:
+            _child_to_loop[inst.current_child_id] = inst.id
+    log.info("loop.rehydrated", metadata={"count": len(actives)})
+    return len(actives)
+
+
+# ---------------------------------------------------------------------------
+# Router event bridge — task.completed / task.failed → advance / fail
+# ---------------------------------------------------------------------------
+
+
+_listener_registered = False
+
+# Pending bridge tasks — populated by _on_router_event when it schedules
+# advance_loop/on_iteration_failed. Tests await wait_for_bridges() between
+# emitting a router event and asserting the loop state; production callers
+# never need to look at this list.
+_pending_bridges: list[asyncio.Task] = []
+
+
+def _envelope_from_task(task: Task) -> HandoffEnvelope:
+    """Extract the iteration envelope from the completed task's result.
+
+    Three shapes the task.result can carry:
+      - a HandoffEnvelope instance (real runner path once agents emit one)
+      - a dict that looks like an envelope (intermediate path while agents
+        still emit JSON instead of typed envelopes)
+      - None / anything else → empty envelope (the runner just falls into
+        the next predicate evaluation with an empty findings map)
+    """
+    result = task.result
+    if isinstance(result, HandoffEnvelope):
+        return result
+    if isinstance(result, dict):
+        try:
+            return HandoffEnvelope.model_validate(result)
+        except Exception:
+            return HandoffEnvelope()
+    return HandoffEnvelope()
+
+
+def _on_router_event(event: str, task: Task) -> None:
+    """Sync router-event listener; schedules async advance/fail on the loop.
+
+    Routes:
+      - ``task.completed`` for a known iteration child → ``advance_loop``
+      - ``task.failed``     for a known iteration child → ``on_iteration_failed``
+      - anything else                                    → no-op
+
+    Errors in the scheduled coroutine are caught + logged via the
+    done-callback so a failing advance doesn't quietly drop a loop.
+    """
+    if event not in ("task.completed", "task.failed"):
+        return
+    loop_id = _child_to_loop.get(task.id)
+    if loop_id is None:
+        return
+
+    if event == "task.completed":
+        envelope = _envelope_from_task(task)
+        coro = advance_loop(loop_id, envelope)
+    else:
+        coro = on_iteration_failed(task.id, task.error or "unknown failure")
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # Sync context (tests / non-daemon callers). Tests call advance_loop
+        # directly; production always has a running loop because the daemon
+        # wires this listener inside the FastAPI event loop.
+        log.debug(
+            "loop.bridge_no_running_loop",
+            metadata={"event": event, "task_id": task.id},
+        )
+        return
+
+    aio_task = loop.create_task(coro)
+    _pending_bridges.append(aio_task)
+
+    def _on_done(t: asyncio.Task) -> None:
+        try:
+            _pending_bridges.remove(t)
+        except ValueError:
+            pass
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc is not None:
+            log.warning(
+                "loop.bridge_advance_failed",
+                metadata={
+                    "event": event,
+                    "task_id": task.id,
+                    "loop_id": loop_id,
+                    "reason": str(exc),
+                },
+            )
+
+    aio_task.add_done_callback(_on_done)
+
+
+async def wait_for_bridges() -> None:
+    """Await every in-flight bridge task. Test helper.
+
+    Use after emitting a router event so the scheduled advance_loop /
+    on_iteration_failed coroutines complete before the test asserts
+    against loop state. Production code never needs this — events flow
+    inside the daemon's event loop and the bridge is fire-and-forget.
+    """
+    tasks = list(_pending_bridges)
+    if not tasks:
+        return
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def start() -> None:
+    """Register the router event listener. Called from hub.init.
+
+    Idempotent — calling twice does not double-register because the router's
+    listener list is identity-based.
+    """
+    from . import router
+
+    global _listener_registered
+    if _listener_registered:
+        return
+    router.on_event(_on_router_event)
+    _listener_registered = True
+    log.info("loop.bridge_started")
+
+
+def reset_for_tests() -> None:  # type: ignore[no-redef]
+    """Override of the earlier reset — also clears the listener-registered flag.
+
+    The conftest fixture runs this between tests, so any test that explicitly
+    calls start() gets a fresh registration the next time.
+    """
+    global _listener_registered
+    _instances.clear()
+    _child_to_loop.clear()
+    _pending_bridges.clear()
+    _listener_registered = False

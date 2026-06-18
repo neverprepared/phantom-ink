@@ -159,6 +159,45 @@ def init_db() -> None:
                 ON agent_events(parent_id, seq);
             CREATE INDEX IF NOT EXISTS idx_agent_events_ts
                 ON agent_events(ts);
+
+            -- One row per Loop instance. The full LoopInstance JSON lives in
+            -- ``blob``; the typed columns are projected for index queries
+            -- (load-active-on-startup, list-by-status, find-by-child).
+            CREATE TABLE IF NOT EXISTS loop_instances (
+                id                TEXT    PRIMARY KEY,
+                parent_task_id    TEXT    NOT NULL,
+                status            TEXT    NOT NULL,
+                iteration         INTEGER NOT NULL,
+                workspace_profile TEXT,
+                current_child_id  TEXT,
+                created_at        INTEGER NOT NULL,
+                updated_at        INTEGER NOT NULL,
+                blob              TEXT    NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_loop_instances_status
+                ON loop_instances(status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_loop_instances_current_child
+                ON loop_instances(current_child_id);
+
+            -- One row per iteration completion. Feeds the convergence-trend
+            -- chart and the fleet-level analytics in the future Loops panel.
+            -- (loop_id, iteration) is unique so re-running an iteration during
+            -- restart recovery overwrites rather than duplicates.
+            CREATE TABLE IF NOT EXISTS loop_iteration_metric (
+                id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+                loop_id                  TEXT    NOT NULL,
+                iteration                INTEGER NOT NULL,
+                convergence_metric_value REAL,
+                duration_ms              INTEGER,
+                cost_usd                 REAL,
+                tokens                   INTEGER,
+                model                    TEXT,
+                state_at_end             TEXT,
+                timestamp                INTEGER NOT NULL,
+                UNIQUE(loop_id, iteration)
+            );
+            CREATE INDEX IF NOT EXISTS idx_loop_iteration_metric_loop
+                ON loop_iteration_metric(loop_id, iteration);
         """)
 
 
@@ -424,3 +463,162 @@ def query_audit_log(
                 pass
         result.append(d)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Loop instances + iteration metrics
+# ---------------------------------------------------------------------------
+
+
+def upsert_loop_instance(inst: "LoopInstance") -> None:  # type: ignore[name-defined]
+    """Persist a LoopInstance — called on every state transition.
+
+    The typed columns are projected for query (active-on-startup,
+    list-by-status, find-by-child); ``blob`` carries the full JSON so
+    rehydration round-trips perfectly.
+    """
+    blob = inst.model_dump_json()
+    with _lock:
+        _db().execute(
+            """
+            INSERT INTO loop_instances
+                (id, parent_task_id, status, iteration, workspace_profile,
+                 current_child_id, created_at, updated_at, blob)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                parent_task_id    = excluded.parent_task_id,
+                status            = excluded.status,
+                iteration         = excluded.iteration,
+                workspace_profile = excluded.workspace_profile,
+                current_child_id  = excluded.current_child_id,
+                updated_at        = excluded.updated_at,
+                blob              = excluded.blob
+            """,
+            (
+                inst.id,
+                inst.parent_task_id,
+                inst.status.value,
+                inst.iteration,
+                inst.workspace_profile,
+                inst.current_child_id,
+                inst.created_at,
+                inst.updated_at,
+                blob,
+            ),
+        )
+
+
+def load_active_loop_instances() -> list["LoopInstance"]:  # type: ignore[name-defined]
+    """Return every LoopInstance whose status is RUNNING or PENDING.
+
+    Called on daemon startup to rehydrate the in-memory loop runner state
+    so a restart doesn't lose track of in-flight loops.
+    """
+    from .loops import LoopInstance, LoopStatus
+
+    rows = _db().execute(
+        "SELECT blob FROM loop_instances "
+        "WHERE status IN (?, ?) "
+        "ORDER BY updated_at DESC",
+        (LoopStatus.PENDING.value, LoopStatus.RUNNING.value),
+    ).fetchall()
+    result: list[LoopInstance] = []
+    for row in rows:
+        try:
+            result.append(LoopInstance.model_validate_json(row["blob"]))
+        except Exception:
+            # Skip rows that don't deserialize cleanly under the current
+            # schema. The additive-only envelope discipline means old rows
+            # SHOULD deserialize; if they don't, the operator can drop the
+            # row and restart the loop. Don't crash the daemon over it.
+            pass
+    return result
+
+
+def get_loop_instance(loop_id: str) -> "LoopInstance | None":  # type: ignore[name-defined]
+    from .loops import LoopInstance
+
+    row = _db().execute(
+        "SELECT blob FROM loop_instances WHERE id = ?", (loop_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        return LoopInstance.model_validate_json(row["blob"])
+    except Exception:
+        return None
+
+
+def insert_loop_iteration_metric(
+    *,
+    loop_id: str,
+    iteration: int,
+    convergence_metric_value: float,
+    timestamp_ms: int,
+    duration_ms: int | None = None,
+    cost_usd: float | None = None,
+    tokens: int | None = None,
+    model: str | None = None,
+    state_at_end: str | None = None,
+) -> None:
+    """Write one iteration row. UPSERT semantics on (loop_id, iteration)
+    so restart-recovery rewrites instead of duplicating.
+    """
+    with _lock:
+        _db().execute(
+            """
+            INSERT INTO loop_iteration_metric
+                (loop_id, iteration, convergence_metric_value, duration_ms,
+                 cost_usd, tokens, model, state_at_end, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(loop_id, iteration) DO UPDATE SET
+                convergence_metric_value = excluded.convergence_metric_value,
+                duration_ms              = excluded.duration_ms,
+                cost_usd                 = excluded.cost_usd,
+                tokens                   = excluded.tokens,
+                model                    = excluded.model,
+                state_at_end             = excluded.state_at_end,
+                timestamp                = excluded.timestamp
+            """,
+            (
+                loop_id,
+                iteration,
+                convergence_metric_value,
+                duration_ms,
+                cost_usd,
+                tokens,
+                model,
+                state_at_end,
+                timestamp_ms,
+            ),
+        )
+
+
+def query_loop_iteration_metrics(loop_id: str) -> list[dict]:
+    """Return iteration rows for a loop in iteration order. Feeds the
+    convergence-trend chart in the future Loops panel.
+    """
+    rows = _db().execute(
+        "SELECT loop_id, iteration, convergence_metric_value, duration_ms, "
+        "cost_usd, tokens, model, state_at_end, timestamp "
+        "FROM loop_iteration_metric WHERE loop_id = ? ORDER BY iteration ASC",
+        (loop_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Async wrappers (loops)
+# ---------------------------------------------------------------------------
+
+
+async def async_upsert_loop_instance(inst: "LoopInstance") -> None:  # type: ignore[name-defined]
+    await asyncio.to_thread(upsert_loop_instance, inst)
+
+
+async def async_insert_loop_iteration_metric(**kwargs: Any) -> None:
+    await asyncio.to_thread(insert_loop_iteration_metric, **kwargs)
+
+
+async def async_load_active_loop_instances() -> list["LoopInstance"]:  # type: ignore[name-defined]
+    return await asyncio.to_thread(load_active_loop_instances)
