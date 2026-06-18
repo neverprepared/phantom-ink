@@ -74,16 +74,16 @@ export function DeleteAutomationRule(arg1) {
   return window['go']['main']['App']['DeleteAutomationRule'](arg1);
 }
 
-export function DeleteChain(arg1) {
-  return window['go']['main']['App']['DeleteChain'](arg1);
-}
-
 export function DeleteChannel(arg1) {
   return window['go']['main']['App']['DeleteChannel'](arg1);
 }
 
 export function DeleteCollectJob(arg1) {
   return window['go']['main']['App']['DeleteCollectJob'](arg1);
+}
+
+export function DeleteLoop(arg1) {
+  return window['go']['main']['App']['DeleteLoop'](arg1);
 }
 
 export function DeleteOllamaModel(arg1) {
@@ -350,14 +350,6 @@ export function ListBackups() {
   return window['go']['main']['App']['ListBackups']();
 }
 
-export function ListChainRuns(arg1, arg2) {
-  return window['go']['main']['App']['ListChainRuns'](arg1, arg2);
-}
-
-export function ListChains() {
-  return window['go']['main']['App']['ListChains']();
-}
-
 export function ListChannels(arg1) {
   return window['go']['main']['App']['ListChannels'](arg1);
 }
@@ -372,6 +364,14 @@ export function ListCollectedEntries(arg1, arg2, arg3) {
 
 export function ListHubTasks(arg1, arg2) {
   return window['go']['main']['App']['ListHubTasks'](arg1, arg2);
+}
+
+export function ListLoopRuns(arg1, arg2) {
+  return window['go']['main']['App']['ListLoopRuns'](arg1, arg2);
+}
+
+export function ListLoops() {
+  return window['go']['main']['App']['ListLoops']();
 }
 
 export function ListOllamaModels() {
@@ -458,12 +458,12 @@ export function RetryTask(arg1) {
   return window['go']['main']['App']['RetryTask'](arg1);
 }
 
-export function RunChain(arg1, arg2, arg3) {
-  return window['go']['main']['App']['RunChain'](arg1, arg2, arg3);
-}
-
 export function RunCollectJobNow(arg1) {
   return window['go']['main']['App']['RunCollectJobNow'](arg1);
+}
+
+export function RunLoop(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RunLoop'](arg1, arg2, arg3);
 }
 
 export function RunMetricScript(arg1, arg2) {
@@ -482,16 +482,16 @@ export function SaveAutomationRule(arg1) {
   return window['go']['main']['App']['SaveAutomationRule'](arg1);
 }
 
-export function SaveChain(arg1) {
-  return window['go']['main']['App']['SaveChain'](arg1);
-}
-
 export function SaveCollectJob(arg1) {
   return window['go']['main']['App']['SaveCollectJob'](arg1);
 }
 
 export function SaveDashboardLayout(arg1, arg2) {
   return window['go']['main']['App']['SaveDashboardLayout'](arg1, arg2);
+}
+
+export function SaveLoop(arg1) {
+  return window['go']['main']['App']['SaveLoop'](arg1);
 }
 
 export function SaveSchedule(arg1) {

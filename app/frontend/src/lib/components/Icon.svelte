@@ -4,7 +4,7 @@
     stream:       '<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="9" cy="7" r="2" fill="var(--bg-elev)"/><circle cx="15" cy="12" r="2" fill="var(--bg-elev)"/><circle cx="8" cy="17" r="2" fill="var(--bg-elev)"/>',
     cube:         '<path d="M12 2.5 21 7v10l-9 4.5L3 17V7z"/><path d="M3 7l9 4.5L21 7"/><line x1="12" y1="11.5" x2="12" y2="21.5"/>',
     server:       '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><circle cx="7" cy="7.5" r="1" fill="currentColor" stroke="none"/><circle cx="7" cy="16.5" r="1" fill="currentColor" stroke="none"/>',
-    chains:       '<path d="M9.5 14.5 14.5 9.5"/><path d="M7 17a3.5 3.5 0 0 1 0-5l2-2"/><path d="M17 7a3.5 3.5 0 0 1 0 5l-2 2"/>',
+    loops:       '<path d="M9.5 14.5 14.5 9.5"/><path d="M7 17a3.5 3.5 0 0 1 0-5l2-2"/><path d="M17 7a3.5 3.5 0 0 1 0 5l-2 2"/>',
     chat:         '<path d="M4 5.5h16v11H9l-4 3.5V16.5H4z" stroke-linejoin="round"/>',
     check:        '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="m8 12 3 3 5-6"/>',
     gear:         '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.4M12 19.1v2.4M21.5 12h-2.4M4.9 12H2.5M18.7 5.3l-1.7 1.7M7 17l-1.7 1.7M18.7 18.7 17 17M7 7 5.3 5.3"/>',

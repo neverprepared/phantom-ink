@@ -84,7 +84,7 @@ func (a *App) activeProfileName() string {
 
 // BrowseProfileFiles opens a multi-select file picker rooted at the named
 // profile's workspace_home. Returns paths relative to that workspace_home so
-// chains stay profile-portable. Selections outside the profile root are
+// loops stay profile-portable. Selections outside the profile root are
 // rejected with an error.
 //
 // Empty profileName uses the currently-active profile.
@@ -127,10 +127,10 @@ func (a *App) BrowseProfileFiles(profileName string) ([]string, error) {
 	return rels, nil
 }
 
-// resolveCwd produces the absolute working directory for a chain step given
+// resolveCwd produces the absolute working directory for a loop step given
 // the owning profile and a user-supplied cwd. Rules:
 //
-//   - profile is required for chain execution (foundational)
+//   - profile is required for loop execution (foundational)
 //   - empty cwd  → profile.WorkspaceHome
 //   - relative   → filepath.Join(WorkspaceHome, cwd), must stay inside
 //   - absolute   → must have WorkspaceHome as prefix
@@ -139,7 +139,7 @@ func (a *App) BrowseProfileFiles(profileName string) ([]string, error) {
 // how "isolated to the active profile" is enforced at execution time.
 func (a *App) resolveCwd(profileName, rawCwd string) (string, error) {
 	if profileName == "" {
-		return "", fmt.Errorf("no profile in context — chain steps must run under a profile")
+		return "", fmt.Errorf("no profile in context — loop steps must run under a profile")
 	}
 	prof, err := a.findProfile(profileName)
 	if err != nil {

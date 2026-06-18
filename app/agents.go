@@ -9,7 +9,7 @@ import (
 )
 
 // AgentInvocation describes how to invoke a CLI agent with a prompt as part
-// of a chain step. PromptMode controls how the prompt text reaches the binary:
+// of a loop step. PromptMode controls how the prompt text reaches the binary:
 //
 //   - "arg":   appended as a single trailing argument after PromptArgs
 //   - "stdin": piped to stdin; PromptArgs are passed as-is
@@ -50,16 +50,16 @@ type DetectedAgent struct {
 	Invocation AgentInvocation `json:"invocation"`
 }
 
-// Chainable reports whether the agent has a wired invocation and is therefore
-// eligible to appear as a chain step. Used by the frontend chain builder.
-func (d DetectedAgent) Chainable() bool {
+// Loopable reports whether the agent has a wired invocation and is therefore
+// eligible to appear as a loop step. Used by the frontend loop builder.
+func (d DetectedAgent) Loopable() bool {
 	return d.Invocation.PromptMode != ""
 }
 
 // knownAgents is the catalog. Add new entries here to expand detection.
 //
-// Invocation values describe how each CLI takes a prompt for chain execution.
-// Not every agent supports every chain feature — gemini, for example, prints
+// Invocation values describe how each CLI takes a prompt for loop execution.
+// Not every agent supports every loop feature — gemini, for example, prints
 // to stdout but does not edit files in cwd.
 var knownAgents = []AgentDescriptor{
 	{

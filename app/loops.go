@@ -1,189 +1,242 @@
 package main
 
-// Loop is the top-level construct that replaces Chain in the loop-engineering
-// model. A Loop has structured Intent, a Body that is a flowchart of Nodes
-// connected by Edges, a convergence predicate that decides when to stop, and
-// stop conditions that bound runaway iteration.
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os/exec"
+	"strings"
+	"time"
+)
+
+// stepRunTimeout is the hard wall-clock cap on a single loop step. Anything
+// past this gets SIGKILL'd. Long jobs should run inside a brainbox session
+// rather than the host loop runner.
+const stepRunTimeout = 5 * time.Minute
+
+// Loop is the runtime form of a saved loop. It mirrors LoopRow but with
+// Steps and Files materialized as slices.
 //
-// A 1-iteration Loop with a trivially-true convergence predicate is
-// behaviorally identical to today's Chain run — backwards compat is automatic
-// once the runner learns to consume Loop.
+// Files are stored as paths relative to the profile's workspace_home so the
+// same loop works across profiles — "code/api/main.go" resolves under
+// whatever profile is active at run time. At render time the {{files}}
+// template variable expands to the shell-quoted absolute paths.
 //
-// These types are scaffolding (Phase A1): defined but not wired into the
-// runner yet. See the plan at
-// ~/.claude/plans/okay-the-idea-of-replicated-popcorn.md for the full
-// design and phase breakdown.
+// Linear-step semantics are preserved from the legacy Chain construct:
+// each step runs in order, output of step N feeds {{prev.output}} of step
+// N+1, OnSuccess fires once at terminal success. The rich convergence /
+// iteration primitives live on the brainbox-side LoopSpec; this type is
+// the authoring surface in the desktop app and the host-side runtime for
+// the trivial 1-iteration case.
 type Loop struct {
-	ID                   string          `json:"id"`
-	Name                 string          `json:"name"`
-	Description          string          `json:"description"`
-	Intent               Intent          `json:"intent"`
-	Body                 LoopBody        `json:"body"`
-	MaxIterations        int             `json:"max_iterations"`
-	ConvergencePredicate string          `json:"convergence_predicate"` // JMESPath, bool
-	ConvergenceMetric    string          `json:"convergence_metric"`    // JMESPath, number
-	StopConditions       []StopCondition `json:"stop_conditions"`
-	Permissions          string          `json:"permissions"` // "inherit" | "default" | "strict"
-	TemplateSnapshot     *TemplateSnapshot `json:"template_snapshot,omitempty"`
-	Cwd                  string          `json:"cwd"`
-	WorkspaceProfile     string          `json:"workspace_profile"`
-	CreatedAt            string          `json:"created_at"`
-	UpdatedAt            string          `json:"updated_at"`
+	ID               string         `json:"id"`
+	Name             string         `json:"name"`
+	Description      string         `json:"description"`
+	Steps            []LoopStep     `json:"steps"`
+	Cwd              string         `json:"cwd"`
+	OnSuccess        []LoopFollowup `json:"on_success"`
+	Files            []string       `json:"files"`
+	WorkspaceProfile string         `json:"workspace_profile"`
+	CreatedAt        string         `json:"created_at"`
+	UpdatedAt        string         `json:"updated_at"`
 }
 
-// Intent is the structured "what does done look like" attached to a Loop.
-// Convergence is the same expression used by Loop.ConvergencePredicate —
-// they're the same data viewed from two angles. A template that fails to
-// declare Convergence cannot be loaded.
-type Intent struct {
-	Outcome      string             `json:"outcome"`
-	Verification []string           `json:"verification"`
-	NonGoals     []string           `json:"non_goals"`
-	Convergence  string             `json:"convergence"` // JMESPath, bool
-	Escalation   []EscalationClause `json:"escalation"`
-}
-
-// EscalationClause routes an out-of-bounds Loop state to a handler: emit a
-// human-attention envelope, skip the iteration, or fail the Loop outright.
-type EscalationClause struct {
-	Predicate string `json:"predicate"` // JMESPath, bool
-	Action    string `json:"action"`    // "human" | "skip" | "fail"
-}
-
-// StopCondition is a hard cap evaluated between iterations. If any matches,
-// the Loop stops with a corresponding status.
-type StopCondition struct {
-	Predicate string `json:"predicate"` // JMESPath, bool against envelope
-	Reason    string `json:"reason"`    // operator-facing tag, e.g. "diff_too_large"
-}
-
-// LoopBody is the flowchart that runs each iteration. Nodes are units of
-// execution; Edges connect them and may carry predicates that select branches
-// based on the envelope emitted by the source Node.
-type LoopBody struct {
-	Nodes []Node `json:"nodes"`
-	Edges []Edge `json:"edges"`
-}
-
-// Node is one unit of execution inside a Loop body. Kind selects the runtime
-// shape (agent invocation, brainbox playbook, join of upstream branches, human
-// review pause, scheduled wait). Executor selects the runtime backend for
-// agent/playbook nodes — host-cli is wired today; brainbox-session and
-// a2a-remote are forward-compat slots.
+// LoopFollowup is a declarative spec for enqueueing a follow-up task when a
+// loop run completes successfully. InputFrom controls what fills the next
+// loop's {{input}} slot:
 //
-// Requires lists permission scopes the Node needs (consulted only in the
-// "strict" permission tier; in "default" tier, destructive scopes still
-// require explicit listing here).
-type Node struct {
-	ID         string   `json:"id"`
-	Kind       string   `json:"kind"`     // "agent" | "playbook" | "join" | "human" | "schedule"
-	Executor   string   `json:"executor"` // "host-cli" | "brainbox-session" | "a2a-remote"
-	Role       string   `json:"role"`    // references brainbox/agents/roles/*.md by name
-	AgentID    string   `json:"agent_id"`
-	PlaybookID string   `json:"playbook_id"`
-	Prompt     string   `json:"prompt"`
-	Requires   []string `json:"requires"`
-	TimeoutMs  int      `json:"timeout_ms"`
-}
-
-// Edge connects two Nodes in a Loop body. Predicate (JMESPath, bool) decides
-// whether the edge fires against the envelope emitted by From; omitted
-// predicate means always-fire. Transform projects/strips fields from the
-// envelope before handing off to To — useful at trust boundaries (e.g. strip
-// scope_grants before crossing a2a-remote).
-type Edge struct {
-	From      string         `json:"from"`
-	To        string         `json:"to"`
-	Predicate string         `json:"predicate,omitempty"`
-	Transform *EdgeTransform `json:"transform,omitempty"`
-}
-
-// EdgeTransform is a declarative envelope projection. Day-1 supports:
+//   - "stdout":  the last step's stdout
+//   - "literal": the InputLiteral field, verbatim
+//   - "":        defaults to "stdout"
 //
-//   - Select: keep only the listed JMESPath-rooted fields
-//   - Omit:   drop the listed fields
-//   - Merge:  merge a literal JSON object into the envelope
-//
-// Selecting and omitting are mutually exclusive on a given edge; Merge can
-// combine with either.
-type EdgeTransform struct {
-	Select []string               `json:"select,omitempty"`
-	Omit   []string               `json:"omit,omitempty"`
-	Merge  map[string]interface{} `json:"merge,omitempty"`
+// Future extensions (template rendering, conditional branching) go here.
+type LoopFollowup struct {
+	LoopID       string `json:"loop_id"`
+	InputFrom    string `json:"input_from"`
+	InputLiteral string `json:"input_literal"`
+	Cwd          string `json:"cwd"`
 }
 
-// TemplateSnapshot is pinned onto each LoopInstance at creation. The runner
-// reads only from the snapshot for the duration of the Loop's life; on-disk
-// template changes after creation never affect in-flight instances. Role
-// markdown referenced by Nodes does live-bind — see the plan for the
-// rationale (templates change freely, roles change deliberately).
-type TemplateSnapshot struct {
-	Name     string `json:"name"`
-	Version  string `json:"version"`
-	Hash     string `json:"hash"`
-	BodyJSON string `json:"body_json"` // full Loop config at snapshot time
+// LoopStep is one node in a loop. PromptTemplate may reference {{input}}
+// (the initial user input) and {{prev.output}} (the previous step's stdout).
+// Cwd overrides the loop-level cwd for this step; empty means inherit.
+//
+// Type selects the step kind:
+//
+//   - "agent" (default/empty): run an agent binary on the host via AgentID
+//   - "playbook": trigger a brainbox playbook run via PlaybookID, block until
+//     the playbook reaches a terminal state (completed/failed/cancelled)
+//
+// Executor (agent steps only) selects the execution backend. Only "host" is
+// wired today. Reserved: "session", "queue".
+type LoopStep struct {
+	Type           string `json:"type"`        // "agent" (default) | "playbook"
+	AgentID        string `json:"agent_id"`    // non-empty when type="agent"
+	PlaybookID     string `json:"playbook_id"` // non-empty when type="playbook"
+	PromptTemplate string `json:"prompt_template"`
+	Cwd            string `json:"cwd"`
+	Executor       string `json:"executor"`
 }
 
-// HandoffEnvelope is the unifying handoff primitive. Every Node-to-Node,
-// iteration-to-iteration, Loop-to-Loop, and cross-runtime handoff carries one
-// of these. The envelope is additive-only — never remove or repurpose a
-// field, only add optional ones. SchemaVersion is for cross-runtime
-// compatibility checks (e.g. an A2A remote agent declaring "accepts schema
-// >=3"); the runner does not do migrations on load.
-//
-// Embed-with-overflow: blobs over ~100KB go to artifact storage and the
-// envelope carries a pointer in ArtifactRefs.
-//
-// JMESPath-queryable: edge predicates, the convergence predicate, stop
-// conditions, join conditions, and the convergence metric all evaluate
-// against this shape using the same language.
-type HandoffEnvelope struct {
-	SchemaVersion int                    `json:"schema_version"`
-	LoopID        string                 `json:"loop_id"`
-	Iteration     int                    `json:"iteration"`
-	FromNode      string                 `json:"from_node"`
-	ToNode        string                 `json:"to_node"`
-	ArtifactRefs  map[string]interface{} `json:"artifact_refs,omitempty"`
-	Observations  map[string]interface{} `json:"observations,omitempty"`
-	Findings      map[string]interface{} `json:"findings,omitempty"`
-	MemoryRefs    []string               `json:"memory_refs,omitempty"`
-	TraceID       string                 `json:"trace_id,omitempty"`
-	ScopeGrants   map[string]interface{} `json:"scope_grants,omitempty"`
-	ContextCarry  map[string]interface{} `json:"context_carry,omitempty"`
+// LoopRunEvent is the payload streamed to the frontend via EventsEmit during
+// a loop run. The frontend consumes these to render live progress.
+type LoopRunEvent struct {
+	RunID     string `json:"run_id"`
+	LoopID    string `json:"loop_id"`
+	Phase     string `json:"phase"` // "run:start" | "step:start" | "step:output" | "step:done" | "run:done"
+	StepIndex int    `json:"step_index"`
+	AgentID   string `json:"agent_id"`
+	Output    string `json:"output"`    // for step:output / step:done — accumulated stdout
+	Stderr    string `json:"stderr"`    // captured stderr (final on step:done)
+	ExitCode  int    `json:"exit_code"`
+	Error     string `json:"error"`     // non-empty when step failed
+	Status    string `json:"status"`    // "running" | "success" | "failed" | "cancelled"
+	At        string `json:"at"`        // RFC3339 timestamp
 }
 
-// EnvelopeSchemaVersion is the current additive schema version stamped onto
-// freshly-emitted envelopes. Bump only when adding fields, never on
-// repurpose or removal. Day-1: v1.
-const EnvelopeSchemaVersion = 1
+// renderPromptTemplate substitutes the supported placeholders into a step's
+// template. Unknown placeholders are left alone so the user can see them in
+// the prompt if they typo'd.
+//
+// Supported:
+//   - {{input}}       initial loop input
+//   - {{prev.output}} previous step's stdout
+//   - {{files}}       space-separated, shell-quoted absolute paths of the
+//                     loop's attached files (resolved to absolute under the
+//                     active profile's workspace_home before being passed in)
+func renderPromptTemplate(tpl, input, prev, files string) string {
+	tpl = strings.ReplaceAll(tpl, "{{input}}", input)
+	tpl = strings.ReplaceAll(tpl, "{{prev.output}}", prev)
+	tpl = strings.ReplaceAll(tpl, "{{files}}", files)
+	return tpl
+}
 
-// Permission tiers — see plan for semantics. Default applies when a Loop
-// declares no tier.
-const (
-	PermissionInherit = "inherit"
-	PermissionDefault = "default"
-	PermissionStrict  = "strict"
-)
+// shellQuote returns s wrapped so it's safe as a single shell-arg even when
+// it contains spaces, quotes, or other punctuation. Single-quote escape:
+// every internal ' becomes '\'' and the whole string is wrapped in '...'.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
 
-// Node kinds.
-const (
-	NodeKindAgent    = "agent"
-	NodeKindPlaybook = "playbook"
-	NodeKindJoin     = "join"
-	NodeKindHuman    = "human"
-	NodeKindSchedule = "schedule"
-)
+// newRunID is a short opaque identifier for a loop run.
+func newRunID() string {
+	var b [6]byte
+	_, _ = rand.Read(b[:])
+	return "run-" + hex.EncodeToString(b[:])
+}
 
-// Node executors.
-const (
-	ExecutorHostCLI         = "host-cli"
-	ExecutorBrainboxSession = "brainbox-session"
-	ExecutorA2ARemote       = "a2a-remote"
-)
+// runLoopStep executes a single agent invocation on the host and returns the
+// captured stdout + stderr + exit code. Bounded by stepRunTimeout.
+//
+// TODO: sandbox — this runs as a host subprocess. Future iterations should
+// route execution into a brainbox container or a UTM VM based on loop config.
+// See memory:project_agent_chain_sandbox_todo.md for the design backlog.
+func runLoopStep(parent context.Context, desc AgentDescriptor, prompt, cwd string) (stdout, stderr string, exitCode int, err error) {
+	if desc.Invocation.PromptMode == "" {
+		return "", "", -1, fmt.Errorf("agent %q has no invocation wired", desc.ID)
+	}
 
-// Escalation actions.
-const (
-	EscalationHuman = "human"
-	EscalationSkip  = "skip"
-	EscalationFail  = "fail"
-)
+	ctx, cancel := context.WithTimeout(parent, stepRunTimeout)
+	defer cancel()
+
+	args := append([]string{}, desc.Invocation.PromptArgs...)
+	if desc.Invocation.PromptMode == "arg" {
+		args = append(args, prompt)
+	}
+
+	cmd := exec.CommandContext(ctx, desc.Binary, args...)
+	if cwd != "" && desc.Invocation.AcceptsCwd {
+		cmd.Dir = cwd
+	}
+	if desc.Invocation.PromptMode == "stdin" {
+		cmd.Stdin = strings.NewReader(prompt)
+	}
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	runErr := cmd.Run()
+	stdout = stdoutBuf.String()
+	stderr = stderrBuf.String()
+	if cmd.ProcessState != nil {
+		exitCode = cmd.ProcessState.ExitCode()
+	} else {
+		exitCode = -1
+	}
+	if runErr != nil {
+		return stdout, stderr, exitCode, runErr
+	}
+	return stdout, stderr, exitCode, nil
+}
+
+// loopStepsFromJSON unmarshals a loop row's StepsJSON into structured steps.
+func loopStepsFromJSON(s string) ([]LoopStep, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var steps []LoopStep
+	if err := json.Unmarshal([]byte(s), &steps); err != nil {
+		return nil, fmt.Errorf("decode loop steps: %w", err)
+	}
+	return steps, nil
+}
+
+// loopStepsToJSON marshals steps to the form persisted in the loops table.
+func loopStepsToJSON(steps []LoopStep) (string, error) {
+	if steps == nil {
+		steps = []LoopStep{}
+	}
+	b, err := json.Marshal(steps)
+	if err != nil {
+		return "", fmt.Errorf("encode loop steps: %w", err)
+	}
+	return string(b), nil
+}
+
+func loopFollowupsFromJSON(s string) ([]LoopFollowup, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var out []LoopFollowup
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil, fmt.Errorf("decode loop followups: %w", err)
+	}
+	return out, nil
+}
+
+func loopFollowupsToJSON(fs []LoopFollowup) (string, error) {
+	if fs == nil {
+		fs = []LoopFollowup{}
+	}
+	b, err := json.Marshal(fs)
+	if err != nil {
+		return "", fmt.Errorf("encode loop followups: %w", err)
+	}
+	return string(b), nil
+}
+
+func loopFilesFromJSON(s string) ([]string, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil, fmt.Errorf("decode loop files: %w", err)
+	}
+	return out, nil
+}
+
+func loopFilesToJSON(files []string) (string, error) {
+	if files == nil {
+		files = []string{}
+	}
+	b, err := json.Marshal(files)
+	if err != nil {
+		return "", fmt.Errorf("encode loop files: %w", err)
+	}
+	return string(b), nil
+}

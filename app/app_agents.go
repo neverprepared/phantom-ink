@@ -40,7 +40,7 @@ func (a *App) ListAgents() ([]DetectedAgent, error) {
 
 // UsableAgents returns the subset of agents that are both detected on PATH
 // and toggled enabled by the user. This is the visibility rule consumed by
-// chain step pickers, command palette entries, and any other surface that
+// loop step pickers, command palette entries, and any other surface that
 // runs an agent (as opposed to managing its enabled state).
 func (a *App) UsableAgents() ([]DetectedAgent, error) {
 	all, err := a.ListAgents()
@@ -56,7 +56,7 @@ func (a *App) UsableAgents() ([]DetectedAgent, error) {
 	return out, nil
 }
 
-// agentDescriptor looks up a known agent by ID for chain execution. Returns
+// agentDescriptor looks up a known agent by ID for loop execution. Returns
 // false if the ID isn't in the catalog.
 func agentDescriptor(id string) (AgentDescriptor, bool) {
 	for _, d := range knownAgents {

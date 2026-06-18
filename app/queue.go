@@ -33,14 +33,14 @@ const (
 
 // Task is the runtime form of TaskRow, exposed to the frontend by app_queue.go.
 // We mirror TaskRow to avoid leaking storage details (and to give us a place to
-// hang derived fields later, e.g. chain_name).
+// hang derived fields later, e.g. loop_name).
 type Task = TaskRow
 
 // taskEvent payload pushed to the frontend whenever a task changes state, so
-// the Tasks panel and chain runner stay live without polling.
+// the Tasks panel and loop runner stay live without polling.
 type taskEvent struct {
 	TaskID   string `json:"task_id"`
-	ChainID  string `json:"chain_id"`
+	LoopID  string `json:"loop_id"`
 	Status   string `json:"status"`
 	Attempts int    `json:"attempts"`
 	Error    string `json:"error"`
@@ -50,8 +50,8 @@ type taskEvent struct {
 const taskEventName = "task:event"
 
 // worker is the in-process task-queue runner. v1 is a single goroutine that
-// polls the tasks table for eligible work, runs each chain to completion,
-// then loops. Concurrency knobs (worker pool, per-chain rate limit) will go
+// polls the tasks table for eligible work, runs each loop to completion,
+// then loops. Concurrency knobs (worker pool, per-loop rate limit) will go
 // here when needed.
 //
 // Lifecycle: started by App.startup, stopped by App.shutdown via cancelling
@@ -117,12 +117,12 @@ func (w *worker) recoverOrphans() {
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, t := range rows {
 		_, _ = w.app.db.MarkTaskFailed(t.ID, now, "", "interrupted by app restart", "")
-		w.app.emitTaskEvent(t.ID, t.ChainID, TaskFailed, t.Attempts, "interrupted by app restart")
+		w.app.emitTaskEvent(t.ID, t.LoopID, TaskFailed, t.Attempts, "interrupted by app restart")
 	}
 }
 
 // tickOnce picks at most one eligible task and runs it to completion before
-// returning. Bounded so a long chain doesn't starve the rest of the queue
+// returning. Bounded so a long loop doesn't starve the rest of the queue
 // when we later add concurrency — for v1 with one worker, blocking is fine.
 func (w *worker) tickOnce(ctx context.Context) {
 	if w.app.db == nil {
@@ -133,16 +133,16 @@ func (w *worker) tickOnce(ctx context.Context) {
 	if !ok {
 		return
 	}
-	w.app.emitTaskEvent(task.ID, task.ChainID, TaskRunning, task.Attempts, "")
+	w.app.emitTaskEvent(task.ID, task.LoopID, TaskRunning, task.Attempts, "")
 
-	runID, runErr := w.app.runChainForTask(ctx, task)
+	runID, runErr := w.app.runLoopForTask(ctx, task)
 	finishedAt := time.Now().UTC().Format(time.RFC3339)
 
 	if runErr == nil {
 		if err := w.app.db.MarkTaskSucceeded(task.ID, finishedAt, runID); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: task %s mark succeeded: %v\n", task.ID, err)
 		}
-		w.app.emitTaskEvent(task.ID, task.ChainID, TaskSucceeded, task.Attempts, "")
+		w.app.emitTaskEvent(task.ID, task.LoopID, TaskSucceeded, task.Attempts, "")
 		return
 	}
 
@@ -156,12 +156,12 @@ func (w *worker) tickOnce(ctx context.Context) {
 		fmt.Fprintf(os.Stderr, "warning: task %s mark failed: %v\n", task.ID, err)
 	}
 	if requeued {
-		w.app.emitTaskEvent(task.ID, task.ChainID, TaskPending, task.Attempts, runErr.Error())
+		w.app.emitTaskEvent(task.ID, task.LoopID, TaskPending, task.Attempts, runErr.Error())
 	} else {
 		// Terminal failure. emitTaskEvent dual-emits a task:<id> envelope with
 		// status=failed; the bus is now the only attention source (P5), so no
 		// attention_items row is needed here.
-		w.app.emitTaskEvent(task.ID, task.ChainID, TaskFailed, task.Attempts, runErr.Error())
+		w.app.emitTaskEvent(task.ID, task.LoopID, TaskFailed, task.Attempts, runErr.Error())
 	}
 }
 

@@ -122,7 +122,7 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}()
 
-	// Start the agent-event-bus outbox. Producers (queue, chain executor) append
+	// Start the agent-event-bus outbox. Producers (queue, loop executor) append
 	// envelopes; the flush loop ships batches to brainbox /api/agent_events with
 	// exponential backoff. Brainbox dedups by envelope id.
 	if a.db != nil {

@@ -262,7 +262,7 @@
       </div>
     </div>
     <p style="color: var(--text-faint); font-size: 13px; margin: -4px 0 16px;">
-      Reusable recipes — one unit of work each. Compose several into a pipeline over in Chains.
+      Reusable recipes — one unit of work each. Compose several into a pipeline over in Loops.
     </p>
 
     {#if hasProfile}

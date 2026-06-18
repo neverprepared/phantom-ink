@@ -1,7 +1,7 @@
 export type WidgetKind =
   | 'stat-counter'
   | 'dispatch-form'
-  | 'chains-list'
+  | 'loops-list'
   | 'action-items'
   | 'resource-monitor'
   | 'custom-counter'
@@ -139,8 +139,8 @@ export interface HubTask {
 
 export interface UpcomingFire {
   schedule_id: string;
-  chain_id: string;
-  chain_name: string;
+  loop_id: string;
+  loop_name: string;
   cron_expr: string;
   next_fire_at: string;
 }

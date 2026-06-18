@@ -101,23 +101,23 @@ if (typeof window !== 'undefined') {
 
 // ---------------------------------------------------------------------------
 // Panel focus — one-shot signal for cross-panel navigation. Setter sets the
-// target chain ID and switches the current panel; reader clears after use.
-// Used by TasksSection (and later, others) to "open this chain" without
+// target loop ID and switches the current panel; reader clears after use.
+// Used by TasksSection (and later, others) to "open this loop" without
 // reinventing routing.
 // ---------------------------------------------------------------------------
 
-let _chainFocus = $state<string>('');
+let _loopFocus = $state<string>('');
 let _conversationSeed = $state<string[]>([]);
 
 export const panelFocus = {
-  get chainID() { return _chainFocus; },
-  focusChain(id: string) {
-    _chainFocus = id;
-    currentPanel.value = 'chains';
+  get loopID() { return _loopFocus; },
+  focusLoop(id: string) {
+    _loopFocus = id;
+    currentPanel.value = 'loops';
   },
-  consumeChainFocus(): string {
-    const id = _chainFocus;
-    _chainFocus = '';
+  consumeLoopFocus(): string {
+    const id = _loopFocus;
+    _loopFocus = '';
     return id;
   },
   /** Start a new conversation with the named sessions pre-selected. */

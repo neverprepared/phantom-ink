@@ -136,6 +136,9 @@ var migrations = []migration{
 	// v5: agent chains — ordered sequences of CLI agents wired so each step
 	// receives the previous step's output as input. steps_json is the full
 	// []ChainStep payload; chain_runs.log_json is the per-step event log.
+	// (Historical table names "chains"/"chain_runs" preserved here so this
+	// migration is a no-op on existing DBs. The Chain → Loop rename of the
+	// data model is applied as a separate ALTER TABLE migration below.)
 	{version: 5, sql: `
 		CREATE TABLE IF NOT EXISTS chains (
 			id          TEXT PRIMARY KEY,
@@ -161,6 +164,7 @@ var migrations = []migration{
 	// task targets a chain and, on dispatch, becomes a chain_runs row. status
 	// is one of: pending | running | succeeded | failed | cancelled. trigger
 	// is one of: manual | schedule | webhook | followup.
+	// (Historical column "chain_id" preserved; renamed by ALTER below.)
 	{version: 6, sql: `
 		CREATE TABLE IF NOT EXISTS tasks (
 			id              TEXT PRIMARY KEY,
@@ -186,6 +190,7 @@ var migrations = []migration{
 	// v7: cron schedules — fire chain runs on a recurring expression. The
 	// scheduler goroutine reads the table on tick and enqueues a task per
 	// due schedule, recording last_fired_at to suppress double-firing.
+	// (Historical column "chain_id" preserved; renamed by ALTER below.)
 	{version: 7, sql: `
 		CREATE TABLE IF NOT EXISTS schedules (
 			id             TEXT PRIMARY KEY,
@@ -393,6 +398,37 @@ var migrations = []migration{
 			replied_at INTEGER NOT NULL
 		);
 	`},
+	// v24: Chain → Loop rename. Renames the chains, chain_runs tables and
+	// the chain_id columns on tasks and schedules so the storage layer matches
+	// the renamed Go types. Pure rename — no data shape changes, no data loss.
+	// Fresh installs hit v5–v17 first (creating chains/chain_runs/chain_id),
+	// then this migration renames them; existing installs at v23 just run
+	// this. ALTER TABLE RENAME and ALTER TABLE RENAME COLUMN are both
+	// supported by modernc.org/sqlite per SQLite >= 3.25.
+	{version: 24, fn: func(conn *sql.DB) error {
+		// Order matters: rename the chain_id column on chain_runs BEFORE
+		// renaming the table, otherwise the column-rename statement runs
+		// against a name that no longer exists.
+		stmts := []string{
+			"ALTER TABLE chain_runs RENAME COLUMN chain_id TO loop_id",
+			"ALTER TABLE chains RENAME TO loops",
+			"ALTER TABLE chain_runs RENAME TO loop_runs",
+			"ALTER TABLE tasks RENAME COLUMN chain_id TO loop_id",
+			"ALTER TABLE schedules RENAME COLUMN chain_id TO loop_id",
+			"DROP INDEX IF EXISTS idx_chain_runs_chain_id",
+			"CREATE INDEX IF NOT EXISTS idx_loop_runs_loop_id ON loop_runs(loop_id)",
+			"DROP INDEX IF EXISTS idx_tasks_chain_id",
+			"CREATE INDEX IF NOT EXISTS idx_tasks_loop_id ON tasks(loop_id)",
+			"DROP INDEX IF EXISTS idx_schedules_chain_id",
+			"CREATE INDEX IF NOT EXISTS idx_schedules_loop_id ON schedules(loop_id)",
+		}
+		for _, s := range stmts {
+			if _, err := conn.Exec(s); err != nil {
+				return fmt.Errorf("v24 %q: %w", s, err)
+			}
+		}
+		return nil
+	}},
 }
 
 func (db *DB) migrate() error {
@@ -621,14 +657,14 @@ func (db *DB) SetAgentEnabled(id string, enabled bool) error {
 }
 
 // ---------------------------------------------------------------------------
-// Chains
+// Loops
 // ---------------------------------------------------------------------------
 
-// ChainRow is the persisted form of a chain definition. The runtime Chain type
-// (with structured Steps) lives in chains.go and serializes Steps to/from
+// LoopRow is the persisted form of a loop definition. The runtime Loop type
+// (with structured Steps) lives in loops.go and serializes Steps to/from
 // StepsJSON via encoding/json. OnSuccessJSON is the same idea for the
-// declarative followups list — read+written wholesale with the chain.
-type ChainRow struct {
+// declarative followups list — read+written wholesale with the loop.
+type LoopRow struct {
 	ID               string `json:"id"`
 	Name             string `json:"name"`
 	Description      string `json:"description"`
@@ -641,7 +677,7 @@ type ChainRow struct {
 	UpdatedAt        string `json:"updated_at"`
 }
 
-func (db *DB) UpsertChain(c ChainRow) error {
+func (db *DB) UpsertLoop(c LoopRow) error {
 	if c.OnSuccessJSON == "" {
 		c.OnSuccessJSON = "[]"
 	}
@@ -649,7 +685,7 @@ func (db *DB) UpsertChain(c ChainRow) error {
 		c.FilesJSON = "[]"
 	}
 	_, err := db.conn.Exec(`
-		INSERT INTO chains (id, name, description, steps_json, cwd, on_success_json, files_json, workspace_profile, created_at, updated_at)
+		INSERT INTO loops (id, name, description, steps_json, cwd, on_success_json, files_json, workspace_profile, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name              = excluded.name,
@@ -664,11 +700,11 @@ func (db *DB) UpsertChain(c ChainRow) error {
 	return err
 }
 
-func (db *DB) GetChain(id string) (ChainRow, bool) {
-	var r ChainRow
+func (db *DB) GetLoop(id string) (LoopRow, bool) {
+	var r LoopRow
 	err := db.conn.QueryRow(`
 		SELECT id, name, description, steps_json, cwd, on_success_json, files_json, workspace_profile, created_at, updated_at
-		FROM chains WHERE id = ?`, id).Scan(
+		FROM loops WHERE id = ?`, id).Scan(
 		&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.FilesJSON, &r.WorkspaceProfile, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return r, false
@@ -676,9 +712,9 @@ func (db *DB) GetChain(id string) (ChainRow, bool) {
 	return r, true
 }
 
-// ListChains returns chains visible for the given profile: profile-owned chains
-// plus global chains (workspace_profile=""). Pass "" to return all chains.
-func (db *DB) ListChains(profile string) ([]ChainRow, error) {
+// ListLoops returns loops visible for the given profile: profile-owned loops
+// plus global loops (workspace_profile=""). Pass "" to return all loops.
+func (db *DB) ListLoops(profile string) ([]LoopRow, error) {
 	var (
 		rows *sql.Rows
 		err  error
@@ -686,20 +722,20 @@ func (db *DB) ListChains(profile string) ([]ChainRow, error) {
 	if profile == "" {
 		rows, err = db.conn.Query(`
 			SELECT id, name, description, steps_json, cwd, on_success_json, files_json, workspace_profile, created_at, updated_at
-			FROM chains ORDER BY name`)
+			FROM loops ORDER BY name`)
 	} else {
 		rows, err = db.conn.Query(`
 			SELECT id, name, description, steps_json, cwd, on_success_json, files_json, workspace_profile, created_at, updated_at
-			FROM chains WHERE workspace_profile = '' OR workspace_profile = ?
+			FROM loops WHERE workspace_profile = '' OR workspace_profile = ?
 			ORDER BY name`, profile)
 	}
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ChainRow
+	var out []LoopRow
 	for rows.Next() {
-		var r ChainRow
+		var r LoopRow
 		if err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.FilesJSON, &r.WorkspaceProfile, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			continue
 		}
@@ -708,52 +744,52 @@ func (db *DB) ListChains(profile string) ([]ChainRow, error) {
 	return out, nil
 }
 
-func (db *DB) DeleteChain(id string) error {
-	_, err := db.conn.Exec("DELETE FROM chains WHERE id = ?", id)
+func (db *DB) DeleteLoop(id string) error {
+	_, err := db.conn.Exec("DELETE FROM loops WHERE id = ?", id)
 	return err
 }
 
-// ChainRunRow is the persisted form of a single chain execution.
-type ChainRunRow struct {
+// LoopRunRow is the persisted form of a single loop execution.
+type LoopRunRow struct {
 	ID         string `json:"id"`
-	ChainID    string `json:"chain_id"`
+	LoopID    string `json:"loop_id"`
 	StartedAt  string `json:"started_at"`
 	FinishedAt string `json:"finished_at"`
 	Status     string `json:"status"`
 	LogJSON    string `json:"log_json"`
 }
 
-func (db *DB) InsertChainRun(r ChainRunRow) error {
+func (db *DB) InsertLoopRun(r LoopRunRow) error {
 	_, err := db.conn.Exec(`
-		INSERT INTO chain_runs (id, chain_id, started_at, finished_at, status, log_json)
+		INSERT INTO loop_runs (id, loop_id, started_at, finished_at, status, log_json)
 		VALUES (?, ?, ?, ?, ?, ?)`,
-		r.ID, r.ChainID, r.StartedAt, r.FinishedAt, r.Status, r.LogJSON)
+		r.ID, r.LoopID, r.StartedAt, r.FinishedAt, r.Status, r.LogJSON)
 	return err
 }
 
-func (db *DB) UpdateChainRun(id, finishedAt, status, logJSON string) error {
+func (db *DB) UpdateLoopRun(id, finishedAt, status, logJSON string) error {
 	_, err := db.conn.Exec(`
-		UPDATE chain_runs SET finished_at = ?, status = ?, log_json = ? WHERE id = ?`,
+		UPDATE loop_runs SET finished_at = ?, status = ?, log_json = ? WHERE id = ?`,
 		finishedAt, status, logJSON, id)
 	return err
 }
 
-func (db *DB) ListChainRuns(chainID string, limit int) ([]ChainRunRow, error) {
+func (db *DB) ListLoopRuns(loopID string, limit int) ([]LoopRunRow, error) {
 	if limit <= 0 {
 		limit = 25
 	}
 	rows, err := db.conn.Query(`
-		SELECT id, chain_id, started_at, finished_at, status, log_json
-		FROM chain_runs WHERE chain_id = ?
-		ORDER BY started_at DESC LIMIT ?`, chainID, limit)
+		SELECT id, loop_id, started_at, finished_at, status, log_json
+		FROM loop_runs WHERE loop_id = ?
+		ORDER BY started_at DESC LIMIT ?`, loopID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ChainRunRow
+	var out []LoopRunRow
 	for rows.Next() {
-		var r ChainRunRow
-		if err := rows.Scan(&r.ID, &r.ChainID, &r.StartedAt, &r.FinishedAt, &r.Status, &r.LogJSON); err != nil {
+		var r LoopRunRow
+		if err := rows.Scan(&r.ID, &r.LoopID, &r.StartedAt, &r.FinishedAt, &r.Status, &r.LogJSON); err != nil {
 			continue
 		}
 		out = append(out, r)
@@ -770,7 +806,7 @@ func (db *DB) ListChainRuns(chainID string, limit int) ([]ChainRunRow, error) {
 // under the right profile context — see feedback_profiles_foundational.md.
 type TaskRow struct {
 	ID               string `json:"id"`
-	ChainID          string `json:"chain_id"`
+	LoopID          string `json:"loop_id"`
 	Status           string `json:"status"`
 	Priority         int    `json:"priority"`
 	Input            string `json:"input"`
@@ -791,11 +827,11 @@ type TaskRow struct {
 func (db *DB) InsertTask(t TaskRow) error {
 	_, err := db.conn.Exec(`
 		INSERT INTO tasks (
-			id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
+			id, loop_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
 			enqueued_at, scheduled_for, started_at, finished_at,
 			attempts, max_attempts, last_error, result_run_id
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.ChainID, t.Status, t.Priority, t.Input, t.Cwd, t.Trigger, t.ParentTaskID, t.WorkspaceProfile,
+		t.ID, t.LoopID, t.Status, t.Priority, t.Input, t.Cwd, t.Trigger, t.ParentTaskID, t.WorkspaceProfile,
 		t.EnqueuedAt, t.ScheduledFor, t.StartedAt, t.FinishedAt,
 		t.Attempts, t.MaxAttempts, t.LastError, t.ResultRunID)
 	return err
@@ -814,7 +850,7 @@ func (db *DB) ClaimNextTask(nowRFC3339 string) (TaskRow, bool) {
 
 	var t TaskRow
 	err = tx.QueryRow(`
-		SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
+		SELECT id, loop_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
 		       enqueued_at, scheduled_for, started_at, finished_at,
 		       attempts, max_attempts, last_error, result_run_id
 		FROM tasks
@@ -822,7 +858,7 @@ func (db *DB) ClaimNextTask(nowRFC3339 string) (TaskRow, bool) {
 		  AND (scheduled_for = '' OR scheduled_for <= ?)
 		ORDER BY priority DESC, enqueued_at ASC
 		LIMIT 1`, nowRFC3339).Scan(
-		&t.ID, &t.ChainID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
+		&t.ID, &t.LoopID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
 		&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
 		&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID)
 	if err != nil {
@@ -903,11 +939,11 @@ func (db *DB) RetryTask(id string) error {
 func (db *DB) GetTask(id string) (TaskRow, bool) {
 	var t TaskRow
 	err := db.conn.QueryRow(`
-		SELECT id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
+		SELECT id, loop_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
 		       enqueued_at, scheduled_for, started_at, finished_at,
 		       attempts, max_attempts, last_error, result_run_id
 		FROM tasks WHERE id = ?`, id).Scan(
-		&t.ID, &t.ChainID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
+		&t.ID, &t.LoopID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
 		&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
 		&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID)
 	if err != nil {
@@ -922,7 +958,7 @@ func (db *DB) ListTasks(status, workspace string, limit int) ([]TaskRow, error) 
 	if limit <= 0 || limit > 200 {
 		limit = 200
 	}
-	const selectCols = `id, chain_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
+	const selectCols = `id, loop_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
 	       enqueued_at, scheduled_for, started_at, finished_at,
 	       attempts, max_attempts, last_error, result_run_id`
 	var (
@@ -952,7 +988,7 @@ func (db *DB) ListTasks(status, workspace string, limit int) ([]TaskRow, error) 
 	for rows.Next() {
 		var t TaskRow
 		if err := rows.Scan(
-			&t.ID, &t.ChainID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
+			&t.ID, &t.LoopID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
 			&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
 			&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID,
 		); err != nil {
@@ -1023,7 +1059,7 @@ func (db *DB) TaskStatsCounted(since string) (pending, running, succeeded, faile
 
 type ScheduleRow struct {
 	ID               string `json:"id"`
-	ChainID          string `json:"chain_id"`
+	LoopID          string `json:"loop_id"`
 	CronExpr         string `json:"cron_expr"`
 	Input            string `json:"input"`
 	Cwd              string `json:"cwd"`
@@ -1040,17 +1076,17 @@ type ScheduleRow struct {
 
 func (db *DB) UpsertSchedule(s ScheduleRow) error {
 	_, err := db.conn.Exec(`
-		INSERT INTO schedules (id, chain_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at)
+		INSERT INTO schedules (id, loop_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			chain_id          = excluded.chain_id,
+			loop_id          = excluded.loop_id,
 			cron_expr         = excluded.cron_expr,
 			input             = excluded.input,
 			cwd               = excluded.cwd,
 			enabled           = excluded.enabled,
 			workspace_profile = excluded.workspace_profile,
 			updated_at        = excluded.updated_at`,
-		s.ID, s.ChainID, s.CronExpr, s.Input, s.Cwd, boolToInt(s.Enabled), s.WorkspaceProfile,
+		s.ID, s.LoopID, s.CronExpr, s.Input, s.Cwd, boolToInt(s.Enabled), s.WorkspaceProfile,
 		s.CreatedAt, s.UpdatedAt, s.LastFiredAt)
 	return err
 }
@@ -1059,9 +1095,9 @@ func (db *DB) GetSchedule(id string) (ScheduleRow, bool) {
 	var r ScheduleRow
 	var enabled int
 	err := db.conn.QueryRow(`
-		SELECT id, chain_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
+		SELECT id, loop_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
 		FROM schedules WHERE id = ?`, id).Scan(
-		&r.ID, &r.ChainID, &r.CronExpr, &r.Input, &r.Cwd, &enabled, &r.WorkspaceProfile,
+		&r.ID, &r.LoopID, &r.CronExpr, &r.Input, &r.Cwd, &enabled, &r.WorkspaceProfile,
 		&r.CreatedAt, &r.UpdatedAt, &r.LastFiredAt)
 	if err != nil {
 		return r, false
@@ -1070,17 +1106,17 @@ func (db *DB) GetSchedule(id string) (ScheduleRow, bool) {
 	return r, true
 }
 
-func (db *DB) ListSchedules(chainID string) ([]ScheduleRow, error) {
+func (db *DB) ListSchedules(loopID string) ([]ScheduleRow, error) {
 	var rows *sql.Rows
 	var err error
-	if chainID == "" {
+	if loopID == "" {
 		rows, err = db.conn.Query(`
-			SELECT id, chain_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
+			SELECT id, loop_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
 			FROM schedules ORDER BY created_at`)
 	} else {
 		rows, err = db.conn.Query(`
-			SELECT id, chain_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
-			FROM schedules WHERE chain_id = ? ORDER BY created_at`, chainID)
+			SELECT id, loop_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
+			FROM schedules WHERE loop_id = ? ORDER BY created_at`, loopID)
 	}
 	if err != nil {
 		return nil, err
@@ -1090,7 +1126,7 @@ func (db *DB) ListSchedules(chainID string) ([]ScheduleRow, error) {
 	for rows.Next() {
 		var r ScheduleRow
 		var enabled int
-		if err := rows.Scan(&r.ID, &r.ChainID, &r.CronExpr, &r.Input, &r.Cwd, &enabled, &r.WorkspaceProfile,
+		if err := rows.Scan(&r.ID, &r.LoopID, &r.CronExpr, &r.Input, &r.Cwd, &enabled, &r.WorkspaceProfile,
 			&r.CreatedAt, &r.UpdatedAt, &r.LastFiredAt); err != nil {
 			continue
 		}
