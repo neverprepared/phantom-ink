@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import uuid
 from typing import Any
 
@@ -538,12 +539,25 @@ _pending_bridges: list[asyncio.Task] = []
 def _envelope_from_task(task: Task) -> HandoffEnvelope:
     """Extract the iteration envelope from the completed task's result.
 
-    Three shapes the task.result can carry:
-      - a HandoffEnvelope instance (real runner path once agents emit one)
-      - a dict that looks like an envelope (intermediate path while agents
-        still emit JSON instead of typed envelopes)
-      - None / anything else → empty envelope (the runner just falls into
-        the next predicate evaluation with an empty findings map)
+    Four shapes the task.result can carry, in order of preference:
+      - a HandoffEnvelope instance — direct typed return (rare today;
+        becomes common once dispatch grows native envelope support)
+      - a dict that validates as an envelope — direct hub message with a
+        structured ``result`` payload
+      - a string that parses as JSON to a dict that validates — the
+        canonical path while agents call the existing ``complete.sh``
+        with ``$(cat /tmp/loop-envelope.json)`` as the result arg
+      - anything else — empty envelope; the runner falls into the next
+        predicate evaluation, blockers count is 0, and convergence
+        either fires (zero-blocker template) or doesn't (review template
+        with CI gate). Either way, no exception bubbles up.
+
+    Malformed JSON strings, non-dict JSON values, and dicts that fail
+    HandoffEnvelope validation all silently fall through to the empty
+    envelope. The bridge runs inside a router event listener — raising
+    here would drop a loop, which is the failure mode we wrote
+    _on_router_event's done_callback to surface, but is worse than
+    silently treating "no findings" as "no progress."
     """
     result = task.result
     if isinstance(result, HandoffEnvelope):
@@ -553,6 +567,17 @@ def _envelope_from_task(task: Task) -> HandoffEnvelope:
             return HandoffEnvelope.model_validate(result)
         except Exception:
             return HandoffEnvelope()
+    if isinstance(result, str):
+        try:
+            parsed = json.loads(result)
+        except (ValueError, TypeError):
+            return HandoffEnvelope()
+        if isinstance(parsed, dict):
+            try:
+                return HandoffEnvelope.model_validate(parsed)
+            except Exception:
+                return HandoffEnvelope()
+        return HandoffEnvelope()
     return HandoffEnvelope()
 
 

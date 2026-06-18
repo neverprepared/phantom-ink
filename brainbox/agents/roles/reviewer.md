@@ -106,6 +106,84 @@ curl -X POST "$BRAINBOX_HUB_URL/api/hub/messages" \
   -d '{"recipient":"merge-queue","type":"text","payload":{"body":"Review complete for PR #123. 0 blocking, 3 suggestions. Safe to merge."}}'
 ```
 
+## Mode C — Loop Review (review-driven repair)
+
+When your task is part of a phantom-ink **loop** — i.e. `$BRAINBOX_LOOP_ID` is set in your environment, or your task description starts with `loop <id> iter <N>:` — you MUST emit a structured **HandoffEnvelope** as your completion result. The loop runner reads this envelope's `findings` and `observations` to decide whether the loop has converged, should iterate, should stop on a condition, or should escalate to a human.
+
+### When this mode applies
+
+- `$BRAINBOX_LOOP_ID` is set (the iteration runner injects it)
+- Task description begins with `loop <id> iter <N>:`
+- Either signal means: emit the envelope. Don't emit a prose summary to `complete.sh` as you would in Mode B.
+
+### The envelope schema
+
+Write this exact JSON shape to `/tmp/loop-envelope.json` before completing:
+
+```json
+{
+  "findings": {
+    "blockers": [
+      {
+        "file": "path/to/file.go",
+        "line": 42,
+        "reason": "Brief reason this blocks merge.",
+        "suggested_fix": "Optional: concrete fix."
+      }
+    ],
+    "approved": false,
+    "notes": ["Optional non-blocking observations."]
+  },
+  "observations": {
+    "ci_status": "green",
+    "diff_lines": 47,
+    "files_touched": ["a.go", "b.go"]
+  }
+}
+```
+
+Required fields (the convergence predicate reads these):
+
+- `findings.blockers` — array; empty means no blockers found this iteration
+- `observations.ci_status` — one of `"green"`, `"red"`, or `"pending"`, from the most recent `gh pr checks` output
+
+Optional fields (used for telemetry and human-facing summaries):
+
+- `findings.approved` — boolean; set `true` only when blockers is empty AND CI is green
+- `findings.notes` — array of strings, non-blocking observations
+- `observations.diff_lines` — integer; used by the `diff_too_large` stop condition
+- `observations.files_touched` — array of paths
+
+### Convergence rules (what you're aiming at)
+
+- **Convergence:** `findings.blockers` is empty AND `observations.ci_status == "green"`. Both must be true. Reporting no blockers on a red-CI PR does **not** converge.
+- **Iteration cap:** the loop runs at most 3 iterations of the default `pr-review-loop` template. After that the loop escalates to a human.
+- **Diff cap:** the loop stops if `observations.diff_lines > 500`. Report the real value; don't shrink it.
+
+### Emission steps
+
+1. Do the review work (read the diff, check for blockers, observe CI).
+2. Build the envelope as JSON. **Do not include trailing commas or comments** — the bridge parses with strict `json.loads`.
+3. Write it to `/tmp/loop-envelope.json`.
+4. Validate it:
+   ```bash
+   python3 -m json.tool /tmp/loop-envelope.json > /dev/null || { echo "envelope invalid"; exit 1; }
+   ```
+5. Pass the envelope contents to `complete.sh`:
+   ```bash
+   ~/.brainbox/complete.sh "$(cat /tmp/loop-envelope.json)"
+   ```
+
+The runner's event bridge parses the result string as JSON, validates it against the `HandoffEnvelope` schema, and feeds it to `advance_loop`. A malformed envelope falls through to an empty envelope — the loop will not converge but will not crash — so validating in step 4 is operator-courtesy, not a safety net.
+
+### Carrying state across iterations
+
+If your task description references iteration N > 1, the previous iteration's envelope is available to the runner. Read the previous iteration's `findings.blockers` and confirm whether each was addressed in the PR's most recent commits. If a blocker reappears in the same location across two iterations, the runner detects thrashing — you do not need to handle that yourself, but you should NOT silently mark a still-present blocker as resolved.
+
+### Permissions in loop context
+
+Loop sessions run under the loop template's permission tier (`default` for `pr-review-loop`). Your scope is `repo:read` — you cannot push, merge, comment on PRs, or modify files. Findings are advisory data; the worker (when it lands) will apply fixes.
+
 ## Brainbox Integration
 
 Your agent token: `/run/secrets/agent-token` (hardened) or `~/.agent-token` (legacy).  
