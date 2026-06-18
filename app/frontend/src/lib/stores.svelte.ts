@@ -110,12 +110,12 @@ let _loopFocus = $state<string>('');
 let _conversationSeed = $state<string[]>([]);
 
 export const panelFocus = {
-  get loopID() { return _loopFocus; },
-  focusLoop(id: string) {
+  get sequenceID() { return _loopFocus; },
+  focusSequence(id: string) {
     _loopFocus = id;
-    currentPanel.value = 'loops';
+    currentPanel.value = 'sequences';
   },
-  consumeLoopFocus(): string {
+  consumeSequenceFocus(): string {
     const id = _loopFocus;
     _loopFocus = '';
     return id;

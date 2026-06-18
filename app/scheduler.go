@@ -87,7 +87,7 @@ func (s *scheduler) tick() {
 		// The schedule's snapshotted profile is propagated to the task so the
 		// run executes in the right workspace, not whichever is active now.
 		if _, err := s.app.EnqueueTask(EnqueueTaskRequest{
-			LoopID:          sch.LoopID,
+			SequenceID:          sch.SequenceID,
 			Input:            sch.Input,
 			Cwd:              sch.Cwd,
 			Trigger:          TriggerSchedule,

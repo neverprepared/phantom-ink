@@ -12,7 +12,7 @@
 
   import StatCounterWidget       from '../widgets/StatCounterWidget.svelte';
   import DispatchFormWidget      from '../widgets/DispatchFormWidget.svelte';
-  import LoopsListWidget        from '../widgets/LoopsListWidget.svelte';
+  import SequencesListWidget        from '../widgets/SequencesListWidget.svelte';
   import ActionItemsWidget       from '../widgets/ActionItemsWidget.svelte';
   import ResourceMonitorWidget   from '../widgets/ResourceMonitorWidget.svelte';
   import CustomCounterWidget     from '../widgets/CustomCounterWidget.svelte';
@@ -262,7 +262,7 @@
   const WIDGET_MAP: Record<WidgetKind, any> = {
     'stat-counter':     StatCounterWidget,
     'dispatch-form':    DispatchFormWidget,
-    'loops-list':      LoopsListWidget,
+    'loops-list':      SequencesListWidget,
     'action-items':     ActionItemsWidget,
     'resource-monitor': ResourceMonitorWidget,
     'custom-counter':   CustomCounterWidget,
@@ -348,7 +348,7 @@
     'sessions-mini':     'Live Sessions',
     'notes':             'Scratchpad',
     'dispatch-form':     'Dispatch Form',
-    'loops-list':       'Scheduled Loops',
+    'loops-list':       'Scheduled Sequences',
     'action-items':      'Action Items',
     'resource-monitor':  'Resource Monitor',
     'stream':            'Stream',

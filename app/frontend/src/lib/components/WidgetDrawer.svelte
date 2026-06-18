@@ -121,7 +121,7 @@
     { kind: 'sessions-mini',    label: 'Live Sessions',      desc: 'Mini list of active and stopped sessions.' },
     { kind: 'notes',            label: 'Scratchpad',         desc: 'Persistent freeform text notes.' },
     { kind: 'dispatch-form',    label: 'Dispatch Form',      desc: 'Submit a task to a hub agent.' },
-    { kind: 'loops-list',      label: 'Scheduled Loops',   desc: 'Upcoming scheduled loop fires.' },
+    { kind: 'loops-list',      label: 'Scheduled Sequences',   desc: 'Upcoming scheduled loop fires.' },
     { kind: 'action-items',     label: 'Action Items',       desc: 'System alerts and action items.' },
     { kind: 'resource-monitor', label: 'Resource Monitor',   desc: 'CPU, memory, and container stats.' },
     { kind: 'script-metric',    label: 'Script Metric',      desc: 'Run a shell command, display its output as a number or string.' },
@@ -160,7 +160,7 @@
     { val: 'muted',   label: 'Muted' },
   ];
 
-  const NAV_TARGETS = ['', 'sessions', 'stream', 'agents', 'loops', 'conversations', 'playbooks'];
+  const NAV_TARGETS = ['', 'sessions', 'stream', 'agents', 'sequences', 'conversations', 'playbooks'];
 
   function handleAdd() {
     const id = crypto.randomUUID();
@@ -288,7 +288,7 @@
     'sessions-mini':     'Live Sessions',
     'notes':             'Scratchpad',
     'dispatch-form':     'Dispatch Form',
-    'loops-list':       'Scheduled Loops',
+    'loops-list':       'Scheduled Sequences',
     'action-items':      'Action Items',
     'resource-monitor':  'Resource Monitor',
     'stream':            'Stream',

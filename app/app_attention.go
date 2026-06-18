@@ -222,7 +222,7 @@ func (a *App) AttentionRetry(id string) error {
 				return fmt.Errorf("loop envelope missing loop_id metadata")
 			}
 			if _, err := a.EnqueueTask(EnqueueTaskRequest{
-				LoopID:          loopID,
+				SequenceID:          loopID,
 				Input:            input,
 				Cwd:              cwd,
 				Trigger:          TriggerManual,
@@ -357,13 +357,13 @@ func hasActions(raw json.RawMessage) bool {
 	return len(arr) > 0
 }
 
-// loopNameOrID returns the loop's human-readable name, falling back to the
+// sequenceNameOrID returns the loop's human-readable name, falling back to the
 // id when the loop is not found.
-func loopNameOrID(db *DB, loopID string) string {
+func sequenceNameOrID(db *DB, loopID string) string {
 	if db == nil {
 		return loopID
 	}
-	row, ok := db.GetLoop(loopID)
+	row, ok := db.GetSequence(loopID)
 	if !ok || row.Name == "" {
 		return loopID
 	}

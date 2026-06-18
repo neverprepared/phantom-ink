@@ -17,7 +17,7 @@ import (
 // rather than the host loop runner.
 const stepRunTimeout = 5 * time.Minute
 
-// Loop is the runtime form of a saved loop. It mirrors LoopRow but with
+// Sequence is the runtime form of a saved loop. It mirrors SequenceRow but with
 // Steps and Files materialized as slices.
 //
 // Files are stored as paths relative to the profile's workspace_home so the
@@ -28,23 +28,23 @@ const stepRunTimeout = 5 * time.Minute
 // Linear-step semantics are preserved from the legacy Chain construct:
 // each step runs in order, output of step N feeds {{prev.output}} of step
 // N+1, OnSuccess fires once at terminal success. The rich convergence /
-// iteration primitives live on the brainbox-side LoopSpec; this type is
+// iteration primitives live on the brainbox-side SequenceSpec; this type is
 // the authoring surface in the desktop app and the host-side runtime for
 // the trivial 1-iteration case.
-type Loop struct {
+type Sequence struct {
 	ID               string         `json:"id"`
 	Name             string         `json:"name"`
 	Description      string         `json:"description"`
-	Steps            []LoopStep     `json:"steps"`
+	Steps            []SequenceStep     `json:"steps"`
 	Cwd              string         `json:"cwd"`
-	OnSuccess        []LoopFollowup `json:"on_success"`
+	OnSuccess        []SequenceFollowup `json:"on_success"`
 	Files            []string       `json:"files"`
 	WorkspaceProfile string         `json:"workspace_profile"`
 	CreatedAt        string         `json:"created_at"`
 	UpdatedAt        string         `json:"updated_at"`
 }
 
-// LoopFollowup is a declarative spec for enqueueing a follow-up task when a
+// SequenceFollowup is a declarative spec for enqueueing a follow-up task when a
 // loop run completes successfully. InputFrom controls what fills the next
 // loop's {{input}} slot:
 //
@@ -53,14 +53,14 @@ type Loop struct {
 //   - "":        defaults to "stdout"
 //
 // Future extensions (template rendering, conditional branching) go here.
-type LoopFollowup struct {
-	LoopID       string `json:"loop_id"`
+type SequenceFollowup struct {
+	SequenceID       string `json:"loop_id"`
 	InputFrom    string `json:"input_from"`
 	InputLiteral string `json:"input_literal"`
 	Cwd          string `json:"cwd"`
 }
 
-// LoopStep is one node in a loop. PromptTemplate may reference {{input}}
+// SequenceStep is one node in a loop. PromptTemplate may reference {{input}}
 // (the initial user input) and {{prev.output}} (the previous step's stdout).
 // Cwd overrides the loop-level cwd for this step; empty means inherit.
 //
@@ -72,7 +72,7 @@ type LoopFollowup struct {
 //
 // Executor (agent steps only) selects the execution backend. Only "host" is
 // wired today. Reserved: "session", "queue".
-type LoopStep struct {
+type SequenceStep struct {
 	Type           string `json:"type"`        // "agent" (default) | "playbook"
 	AgentID        string `json:"agent_id"`    // non-empty when type="agent"
 	PlaybookID     string `json:"playbook_id"` // non-empty when type="playbook"
@@ -81,11 +81,11 @@ type LoopStep struct {
 	Executor       string `json:"executor"`
 }
 
-// LoopRunEvent is the payload streamed to the frontend via EventsEmit during
+// SequenceRunEvent is the payload streamed to the frontend via EventsEmit during
 // a loop run. The frontend consumes these to render live progress.
-type LoopRunEvent struct {
+type SequenceRunEvent struct {
 	RunID     string `json:"run_id"`
-	LoopID    string `json:"loop_id"`
+	SequenceID    string `json:"loop_id"`
 	Phase     string `json:"phase"` // "run:start" | "step:start" | "step:output" | "step:done" | "run:done"
 	StepIndex int    `json:"step_index"`
 	AgentID   string `json:"agent_id"`
@@ -128,13 +128,13 @@ func newRunID() string {
 	return "run-" + hex.EncodeToString(b[:])
 }
 
-// runLoopStep executes a single agent invocation on the host and returns the
+// runSequenceStep executes a single agent invocation on the host and returns the
 // captured stdout + stderr + exit code. Bounded by stepRunTimeout.
 //
 // TODO: sandbox — this runs as a host subprocess. Future iterations should
 // route execution into a brainbox container or a UTM VM based on loop config.
 // See memory:project_agent_chain_sandbox_todo.md for the design backlog.
-func runLoopStep(parent context.Context, desc AgentDescriptor, prompt, cwd string) (stdout, stderr string, exitCode int, err error) {
+func runSequenceStep(parent context.Context, desc AgentDescriptor, prompt, cwd string) (stdout, stderr string, exitCode int, err error) {
 	if desc.Invocation.PromptMode == "" {
 		return "", "", -1, fmt.Errorf("agent %q has no invocation wired", desc.ID)
 	}
@@ -173,22 +173,22 @@ func runLoopStep(parent context.Context, desc AgentDescriptor, prompt, cwd strin
 	return stdout, stderr, exitCode, nil
 }
 
-// loopStepsFromJSON unmarshals a loop row's StepsJSON into structured steps.
-func loopStepsFromJSON(s string) ([]LoopStep, error) {
+// sequenceStepsFromJSON unmarshals a loop row's StepsJSON into structured steps.
+func sequenceStepsFromJSON(s string) ([]SequenceStep, error) {
 	if s == "" {
 		return nil, nil
 	}
-	var steps []LoopStep
+	var steps []SequenceStep
 	if err := json.Unmarshal([]byte(s), &steps); err != nil {
 		return nil, fmt.Errorf("decode loop steps: %w", err)
 	}
 	return steps, nil
 }
 
-// loopStepsToJSON marshals steps to the form persisted in the loops table.
-func loopStepsToJSON(steps []LoopStep) (string, error) {
+// sequenceStepsToJSON marshals steps to the form persisted in the loops table.
+func sequenceStepsToJSON(steps []SequenceStep) (string, error) {
 	if steps == nil {
-		steps = []LoopStep{}
+		steps = []SequenceStep{}
 	}
 	b, err := json.Marshal(steps)
 	if err != nil {
@@ -197,20 +197,20 @@ func loopStepsToJSON(steps []LoopStep) (string, error) {
 	return string(b), nil
 }
 
-func loopFollowupsFromJSON(s string) ([]LoopFollowup, error) {
+func sequenceFollowupsFromJSON(s string) ([]SequenceFollowup, error) {
 	if s == "" {
 		return nil, nil
 	}
-	var out []LoopFollowup
+	var out []SequenceFollowup
 	if err := json.Unmarshal([]byte(s), &out); err != nil {
 		return nil, fmt.Errorf("decode loop followups: %w", err)
 	}
 	return out, nil
 }
 
-func loopFollowupsToJSON(fs []LoopFollowup) (string, error) {
+func sequenceFollowupsToJSON(fs []SequenceFollowup) (string, error) {
 	if fs == nil {
-		fs = []LoopFollowup{}
+		fs = []SequenceFollowup{}
 	}
 	b, err := json.Marshal(fs)
 	if err != nil {
@@ -219,7 +219,7 @@ func loopFollowupsToJSON(fs []LoopFollowup) (string, error) {
 	return string(b), nil
 }
 
-func loopFilesFromJSON(s string) ([]string, error) {
+func sequenceFilesFromJSON(s string) ([]string, error) {
 	if s == "" {
 		return nil, nil
 	}
@@ -230,7 +230,7 @@ func loopFilesFromJSON(s string) ([]string, error) {
 	return out, nil
 }
 
-func loopFilesToJSON(files []string) (string, error) {
+func sequenceFilesToJSON(files []string) (string, error) {
 	if files == nil {
 		files = []string{}
 	}

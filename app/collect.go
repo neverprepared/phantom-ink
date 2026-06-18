@@ -440,7 +440,7 @@ func (a *App) dispatchCollectJob(job CollectJob) ([]CollectedEntry, error) {
 		_, err := a.RunPlaybook(job.TargetID, job.Profile, "")
 		return nil, err
 	case "loop":
-		_, err := a.RunLoop(job.TargetID, "", "")
+		_, err := a.RunSequence(job.TargetID, "", "")
 		return nil, err
 	case "runner":
 		// Fire as a one-shot shell command using the local claude binary.

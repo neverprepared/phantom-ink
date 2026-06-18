@@ -81,7 +81,7 @@
   let visiblePlaybooks = $derived(
     playbooks.filter(p => !p.workspace_profile || p.workspace_profile === draftProfile)
   );
-  let visibleLoops = $derived(
+  let visibleSequences = $derived(
     loops.filter(c => !c.workspace_profile || c.workspace_profile === draftProfile)
   );
 
@@ -95,7 +95,7 @@
       const [j, p, c] = await Promise.all([
         (a.ListCollectJobs as any)('').catch(() => []),
         (a.ListPlaybooks as any)('').catch(() => []),
-        (a.ListLoops as any)().catch(() => []),
+        (a.ListSequences as any)().catch(() => []),
       ]);
       jobs = (j ?? []) as CollectJob[];
       playbooks = ((p ?? []) as any[]).map((x: any) => ({
@@ -347,7 +347,7 @@
           <span class="form-label">loop</span>
           <select class="form-select" bind:value={draft.targetId}>
             <option value="">— select —</option>
-            {#each visibleLoops as ch (ch.id)}
+            {#each visibleSequences as ch (ch.id)}
               <option value={ch.id}>{ch.name}</option>
             {/each}
           </select>

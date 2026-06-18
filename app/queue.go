@@ -40,7 +40,7 @@ type Task = TaskRow
 // the Tasks panel and loop runner stay live without polling.
 type taskEvent struct {
 	TaskID   string `json:"task_id"`
-	LoopID  string `json:"loop_id"`
+	SequenceID  string `json:"loop_id"`
 	Status   string `json:"status"`
 	Attempts int    `json:"attempts"`
 	Error    string `json:"error"`
@@ -117,7 +117,7 @@ func (w *worker) recoverOrphans() {
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, t := range rows {
 		_, _ = w.app.db.MarkTaskFailed(t.ID, now, "", "interrupted by app restart", "")
-		w.app.emitTaskEvent(t.ID, t.LoopID, TaskFailed, t.Attempts, "interrupted by app restart")
+		w.app.emitTaskEvent(t.ID, t.SequenceID, TaskFailed, t.Attempts, "interrupted by app restart")
 	}
 }
 
@@ -133,16 +133,16 @@ func (w *worker) tickOnce(ctx context.Context) {
 	if !ok {
 		return
 	}
-	w.app.emitTaskEvent(task.ID, task.LoopID, TaskRunning, task.Attempts, "")
+	w.app.emitTaskEvent(task.ID, task.SequenceID, TaskRunning, task.Attempts, "")
 
-	runID, runErr := w.app.runLoopForTask(ctx, task)
+	runID, runErr := w.app.runSequenceForTask(ctx, task)
 	finishedAt := time.Now().UTC().Format(time.RFC3339)
 
 	if runErr == nil {
 		if err := w.app.db.MarkTaskSucceeded(task.ID, finishedAt, runID); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: task %s mark succeeded: %v\n", task.ID, err)
 		}
-		w.app.emitTaskEvent(task.ID, task.LoopID, TaskSucceeded, task.Attempts, "")
+		w.app.emitTaskEvent(task.ID, task.SequenceID, TaskSucceeded, task.Attempts, "")
 		return
 	}
 
@@ -156,12 +156,12 @@ func (w *worker) tickOnce(ctx context.Context) {
 		fmt.Fprintf(os.Stderr, "warning: task %s mark failed: %v\n", task.ID, err)
 	}
 	if requeued {
-		w.app.emitTaskEvent(task.ID, task.LoopID, TaskPending, task.Attempts, runErr.Error())
+		w.app.emitTaskEvent(task.ID, task.SequenceID, TaskPending, task.Attempts, runErr.Error())
 	} else {
 		// Terminal failure. emitTaskEvent dual-emits a task:<id> envelope with
 		// status=failed; the bus is now the only attention source (P5), so no
 		// attention_items row is needed here.
-		w.app.emitTaskEvent(task.ID, task.LoopID, TaskFailed, task.Attempts, runErr.Error())
+		w.app.emitTaskEvent(task.ID, task.SequenceID, TaskFailed, task.Attempts, runErr.Error())
 	}
 }
 

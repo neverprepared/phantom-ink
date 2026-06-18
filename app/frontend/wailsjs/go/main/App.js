@@ -86,10 +86,6 @@ export function DeleteCollectJob(arg1) {
   return window['go']['main']['App']['DeleteCollectJob'](arg1);
 }
 
-export function DeleteLoop(arg1) {
-  return window['go']['main']['App']['DeleteLoop'](arg1);
-}
-
 export function DeleteOllamaModel(arg1) {
   return window['go']['main']['App']['DeleteOllamaModel'](arg1);
 }
@@ -112,6 +108,10 @@ export function DeleteRunner(arg1) {
 
 export function DeleteSchedule(arg1) {
   return window['go']['main']['App']['DeleteSchedule'](arg1);
+}
+
+export function DeleteSequence(arg1) {
+  return window['go']['main']['App']['DeleteSequence'](arg1);
 }
 
 export function DeleteSession(arg1) {
@@ -382,16 +382,8 @@ export function ListLiveLoops(arg1) {
   return window['go']['main']['App']['ListLiveLoops'](arg1);
 }
 
-export function ListLoopRuns(arg1, arg2) {
-  return window['go']['main']['App']['ListLoopRuns'](arg1, arg2);
-}
-
 export function ListLoopTemplates() {
   return window['go']['main']['App']['ListLoopTemplates']();
-}
-
-export function ListLoops() {
-  return window['go']['main']['App']['ListLoops']();
 }
 
 export function ListOllamaModels() {
@@ -416,6 +408,14 @@ export function ListRunners() {
 
 export function ListSchedules(arg1) {
   return window['go']['main']['App']['ListSchedules'](arg1);
+}
+
+export function ListSequenceRuns(arg1, arg2) {
+  return window['go']['main']['App']['ListSequenceRuns'](arg1, arg2);
+}
+
+export function ListSequences() {
+  return window['go']['main']['App']['ListSequences']();
 }
 
 export function ListServices() {
@@ -482,10 +482,6 @@ export function RunCollectJobNow(arg1) {
   return window['go']['main']['App']['RunCollectJobNow'](arg1);
 }
 
-export function RunLoop(arg1, arg2, arg3) {
-  return window['go']['main']['App']['RunLoop'](arg1, arg2, arg3);
-}
-
 export function RunMetricScript(arg1, arg2) {
   return window['go']['main']['App']['RunMetricScript'](arg1, arg2);
 }
@@ -496,6 +492,10 @@ export function RunPlaybook(arg1, arg2, arg3) {
 
 export function RunPreflightChecks() {
   return window['go']['main']['App']['RunPreflightChecks']();
+}
+
+export function RunSequence(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RunSequence'](arg1, arg2, arg3);
 }
 
 export function SaveAutomationRule(arg1) {
@@ -510,12 +510,12 @@ export function SaveDashboardLayout(arg1, arg2) {
   return window['go']['main']['App']['SaveDashboardLayout'](arg1, arg2);
 }
 
-export function SaveLoop(arg1) {
-  return window['go']['main']['App']['SaveLoop'](arg1);
-}
-
 export function SaveSchedule(arg1) {
   return window['go']['main']['App']['SaveSchedule'](arg1);
+}
+
+export function SaveSequence(arg1) {
+  return window['go']['main']['App']['SaveSequence'](arg1);
 }
 
 export function ScanDiskUsage() {

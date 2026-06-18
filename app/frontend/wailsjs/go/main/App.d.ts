@@ -46,8 +46,6 @@ export function DeleteChannel(arg1:string):Promise<void>;
 
 export function DeleteCollectJob(arg1:string):Promise<void>;
 
-export function DeleteLoop(arg1:string):Promise<void>;
-
 export function DeleteOllamaModel(arg1:string):Promise<void>;
 
 export function DeletePlaybook(arg1:string):Promise<void>;
@@ -59,6 +57,8 @@ export function DeleteProfileImageRecord(arg1:string):Promise<void>;
 export function DeleteRunner(arg1:string):Promise<void>;
 
 export function DeleteSchedule(arg1:string):Promise<void>;
+
+export function DeleteSequence(arg1:string):Promise<void>;
 
 export function DeleteSession(arg1:string):Promise<brainbox.SessionActionResponse>;
 
@@ -194,11 +194,7 @@ export function ListHubTasks(arg1:string,arg2:string):Promise<Array<main.HubTask
 
 export function ListLiveLoops(arg1:string):Promise<Array<brainbox.LiveLoopSummary>>;
 
-export function ListLoopRuns(arg1:string,arg2:number):Promise<Array<main.LoopRunRow>>;
-
 export function ListLoopTemplates():Promise<Array<string>>;
-
-export function ListLoops():Promise<Array<main.Loop>>;
 
 export function ListOllamaModels():Promise<Array<brainbox.OllamaModel>>;
 
@@ -211,6 +207,10 @@ export function ListProfileImages():Promise<Array<main.ProfileImageRow>>;
 export function ListRunners():Promise<Array<brainbox.Runner>>;
 
 export function ListSchedules(arg1:string):Promise<Array<main.ScheduleRow>>;
+
+export function ListSequenceRuns(arg1:string,arg2:number):Promise<Array<main.SequenceRunRow>>;
+
+export function ListSequences():Promise<Array<main.Sequence>>;
 
 export function ListServices():Promise<Array<main.ServiceStatus>>;
 
@@ -244,13 +244,13 @@ export function RetryTask(arg1:string):Promise<void>;
 
 export function RunCollectJobNow(arg1:string):Promise<void>;
 
-export function RunLoop(arg1:string,arg2:string,arg3:string):Promise<string>;
-
 export function RunMetricScript(arg1:string,arg2:string):Promise<string>;
 
 export function RunPlaybook(arg1:string,arg2:string,arg3:string):Promise<brainbox.Playbook>;
 
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
+
+export function RunSequence(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function SaveAutomationRule(arg1:main.AutomationRule):Promise<void>;
 
@@ -258,9 +258,9 @@ export function SaveCollectJob(arg1:main.CollectJob):Promise<main.CollectJob>;
 
 export function SaveDashboardLayout(arg1:string,arg2:string):Promise<void>;
 
-export function SaveLoop(arg1:main.Loop):Promise<main.Loop>;
-
 export function SaveSchedule(arg1:main.ScheduleRow):Promise<main.ScheduleRow>;
+
+export function SaveSequence(arg1:main.Sequence):Promise<main.Sequence>;
 
 export function ScanDiskUsage():Promise<main.DiskOverview>;
 
