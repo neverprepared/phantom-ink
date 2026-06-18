@@ -20,6 +20,8 @@ export function BuildProfileImage(arg1:main.ProfileImageBuildRequest):Promise<vo
 
 export function CancelHubTask(arg1:string):Promise<void>;
 
+export function CancelLiveLoop(arg1:string,arg2:string):Promise<brainbox.LiveLoop>;
+
 export function CancelPlaybook(arg1:string):Promise<void>;
 
 export function CancelTask(arg1:string):Promise<void>;
@@ -114,6 +116,10 @@ export function GetLangfuseHealth():Promise<brainbox.HealthStatus>;
 
 export function GetLatestCollectedEntry(arg1:string,arg2:string):Promise<main.CollectedEntry>;
 
+export function GetLiveLoop(arg1:string):Promise<brainbox.LiveLoop>;
+
+export function GetLiveLoopIterations(arg1:string):Promise<Array<brainbox.LiveLoopIteration>>;
+
 export function GetLocalRunnerStatus():Promise<main.LocalRunnerStatus>;
 
 export function GetMatchingRules(arg1:string,arg2:string):Promise<Array<main.AutomationRule>>;
@@ -186,7 +192,11 @@ export function ListCollectedEntries(arg1:string,arg2:string,arg3:string):Promis
 
 export function ListHubTasks(arg1:string,arg2:string):Promise<Array<main.HubTask>>;
 
+export function ListLiveLoops(arg1:string):Promise<Array<brainbox.LiveLoopSummary>>;
+
 export function ListLoopRuns(arg1:string,arg2:number):Promise<Array<main.LoopRunRow>>;
+
+export function ListLoopTemplates():Promise<Array<string>>;
 
 export function ListLoops():Promise<Array<main.Loop>>;
 
@@ -273,6 +283,8 @@ export function SetRegistrySettings(arg1:string,arg2:string):Promise<void>;
 export function SetServiceConfig(arg1:string,arg2:boolean,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 
 export function SetTheme(arg1:string):Promise<void>;
+
+export function StartLiveLoop(arg1:string,arg2:Record<string, any>):Promise<brainbox.LiveLoop>;
 
 export function StartRunnerPairing(arg1:string,arg2:number,arg3:string):Promise<brainbox.PairingTicket>;
 

@@ -8,6 +8,7 @@
   // Panels (lazy imports)
   import SessionsPanel from '../panels/SessionsPanel.svelte';
   import LoopsPanel from '../panels/LoopsPanel.svelte';
+  import LoopRunsPanel from '../panels/LoopRunsPanel.svelte';
   import ConversationsPanel from '../panels/ConversationsPanel.svelte';
   import ServicesPanel from '../panels/ServicesPanel.svelte';
   import PlaybooksPanel from '../panels/PlaybooksPanel.svelte';
@@ -49,6 +50,8 @@
         <ServicesPanel />
       {:else if currentPanel.value === 'loops'}
         <LoopsPanel />
+      {:else if currentPanel.value === 'loop-runs'}
+        <LoopRunsPanel />
       {:else if currentPanel.value === 'conversations'}
         <ConversationsPanel />
       {:else if currentPanel.value === 'playbooks'}

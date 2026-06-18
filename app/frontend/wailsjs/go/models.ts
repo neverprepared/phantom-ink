@@ -485,6 +485,106 @@ export namespace brainbox {
 	        this.message = source["message"];
 	    }
 	}
+	export class LiveLoop {
+	    id: string;
+	    spec_snapshot: Record<string, any>;
+	    parent_task_id: string;
+	    status: string;
+	    iteration: number;
+	    envelope: Record<string, any>;
+	    metric_history: number[];
+	    current_child_id?: string;
+	    workspace_profile?: string;
+	    created_at: number;
+	    updated_at: number;
+	    error?: string;
+	    stop_reason?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LiveLoop(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.spec_snapshot = source["spec_snapshot"];
+	        this.parent_task_id = source["parent_task_id"];
+	        this.status = source["status"];
+	        this.iteration = source["iteration"];
+	        this.envelope = source["envelope"];
+	        this.metric_history = source["metric_history"];
+	        this.current_child_id = source["current_child_id"];
+	        this.workspace_profile = source["workspace_profile"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	        this.error = source["error"];
+	        this.stop_reason = source["stop_reason"];
+	    }
+	}
+	export class LiveLoopIteration {
+	    loop_id: string;
+	    iteration: number;
+	    convergence_metric_value: number;
+	    duration_ms: number;
+	    cost_usd: number;
+	    tokens: number;
+	    model?: string;
+	    state_at_end?: string;
+	    timestamp: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LiveLoopIteration(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.loop_id = source["loop_id"];
+	        this.iteration = source["iteration"];
+	        this.convergence_metric_value = source["convergence_metric_value"];
+	        this.duration_ms = source["duration_ms"];
+	        this.cost_usd = source["cost_usd"];
+	        this.tokens = source["tokens"];
+	        this.model = source["model"];
+	        this.state_at_end = source["state_at_end"];
+	        this.timestamp = source["timestamp"];
+	    }
+	}
+	export class LiveLoopSummary {
+	    id: string;
+	    name: string;
+	    status: string;
+	    iteration: number;
+	    max_iterations: number;
+	    parent_task_id: string;
+	    current_child_id?: string;
+	    metric_history: number[];
+	    stop_reason?: string;
+	    error?: string;
+	    workspace_profile?: string;
+	    created_at: number;
+	    updated_at: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LiveLoopSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.status = source["status"];
+	        this.iteration = source["iteration"];
+	        this.max_iterations = source["max_iterations"];
+	        this.parent_task_id = source["parent_task_id"];
+	        this.current_child_id = source["current_child_id"];
+	        this.metric_history = source["metric_history"];
+	        this.stop_reason = source["stop_reason"];
+	        this.error = source["error"];
+	        this.workspace_profile = source["workspace_profile"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	    }
+	}
 	export class Message {
 	    id: string;
 	    sender: string;
