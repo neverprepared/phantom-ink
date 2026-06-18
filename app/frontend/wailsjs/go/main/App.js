@@ -86,6 +86,10 @@ export function DeleteCollectJob(arg1) {
   return window['go']['main']['App']['DeleteCollectJob'](arg1);
 }
 
+export function DeleteLoopTemplate(arg1) {
+  return window['go']['main']['App']['DeleteLoopTemplate'](arg1);
+}
+
 export function DeleteOllamaModel(arg1) {
   return window['go']['main']['App']['DeleteOllamaModel'](arg1);
 }
@@ -124,6 +128,10 @@ export function DisableLocalRunner() {
 
 export function DismissAttention(arg1) {
   return window['go']['main']['App']['DismissAttention'](arg1);
+}
+
+export function DryRunLoopTemplate(arg1, arg2) {
+  return window['go']['main']['App']['DryRunLoopTemplate'](arg1, arg2);
 }
 
 export function EnableLocalRunner(arg1) {
@@ -236,6 +244,14 @@ export function GetLiveLoopIterations(arg1) {
 
 export function GetLocalRunnerStatus() {
   return window['go']['main']['App']['GetLocalRunnerStatus']();
+}
+
+export function GetLoopTemplate(arg1) {
+  return window['go']['main']['App']['GetLoopTemplate'](arg1);
+}
+
+export function GetLoopTemplateSchema() {
+  return window['go']['main']['App']['GetLoopTemplateSchema']();
 }
 
 export function GetMatchingRules(arg1, arg2) {
@@ -454,6 +470,10 @@ export function PurgeBackup(arg1) {
   return window['go']['main']['App']['PurgeBackup'](arg1);
 }
 
+export function PutLoopTemplate(arg1, arg2, arg3) {
+  return window['go']['main']['App']['PutLoopTemplate'](arg1, arg2, arg3);
+}
+
 export function RemoveChannelParticipant(arg1, arg2) {
   return window['go']['main']['App']['RemoveChannelParticipant'](arg1, arg2);
 }
@@ -612,4 +632,8 @@ export function UpdatePlaybook(arg1, arg2) {
 
 export function UsableAgents() {
   return window['go']['main']['App']['UsableAgents']();
+}
+
+export function ValidateLoopTemplate(arg1) {
+  return window['go']['main']['App']['ValidateLoopTemplate'](arg1);
 }
