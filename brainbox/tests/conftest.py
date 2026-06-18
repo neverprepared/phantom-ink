@@ -18,6 +18,7 @@ def reset_hub_state():
     from brainbox.store import reset_store_for_tests
 
     from brainbox.scheduler import reset_for_tests as _reset_scheduler
+    from brainbox.loop_runner import reset_for_tests as _reset_loop_runner
 
     def _reset():
         _auth._api_key = ""
@@ -32,6 +33,7 @@ def reset_hub_state():
         _router._tasks.clear()
         _router._listeners.clear()
         _reset_scheduler()
+        _reset_loop_runner()  # clears _instances + _child_to_loop
         reset_store_for_tests()  # fresh in-memory DB per test
 
     _reset()

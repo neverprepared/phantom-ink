@@ -1,0 +1,440 @@
+"""Loop runner core — Phase A3b.
+
+Drives a LoopSpec end-to-end:
+  start_loop(spec, envelope) → creates LoopInstance, parent task, first child
+  advance_loop(loop_id, envelope) → called when an iteration completes;
+    evaluates convergence/stop/max-iter/thrash and either enqueues the next
+    iteration or terminates the loop.
+
+The parent task is RUNNING throughout the loop's life — it represents the
+loop itself in the existing Tasks panel and never gets dispatched (the
+scheduler only dispatches PENDING). The iteration *children* are normal
+tasks dispatched by the scheduler. When a child completes, the loop runner
+(via a router event listener wired up in A3c, or directly in tests) calls
+advance_loop with the child's emitted envelope.
+
+A3b scope:
+  - Single-node iteration. Each iteration enqueues a child task that runs
+    the body's FIRST node. Multi-node flowchart traversal (edge predicates,
+    fan-out/fan-in, EdgeTransform) is a follow-up — the data model supports
+    it, the runner doesn't traverse it yet.
+  - In-memory instance store. Persistence to the brainbox store comes
+    with A3c, when iteration-metric rows also start being written.
+  - No router event-listener registration here. Tests call advance_loop
+    directly; the listener wiring lands in A3c so the dispatch path is
+    intact across PR boundaries.
+
+See ~/.claude/plans/okay-the-idea-of-replicated-popcorn.md.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import uuid
+from typing import Any
+
+from .log import get_logger
+from .loop_predicate import eval_metric, eval_predicate
+from .loops import (
+    HandoffEnvelope,
+    LoopInstance,
+    LoopSpec,
+    LoopStatus,
+    StopCondition,
+    TemplateSnapshot,
+)
+from .models import Task, TaskStatus
+from .utils import now_ms as _now_ms
+
+log = get_logger()
+
+# ---------------------------------------------------------------------------
+# State — in-memory until A3c adds persistence
+# ---------------------------------------------------------------------------
+
+_instances: dict[str, LoopInstance] = {}
+
+# Reverse index: child_task_id → loop_id. Lets the router event listener
+# (A3c) find the loop a completing task belongs to in O(1).
+_child_to_loop: dict[str, str] = {}
+
+
+def reset_for_tests() -> None:
+    """Clear runner state. Called from the autouse fixture in conftest."""
+    _instances.clear()
+    _child_to_loop.clear()
+
+
+def get_instance(loop_id: str) -> LoopInstance | None:
+    return _instances.get(loop_id)
+
+
+def list_instances() -> list[LoopInstance]:
+    return list(_instances.values())
+
+
+def loop_id_for_child(child_task_id: str) -> str | None:
+    return _child_to_loop.get(child_task_id)
+
+
+# ---------------------------------------------------------------------------
+# start_loop
+# ---------------------------------------------------------------------------
+
+
+async def start_loop(
+    spec: LoopSpec,
+    initial_envelope: HandoffEnvelope,
+    *,
+    workspace_profile: str | None = None,
+    workspace_home: str | None = None,
+) -> LoopInstance:
+    """Create a Loop instance, its parent task, and enqueue iteration 1.
+
+    Returns the LoopInstance with ``status == RUNNING`` and
+    ``current_child_id`` set to the iteration-1 child task.
+
+    Raises ValueError if the LoopSpec body is empty (a loop with no nodes
+    cannot iterate).
+    """
+    from . import router
+
+    if not spec.body.nodes:
+        raise ValueError("LoopSpec.body.nodes must contain at least one node")
+
+    loop_id = str(uuid.uuid4())
+    now = _now_ms()
+
+    # Pin the template snapshot if the caller didn't already. The runner
+    # only reads from the snapshot for the duration of the loop — see plan
+    # for the pin-template / live-bind-roles rationale.
+    if spec.template_snapshot is None:
+        body_json = spec.model_dump_json(by_alias=True)
+        snapshot = TemplateSnapshot(
+            name=spec.name or "ad-hoc",
+            version="",
+            hash=hashlib.sha256(body_json.encode()).hexdigest()[:16],
+            body_json=body_json,
+        )
+        spec = spec.model_copy(update={"template_snapshot": snapshot})
+
+    # Stamp the loop_id onto the envelope so every downstream predicate has
+    # a stable handle to the loop it came from.
+    initial_envelope = initial_envelope.model_copy(update={
+        "loop_id": loop_id,
+        "iteration": 0,
+    })
+
+    # Create the parent task directly in router._tasks — register_ci_ratchet_task
+    # is the existing precedent for special-purpose tasks that bypass
+    # submit_task's policy / agent-registry check. The parent stays RUNNING
+    # throughout the loop's life and never gets dispatched (scheduler only
+    # picks up PENDING).
+    parent_id = str(uuid.uuid4())
+    parent = Task(
+        id=parent_id,
+        description=f"loop: {spec.name or spec.id or 'ad-hoc'}",
+        agent_name=f"loop:{spec.name or 'ad-hoc'}",
+        status=TaskStatus.RUNNING,
+        created_at=now,
+        updated_at=now,
+        job_id=parent_id,
+        workspace_profile=workspace_profile,
+        workspace_home=workspace_home,
+    )
+    router._tasks[parent_id] = parent
+
+    # Create the instance BEFORE enqueueing the first child so the
+    # child_to_loop reverse index is consistent if anything fires immediately.
+    inst = LoopInstance(
+        id=loop_id,
+        spec_snapshot=spec,
+        parent_task_id=parent_id,
+        status=LoopStatus.RUNNING,
+        iteration=0,
+        envelope=initial_envelope,
+        workspace_profile=workspace_profile,
+        created_at=now,
+        updated_at=now,
+    )
+    _instances[loop_id] = inst
+
+    # Enqueue iteration 1 — see _enqueue_iteration for the single-node
+    # simplification A3b is taking.
+    child_id = await _enqueue_iteration(
+        inst,
+        envelope=initial_envelope,
+        iteration=1,
+        workspace_home=workspace_home,
+    )
+    inst.iteration = 1
+    inst.current_child_id = child_id
+    inst.updated_at = _now_ms()
+
+    log.info(
+        "loop.started",
+        metadata={
+            "loop_id": loop_id,
+            "parent_task_id": parent_id,
+            "first_child_id": child_id,
+            "spec": spec.name,
+        },
+    )
+    return inst
+
+
+# ---------------------------------------------------------------------------
+# advance_loop — convergence / stop / thrash / max-iter / continue
+# ---------------------------------------------------------------------------
+
+
+async def advance_loop(
+    loop_id: str,
+    completed_envelope: HandoffEnvelope,
+) -> LoopInstance:
+    """Called when an iteration child task completes.
+
+    Evaluates the loop's predicates in order:
+      1. convergence_predicate — true → CONVERGED, parent COMPLETED
+      2. stop_conditions       — any match → STOPPED_BY_CONDITION, parent FAILED
+      3. max_iterations cap    — reached → MAX_ITER, parent FAILED
+      4. thrash detection      — metric non-decreasing for 2 iterations → THRASHING, parent FAILED
+      5. otherwise             → enqueue next iteration, update current_child_id
+
+    The completed_envelope is stamped with the loop_id and iteration before
+    the metric is read off it — so callers can pass either a freshly-built
+    envelope or the actual child task's result.
+    """
+    from . import router
+
+    inst = _instances.get(loop_id)
+    if inst is None:
+        raise ValueError(f"Loop '{loop_id}' not found")
+    if inst.status not in (LoopStatus.RUNNING, LoopStatus.PENDING):
+        raise ValueError(
+            f"Loop '{loop_id}' is not active (status: {inst.status})"
+        )
+
+    spec = inst.spec_snapshot
+    iteration = inst.iteration
+    stamped = completed_envelope.model_copy(update={
+        "loop_id": loop_id,
+        "iteration": iteration,
+    })
+    inst.envelope = stamped
+
+    # Record the convergence metric for this iteration. Missing field is 0.0
+    # (matches the Go side coercion); we let that through so charts can
+    # render iteration N even when no findings populated.
+    metric_value = (
+        eval_metric(stamped, spec.convergence_metric)
+        if spec.convergence_metric
+        else 0.0
+    )
+    inst.metric_history.append(metric_value)
+
+    # 1. Convergence — the happy path
+    if eval_predicate(stamped, spec.convergence_predicate):
+        _terminate(inst, LoopStatus.CONVERGED, parent_status=TaskStatus.COMPLETED)
+        log.info(
+            "loop.converged",
+            metadata={"loop_id": loop_id, "iteration": iteration, "metric": metric_value},
+        )
+        return inst
+
+    # 2. Stop conditions — explicit operator-authored caps (diff size, cost)
+    matched = _matched_stop_condition(spec.stop_conditions, stamped)
+    if matched is not None:
+        inst.stop_reason = matched.reason or matched.predicate
+        _terminate(inst, LoopStatus.STOPPED_BY_CONDITION, parent_status=TaskStatus.FAILED)
+        log.info(
+            "loop.stopped_by_condition",
+            metadata={"loop_id": loop_id, "iteration": iteration, "reason": inst.stop_reason},
+        )
+        return inst
+
+    # 3. Iteration cap — last line of defense against runaway
+    if iteration >= spec.max_iterations:
+        _terminate(inst, LoopStatus.MAX_ITER, parent_status=TaskStatus.FAILED)
+        log.info(
+            "loop.max_iter",
+            metadata={"loop_id": loop_id, "iteration": iteration, "cap": spec.max_iterations},
+        )
+        return inst
+
+    # 4. Thrash — non-decreasing metric for two consecutive iterations.
+    # Needs at least 3 datapoints to make a non-decreasing claim (i-2, i-1, i).
+    # Cheap heuristic that catches 80% of "agent is editing without converging."
+    if _is_thrashing(inst.metric_history):
+        _terminate(inst, LoopStatus.THRASHING, parent_status=TaskStatus.FAILED)
+        log.info(
+            "loop.thrashing",
+            metadata={"loop_id": loop_id, "iteration": iteration, "history": inst.metric_history},
+        )
+        return inst
+
+    # 5. Continue — enqueue iteration N+1
+    next_iter = iteration + 1
+    # Old child mapping no longer needed; child task already COMPLETED.
+    if inst.current_child_id is not None:
+        _child_to_loop.pop(inst.current_child_id, None)
+    next_child_id = await _enqueue_iteration(
+        inst,
+        envelope=stamped,
+        iteration=next_iter,
+        workspace_home=router._tasks[inst.parent_task_id].workspace_home,
+    )
+    inst.iteration = next_iter
+    inst.current_child_id = next_child_id
+    inst.updated_at = _now_ms()
+
+    log.info(
+        "loop.advanced",
+        metadata={
+            "loop_id": loop_id,
+            "iteration": next_iter,
+            "child_task_id": next_child_id,
+            "metric": metric_value,
+        },
+    )
+    return inst
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+async def _enqueue_iteration(
+    inst: LoopInstance,
+    *,
+    envelope: HandoffEnvelope,
+    iteration: int,
+    workspace_home: str | None,
+) -> str:
+    """Enqueue the child task for one iteration of the loop body.
+
+    A3b simplification: runs the FIRST node only. Flowchart traversal (edges,
+    fan-out/fan-in) is a follow-up. The prompt is the node's prompt with
+    {{iteration}} substituted; full envelope-driven templating lands when the
+    real review-driven loop template is authored.
+    """
+    from . import router
+
+    spec = inst.spec_snapshot
+    first_node = spec.body.nodes[0]
+    # Prefer agent_id if set; fall back to role (which becomes the agent_name)
+    agent_name = first_node.agent_id or first_node.role
+    if not agent_name:
+        raise ValueError(
+            f"loop {inst.id}: first node {first_node.id!r} has no agent_id or role"
+        )
+
+    description = (
+        f"loop {inst.id[:8]} iter {iteration}: "
+        f"{first_node.id} ({first_node.kind.value})"
+    )
+
+    task = await router.submit_task(
+        description=description,
+        agent_name=agent_name,
+        workspace_profile=inst.workspace_profile,
+        workspace_home=workspace_home,
+        job_id=inst.parent_task_id,
+    )
+    _child_to_loop[task.id] = inst.id
+    return task.id
+
+
+def _matched_stop_condition(
+    conditions: list[StopCondition],
+    envelope: HandoffEnvelope,
+) -> StopCondition | None:
+    for cond in conditions:
+        if eval_predicate(envelope, cond.predicate):
+            return cond
+    return None
+
+
+def _is_thrashing(history: list[float]) -> bool:
+    """Two consecutive non-decreasing metric values = thrashing.
+
+    Needs at least three datapoints: with history [a, b, c], we check whether
+    b >= a AND c >= b. A single flat or rising step is normal noise; two in a
+    row is the agent failing to converge.
+    """
+    if len(history) < 3:
+        return False
+    a, b, c = history[-3], history[-2], history[-1]
+    return b >= a and c >= b
+
+
+def _terminate(
+    inst: LoopInstance,
+    loop_status: LoopStatus,
+    *,
+    parent_status: TaskStatus,
+    error: str | None = None,
+) -> None:
+    """Move the LoopInstance to a terminal state and transition the parent
+    task accordingly. Cleans up the child→loop reverse mapping.
+
+    Direct task-state writes (bypassing complete_task / fail_task) are
+    intentional: complete_task requires status=RUNNING-with-session-name,
+    which the loop parent doesn't have. The parent is a marker task, not a
+    real dispatch.
+    """
+    from . import router
+
+    now = _now_ms()
+    inst.status = loop_status
+    if error:
+        inst.error = error
+    inst.updated_at = now
+
+    if inst.current_child_id is not None:
+        _child_to_loop.pop(inst.current_child_id, None)
+    inst.current_child_id = None
+
+    parent = router._tasks.get(inst.parent_task_id)
+    if parent is not None:
+        parent.status = parent_status
+        parent.updated_at = now
+        if error:
+            parent.error = error
+        if parent_status == TaskStatus.COMPLETED:
+            router._emit("task.completed", parent)
+        elif parent_status == TaskStatus.FAILED:
+            parent.error = parent.error or f"loop terminated: {loop_status.value}"
+            router._emit("task.failed", parent)
+
+
+# ---------------------------------------------------------------------------
+# Failure handling — child task FAILED → loop FAILED
+# ---------------------------------------------------------------------------
+
+
+async def on_iteration_failed(child_task_id: str, error: str) -> LoopInstance | None:
+    """Called when an iteration child task transitions to FAILED.
+
+    The loop fails too — no automatic retry at the loop layer because the
+    router already retried per the task's max_attempts policy. If retry is
+    desired, the operator restarts the whole loop.
+    """
+    loop_id = _child_to_loop.get(child_task_id)
+    if loop_id is None:
+        return None
+    inst = _instances.get(loop_id)
+    if inst is None or inst.status not in (LoopStatus.RUNNING, LoopStatus.PENDING):
+        return inst
+    _terminate(
+        inst,
+        LoopStatus.FAILED,
+        parent_status=TaskStatus.FAILED,
+        error=f"iteration {inst.iteration} failed: {error}",
+    )
+    log.info(
+        "loop.iteration_failed",
+        metadata={"loop_id": loop_id, "iteration": inst.iteration, "error": error},
+    )
+    return inst
