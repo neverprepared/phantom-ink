@@ -34,6 +34,10 @@ export function CancelHubTask(arg1) {
   return window['go']['main']['App']['CancelHubTask'](arg1);
 }
 
+export function CancelLiveLoop(arg1, arg2) {
+  return window['go']['main']['App']['CancelLiveLoop'](arg1, arg2);
+}
+
 export function CancelPlaybook(arg1) {
   return window['go']['main']['App']['CancelPlaybook'](arg1);
 }
@@ -222,6 +226,14 @@ export function GetLatestCollectedEntry(arg1, arg2) {
   return window['go']['main']['App']['GetLatestCollectedEntry'](arg1, arg2);
 }
 
+export function GetLiveLoop(arg1) {
+  return window['go']['main']['App']['GetLiveLoop'](arg1);
+}
+
+export function GetLiveLoopIterations(arg1) {
+  return window['go']['main']['App']['GetLiveLoopIterations'](arg1);
+}
+
 export function GetLocalRunnerStatus() {
   return window['go']['main']['App']['GetLocalRunnerStatus']();
 }
@@ -366,8 +378,16 @@ export function ListHubTasks(arg1, arg2) {
   return window['go']['main']['App']['ListHubTasks'](arg1, arg2);
 }
 
+export function ListLiveLoops(arg1) {
+  return window['go']['main']['App']['ListLiveLoops'](arg1);
+}
+
 export function ListLoopRuns(arg1, arg2) {
   return window['go']['main']['App']['ListLoopRuns'](arg1, arg2);
+}
+
+export function ListLoopTemplates() {
+  return window['go']['main']['App']['ListLoopTemplates']();
 }
 
 export function ListLoops() {
@@ -540,6 +560,10 @@ export function SetServiceConfig(arg1, arg2, arg3, arg4, arg5) {
 
 export function SetTheme(arg1) {
   return window['go']['main']['App']['SetTheme'](arg1);
+}
+
+export function StartLiveLoop(arg1, arg2) {
+  return window['go']['main']['App']['StartLiveLoop'](arg1, arg2);
 }
 
 export function StartRunnerPairing(arg1, arg2, arg3) {
