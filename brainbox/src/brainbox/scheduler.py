@@ -206,6 +206,17 @@ async def _dispatch_pending(task: Task) -> None:
     workspace_home = task.workspace_home
     workspace_profile = task.workspace_profile
 
+    # Loop iteration context → session env vars so reviewer Mode C can detect
+    # it without parsing the task description. Permission-tier env filtering
+    # is applied downstream in lifecycle.configure based on task fields.
+    extra_env: dict[str, str] = {}
+    if task.loop_id:
+        extra_env["BRAINBOX_LOOP_ID"] = task.loop_id
+        if task.loop_iteration > 0:
+            extra_env["BRAINBOX_LOOP_ITERATION"] = str(task.loop_iteration)
+        if task.permission_tier:
+            extra_env["BRAINBOX_LOOP_PERMISSIONS"] = task.permission_tier
+
     try:
         await lifecycle.run_pipeline(
             session_name=task.session_name,
@@ -220,6 +231,7 @@ async def _dispatch_pending(task: Task) -> None:
             workspace_profile=workspace_profile,
             runner=resolved_runner,
             backend=task.backend,
+            extra_env=extra_env or None,
         )
     except Exception as exc:
         task.attempts += 1

@@ -58,11 +58,21 @@ async def submit_task(
     priority: int = 0,
     max_attempts: int = 1,
     deadline_ms: int | None = None,
+    loop_id: str | None = None,
+    loop_iteration: int = 0,
+    permission_tier: str | None = None,
+    node_requires: list[str] | None = None,
 ) -> Task:
     """Enqueue a task for the given agent.
 
     Returns immediately with the task in PENDING state. The scheduler loop
     dispatches it to a runner (or in-process) within seconds.
+
+    Loop context kwargs (loop_id, loop_iteration, permission_tier,
+    node_requires) are populated only when the task is an iteration child
+    of a Loop. lifecycle.run_pipeline reads them to inject BRAINBOX_LOOP_ID
+    and BRAINBOX_ITERATION into the session env and to apply the Loop's
+    permission tier to the env merge.
     """
     from . import scheduler
 
@@ -100,6 +110,10 @@ async def submit_task(
         priority=priority,
         max_attempts=max_attempts,
         deadline_ms=deadline_ms,
+        loop_id=loop_id,
+        loop_iteration=loop_iteration,
+        permission_tier=permission_tier,
+        node_requires=node_requires or [],
     )
 
     # Register as child of parent task

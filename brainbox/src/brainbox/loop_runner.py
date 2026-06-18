@@ -358,6 +358,10 @@ async def _enqueue_iteration(
         workspace_profile=inst.workspace_profile,
         workspace_home=workspace_home,
         job_id=inst.parent_task_id,
+        loop_id=inst.id,
+        loop_iteration=iteration,
+        permission_tier=spec.permissions.value if spec.permissions else None,
+        node_requires=list(first_node.requires),
     )
     _child_to_loop[task.id] = inst.id
     return task.id
