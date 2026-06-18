@@ -50,6 +50,17 @@ stop_conditions:
   - predicate: "observations.diff_lines > `500`"
     reason: diff_too_large
 permissions: default
+required_refs:
+  - name: pr_number
+    type: int
+    description: GitHub PR number on the target repository
+  - name: repo
+    type: string
+    description: owner/name slug (e.g. neverprepared/phantom-ink)
+  - name: head_sha
+    type: sha
+    description: PR head commit SHA — auto-populated by the webhook on PR events
+    required: false
 ---
 
 # pr-review-loop

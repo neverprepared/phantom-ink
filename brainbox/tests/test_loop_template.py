@@ -165,6 +165,18 @@ class TestPRReviewLoopContent:
         assert "repo:read" in reviewer.requires
         assert not any(r.startswith("repo:write") for r in reviewer.requires)
 
+    def test_declares_required_refs(self):
+        from brainbox.loops import RequiredRefType
+
+        spec = load_template("pr-review-loop")
+        names = {ref.name for ref in spec.required_refs}
+        assert names == {"pr_number", "repo", "head_sha"}
+        pr_ref = next(r for r in spec.required_refs if r.name == "pr_number")
+        assert pr_ref.type == RequiredRefType.INT
+        assert pr_ref.required is True
+        head_ref = next(r for r in spec.required_refs if r.name == "head_sha")
+        assert head_ref.required is False
+
 
 # ---------------------------------------------------------------------------
 # Integration — template → start_loop end-to-end

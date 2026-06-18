@@ -98,6 +98,21 @@ async def start_loop(
     if not spec.body.nodes:
         raise ValueError("LoopSpec.body.nodes must contain at least one node")
 
+    # required_refs are presence-checked against initial_envelope.artifact_refs
+    # before we enqueue iteration 1. Day 1 doesn't enforce types; missing
+    # required ref names surface as a single ValueError with the full list,
+    # so the operator sees every gap at once rather than fixing them one by
+    # one.
+    missing_refs = [
+        ref.name
+        for ref in spec.required_refs
+        if ref.required and ref.name not in (initial_envelope.artifact_refs or {})
+    ]
+    if missing_refs:
+        raise ValueError(
+            f"missing required artifact_refs: {', '.join(missing_refs)}"
+        )
+
     loop_id = str(uuid.uuid4())
     now = _now_ms()
 

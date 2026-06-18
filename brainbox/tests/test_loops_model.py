@@ -209,3 +209,44 @@ def test_stop_condition_carries_reason_tag():
         reason="diff_too_large",
     )
     assert sc.reason == "diff_too_large"
+
+
+# ---------------------------------------------------------------------------
+# RequiredRef + LoopSpec.required_refs
+# ---------------------------------------------------------------------------
+
+
+def test_loopspec_required_refs_defaults_to_empty():
+    spec = _minimal_spec()
+    assert spec.required_refs == []
+
+
+def test_loopspec_accepts_required_refs_declarations():
+    from brainbox.loops import RequiredRef, RequiredRefType
+
+    spec = _minimal_spec()
+    spec = LoopSpec(
+        intent=Intent(outcome="x", convergence="`true`"),
+        body=Body(nodes=[Node(id="n", role="reviewer")]),
+        required_refs=[
+            RequiredRef(name="pr_number", type=RequiredRefType.INT,
+                        description="GitHub PR number"),
+            RequiredRef(name="repo", type=RequiredRefType.STRING,
+                        description="owner/name"),
+            RequiredRef(name="head_sha", type=RequiredRefType.SHA,
+                        description="head commit", required=False),
+        ],
+    )
+    assert len(spec.required_refs) == 3
+    assert spec.required_refs[0].name == "pr_number"
+    assert spec.required_refs[0].type == RequiredRefType.INT
+    assert spec.required_refs[2].required is False
+
+
+def test_required_ref_defaults():
+    from brainbox.loops import RequiredRef, RequiredRefType
+
+    ref = RequiredRef(name="x")
+    assert ref.type == RequiredRefType.STRING
+    assert ref.required is True
+    assert ref.description == ""

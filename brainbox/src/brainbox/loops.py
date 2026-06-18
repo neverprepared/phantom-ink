@@ -58,6 +58,35 @@ class EscalationAction(str, Enum):
     FAIL = "fail"
 
 
+class RequiredRefType(str, Enum):
+    """Operator-facing type hint for a Loop's required artifact_refs.
+
+    Drives the Trigger form's input rendering (number input for int,
+    text input for string, fixed-width font + length hint for sha) and
+    documents intent for AI Assist when generating templates. Day 1 the
+    runner does NOT enforce type — the start_loop check is presence-only.
+    Type coercion / validation is a follow-up.
+    """
+
+    INT = "int"
+    STRING = "string"
+    SHA = "sha"
+
+
+class RequiredRef(BaseModel):
+    """Declares an artifact_refs key that the operator (or webhook handler)
+    must populate before start_loop accepts the trigger.
+
+    Surfaced in the desktop Trigger tab as a form field; pre-populated
+    by the GitHub webhook handler from the PR payload.
+    """
+
+    name: str
+    type: RequiredRefType = RequiredRefType.STRING
+    description: str = ""
+    required: bool = True
+
+
 # ---------------------------------------------------------------------------
 # Body — Nodes and Edges
 # ---------------------------------------------------------------------------
@@ -181,6 +210,12 @@ class LoopSpec(BaseModel):
     convergence_metric: str = ""  # JMESPath, number — charted per iteration
     stop_conditions: list[StopCondition] = Field(default_factory=list)
     permissions: PermissionTier = PermissionTier.DEFAULT
+    # Operator-supplied refs the loop needs to trigger. start_loop validates
+    # every required entry exists in initial envelope.artifact_refs and
+    # rejects with a useful message when any is missing. The desktop Trigger
+    # tab and the AI Assist generator read this to know which form fields
+    # to render for a given template.
+    required_refs: list[RequiredRef] = Field(default_factory=list)
     template_snapshot: TemplateSnapshot | None = None
     cwd: str = ""
     workspace_profile: str = ""
