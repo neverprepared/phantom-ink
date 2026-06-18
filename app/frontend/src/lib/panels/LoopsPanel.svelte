@@ -15,6 +15,7 @@
   import { notifications } from '../notifications.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import YamlEditor from '../components/YamlEditor.svelte';
   import LoopRunsPanel from './LoopRunsPanel.svelte';
 
   type TabId = 'templates' | 'runs' | 'trigger';
@@ -37,6 +38,9 @@
   let selectedName = $state<string | null>(null);
   let selectedTemplate = $state<LoopTemplate | null>(null);
   let templateError = $state<string | null>(null);
+  let editorValue = $state('');     // editor buffer (drifts from selectedTemplate.yaml when dirty)
+  let savedYaml = $state('');       // last persisted text — diff against editorValue = dirty
+  let templateBusy = $state(false); // true while save/fork/delete is in flight
 
   async function loadTemplateList() {
     templatesLoading = true;
@@ -54,15 +58,132 @@
     }
   }
 
+  function isDirty(): boolean {
+    return editorValue !== savedYaml;
+  }
+
   async function selectName(name: string) {
+    if (isDirty()) {
+      const ok = window.confirm(
+        `${selectedName} has unsaved changes. Discard them?`,
+      );
+      if (!ok) return;
+    }
     selectedName = name;
     selectedTemplate = null;
     templateError = null;
     try {
       const api = await getApi();
-      selectedTemplate = (await api.GetLoopTemplate(name)) as LoopTemplate;
+      const tpl = (await api.GetLoopTemplate(name)) as LoopTemplate;
+      selectedTemplate = tpl;
+      savedYaml = tpl.yaml;
+      editorValue = tpl.yaml;
     } catch (err) {
       templateError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  // Editor → buffer
+  function handleEditorChange(next: string) {
+    editorValue = next;
+  }
+
+  // Debounced server-side validation: the editor passes the current doc to
+  // this function on each lint pass (CodeMirror handles the debounce);
+  // we hit /api/loops/templates/validate and return the structured errors.
+  async function lintTemplate(text: string) {
+    try {
+      const api = await getApi();
+      const result = await api.ValidateLoopTemplate(text);
+      if (result?.ok) return [];
+      return (result?.errors ?? []).map((e) => ({
+        line: e.line ?? null,
+        col: e.col ?? null,
+        field: e.field ?? null,
+        message: e.message,
+      }));
+    } catch (err) {
+      console.warn('lint validation failed', err);
+      return [];
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Save / Fork / Delete
+  // ---------------------------------------------------------------------------
+
+  async function saveTemplate() {
+    if (!selectedTemplate) return;
+    if (selectedTemplate.origin === 'built-in') {
+      notifications.error('Built-in templates can\'t be saved. Use Fork.');
+      return;
+    }
+    templateBusy = true;
+    try {
+      const api = await getApi();
+      const updated = (await api.PutLoopTemplate(
+        selectedTemplate.name,
+        editorValue,
+        false,
+      )) as LoopTemplate;
+      selectedTemplate = updated;
+      savedYaml = updated.yaml;
+      editorValue = updated.yaml;
+      notifications.success(`${updated.name} saved`);
+    } catch (err) {
+      notifications.error(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      templateBusy = false;
+    }
+  }
+
+  async function forkTemplate() {
+    if (!selectedTemplate) return;
+    templateBusy = true;
+    try {
+      const api = await getApi();
+      const updated = (await api.PutLoopTemplate(
+        selectedTemplate.name,
+        editorValue,
+        true,
+      )) as LoopTemplate;
+      // Re-list so the new user-origin copy appears as a fresh option;
+      // re-select it so the editor reflects origin: "user" and Save is enabled.
+      await loadTemplateList();
+      selectedTemplate = updated;
+      savedYaml = updated.yaml;
+      editorValue = updated.yaml;
+      selectedName = updated.name;
+      notifications.success(`Forked ${updated.name} to user dir`);
+    } catch (err) {
+      notifications.error(`Fork failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      templateBusy = false;
+    }
+  }
+
+  async function deleteTemplate() {
+    if (!selectedTemplate) return;
+    if (selectedTemplate.origin === 'built-in') {
+      notifications.error('Built-in templates can\'t be deleted.');
+      return;
+    }
+    const ok = window.confirm(`Delete user template ${selectedTemplate.name}?`);
+    if (!ok) return;
+    templateBusy = true;
+    try {
+      const api = await getApi();
+      await api.DeleteLoopTemplate(selectedTemplate.name);
+      notifications.success(`${selectedTemplate.name} deleted`);
+      selectedTemplate = null;
+      savedYaml = '';
+      editorValue = '';
+      selectedName = null;
+      await loadTemplateList();
+    } catch (err) {
+      notifications.error(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      templateBusy = false;
     }
   }
 
@@ -250,12 +371,45 @@
               {#if selectedTemplate.version}
                 <span class="dim">v{selectedTemplate.version}</span>
               {/if}
+              {#if isDirty()}
+                <span class="dirty-dot" title="Unsaved changes"></span>
+              {/if}
             </div>
             <div class="hash">hash {selectedTemplate.hash}</div>
           </div>
-          <pre class="yaml-view">{selectedTemplate.yaml}</pre>
-          <div class="editor-note">
-            Read-only view — CodeMirror editor + save / fork / delete land in the next PR.
+          <div class="editor-wrap">
+            <YamlEditor
+              value={selectedTemplate.yaml}
+              onChange={handleEditorChange}
+              lintRequest={lintTemplate}
+            />
+          </div>
+          <div class="editor-actions">
+            {#if selectedTemplate.origin === 'user'}
+              <button
+                class="btn-save"
+                onclick={saveTemplate}
+                disabled={templateBusy || !isDirty()}
+              >
+                {templateBusy ? 'Saving…' : 'Save'}
+              </button>
+              <button
+                class="btn-delete"
+                onclick={deleteTemplate}
+                disabled={templateBusy}
+              >
+                Delete
+              </button>
+            {:else}
+              <button
+                class="btn-fork"
+                onclick={forkTemplate}
+                disabled={templateBusy}
+              >
+                {templateBusy ? 'Forking…' : 'Fork to user'}
+              </button>
+              <span class="dim">Built-in templates are read-only. Fork to make changes.</span>
+            {/if}
           </div>
         {:else}
           <div class="dim">Select a template to view.</div>
@@ -449,25 +603,58 @@
     font-size: 11px;
     color: var(--color-text-muted, #888);
   }
-  .yaml-view {
-    background: var(--color-surface-1, #181818);
-    border: 1px solid var(--color-border, #2a2a2a);
-    border-radius: 4px;
-    padding: 10px;
-    font-family: var(--font-mono, monospace);
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--color-text, #ddd);
-    overflow: auto;
-    margin: 0;
+  .editor-wrap {
     flex: 1;
     min-height: 0;
-    white-space: pre;
+    display: flex;
+    flex-direction: column;
   }
-  .editor-note {
-    font-size: 11px;
-    color: var(--color-text-muted, #888);
-    font-style: italic;
+  .editor-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding-top: 4px;
+  }
+  .btn-save,
+  .btn-fork,
+  .btn-delete {
+    border: 1px solid var(--color-border, #2a2a2a);
+    background: var(--color-surface-2, #1a1a1a);
+    color: var(--color-text, #ddd);
+    padding: 5px 14px;
+    font-size: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .btn-save {
+    background: var(--color-accent, #88c1ff);
+    color: #111;
+    border-color: var(--color-accent, #88c1ff);
+    font-weight: 600;
+  }
+  .btn-fork {
+    background: #1f3a2a;
+    color: #95e0a8;
+    border-color: #1f3a2a;
+  }
+  .btn-delete {
+    background: transparent;
+    color: #ff9a9a;
+    border-color: #4a2a2a;
+  }
+  .btn-save:disabled,
+  .btn-fork:disabled,
+  .btn-delete:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .dirty-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #ffb070;
+    margin-left: 4px;
   }
 
   /* Runs tab — child panel takes over */
