@@ -1633,118 +1633,6 @@ export namespace main {
 	        this.line = source["line"];
 	    }
 	}
-	export class LoopFollowup {
-	    loop_id: string;
-	    input_from: string;
-	    input_literal: string;
-	    cwd: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new LoopFollowup(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.loop_id = source["loop_id"];
-	        this.input_from = source["input_from"];
-	        this.input_literal = source["input_literal"];
-	        this.cwd = source["cwd"];
-	    }
-	}
-	export class LoopStep {
-	    type: string;
-	    agent_id: string;
-	    playbook_id: string;
-	    prompt_template: string;
-	    cwd: string;
-	    executor: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new LoopStep(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.type = source["type"];
-	        this.agent_id = source["agent_id"];
-	        this.playbook_id = source["playbook_id"];
-	        this.prompt_template = source["prompt_template"];
-	        this.cwd = source["cwd"];
-	        this.executor = source["executor"];
-	    }
-	}
-	export class Loop {
-	    id: string;
-	    name: string;
-	    description: string;
-	    steps: LoopStep[];
-	    cwd: string;
-	    on_success: LoopFollowup[];
-	    files: string[];
-	    workspace_profile: string;
-	    created_at: string;
-	    updated_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Loop(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.description = source["description"];
-	        this.steps = this.convertValues(source["steps"], LoopStep);
-	        this.cwd = source["cwd"];
-	        this.on_success = this.convertValues(source["on_success"], LoopFollowup);
-	        this.files = source["files"];
-	        this.workspace_profile = source["workspace_profile"];
-	        this.created_at = source["created_at"];
-	        this.updated_at = source["updated_at"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-	
-	export class LoopRunRow {
-	    id: string;
-	    loop_id: string;
-	    started_at: string;
-	    finished_at: string;
-	    status: string;
-	    log_json: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new LoopRunRow(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.loop_id = source["loop_id"];
-	        this.started_at = source["started_at"];
-	        this.finished_at = source["finished_at"];
-	        this.status = source["status"];
-	        this.log_json = source["log_json"];
-	    }
-	}
-	
 	export class OpenTarget {
 	    panel: string;
 	    ref: string;
@@ -1884,6 +1772,118 @@ export namespace main {
 	        this.source = source["source"];
 	    }
 	}
+	export class SequenceFollowup {
+	    loop_id: string;
+	    input_from: string;
+	    input_literal: string;
+	    cwd: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SequenceFollowup(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.loop_id = source["loop_id"];
+	        this.input_from = source["input_from"];
+	        this.input_literal = source["input_literal"];
+	        this.cwd = source["cwd"];
+	    }
+	}
+	export class SequenceStep {
+	    type: string;
+	    agent_id: string;
+	    playbook_id: string;
+	    prompt_template: string;
+	    cwd: string;
+	    executor: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SequenceStep(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.agent_id = source["agent_id"];
+	        this.playbook_id = source["playbook_id"];
+	        this.prompt_template = source["prompt_template"];
+	        this.cwd = source["cwd"];
+	        this.executor = source["executor"];
+	    }
+	}
+	export class Sequence {
+	    id: string;
+	    name: string;
+	    description: string;
+	    steps: SequenceStep[];
+	    cwd: string;
+	    on_success: SequenceFollowup[];
+	    files: string[];
+	    workspace_profile: string;
+	    created_at: string;
+	    updated_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Sequence(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.steps = this.convertValues(source["steps"], SequenceStep);
+	        this.cwd = source["cwd"];
+	        this.on_success = this.convertValues(source["on_success"], SequenceFollowup);
+	        this.files = source["files"];
+	        this.workspace_profile = source["workspace_profile"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class SequenceRunRow {
+	    id: string;
+	    loop_id: string;
+	    started_at: string;
+	    finished_at: string;
+	    status: string;
+	    log_json: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SequenceRunRow(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.loop_id = source["loop_id"];
+	        this.started_at = source["started_at"];
+	        this.finished_at = source["finished_at"];
+	        this.status = source["status"];
+	        this.log_json = source["log_json"];
+	    }
+	}
+	
 	export class ServiceStatus {
 	    name: string;
 	    label: string;

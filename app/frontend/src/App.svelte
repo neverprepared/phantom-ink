@@ -89,7 +89,7 @@
         '1': 'dashboard',
         '2': 'sessions',
         '3': 'integrations',
-        '4': 'loops',
+        '4': 'sequences',
         '5': 'playbooks',
         ',': 'settings',
       };

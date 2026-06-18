@@ -19,7 +19,7 @@
 
 <div class="widget">
   <div class="widget-header widget-drag-handle">
-    <Icon name="loops" size={15} style="color: var(--text-muted); flex-shrink: 0;" />
+    <Icon name="sequences" size={15} style="color: var(--text-muted); flex-shrink: 0;" />
     <span class="widget-title">» SCHEDULED CHAINS</span>
     <span class="badge">{fires.length}</span>
   </div>
@@ -28,7 +28,7 @@
       <div class="empty">no upcoming fires</div>
     {:else}
       {#each fires as fire (fire.schedule_id)}
-        <button class="fire-row" onclick={() => currentPanel.value = 'loops'}>
+        <button class="fire-row" onclick={() => currentPanel.value = 'sequences'}>
           <span class="fire-time">{formatNextFire(fire.next_fire_at)}</span>
           <span class="fire-name">{fire.loop_name || fire.loop_id?.slice(0, 12)}</span>
           <span class="fire-cron">{fire.cron_expr}</span>

@@ -16,7 +16,7 @@ import (
 // here so the task always runs in the right context regardless of who's at
 // the keyboard when the worker picks it up.
 type EnqueueTaskRequest struct {
-	LoopID          string `json:"loop_id"`
+	SequenceID          string `json:"loop_id"`
 	Input            string `json:"input"`
 	Cwd              string `json:"cwd"`
 	Priority         int    `json:"priority"`
@@ -33,11 +33,11 @@ func (a *App) EnqueueTask(req EnqueueTaskRequest) (string, error) {
 	if a.db == nil {
 		return "", fmt.Errorf("database not initialized")
 	}
-	if strings.TrimSpace(req.LoopID) == "" {
+	if strings.TrimSpace(req.SequenceID) == "" {
 		return "", fmt.Errorf("loop_id is required")
 	}
-	if _, ok := a.db.GetLoop(req.LoopID); !ok {
-		return "", fmt.Errorf("loop %q not found", req.LoopID)
+	if _, ok := a.db.GetSequence(req.SequenceID); !ok {
+		return "", fmt.Errorf("loop %q not found", req.SequenceID)
 	}
 	trigger, err := validateTrigger(req.Trigger)
 	if err != nil {
@@ -64,7 +64,7 @@ func (a *App) EnqueueTask(req EnqueueTaskRequest) (string, error) {
 
 	t := TaskRow{
 		ID:               newTaskID(),
-		LoopID:          req.LoopID,
+		SequenceID:          req.SequenceID,
 		Status:           TaskPending,
 		Priority:         req.Priority,
 		Input:            req.Input,
@@ -79,7 +79,7 @@ func (a *App) EnqueueTask(req EnqueueTaskRequest) (string, error) {
 	if err := a.db.InsertTask(t); err != nil {
 		return "", err
 	}
-	a.emitTaskEvent(t.ID, t.LoopID, TaskPending, 0, "")
+	a.emitTaskEvent(t.ID, t.SequenceID, TaskPending, 0, "")
 	return t.ID, nil
 }
 
@@ -123,7 +123,7 @@ func (a *App) CancelTask(id string) error {
 		return err
 	}
 	if t, ok := a.db.GetTask(id); ok {
-		a.emitTaskEvent(id, t.LoopID, TaskCancelled, t.Attempts, "")
+		a.emitTaskEvent(id, t.SequenceID, TaskCancelled, t.Attempts, "")
 	}
 	return nil
 }
@@ -138,7 +138,7 @@ func (a *App) RetryTask(id string) error {
 		return err
 	}
 	if t, ok := a.db.GetTask(id); ok {
-		a.emitTaskEvent(id, t.LoopID, TaskPending, 0, "")
+		a.emitTaskEvent(id, t.SequenceID, TaskPending, 0, "")
 	}
 	return nil
 }

@@ -28,7 +28,7 @@
 
   interface JobItem      { id: string; name: string; profile: string; }
   interface PlaybookItem { id: string; name: string; workspace_profile: string; }
-  interface LoopItem    { id: string; name: string; }
+  interface SequenceItem    { id: string; name: string; }
 
   // ── State ──────────────────────────────────────────────────────────────
 
@@ -37,7 +37,7 @@
   let rules     = $state<AutomationRule[]>([]);
   let jobs      = $state<JobItem[]>([]);
   let playbooks = $state<PlaybookItem[]>([]);
-  let loops    = $state<LoopItem[]>([]);
+  let loops    = $state<SequenceItem[]>([]);
   let loading   = $state(false);
   let editingId = $state<string | null>(null);
   let statusMsg = $state('');
@@ -64,8 +64,8 @@
     // action config — run_playbook
     actPlaybookID:    '',
     // action config — run_loop
-    actLoopID:       '',
-    actLoopInput:    '',
+    actSequenceID:       '',
+    actSequenceInput:    '',
     // action config — notify
     actTitle:         '{title}',
     actBody:          '',
@@ -89,7 +89,7 @@
   let visiblePlaybooks = $derived(
     !draftProfile ? playbooks : playbooks.filter(p => !p.workspace_profile || p.workspace_profile === draftProfile)
   );
-  let visibleLoops = $derived(loops);
+  let visibleSequences = $derived(loops);
 
   let webhookURL = $derived(
     draft.trigWebhookKey ? `${baseURL}/api/webhooks/${draft.trigWebhookKey}` : ''
@@ -106,13 +106,13 @@
         (a.ListAutomationRules as any)('').catch(() => []),
         (a.ListCollectJobs as any)('').catch(() => []),
         (a.ListPlaybooks as any)('').catch(() => []),
-        (a.ListLoops as any)().catch(() => []),
+        (a.ListSequences as any)().catch(() => []),
         (a.GetConfig as any)().catch(() => null),
       ]);
       rules     = (r ?? []) as AutomationRule[];
       jobs      = ((j ?? []) as any[]).map((x: any): JobItem      => ({ id: x.id, name: x.name, profile:           x.profile           ?? '' }));
       playbooks = ((p ?? []) as any[]).map((x: any): PlaybookItem => ({ id: x.id, name: x.name, workspace_profile: x.workspace_profile  ?? '' }));
-      loops    = ((c ?? []) as any[]).map((x: any): LoopItem    => ({ id: x.id, name: x.name }));
+      loops    = ((c ?? []) as any[]).map((x: any): SequenceItem    => ({ id: x.id, name: x.name }));
       if (cfg?.base_url) baseURL = cfg.base_url;
     } finally {
       loading = false;
@@ -173,7 +173,7 @@
     switch (draft.actionType) {
       case 'fire_job':     return { job_id: draft.actJobID };
       case 'run_playbook': return { playbook_id: draft.actPlaybookID };
-      case 'run_loop':    return { loop_id: draft.actLoopID, input: draft.actLoopInput };
+      case 'run_loop':    return { loop_id: draft.actSequenceID, input: draft.actSequenceInput };
       case 'notify':       return { title: draft.actTitle, body: draft.actBody };
     }
   }
@@ -208,7 +208,7 @@
       name: '', description: '', profile: profile, enabled: true,
       triggerType: 'entry_created', trigKind: '', trigTags: '', trigStatus: '', trigJobID: '',
       trigWebhookKey: '',
-      actionType: 'notify', actJobID: '', actPlaybookID: '', actLoopID: '', actLoopInput: '',
+      actionType: 'notify', actJobID: '', actPlaybookID: '', actSequenceID: '', actSequenceInput: '',
       actTitle: '{title}', actBody: '',
     };
   }
@@ -234,8 +234,8 @@
       actionType:       (rule.action_type || 'notify') as ActionType,
       actJobID:         actCfg.job_id      ?? '',
       actPlaybookID:    actCfg.playbook_id ?? '',
-      actLoopID:       actCfg.loop_id    ?? '',
-      actLoopInput:    actCfg.input       ?? '',
+      actSequenceID:       actCfg.loop_id    ?? '',
+      actSequenceInput:    actCfg.input       ?? '',
       actTitle:         actCfg.title       ?? '{title}',
       actBody:       actCfg.body        ?? '',
     };
@@ -253,7 +253,7 @@
     if (draft.triggerType === 'webhook' && !draft.trigWebhookKey) return false;
     if (draft.actionType === 'fire_job' && !draft.actJobID) return false;
     if (draft.actionType === 'run_playbook' && !draft.actPlaybookID) return false;
-    if (draft.actionType === 'run_loop' && !draft.actLoopID) return false;
+    if (draft.actionType === 'run_loop' && !draft.actSequenceID) return false;
     return true;
   }
 
@@ -278,7 +278,7 @@
     switch (rule.action_type) {
       case 'fire_job':     return `fire job · ${resolveJobName(cfg.job_id)}`;
       case 'run_playbook': return `run playbook · ${resolvePlaybookName(cfg.playbook_id)}`;
-      case 'run_loop':    return `run loop · ${resolveLoopName(cfg.loop_id)}`;
+      case 'run_loop':    return `run loop · ${resolveSequenceName(cfg.loop_id)}`;
       case 'notify':       return `notify · "${cfg.title}"`;
       default:             return rule.action_type;
     }
@@ -300,7 +300,7 @@
   function resolvePlaybookName(id: string): string {
     return playbooks.find(p => p.id === id)?.name ?? id?.slice(0, 8) ?? '?';
   }
-  function resolveLoopName(id: string): string {
+  function resolveSequenceName(id: string): string {
     return loops.find(c => c.id === id)?.name ?? id?.slice(0, 8) ?? '?';
   }
 
@@ -460,16 +460,16 @@
           {:else if draft.actionType === 'run_loop'}
             <label class="form-row">
               <span class="form-label">loop</span>
-              <select class="form-select" bind:value={draft.actLoopID}>
+              <select class="form-select" bind:value={draft.actSequenceID}>
                 <option value="">— select —</option>
-                {#each visibleLoops as c (c.id)}
+                {#each visibleSequences as c (c.id)}
                   <option value={c.id}>{c.name}</option>
                 {/each}
               </select>
             </label>
             <label class="form-row">
               <span class="form-label">input</span>
-              <input class="form-input" bind:value={draft.actLoopInput} placeholder={"{title} — optional"} />
+              <input class="form-input" bind:value={draft.actSequenceInput} placeholder={"{title} — optional"} />
             </label>
           {:else if draft.actionType === 'notify'}
             <label class="form-row">
@@ -615,9 +615,9 @@
                 {:else if draft.actionType === 'run_loop'}
                   <label class="form-row">
                     <span class="form-label">loop</span>
-                    <select class="form-select" bind:value={draft.actLoopID}>
+                    <select class="form-select" bind:value={draft.actSequenceID}>
                       <option value="">— select —</option>
-                      {#each visibleLoops as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
+                      {#each visibleSequences as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
                     </select>
                   </label>
                 {:else if draft.actionType === 'notify'}

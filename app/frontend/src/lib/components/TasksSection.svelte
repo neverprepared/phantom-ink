@@ -24,7 +24,7 @@
     result_run_id: string;
   }
 
-  interface Loop {
+  interface Sequence {
     id: string;
     name: string;
   }
@@ -43,10 +43,10 @@
       const status = filter === 'all' ? '' : filter;
       const [t, c] = await Promise.all([
         a.ListTasks(status, profileState.active?.name ?? '', 100),
-        a.ListLoops(),
+        a.ListSequences(),
       ]);
       tasks = (t ?? []) as Task[];
-      loops = new Map(((c ?? []) as Loop[]).map(ch => [ch.id, ch.name]));
+      loops = new Map(((c ?? []) as Sequence[]).map(ch => [ch.id, ch.name]));
     } catch (err: any) {
       notifications.error(`Failed to load tasks: ${err?.message ?? err}`);
     } finally {
@@ -96,7 +96,7 @@
     }
   }
 
-  function loopName(id: string): string {
+  function sequenceName(id: string): string {
     return loops.get(id) ?? id;
   }
 
@@ -153,9 +153,9 @@
                 class="loop-link"
                 role="link"
                 tabindex="0"
-                onclick={(e) => { e.stopPropagation(); panelFocus.focusLoop(t.loop_id); }}
-                onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); panelFocus.focusLoop(t.loop_id); } }}
-              >{loopName(t.loop_id)}</span>
+                onclick={(e) => { e.stopPropagation(); panelFocus.focusSequence(t.loop_id); }}
+                onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); panelFocus.focusSequence(t.loop_id); } }}
+              >{sequenceName(t.loop_id)}</span>
             </span>
             <span class="task-meta">
               {#if t.workspace_profile}

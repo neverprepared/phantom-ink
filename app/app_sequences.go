@@ -26,28 +26,28 @@ const playbookPollInterval = 4 * time.Second
 const playbookStepTimeout = 30 * time.Minute
 
 // ---------------------------------------------------------------------------
-// Loops — runtime CRUD + execution
+// Sequences — runtime CRUD + execution
 // ---------------------------------------------------------------------------
 
-const loopRunEvent = "loop:run:event"
+const sequenceRunEvent = "loop:run:event"
 
-// ListLoops returns loops visible for the active profile: loops owned by
+// ListSequences returns loops visible for the active profile: loops owned by
 // that profile plus global loops (workspace_profile=""). When no profile is
 // active, all loops are returned.
-func (a *App) ListLoops() ([]Loop, error) {
+func (a *App) ListSequences() ([]Sequence, error) {
 	if a.db == nil {
-		return []Loop{}, fmt.Errorf("database not initialized")
+		return []Sequence{}, fmt.Errorf("database not initialized")
 	}
-	rawRows, err := a.db.ListLoops(a.activeProfileName())
+	rawRows, err := a.db.ListSequences(a.activeProfileName())
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Loop, 0, len(rawRows))
+	out := make([]Sequence, 0, len(rawRows))
 	for _, r := range rawRows {
-		steps, _ := loopStepsFromJSON(r.StepsJSON)
-		followups, _ := loopFollowupsFromJSON(r.OnSuccessJSON)
-		files, _ := loopFilesFromJSON(r.FilesJSON)
-		out = append(out, Loop{
+		steps, _ := sequenceStepsFromJSON(r.StepsJSON)
+		followups, _ := sequenceFollowupsFromJSON(r.OnSuccessJSON)
+		files, _ := sequenceFilesFromJSON(r.FilesJSON)
+		out = append(out, Sequence{
 			ID:               r.ID,
 			Name:             r.Name,
 			Description:      r.Description,
@@ -63,37 +63,37 @@ func (a *App) ListLoops() ([]Loop, error) {
 	return out, nil
 }
 
-// SaveLoop creates or updates a loop. A blank ID generates a new one.
+// SaveSequence creates or updates a loop. A blank ID generates a new one.
 // Names must be non-empty; steps may be empty (allowing draft loops).
-func (a *App) SaveLoop(c Loop) (Loop, error) {
+func (a *App) SaveSequence(c Sequence) (Sequence, error) {
 	if a.db == nil {
-		return Loop{}, fmt.Errorf("database not initialized")
+		return Sequence{}, fmt.Errorf("database not initialized")
 	}
 	if strings.TrimSpace(c.Name) == "" {
-		return Loop{}, fmt.Errorf("loop name is required")
+		return Sequence{}, fmt.Errorf("loop name is required")
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if c.ID == "" {
-		c.ID = newLoopID()
+		c.ID = newSequenceID()
 		c.CreatedAt = now
 	}
 	c.UpdatedAt = now
-	stepsJSON, err := loopStepsToJSON(c.Steps)
+	stepsJSON, err := sequenceStepsToJSON(c.Steps)
 	if err != nil {
-		return Loop{}, err
+		return Sequence{}, err
 	}
-	followupsJSON, err := loopFollowupsToJSON(c.OnSuccess)
+	followupsJSON, err := sequenceFollowupsToJSON(c.OnSuccess)
 	if err != nil {
-		return Loop{}, err
+		return Sequence{}, err
 	}
 	// Validate follow-up loop references exist so the user gets feedback at
 	// save time rather than mid-run.
 	for i, f := range c.OnSuccess {
-		if f.LoopID == "" {
-			return Loop{}, fmt.Errorf("on_success[%d]: loop_id is required", i)
+		if f.SequenceID == "" {
+			return Sequence{}, fmt.Errorf("on_success[%d]: loop_id is required", i)
 		}
-		if _, ok := a.db.GetLoop(f.LoopID); !ok {
-			return Loop{}, fmt.Errorf("on_success[%d]: loop %q not found", i, f.LoopID)
+		if _, ok := a.db.GetSequence(f.SequenceID); !ok {
+			return Sequence{}, fmt.Errorf("on_success[%d]: loop %q not found", i, f.SequenceID)
 		}
 	}
 	// Normalize file paths: strip whitespace, drop leading slash so loops
@@ -109,44 +109,44 @@ func (a *App) SaveLoop(c Loop) (Loop, error) {
 		f = strings.TrimPrefix(f, "/")
 		clean := filepath.Clean(f)
 		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-			return Loop{}, fmt.Errorf("files[%d]: %q escapes profile root", i, raw)
+			return Sequence{}, fmt.Errorf("files[%d]: %q escapes profile root", i, raw)
 		}
 		cleanFiles = append(cleanFiles, clean)
 	}
 	c.Files = cleanFiles
-	filesJSON, err := loopFilesToJSON(cleanFiles)
+	filesJSON, err := sequenceFilesToJSON(cleanFiles)
 	if err != nil {
-		return Loop{}, err
+		return Sequence{}, err
 	}
-	if err := a.db.UpsertLoop(LoopRow{
+	if err := a.db.UpsertSequence(SequenceRow{
 		ID: c.ID, Name: c.Name, Description: c.Description,
 		StepsJSON: stepsJSON, Cwd: c.Cwd, OnSuccessJSON: followupsJSON,
 		FilesJSON: filesJSON, WorkspaceProfile: c.WorkspaceProfile,
 		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}); err != nil {
-		return Loop{}, err
+		return Sequence{}, err
 	}
 	return c, nil
 }
 
-// DeleteLoop removes a loop by ID. Past runs in loop_runs are kept so
+// DeleteSequence removes a loop by ID. Past runs in loop_runs are kept so
 // users can still browse history; orphaned runs are filtered out in the UI.
-func (a *App) DeleteLoop(id string) error {
+func (a *App) DeleteSequence(id string) error {
 	if a.db == nil {
 		return fmt.Errorf("database not initialized")
 	}
-	return a.db.DeleteLoop(id)
+	return a.db.DeleteSequence(id)
 }
 
-// ListLoopRuns returns the most recent runs for a loop, newest first.
-func (a *App) ListLoopRuns(loopID string, limit int) ([]LoopRunRow, error) {
+// ListSequenceRuns returns the most recent runs for a loop, newest first.
+func (a *App) ListSequenceRuns(loopID string, limit int) ([]SequenceRunRow, error) {
 	if a.db == nil {
-		return []LoopRunRow{}, fmt.Errorf("database not initialized")
+		return []SequenceRunRow{}, fmt.Errorf("database not initialized")
 	}
-	return a.db.ListLoopRuns(loopID, limit)
+	return a.db.ListSequenceRuns(loopID, limit)
 }
 
-// RunLoop executes a loop end-to-end. Returns the runID immediately and
+// RunSequence executes a loop end-to-end. Returns the runID immediately and
 // streams progress via the loop:run:event Wails event. Each step's output
 // is fed to the next step's {{prev.output}} template slot. The initial
 // {{input}} slot is filled with the `input` argument.
@@ -158,15 +158,15 @@ func (a *App) ListLoopRuns(loopID string, limit int) ([]LoopRunRow, error) {
 // detected on PATH, or disabled. The visibility rule (detected && enabled)
 // is enforced here so a loop saved when an agent was available can't be
 // silently run later after that agent disappears.
-func (a *App) RunLoop(id, input, cwdOverride string) (string, error) {
+func (a *App) RunSequence(id, input, cwdOverride string) (string, error) {
 	if a.db == nil {
 		return "", fmt.Errorf("database not initialized")
 	}
-	row, ok := a.db.GetLoop(id)
+	row, ok := a.db.GetSequence(id)
 	if !ok {
 		return "", fmt.Errorf("loop %q not found", id)
 	}
-	steps, err := loopStepsFromJSON(row.StepsJSON)
+	steps, err := sequenceStepsFromJSON(row.StepsJSON)
 	if err != nil {
 		return "", err
 	}
@@ -210,8 +210,8 @@ func (a *App) RunLoop(id, input, cwdOverride string) (string, error) {
 
 	runID := newRunID()
 	startedAt := time.Now().UTC().Format(time.RFC3339)
-	if err := a.db.InsertLoopRun(LoopRunRow{
-		ID: runID, LoopID: id, StartedAt: startedAt, Status: "running", LogJSON: "[]",
+	if err := a.db.InsertSequenceRun(SequenceRunRow{
+		ID: runID, SequenceID: id, StartedAt: startedAt, Status: "running", LogJSON: "[]",
 	}); err != nil {
 		return "", err
 	}
@@ -223,46 +223,46 @@ func (a *App) RunLoop(id, input, cwdOverride string) (string, error) {
 
 	// Resolve loop.files to absolute paths under the profile root. Any file
 	// that escapes is a hard error (consistent with cwd resolution).
-	loopFiles, _ := loopFilesFromJSON(row.FilesJSON)
+	loopFiles, _ := sequenceFilesFromJSON(row.FilesJSON)
 	filesArg, err := a.renderFilesArg(profileName, loopFiles)
 	if err != nil {
 		return "", err
 	}
 
-	go func() { _ = a.executeLoop(runID, id, input, baseCwd, steps, profileName, filesArg) }()
+	go func() { _ = a.executeSequence(runID, id, input, baseCwd, steps, profileName, filesArg) }()
 	return runID, nil
 }
 
-// executeLoop runs every step in order, streaming events as it goes. It
+// executeSequence runs every step in order, streaming events as it goes. It
 // catches the first failure and stops; downstream steps are skipped. Returns
 // nil on success or a wrapped error describing which step failed. Callers
-// that want fire-and-forget behavior (the RunLoop binding) discard the error;
+// that want fire-and-forget behavior (the RunSequence binding) discard the error;
 // the queue worker uses it to decide retry vs. final-failure.
 //
 // profileName is required: every cwd (loop-level, step-level) is resolved
 // against that profile's workspace_home, with traversal outside the root
 // rejected. On-success follow-ups inherit the same profile so autonomous
 // flows stay in their lane.
-func (a *App) executeLoop(runID, loopID, initialInput, baseCwd string, steps []LoopStep, profileName, filesArg string) error {
+func (a *App) executeSequence(runID, loopID, initialInput, baseCwd string, steps []SequenceStep, profileName, filesArg string) error {
 	// Use an independent context for subprocess execution. a.ctx is the Wails
 	// window context and gets cancelled on window close/resize events — tying
 	// long-running agent processes to it would kill them unexpectedly.
 	ctx := context.Background()
-	log := make([]LoopRunEvent, 0, len(steps)*2+2)
+	log := make([]SequenceRunEvent, 0, len(steps)*2+2)
 
-	cc := loopContext{Input: initialInput, Cwd: baseCwd}
-	emit := func(ev LoopRunEvent) {
+	cc := sequenceContext{Input: initialInput, Cwd: baseCwd}
+	emit := func(ev SequenceRunEvent) {
 		ev.At = time.Now().UTC().Format(time.RFC3339)
 		ev.RunID = runID
-		ev.LoopID = loopID
+		ev.SequenceID = loopID
 		log = append(log, ev)
 		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, loopRunEvent, ev)
+			runtime.EventsEmit(a.ctx, sequenceRunEvent, ev)
 		}
-		a.emitLoopEnvelope(ev, profileName, cc)
+		a.emitSequenceEnvelope(ev, profileName, cc)
 	}
 
-	emit(LoopRunEvent{Phase: "run:start", Status: "running"})
+	emit(SequenceRunEvent{Phase: "run:start", Status: "running"})
 
 	prevOutput := initialInput
 	status := "success"
@@ -274,24 +274,24 @@ func (a *App) executeLoop(runID, loopID, initialInput, baseCwd string, steps []L
 			if step.PlaybookID == "" {
 				status = "failed"
 				failure = fmt.Sprintf("step %d: playbook step has no playbook_id", i+1)
-				emit(LoopRunEvent{
+				emit(SequenceRunEvent{
 					Phase: "step:done", StepIndex: i,
 					Error: failure, Status: "failed",
 				})
 				goto done
 			}
-			emit(LoopRunEvent{Phase: "step:start", StepIndex: i, AgentID: "playbook:" + step.PlaybookID, Status: "running"})
+			emit(SequenceRunEvent{Phase: "step:start", StepIndex: i, AgentID: "playbook:" + step.PlaybookID, Status: "running"})
 			playbookOut, err := a.runPlaybookStep(ctx, step.PlaybookID, profileName)
 			if err != nil {
 				status = "failed"
 				failure = fmt.Sprintf("step %d (playbook:%s): %v", i+1, step.PlaybookID, err)
-				emit(LoopRunEvent{
+				emit(SequenceRunEvent{
 					Phase: "step:done", StepIndex: i, AgentID: "playbook:" + step.PlaybookID,
 					Error: err.Error(), Status: "failed",
 				})
 				goto done
 			}
-			emit(LoopRunEvent{
+			emit(SequenceRunEvent{
 				Phase: "step:done", StepIndex: i, AgentID: "playbook:" + step.PlaybookID,
 				Output: playbookOut, Status: "success",
 			})
@@ -307,7 +307,7 @@ func (a *App) executeLoop(runID, loopID, initialInput, baseCwd string, steps []L
 			if err != nil {
 				status = "failed"
 				failure = fmt.Sprintf("step %d (%s): %v", i+1, step.AgentID, err)
-				emit(LoopRunEvent{
+				emit(SequenceRunEvent{
 					Phase: "step:done", StepIndex: i, AgentID: step.AgentID,
 					Error: err.Error(), Status: "failed",
 				})
@@ -315,20 +315,20 @@ func (a *App) executeLoop(runID, loopID, initialInput, baseCwd string, steps []L
 			}
 			prompt := renderPromptTemplate(step.PromptTemplate, initialInput, prevOutput, filesArg)
 
-			emit(LoopRunEvent{Phase: "step:start", StepIndex: i, AgentID: step.AgentID, Status: "running"})
+			emit(SequenceRunEvent{Phase: "step:start", StepIndex: i, AgentID: step.AgentID, Status: "running"})
 
-			stdout, stderr, exitCode, err := runLoopStep(ctx, desc, prompt, resolvedCwd)
+			stdout, stderr, exitCode, err := runSequenceStep(ctx, desc, prompt, resolvedCwd)
 			if err != nil {
 				status = "failed"
 				failure = fmt.Sprintf("step %d (%s): %v", i+1, step.AgentID, err)
-				emit(LoopRunEvent{
+				emit(SequenceRunEvent{
 					Phase: "step:done", StepIndex: i, AgentID: step.AgentID,
 					Output: stdout, Stderr: stderr, ExitCode: exitCode,
 					Error: err.Error(), Status: "failed",
 				})
 				goto done
 			}
-			emit(LoopRunEvent{
+			emit(SequenceRunEvent{
 				Phase: "step:done", StepIndex: i, AgentID: step.AgentID,
 				Output: stdout, Stderr: stderr, ExitCode: exitCode, Status: "success",
 			})
@@ -339,14 +339,14 @@ done:
 
 	finishedAt := time.Now().UTC().Format(time.RFC3339)
 	logJSON, _ := json.Marshal(log)
-	if err := a.db.UpdateLoopRun(runID, finishedAt, status, string(logJSON)); err != nil {
+	if err := a.db.UpdateSequenceRun(runID, finishedAt, status, string(logJSON)); err != nil {
 		logErr("failed to persist loop run %s: %v", runID, err)
 	}
 
-	// Loop failure attention now flows through the bus: the run:done envelope
+	// Sequence failure attention now flows through the bus: the run:done envelope
 	// below carries status=failed and metadata (loop_id, input, cwd) needed
 	// for AttentionRetry. No attention_items row needed (P5).
-	emit(LoopRunEvent{Phase: "run:done", Status: status, Error: failure})
+	emit(SequenceRunEvent{Phase: "run:done", Status: status, Error: failure})
 	if status != "success" {
 		return fmt.Errorf("%s", failure)
 	}
@@ -362,15 +362,15 @@ done:
 // enqueueFollowups looks up the parent loop's on_success entries and submits
 // a task for each, inheriting the parent's workspace profile so the whole
 // flow stays under one workspace context.
-func (a *App) enqueueFollowups(parentLoopID, lastOutput, parentProfile string) {
+func (a *App) enqueueFollowups(parentSequenceID, lastOutput, parentProfile string) {
 	if a.db == nil {
 		return
 	}
-	row, ok := a.db.GetLoop(parentLoopID)
+	row, ok := a.db.GetSequence(parentSequenceID)
 	if !ok {
 		return
 	}
-	followups, err := loopFollowupsFromJSON(row.OnSuccessJSON)
+	followups, err := sequenceFollowupsFromJSON(row.OnSuccessJSON)
 	if err != nil || len(followups) == 0 {
 		return
 	}
@@ -385,38 +385,38 @@ func (a *App) enqueueFollowups(parentLoopID, lastOutput, parentProfile string) {
 			fmt.Fprintf(os.Stderr, "warning: on_success[%d]: unknown input_from %q, defaulting to stdout\n", i, f.InputFrom)
 		}
 		if _, err := a.EnqueueTask(EnqueueTaskRequest{
-			LoopID:          f.LoopID,
+			SequenceID:          f.SequenceID,
 			Input:            input,
 			Cwd:              f.Cwd,
 			Trigger:          TriggerFollowup,
 			WorkspaceProfile: parentProfile,
 		}); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: enqueue followup %d (%s): %v\n", i, f.LoopID, err)
+			fmt.Fprintf(os.Stderr, "warning: enqueue followup %d (%s): %v\n", i, f.SequenceID, err)
 		}
 	}
 }
 
-// runLoopForTask is the queue worker's synchronous entry point. It validates
+// runSequenceForTask is the queue worker's synchronous entry point. It validates
 // the task's loop, allocates a run row, executes the loop, and returns the
-// runID plus any error. Unlike RunLoop (which kicks off a goroutine and
+// runID plus any error. Unlike RunSequence (which kicks off a goroutine and
 // returns immediately), this blocks until the loop completes so the worker
 // can mark the task succeeded/failed accordingly.
 //
 // The task's WorkspaceProfile is the execution context: all cwd values are
 // resolved against that profile's workspace_home via resolveCwd. Empty
 // profile is a hard error — loops never run "globally."
-func (a *App) runLoopForTask(ctx context.Context, task TaskRow) (string, error) {
+func (a *App) runSequenceForTask(ctx context.Context, task TaskRow) (string, error) {
 	if a.db == nil {
 		return "", fmt.Errorf("database not initialized")
 	}
-	row, ok := a.db.GetLoop(task.LoopID)
+	row, ok := a.db.GetSequence(task.SequenceID)
 	if !ok {
-		return "", fmt.Errorf("loop %q not found", task.LoopID)
+		return "", fmt.Errorf("loop %q not found", task.SequenceID)
 	}
 	if task.WorkspaceProfile == "" {
 		return "", fmt.Errorf("task %s has no workspace_profile (legacy row?)", task.ID)
 	}
-	steps, err := loopStepsFromJSON(row.StepsJSON)
+	steps, err := sequenceStepsFromJSON(row.StepsJSON)
 	if err != nil {
 		return "", err
 	}
@@ -445,8 +445,8 @@ func (a *App) runLoopForTask(ctx context.Context, task TaskRow) (string, error) 
 
 	runID := newRunID()
 	startedAt := time.Now().UTC().Format(time.RFC3339)
-	if err := a.db.InsertLoopRun(LoopRunRow{
-		ID: runID, LoopID: task.LoopID, StartedAt: startedAt, Status: "running", LogJSON: "[]",
+	if err := a.db.InsertSequenceRun(SequenceRunRow{
+		ID: runID, SequenceID: task.SequenceID, StartedAt: startedAt, Status: "running", LogJSON: "[]",
 	}); err != nil {
 		return "", err
 	}
@@ -455,13 +455,13 @@ func (a *App) runLoopForTask(ctx context.Context, task TaskRow) (string, error) 
 	if cwd == "" {
 		cwd = row.Cwd
 	}
-	loopFiles, _ := loopFilesFromJSON(row.FilesJSON)
+	loopFiles, _ := sequenceFilesFromJSON(row.FilesJSON)
 	filesArg, err := a.renderFilesArg(task.WorkspaceProfile, loopFiles)
 	if err != nil {
 		return "", err
 	}
-	_ = ctx // executeLoop reads ctx from a.ctx; we don't pass it through yet
-	return runID, a.executeLoop(runID, task.LoopID, task.Input, cwd, steps, task.WorkspaceProfile, filesArg)
+	_ = ctx // executeSequence reads ctx from a.ctx; we don't pass it through yet
+	return runID, a.executeSequence(runID, task.SequenceID, task.Input, cwd, steps, task.WorkspaceProfile, filesArg)
 }
 
 // renderFilesArg resolves each loop.files entry to an absolute path under
@@ -494,7 +494,7 @@ func (a *App) emitTaskEvent(taskID, loopID, status string, attempts int, errMsg 
 		return
 	}
 	runtime.EventsEmit(a.ctx, taskEventName, taskEvent{
-		TaskID: taskID, LoopID: loopID, Status: status,
+		TaskID: taskID, SequenceID: loopID, Status: status,
 		Attempts: attempts, Error: errMsg,
 		At: time.Now().UTC().Format(time.RFC3339),
 	})
@@ -509,7 +509,7 @@ func (a *App) emitTaskEnvelope(taskID, loopID, status string, attempts int, errM
 	}
 	var (
 		title     = fmt.Sprintf("Task %s", status)
-		subtitle  = loopNameOrID(a.db, loopID)
+		subtitle  = sequenceNameOrID(a.db, loopID)
 		workspace string
 		maxAttempts = 1
 	)
@@ -592,8 +592,8 @@ func (a *App) runPlaybookStep(parent context.Context, playbookID, profileName st
 	}
 }
 
-// newLoopID returns a short opaque loop identifier.
-func newLoopID() string {
+// newSequenceID returns a short opaque loop identifier.
+func newSequenceID() string {
 	var b [6]byte
 	_, _ = rand.Read(b[:])
 	return "loop-" + hex.EncodeToString(b[:])

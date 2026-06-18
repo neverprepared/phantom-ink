@@ -212,7 +212,7 @@ func (e *AutomationEngine) fireAction(rule AutomationRule, evt AutomationEvent) 
 		if loopID == "" {
 			return
 		}
-		_, _ = e.app.RunLoop(loopID, renderTemplate(cfg["input"], evt), "")
+		_, _ = e.app.RunSequence(loopID, renderTemplate(cfg["input"], evt), "")
 
 	case "notify":
 		title := renderTemplate(cfg["title"], evt)

@@ -15,7 +15,7 @@ func timeNowUnixMilli() int64 { return time.Now().UnixMilli() }
 // brainbox. Best-effort: a missing outbox (DB not open yet) is silently
 // dropped so producers don't have to nil-check.
 //
-// Most callers prefer the typed helpers (emitTaskEnvelope, emitLoopEnvelope)
+// Most callers prefer the typed helpers (emitTaskEnvelope, emitSequenceEnvelope)
 // below; this is the bare interface for ad-hoc events.
 func (a *App) emitEnvelope(env outbox.Envelope) {
 	if a == nil || a.outbox == nil {
@@ -67,9 +67,9 @@ func taskEnvelopeType(taskStatus string) string {
 // uses it for source filtering.
 const envelopeSource = "wails-app@local"
 
-// loopEnvelopeStatus maps the loop event's status field into the envelope
+// sequenceEnvelopeStatus maps the loop event's status field into the envelope
 // status enum used across the bus.
-func loopEnvelopeStatus(loopStatus string) string {
+func sequenceEnvelopeStatus(loopStatus string) string {
 	switch loopStatus {
 	case "running":
 		return "active"
@@ -81,30 +81,30 @@ func loopEnvelopeStatus(loopStatus string) string {
 	return loopStatus
 }
 
-// loopContext is the retry context the AttentionRetry handler needs to
-// re-enqueue a failed loop run. Threaded through emitLoopEnvelope so the
+// sequenceContext is the retry context the AttentionRetry handler needs to
+// re-enqueue a failed loop run. Threaded through emitSequenceEnvelope so the
 // failure envelope carries it in metadata.
-type loopContext struct {
+type sequenceContext struct {
 	Input string
 	Cwd   string
 }
 
-// emitLoopEnvelope converts a LoopRunEvent into one (or two) bus envelopes:
+// emitSequenceEnvelope converts a SequenceRunEvent into one (or two) bus envelopes:
 //   - run:start / run:done → envelope id=loop:<runID>
 //   - step:start / step:done → envelope id=loop-step:<runID>:<index>,
 //     with parent_id=loop:<runID>
 //
 // Stable IDs ensure brainbox upserts the same row across state transitions
-// and dedup keeps at-least-once delivery safe. The loopContext is embedded
+// and dedup keeps at-least-once delivery safe. The sequenceContext is embedded
 // in run-level envelope metadata so AttentionRetry can rebuild the
 // EnqueueTaskRequest without a separate side table.
-func (a *App) emitLoopEnvelope(ev LoopRunEvent, workspace string, cc loopContext) {
+func (a *App) emitSequenceEnvelope(ev SequenceRunEvent, workspace string, cc sequenceContext) {
 	if a == nil || a.outbox == nil {
 		return
 	}
 	now := nowMillis()
-	loopTitle := loopNameOrID(a.db, ev.LoopID)
-	envStatus := loopEnvelopeStatus(ev.Status)
+	loopTitle := sequenceNameOrID(a.db, ev.SequenceID)
+	envStatus := sequenceEnvelopeStatus(ev.Status)
 
 	switch ev.Phase {
 	case "run:start":
@@ -120,7 +120,7 @@ func (a *App) emitLoopEnvelope(ev LoopRunEvent, workspace string, cc loopContext
 			Tags:      []string{"loop"},
 			StartAt:   &now,
 			Metadata: map[string]interface{}{
-				"loop_id": ev.LoopID,
+				"loop_id": ev.SequenceID,
 				"input":    cc.Input,
 				"cwd":      cc.Cwd,
 			},
@@ -128,7 +128,7 @@ func (a *App) emitLoopEnvelope(ev LoopRunEvent, workspace string, cc loopContext
 	case "run:done":
 		var endAt *int64 = &now
 		meta := map[string]interface{}{
-			"loop_id": ev.LoopID,
+			"loop_id": ev.SequenceID,
 			"input":    cc.Input,
 			"cwd":      cc.Cwd,
 		}
@@ -161,7 +161,7 @@ func (a *App) emitLoopEnvelope(ev LoopRunEvent, workspace string, cc loopContext
 			Tags:      []string{"loop", "step"},
 			StartAt:   &now,
 			Metadata: map[string]interface{}{
-				"loop_id":   ev.LoopID,
+				"loop_id":   ev.SequenceID,
 				"step_index": ev.StepIndex,
 				"agent_id":   ev.AgentID,
 			},
@@ -169,7 +169,7 @@ func (a *App) emitLoopEnvelope(ev LoopRunEvent, workspace string, cc loopContext
 	case "step:done":
 		var endAt *int64 = &now
 		meta := map[string]interface{}{
-			"loop_id":   ev.LoopID,
+			"loop_id":   ev.SequenceID,
 			"step_index": ev.StepIndex,
 			"agent_id":   ev.AgentID,
 			"exit_code":  ev.ExitCode,

@@ -138,7 +138,8 @@ var migrations = []migration{
 	// []ChainStep payload; chain_runs.log_json is the per-step event log.
 	// (Historical table names "chains"/"chain_runs" preserved here so this
 	// migration is a no-op on existing DBs. The Chain → Loop rename of the
-	// data model is applied as a separate ALTER TABLE migration below.)
+	// SQL schema is applied by ALTER TABLE in v24 below; a later code-level
+	// Loop → Sequence rename leaves the SQL names alone.)
 	{version: 5, sql: `
 		CREATE TABLE IF NOT EXISTS chains (
 			id          TEXT PRIMARY KEY,
@@ -405,6 +406,13 @@ var migrations = []migration{
 	// then this migration renames them; existing installs at v23 just run
 	// this. ALTER TABLE RENAME and ALTER TABLE RENAME COLUMN are both
 	// supported by modernc.org/sqlite per SQLite >= 3.25.
+	//
+	// Historical note: a later code rename (Loop → Sequence) keeps the Go
+	// identifiers in sync with the user-facing label, but the SQL tables
+	// stay as `loops` / `loop_runs` (and the foreign-key columns stay as
+	// `loop_id`) to avoid a third migration on the same tables. The Go
+	// SequenceRow / SequenceRunRow types deliberately reference these
+	// historical SQL names.
 	{version: 24, fn: func(conn *sql.DB) error {
 		// Order matters: rename the chain_id column on chain_runs BEFORE
 		// renaming the table, otherwise the column-rename statement runs
@@ -657,14 +665,14 @@ func (db *DB) SetAgentEnabled(id string, enabled bool) error {
 }
 
 // ---------------------------------------------------------------------------
-// Loops
+// Sequences
 // ---------------------------------------------------------------------------
 
-// LoopRow is the persisted form of a loop definition. The runtime Loop type
+// SequenceRow is the persisted form of a loop definition. The runtime Sequence type
 // (with structured Steps) lives in loops.go and serializes Steps to/from
 // StepsJSON via encoding/json. OnSuccessJSON is the same idea for the
 // declarative followups list — read+written wholesale with the loop.
-type LoopRow struct {
+type SequenceRow struct {
 	ID               string `json:"id"`
 	Name             string `json:"name"`
 	Description      string `json:"description"`
@@ -677,7 +685,7 @@ type LoopRow struct {
 	UpdatedAt        string `json:"updated_at"`
 }
 
-func (db *DB) UpsertLoop(c LoopRow) error {
+func (db *DB) UpsertSequence(c SequenceRow) error {
 	if c.OnSuccessJSON == "" {
 		c.OnSuccessJSON = "[]"
 	}
@@ -700,8 +708,8 @@ func (db *DB) UpsertLoop(c LoopRow) error {
 	return err
 }
 
-func (db *DB) GetLoop(id string) (LoopRow, bool) {
-	var r LoopRow
+func (db *DB) GetSequence(id string) (SequenceRow, bool) {
+	var r SequenceRow
 	err := db.conn.QueryRow(`
 		SELECT id, name, description, steps_json, cwd, on_success_json, files_json, workspace_profile, created_at, updated_at
 		FROM loops WHERE id = ?`, id).Scan(
@@ -712,9 +720,9 @@ func (db *DB) GetLoop(id string) (LoopRow, bool) {
 	return r, true
 }
 
-// ListLoops returns loops visible for the given profile: profile-owned loops
+// ListSequences returns loops visible for the given profile: profile-owned loops
 // plus global loops (workspace_profile=""). Pass "" to return all loops.
-func (db *DB) ListLoops(profile string) ([]LoopRow, error) {
+func (db *DB) ListSequences(profile string) ([]SequenceRow, error) {
 	var (
 		rows *sql.Rows
 		err  error
@@ -733,9 +741,9 @@ func (db *DB) ListLoops(profile string) ([]LoopRow, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []LoopRow
+	var out []SequenceRow
 	for rows.Next() {
-		var r LoopRow
+		var r SequenceRow
 		if err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.FilesJSON, &r.WorkspaceProfile, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			continue
 		}
@@ -744,37 +752,37 @@ func (db *DB) ListLoops(profile string) ([]LoopRow, error) {
 	return out, nil
 }
 
-func (db *DB) DeleteLoop(id string) error {
+func (db *DB) DeleteSequence(id string) error {
 	_, err := db.conn.Exec("DELETE FROM loops WHERE id = ?", id)
 	return err
 }
 
-// LoopRunRow is the persisted form of a single loop execution.
-type LoopRunRow struct {
+// SequenceRunRow is the persisted form of a single loop execution.
+type SequenceRunRow struct {
 	ID         string `json:"id"`
-	LoopID    string `json:"loop_id"`
+	SequenceID    string `json:"loop_id"`
 	StartedAt  string `json:"started_at"`
 	FinishedAt string `json:"finished_at"`
 	Status     string `json:"status"`
 	LogJSON    string `json:"log_json"`
 }
 
-func (db *DB) InsertLoopRun(r LoopRunRow) error {
+func (db *DB) InsertSequenceRun(r SequenceRunRow) error {
 	_, err := db.conn.Exec(`
 		INSERT INTO loop_runs (id, loop_id, started_at, finished_at, status, log_json)
 		VALUES (?, ?, ?, ?, ?, ?)`,
-		r.ID, r.LoopID, r.StartedAt, r.FinishedAt, r.Status, r.LogJSON)
+		r.ID, r.SequenceID, r.StartedAt, r.FinishedAt, r.Status, r.LogJSON)
 	return err
 }
 
-func (db *DB) UpdateLoopRun(id, finishedAt, status, logJSON string) error {
+func (db *DB) UpdateSequenceRun(id, finishedAt, status, logJSON string) error {
 	_, err := db.conn.Exec(`
 		UPDATE loop_runs SET finished_at = ?, status = ?, log_json = ? WHERE id = ?`,
 		finishedAt, status, logJSON, id)
 	return err
 }
 
-func (db *DB) ListLoopRuns(loopID string, limit int) ([]LoopRunRow, error) {
+func (db *DB) ListSequenceRuns(loopID string, limit int) ([]SequenceRunRow, error) {
 	if limit <= 0 {
 		limit = 25
 	}
@@ -786,10 +794,10 @@ func (db *DB) ListLoopRuns(loopID string, limit int) ([]LoopRunRow, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []LoopRunRow
+	var out []SequenceRunRow
 	for rows.Next() {
-		var r LoopRunRow
-		if err := rows.Scan(&r.ID, &r.LoopID, &r.StartedAt, &r.FinishedAt, &r.Status, &r.LogJSON); err != nil {
+		var r SequenceRunRow
+		if err := rows.Scan(&r.ID, &r.SequenceID, &r.StartedAt, &r.FinishedAt, &r.Status, &r.LogJSON); err != nil {
 			continue
 		}
 		out = append(out, r)
@@ -806,7 +814,7 @@ func (db *DB) ListLoopRuns(loopID string, limit int) ([]LoopRunRow, error) {
 // under the right profile context — see feedback_profiles_foundational.md.
 type TaskRow struct {
 	ID               string `json:"id"`
-	LoopID          string `json:"loop_id"`
+	SequenceID          string `json:"loop_id"`
 	Status           string `json:"status"`
 	Priority         int    `json:"priority"`
 	Input            string `json:"input"`
@@ -831,7 +839,7 @@ func (db *DB) InsertTask(t TaskRow) error {
 			enqueued_at, scheduled_for, started_at, finished_at,
 			attempts, max_attempts, last_error, result_run_id
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.LoopID, t.Status, t.Priority, t.Input, t.Cwd, t.Trigger, t.ParentTaskID, t.WorkspaceProfile,
+		t.ID, t.SequenceID, t.Status, t.Priority, t.Input, t.Cwd, t.Trigger, t.ParentTaskID, t.WorkspaceProfile,
 		t.EnqueuedAt, t.ScheduledFor, t.StartedAt, t.FinishedAt,
 		t.Attempts, t.MaxAttempts, t.LastError, t.ResultRunID)
 	return err
@@ -858,7 +866,7 @@ func (db *DB) ClaimNextTask(nowRFC3339 string) (TaskRow, bool) {
 		  AND (scheduled_for = '' OR scheduled_for <= ?)
 		ORDER BY priority DESC, enqueued_at ASC
 		LIMIT 1`, nowRFC3339).Scan(
-		&t.ID, &t.LoopID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
+		&t.ID, &t.SequenceID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
 		&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
 		&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID)
 	if err != nil {
@@ -943,7 +951,7 @@ func (db *DB) GetTask(id string) (TaskRow, bool) {
 		       enqueued_at, scheduled_for, started_at, finished_at,
 		       attempts, max_attempts, last_error, result_run_id
 		FROM tasks WHERE id = ?`, id).Scan(
-		&t.ID, &t.LoopID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
+		&t.ID, &t.SequenceID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
 		&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
 		&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID)
 	if err != nil {
@@ -988,7 +996,7 @@ func (db *DB) ListTasks(status, workspace string, limit int) ([]TaskRow, error) 
 	for rows.Next() {
 		var t TaskRow
 		if err := rows.Scan(
-			&t.ID, &t.LoopID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
+			&t.ID, &t.SequenceID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
 			&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
 			&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID,
 		); err != nil {
@@ -1059,7 +1067,7 @@ func (db *DB) TaskStatsCounted(since string) (pending, running, succeeded, faile
 
 type ScheduleRow struct {
 	ID               string `json:"id"`
-	LoopID          string `json:"loop_id"`
+	SequenceID          string `json:"loop_id"`
 	CronExpr         string `json:"cron_expr"`
 	Input            string `json:"input"`
 	Cwd              string `json:"cwd"`
@@ -1086,7 +1094,7 @@ func (db *DB) UpsertSchedule(s ScheduleRow) error {
 			enabled           = excluded.enabled,
 			workspace_profile = excluded.workspace_profile,
 			updated_at        = excluded.updated_at`,
-		s.ID, s.LoopID, s.CronExpr, s.Input, s.Cwd, boolToInt(s.Enabled), s.WorkspaceProfile,
+		s.ID, s.SequenceID, s.CronExpr, s.Input, s.Cwd, boolToInt(s.Enabled), s.WorkspaceProfile,
 		s.CreatedAt, s.UpdatedAt, s.LastFiredAt)
 	return err
 }
@@ -1097,7 +1105,7 @@ func (db *DB) GetSchedule(id string) (ScheduleRow, bool) {
 	err := db.conn.QueryRow(`
 		SELECT id, loop_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
 		FROM schedules WHERE id = ?`, id).Scan(
-		&r.ID, &r.LoopID, &r.CronExpr, &r.Input, &r.Cwd, &enabled, &r.WorkspaceProfile,
+		&r.ID, &r.SequenceID, &r.CronExpr, &r.Input, &r.Cwd, &enabled, &r.WorkspaceProfile,
 		&r.CreatedAt, &r.UpdatedAt, &r.LastFiredAt)
 	if err != nil {
 		return r, false
@@ -1126,7 +1134,7 @@ func (db *DB) ListSchedules(loopID string) ([]ScheduleRow, error) {
 	for rows.Next() {
 		var r ScheduleRow
 		var enabled int
-		if err := rows.Scan(&r.ID, &r.LoopID, &r.CronExpr, &r.Input, &r.Cwd, &enabled, &r.WorkspaceProfile,
+		if err := rows.Scan(&r.ID, &r.SequenceID, &r.CronExpr, &r.Input, &r.Cwd, &enabled, &r.WorkspaceProfile,
 			&r.CreatedAt, &r.UpdatedAt, &r.LastFiredAt); err != nil {
 			continue
 		}
