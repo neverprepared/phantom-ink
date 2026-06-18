@@ -3829,6 +3829,132 @@ async def api_list_loop_templates():
     return {"templates": list_templates()}
 
 
+# Static template endpoints declared BEFORE the parameterized /{name} so
+# FastAPI's first-match routing picks /schema, /validate, /{name}/dry-run
+# correctly. Same pattern as the github-webhook-before-{key} route ordering.
+
+
+@app.get("/api/loops/templates/schema", dependencies=[Depends(require_api_key)])
+async def api_loop_template_schema():
+    """LoopSpec JSON Schema — drives the YAML editor's Intellisense."""
+    from .loops import LoopSpec
+
+    return LoopSpec.model_json_schema()
+
+
+@app.post("/api/loops/templates/validate", dependencies=[Depends(require_api_key)])
+async def api_loop_template_validate(request: Request):
+    """Validate raw template YAML without saving.
+
+    Body: ``{"yaml": "<raw text>"}``
+    Returns the structured error report from ``validate_yaml`` — ``ok``
+    flag plus ``errors[]`` and ``warnings[]`` with line/col/field info
+    where the parser supplies it.
+    """
+    from .loop_template import validate_yaml
+
+    body = await request.json()
+    raw = body.get("yaml")
+    if not isinstance(raw, str):
+        raise HTTPException(status_code=400, detail="body.yaml must be a string")
+    return validate_yaml(raw)
+
+
+@app.post("/api/loops/templates/{name}/dry-run", dependencies=[Depends(require_api_key)])
+async def api_loop_template_dry_run(name: str, request: Request):
+    """Plan iteration 1 against a sample envelope without enqueueing.
+
+    Body (optional): ``{"envelope": {...}}`` — defaults to empty envelope.
+    Returns the dry-run plan — first-iteration target, convergence /
+    metric / stop-condition evals against the sample envelope.
+    """
+    from .loop_template import TemplateError, build_dry_run_plan, load_template
+
+    try:
+        spec = load_template(name)
+    except TemplateError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    body: dict[str, Any] = {}
+    try:
+        raw = await request.body()
+        if raw:
+            body = json.loads(raw)
+    except Exception:
+        pass
+    envelope_data = body.get("envelope") if isinstance(body, dict) else None
+
+    try:
+        return build_dry_run_plan(spec, envelope_data)
+    except TemplateError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/loops/templates/{name}", dependencies=[Depends(require_api_key)])
+async def api_get_loop_template(name: str):
+    """Return the raw YAML and metadata for one template."""
+    from .loop_template import TemplateError, read_raw_template
+
+    try:
+        return read_raw_template(name)
+    except TemplateError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.put("/api/loops/templates/{name}", dependencies=[Depends(require_api_key)])
+async def api_put_loop_template(
+    name: str, request: Request, fork: bool = False
+):
+    """Write a template to the user templates dir.
+
+    Body: ``{"yaml": "<raw text>"}``.
+    Query: ``?fork=true`` allows creating a user override of a built-in
+    template of the same name. Without it, writing to a built-in name
+    returns 409.
+    """
+    from .loop_template import TemplateError, write_user_template
+
+    body = await request.json()
+    raw = body.get("yaml")
+    if not isinstance(raw, str):
+        raise HTTPException(status_code=400, detail="body.yaml must be a string")
+
+    try:
+        return write_user_template(name, raw, fork_from_builtin=fork)
+    except TemplateError as exc:
+        msg = str(exc)
+        if "fork=true" in msg:
+            raise HTTPException(status_code=409, detail=msg)
+        if "invalid template name" in msg:
+            raise HTTPException(status_code=400, detail=msg)
+        if "spec validation failed" in msg or "not valid YAML" in msg or "frontmatter" in msg:
+            raise HTTPException(status_code=422, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
+
+
+@app.delete("/api/loops/templates/{name}", dependencies=[Depends(require_api_key)])
+async def api_delete_loop_template(name: str):
+    """Delete a user template by name. 403 on built-ins (the operator can
+    shadow a built-in by writing a user override, but can never delete
+    the built-in itself)."""
+    from .loop_template import TemplateError, delete_user_template, template_path
+
+    existing = template_path(name)
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"template {name!r} not found")
+    from .loop_template import _origin_for  # type: ignore[attr-defined]
+    if _origin_for(existing) == "built-in":
+        raise HTTPException(
+            status_code=403,
+            detail=f"{name!r} is built-in and cannot be deleted",
+        )
+    try:
+        delete_user_template(name)
+    except TemplateError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"deleted": name}
+
+
 @app.post("/api/loops/start", dependencies=[Depends(require_api_key)])
 async def api_start_loop(request: Request):
     """Start a Loop from a template.
