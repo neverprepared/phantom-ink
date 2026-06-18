@@ -69,6 +69,12 @@ async def init() -> None:
     from . import scheduler as _scheduler
     _scheduler.start()
 
+    # Loop runner: register the router event bridge and rehydrate any
+    # in-flight loops from the DB so a restart picks up where it left off.
+    from . import loop_runner as _loop_runner
+    _loop_runner.start()
+    await _loop_runner.rehydrate_from_store()
+
     log.info(
         "hub.initialized",
         metadata={
