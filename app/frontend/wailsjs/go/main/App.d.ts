@@ -40,11 +40,11 @@ export function DeleteAgent(arg1:string):Promise<void>;
 
 export function DeleteAutomationRule(arg1:string):Promise<void>;
 
-export function DeleteChain(arg1:string):Promise<void>;
-
 export function DeleteChannel(arg1:string):Promise<void>;
 
 export function DeleteCollectJob(arg1:string):Promise<void>;
+
+export function DeleteLoop(arg1:string):Promise<void>;
 
 export function DeleteOllamaModel(arg1:string):Promise<void>;
 
@@ -178,10 +178,6 @@ export function ListAutomationRules(arg1:string):Promise<Array<main.AutomationRu
 
 export function ListBackups():Promise<Array<string>>;
 
-export function ListChainRuns(arg1:string,arg2:number):Promise<Array<main.ChainRunRow>>;
-
-export function ListChains():Promise<Array<main.Chain>>;
-
 export function ListChannels(arg1:string):Promise<Array<brainbox.Channel>>;
 
 export function ListCollectJobs(arg1:string):Promise<Array<main.CollectJob>>;
@@ -189,6 +185,10 @@ export function ListCollectJobs(arg1:string):Promise<Array<main.CollectJob>>;
 export function ListCollectedEntries(arg1:string,arg2:string,arg3:string):Promise<Array<main.CollectedEntry>>;
 
 export function ListHubTasks(arg1:string,arg2:string):Promise<Array<main.HubTask>>;
+
+export function ListLoopRuns(arg1:string,arg2:number):Promise<Array<main.LoopRunRow>>;
+
+export function ListLoops():Promise<Array<main.Loop>>;
 
 export function ListOllamaModels():Promise<Array<brainbox.OllamaModel>>;
 
@@ -232,9 +232,9 @@ export function RestoreProfile(arg1:string):Promise<void>;
 
 export function RetryTask(arg1:string):Promise<void>;
 
-export function RunChain(arg1:string,arg2:string,arg3:string):Promise<string>;
-
 export function RunCollectJobNow(arg1:string):Promise<void>;
+
+export function RunLoop(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function RunMetricScript(arg1:string,arg2:string):Promise<string>;
 
@@ -244,11 +244,11 @@ export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
 
 export function SaveAutomationRule(arg1:main.AutomationRule):Promise<void>;
 
-export function SaveChain(arg1:main.Chain):Promise<main.Chain>;
-
 export function SaveCollectJob(arg1:main.CollectJob):Promise<main.CollectJob>;
 
 export function SaveDashboardLayout(arg1:string,arg2:string):Promise<void>;
+
+export function SaveLoop(arg1:main.Loop):Promise<main.Loop>;
 
 export function SaveSchedule(arg1:main.ScheduleRow):Promise<main.ScheduleRow>;
 

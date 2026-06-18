@@ -15,7 +15,7 @@ func timeNowUnixMilli() int64 { return time.Now().UnixMilli() }
 // brainbox. Best-effort: a missing outbox (DB not open yet) is silently
 // dropped so producers don't have to nil-check.
 //
-// Most callers prefer the typed helpers (emitTaskEnvelope, emitChainEnvelope)
+// Most callers prefer the typed helpers (emitTaskEnvelope, emitLoopEnvelope)
 // below; this is the bare interface for ad-hoc events.
 func (a *App) emitEnvelope(env outbox.Envelope) {
 	if a == nil || a.outbox == nil {
@@ -67,10 +67,10 @@ func taskEnvelopeType(taskStatus string) string {
 // uses it for source filtering.
 const envelopeSource = "wails-app@local"
 
-// chainEnvelopeStatus maps the chain event's status field into the envelope
+// loopEnvelopeStatus maps the loop event's status field into the envelope
 // status enum used across the bus.
-func chainEnvelopeStatus(chainStatus string) string {
-	switch chainStatus {
+func loopEnvelopeStatus(loopStatus string) string {
+	switch loopStatus {
 	case "running":
 		return "active"
 	case "success":
@@ -78,49 +78,49 @@ func chainEnvelopeStatus(chainStatus string) string {
 	case "failed":
 		return "failed"
 	}
-	return chainStatus
+	return loopStatus
 }
 
-// chainContext is the retry context the AttentionRetry handler needs to
-// re-enqueue a failed chain run. Threaded through emitChainEnvelope so the
+// loopContext is the retry context the AttentionRetry handler needs to
+// re-enqueue a failed loop run. Threaded through emitLoopEnvelope so the
 // failure envelope carries it in metadata.
-type chainContext struct {
+type loopContext struct {
 	Input string
 	Cwd   string
 }
 
-// emitChainEnvelope converts a ChainRunEvent into one (or two) bus envelopes:
-//   - run:start / run:done → envelope id=chain:<runID>
-//   - step:start / step:done → envelope id=chain-step:<runID>:<index>,
-//     with parent_id=chain:<runID>
+// emitLoopEnvelope converts a LoopRunEvent into one (or two) bus envelopes:
+//   - run:start / run:done → envelope id=loop:<runID>
+//   - step:start / step:done → envelope id=loop-step:<runID>:<index>,
+//     with parent_id=loop:<runID>
 //
 // Stable IDs ensure brainbox upserts the same row across state transitions
-// and dedup keeps at-least-once delivery safe. The chainContext is embedded
+// and dedup keeps at-least-once delivery safe. The loopContext is embedded
 // in run-level envelope metadata so AttentionRetry can rebuild the
 // EnqueueTaskRequest without a separate side table.
-func (a *App) emitChainEnvelope(ev ChainRunEvent, workspace string, cc chainContext) {
+func (a *App) emitLoopEnvelope(ev LoopRunEvent, workspace string, cc loopContext) {
 	if a == nil || a.outbox == nil {
 		return
 	}
 	now := nowMillis()
-	chainTitle := chainNameOrID(a.db, ev.ChainID)
-	envStatus := chainEnvelopeStatus(ev.Status)
+	loopTitle := loopNameOrID(a.db, ev.LoopID)
+	envStatus := loopEnvelopeStatus(ev.Status)
 
 	switch ev.Phase {
 	case "run:start":
 		a.emitEnvelope(outbox.Envelope{
-			ID:        "chain:" + ev.RunID,
+			ID:        "loop:" + ev.RunID,
 			Kind:      "event",
 			Source:    envelopeSource,
-			Type:      "chain.run.start",
+			Type:      "loop.run.start",
 			Status:    "active",
-			Title:     chainTitle,
-			Subtitle:  "chain run",
+			Title:     loopTitle,
+			Subtitle:  "loop run",
 			Workspace: workspace,
-			Tags:      []string{"chain"},
+			Tags:      []string{"loop"},
 			StartAt:   &now,
 			Metadata: map[string]interface{}{
-				"chain_id": ev.ChainID,
+				"loop_id": ev.LoopID,
 				"input":    cc.Input,
 				"cwd":      cc.Cwd,
 			},
@@ -128,7 +128,7 @@ func (a *App) emitChainEnvelope(ev ChainRunEvent, workspace string, cc chainCont
 	case "run:done":
 		var endAt *int64 = &now
 		meta := map[string]interface{}{
-			"chain_id": ev.ChainID,
+			"loop_id": ev.LoopID,
 			"input":    cc.Input,
 			"cwd":      cc.Cwd,
 		}
@@ -136,32 +136,32 @@ func (a *App) emitChainEnvelope(ev ChainRunEvent, workspace string, cc chainCont
 			meta["error"] = ev.Error
 		}
 		a.emitEnvelope(outbox.Envelope{
-			ID:        "chain:" + ev.RunID,
+			ID:        "loop:" + ev.RunID,
 			Kind:      "event",
 			Source:    envelopeSource,
-			Type:      "chain.run.done",
+			Type:      "loop.run.done",
 			Status:    envStatus,
-			Title:     chainTitle,
-			Subtitle:  "chain run",
+			Title:     loopTitle,
+			Subtitle:  "loop run",
 			Workspace: workspace,
-			Tags:      []string{"chain"},
+			Tags:      []string{"loop"},
 			EndAt:     endAt,
 			Metadata:  meta,
 		})
 	case "step:start":
 		a.emitEnvelope(outbox.Envelope{
-			ID:        fmt.Sprintf("chain-step:%s:%d", ev.RunID, ev.StepIndex),
+			ID:        fmt.Sprintf("loop-step:%s:%d", ev.RunID, ev.StepIndex),
 			Kind:      "event",
 			Source:    envelopeSource,
-			Type:      "chain.step.start",
+			Type:      "loop.step.start",
 			Status:    "active",
 			Title:     fmt.Sprintf("Step %d · %s", ev.StepIndex+1, ev.AgentID),
 			Workspace: workspace,
-			ParentID:  "chain:" + ev.RunID,
-			Tags:      []string{"chain", "step"},
+			ParentID:  "loop:" + ev.RunID,
+			Tags:      []string{"loop", "step"},
 			StartAt:   &now,
 			Metadata: map[string]interface{}{
-				"chain_id":   ev.ChainID,
+				"loop_id":   ev.LoopID,
 				"step_index": ev.StepIndex,
 				"agent_id":   ev.AgentID,
 			},
@@ -169,7 +169,7 @@ func (a *App) emitChainEnvelope(ev ChainRunEvent, workspace string, cc chainCont
 	case "step:done":
 		var endAt *int64 = &now
 		meta := map[string]interface{}{
-			"chain_id":   ev.ChainID,
+			"loop_id":   ev.LoopID,
 			"step_index": ev.StepIndex,
 			"agent_id":   ev.AgentID,
 			"exit_code":  ev.ExitCode,
@@ -178,15 +178,15 @@ func (a *App) emitChainEnvelope(ev ChainRunEvent, workspace string, cc chainCont
 			meta["error"] = ev.Error
 		}
 		a.emitEnvelope(outbox.Envelope{
-			ID:        fmt.Sprintf("chain-step:%s:%d", ev.RunID, ev.StepIndex),
+			ID:        fmt.Sprintf("loop-step:%s:%d", ev.RunID, ev.StepIndex),
 			Kind:      "event",
 			Source:    envelopeSource,
-			Type:      "chain.step.done",
+			Type:      "loop.step.done",
 			Status:    envStatus,
 			Title:     fmt.Sprintf("Step %d · %s", ev.StepIndex+1, ev.AgentID),
 			Workspace: workspace,
-			ParentID:  "chain:" + ev.RunID,
-			Tags:      []string{"chain", "step"},
+			ParentID:  "loop:" + ev.RunID,
+			Tags:      []string{"loop", "step"},
 			EndAt:     endAt,
 			Metadata:  meta,
 		})

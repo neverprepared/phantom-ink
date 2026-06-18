@@ -10,13 +10,13 @@ import (
 // Task queue — Wails bindings
 // ---------------------------------------------------------------------------
 
-// EnqueueTaskRequest is the JS-facing payload for enqueuing a chain run as
-// a durable task. Most fields are optional; chain_id is required.
+// EnqueueTaskRequest is the JS-facing payload for enqueuing a loop run as
+// a durable task. Most fields are optional; loop_id is required.
 // WorkspaceProfile defaults to the currently-active profile — it's snapshotted
 // here so the task always runs in the right context regardless of who's at
 // the keyboard when the worker picks it up.
 type EnqueueTaskRequest struct {
-	ChainID          string `json:"chain_id"`
+	LoopID          string `json:"loop_id"`
 	Input            string `json:"input"`
 	Cwd              string `json:"cwd"`
 	Priority         int    `json:"priority"`
@@ -33,11 +33,11 @@ func (a *App) EnqueueTask(req EnqueueTaskRequest) (string, error) {
 	if a.db == nil {
 		return "", fmt.Errorf("database not initialized")
 	}
-	if strings.TrimSpace(req.ChainID) == "" {
-		return "", fmt.Errorf("chain_id is required")
+	if strings.TrimSpace(req.LoopID) == "" {
+		return "", fmt.Errorf("loop_id is required")
 	}
-	if _, ok := a.db.GetChain(req.ChainID); !ok {
-		return "", fmt.Errorf("chain %q not found", req.ChainID)
+	if _, ok := a.db.GetLoop(req.LoopID); !ok {
+		return "", fmt.Errorf("loop %q not found", req.LoopID)
 	}
 	trigger, err := validateTrigger(req.Trigger)
 	if err != nil {
@@ -64,7 +64,7 @@ func (a *App) EnqueueTask(req EnqueueTaskRequest) (string, error) {
 
 	t := TaskRow{
 		ID:               newTaskID(),
-		ChainID:          req.ChainID,
+		LoopID:          req.LoopID,
 		Status:           TaskPending,
 		Priority:         req.Priority,
 		Input:            req.Input,
@@ -79,7 +79,7 @@ func (a *App) EnqueueTask(req EnqueueTaskRequest) (string, error) {
 	if err := a.db.InsertTask(t); err != nil {
 		return "", err
 	}
-	a.emitTaskEvent(t.ID, t.ChainID, TaskPending, 0, "")
+	a.emitTaskEvent(t.ID, t.LoopID, TaskPending, 0, "")
 	return t.ID, nil
 }
 
@@ -123,7 +123,7 @@ func (a *App) CancelTask(id string) error {
 		return err
 	}
 	if t, ok := a.db.GetTask(id); ok {
-		a.emitTaskEvent(id, t.ChainID, TaskCancelled, t.Attempts, "")
+		a.emitTaskEvent(id, t.LoopID, TaskCancelled, t.Attempts, "")
 	}
 	return nil
 }
@@ -138,7 +138,7 @@ func (a *App) RetryTask(id string) error {
 		return err
 	}
 	if t, ok := a.db.GetTask(id); ok {
-		a.emitTaskEvent(id, t.ChainID, TaskPending, 0, "")
+		a.emitTaskEvent(id, t.LoopID, TaskPending, 0, "")
 	}
 	return nil
 }

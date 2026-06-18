@@ -13,7 +13,7 @@
     invocation: { prompt_mode: string };
   }
 
-  interface ChainStep {
+  interface LoopStep {
     type?: 'agent' | 'playbook';
     agent_id: string;
     playbook_id?: string;
@@ -28,20 +28,20 @@
     workspace_profile: string;
   }
 
-  interface ChainFollowup {
-    chain_id: string;
+  interface LoopFollowup {
+    loop_id: string;
     input_from: 'stdout' | 'literal' | '';
     input_literal: string;
     cwd: string;
   }
 
-  interface Chain {
+  interface Loop {
     id: string;
     name: string;
     description: string;
-    steps: ChainStep[];
+    steps: LoopStep[];
     cwd: string;
-    on_success: ChainFollowup[];
+    on_success: LoopFollowup[];
     files: string[];
     created_at: string;
     updated_at: string;
@@ -84,19 +84,19 @@
   }
 
   // ----- shared state -----
-  let chains = $state<Chain[]>([]);
-  let chainable = $state<UsableAgent[]>([]);
+  let loops = $state<Loop[]>([]);
+  let loopable = $state<UsableAgent[]>([]);
   let loading = $state(true);
-  let recentByChain = $state<Map<string, { status: string }[]>>(new Map());
+  let recentByLoop = $state<Map<string, { status: string }[]>>(new Map());
   let activeId = $state<string | null>(null);
-  let pendingDelete = $state<Chain | null>(null);
+  let pendingDelete = $state<Loop | null>(null);
   let query = $state('');
   let editName = $state('');
   let availablePlaybooks = $state<PlaybookItem[]>([]);
   let playbookPickerOpen = $state(false);
 
   // editor state
-  let chainInput = $state('');
+  let loopInput = $state('');
   let running = $state(false);
   let runPhase = $state<'idle' | 'running' | 'done'>('idle');
   let runFinalStatus = $state('');
@@ -104,25 +104,25 @@
   let stepRunning = $state<Set<number>>(new Set());
   let expandedOutputs = $state<Set<number>>(new Set());
 
-  const filteredChains = $derived(
+  const filteredLoops = $derived(
     (() => {
       const q = query.trim().toLowerCase();
-      if (!q) return chains;
-      return chains.filter((c) =>
+      if (!q) return loops;
+      return loops.filter((c) =>
         (c.name + ' ' + (c.description ?? '') + ' ' + c.steps.map((s) => s.agent_id).join(' '))
           .toLowerCase().includes(q),
       );
     })(),
   );
 
-  const activeChain = $derived(activeId ? chains.find((c) => c.id === activeId) ?? null : null);
+  const activeLoop = $derived(activeId ? loops.find((c) => c.id === activeId) ?? null : null);
   const scopeLabel = $derived(profileState.active?.name ?? 'all');
 
   function agentLabel(id: string): string {
-    return chainable.find((a) => a.id === id)?.label ?? id;
+    return loopable.find((a) => a.id === id)?.label ?? id;
   }
 
-  // Reset run state when switching chains
+  // Reset run state when switching loops
   $effect(() => {
     activeId;
     runPhase = 'idle';
@@ -134,7 +134,7 @@
   });
 
   $effect(() => {
-    if (activeChain) editName = activeChain.name;
+    if (activeLoop) editName = activeLoop.name;
   });
 
   async function load(silent = false) {
@@ -143,34 +143,34 @@
     if (!a) { loading = false; return; }
     try {
       const [c, usable, tasks, pbs] = await Promise.all([
-        a.ListChains(),
+        a.ListLoops(),
         a.UsableAgents(),
         a.ListTasks('', profileState.active?.name ?? '', 200),
         a.ListPlaybooks(profileState.active?.name ?? '').catch(() => []),
       ]);
-      chains = (c ?? []) as Chain[];
-      chainable = ((usable ?? []) as any[]).filter((u: any) => u.invocation?.prompt_mode);
+      loops = (c ?? []) as Loop[];
+      loopable = ((usable ?? []) as any[]).filter((u: any) => u.invocation?.prompt_mode);
       const next = new Map<string, { status: string }[]>();
       for (const t of (tasks ?? []) as any[]) {
-        if (!t.chain_id) continue;
-        const bucket = next.get(t.chain_id) ?? [];
-        if (bucket.length < 5) { bucket.push({ status: t.status }); next.set(t.chain_id, bucket); }
+        if (!t.loop_id) continue;
+        const bucket = next.get(t.loop_id) ?? [];
+        if (bucket.length < 5) { bucket.push({ status: t.status }); next.set(t.loop_id, bucket); }
       }
-      recentByChain = next;
+      recentByLoop = next;
       availablePlaybooks = ((pbs ?? []) as any[]).map((p: any) => ({ id: p.id, name: p.name, workspace_profile: p.workspace_profile ?? '' }));
     } catch (err: any) {
-      notifications.error(`Failed to load chains: ${err?.message ?? err}`);
+      notifications.error(`Failed to load loops: ${err?.message ?? err}`);
     } finally {
       loading = false;
     }
   }
 
-  let unsubChainRun: (() => void) | null = null;
+  let unsubLoopRun: (() => void) | null = null;
 
-  function subscribeChainEvents() {
+  function subscribeLoopEvents() {
     if (typeof window === 'undefined' || !(window as any).runtime?.EventsOn) return;
-    unsubChainRun = (window as any).runtime.EventsOn('chain:run:event', (ev: any) => {
-      if (!activeChain || ev.chain_id !== activeChain.id) return;
+    unsubLoopRun = (window as any).runtime.EventsOn('loop:run:event', (ev: any) => {
+      if (!activeLoop || ev.loop_id !== activeLoop.id) return;
       if (ev.phase === 'run:start') {
         running = true;
         runPhase = 'running';
@@ -201,18 +201,18 @@
 
   onMount(async () => {
     await load();
-    const id = panelFocus.consumeChainFocus();
+    const id = panelFocus.consumeLoopFocus();
     if (id) activeId = id;
 
     const trySubscribe = () => {
-      if ((window as any).runtime?.EventsOn) { subscribeChainEvents(); }
+      if ((window as any).runtime?.EventsOn) { subscribeLoopEvents(); }
       else { setTimeout(trySubscribe, 100); }
     };
     trySubscribe();
   });
 
   onDestroy(() => {
-    if (unsubChainRun) { unsubChainRun(); unsubChainRun = null; }
+    if (unsubLoopRun) { unsubLoopRun(); unsubLoopRun = null; }
   });
 
   $effect(() => {
@@ -221,7 +221,7 @@
   });
 
   // ----- gallery thumbnail helpers -----
-  function nodesFromChain(c: Chain): { nodes: CanvasNode[]; edges: CanvasEdge[] } {
+  function nodesFromLoop(c: Loop): { nodes: CanvasNode[]; edges: CanvasEdge[] } {
     const nodes: CanvasNode[] = [];
     nodes.push({ id: `t-${c.id}`, type: 'trigger', x: 0, y: 0, title: 'manual', sub: 'trigger', state: 'idle' });
     c.steps.forEach((s, i) => {
@@ -238,34 +238,34 @@
     return { nodes, edges };
   }
 
-  // ----- chain CRUD -----
-  async function newChain() {
+  // ----- loop CRUD -----
+  async function newLoop() {
     const a = await getApi();
     if (!a) return;
-    if (chainable.length === 0) { notifications.error('No usable agents — enable one to build a chain'); return; }
-    const draft: Chain = {
-      id: '', name: 'new-chain', description: '',
-      steps: [{ type: 'agent', agent_id: chainable[0].id, prompt_template: '{{input}}', cwd: '' }],
+    if (loopable.length === 0) { notifications.error('No usable agents — enable one to build a loop'); return; }
+    const draft: Loop = {
+      id: '', name: 'new-loop', description: '',
+      steps: [{ type: 'agent', agent_id: loopable[0].id, prompt_template: '{{input}}', cwd: '' }],
       cwd: '', on_success: [], files: [], created_at: '', updated_at: '',
       workspace_profile: profileState.active?.name ?? '',
     };
     try {
-      await a.SaveChain(draft as any);
-      notifications.success('Chain created');
+      await a.SaveLoop(draft as any);
+      notifications.success('Loop created');
       await load();
     } catch (err: any) {
       notifications.error(`Create failed: ${err?.message ?? err}`);
     }
   }
 
-  async function confirmDeleteChain() {
+  async function confirmDeleteLoop() {
     const c = pendingDelete;
     if (!c) return;
     pendingDelete = null;
     const a = await getApi();
     if (!a) return;
     try {
-      await a.DeleteChain(c.id);
+      await a.DeleteLoop(c.id);
       notifications.success(`deleted · ${c.name}`);
       if (activeId === c.id) activeId = null;
       await load();
@@ -274,12 +274,12 @@
     }
   }
 
-  async function saveChainName() {
-    if (!activeChain || editName.trim() === '' || editName.trim() === activeChain.name) return;
+  async function saveLoopName() {
+    if (!activeLoop || editName.trim() === '' || editName.trim() === activeLoop.name) return;
     const a = await getApi();
     if (!a) return;
     try {
-      await a.SaveChain({ ...activeChain, name: editName.trim() } as any);
+      await a.SaveLoop({ ...activeLoop, name: editName.trim() } as any);
       await load(true);
     } catch (err: any) {
       notifications.error(`Rename failed: ${err?.message ?? err}`);
@@ -287,13 +287,13 @@
   }
 
   // ----- step editing -----
-  async function saveStep(i: number, updatedStep: ChainStep) {
-    if (!activeChain) return;
+  async function saveStep(i: number, updatedStep: LoopStep) {
+    if (!activeLoop) return;
     const a = await getApi();
     if (!a) return;
-    const steps = activeChain.steps.map((s, idx) => idx === i ? updatedStep : s);
+    const steps = activeLoop.steps.map((s, idx) => idx === i ? updatedStep : s);
     try {
-      await a.SaveChain({ ...activeChain, steps } as any);
+      await a.SaveLoop({ ...activeLoop, steps } as any);
       await load(true);
     } catch (err: any) {
       notifications.error(`Save failed: ${err?.message ?? err}`);
@@ -301,17 +301,17 @@
   }
 
   async function addAgentStep() {
-    if (!activeChain) return;
-    if (chainable.length === 0) { notifications.error('No usable agents available'); return; }
+    if (!activeLoop) return;
+    if (loopable.length === 0) { notifications.error('No usable agents available'); return; }
     const a = await getApi();
     if (!a) return;
-    const newStep: ChainStep = {
-      type: 'agent', agent_id: chainable[0].id,
-      prompt_template: activeChain.steps.length === 0 ? '{{input}}' : '{{prev.output}}',
+    const newStep: LoopStep = {
+      type: 'agent', agent_id: loopable[0].id,
+      prompt_template: activeLoop.steps.length === 0 ? '{{input}}' : '{{prev.output}}',
       cwd: '',
     };
     try {
-      await a.SaveChain({ ...activeChain, steps: [...activeChain.steps, newStep] } as any);
+      await a.SaveLoop({ ...activeLoop, steps: [...activeLoop.steps, newStep] } as any);
       await load(true);
     } catch (err: any) {
       notifications.error(`Add step failed: ${err?.message ?? err}`);
@@ -319,13 +319,13 @@
   }
 
   async function addPlaybookStepFromPicker(pb: PlaybookItem) {
-    if (!activeChain) return;
+    if (!activeLoop) return;
     playbookPickerOpen = false;
     const a = await getApi();
     if (!a) return;
-    const newStep: ChainStep = { type: 'playbook', agent_id: '', playbook_id: pb.id, prompt_template: '', cwd: '' };
+    const newStep: LoopStep = { type: 'playbook', agent_id: '', playbook_id: pb.id, prompt_template: '', cwd: '' };
     try {
-      await a.SaveChain({ ...activeChain, steps: [...activeChain.steps, newStep] } as any);
+      await a.SaveLoop({ ...activeLoop, steps: [...activeLoop.steps, newStep] } as any);
       await load(true);
     } catch (err: any) {
       notifications.error(`Add playbook step failed: ${err?.message ?? err}`);
@@ -333,12 +333,12 @@
   }
 
   async function deleteStep(i: number) {
-    if (!activeChain) return;
+    if (!activeLoop) return;
     const a = await getApi();
     if (!a) return;
-    const steps = activeChain.steps.filter((_, idx) => idx !== i);
+    const steps = activeLoop.steps.filter((_, idx) => idx !== i);
     try {
-      await a.SaveChain({ ...activeChain, steps } as any);
+      await a.SaveLoop({ ...activeLoop, steps } as any);
       await load(true);
     } catch (err: any) {
       notifications.error(`Remove step failed: ${err?.message ?? err}`);
@@ -346,23 +346,23 @@
   }
 
   async function moveStep(i: number, dir: -1 | 1) {
-    if (!activeChain) return;
+    if (!activeLoop) return;
     const j = i + dir;
-    if (j < 0 || j >= activeChain.steps.length) return;
+    if (j < 0 || j >= activeLoop.steps.length) return;
     const a = await getApi();
     if (!a) return;
-    const steps = [...activeChain.steps];
+    const steps = [...activeLoop.steps];
     [steps[i], steps[j]] = [steps[j], steps[i]];
     try {
-      await a.SaveChain({ ...activeChain, steps } as any);
+      await a.SaveLoop({ ...activeLoop, steps } as any);
       await load(true);
     } catch (err: any) {
       notifications.error(`Reorder failed: ${err?.message ?? err}`);
     }
   }
 
-  async function runChainReal() {
-    if (!activeChain || running) return;
+  async function runLoopReal() {
+    if (!activeLoop || running) return;
     const a = await getApi();
     if (!a) return;
     runPhase = 'running';
@@ -371,7 +371,7 @@
     stepRunning = new Set();
     expandedOutputs = new Set();
     try {
-      await a.RunChain(activeChain.id, chainInput, activeChain.cwd ?? '');
+      await a.RunLoop(activeLoop.id, loopInput, activeLoop.cwd ?? '');
     } catch (err: any) {
       running = false;
       runPhase = 'done';
@@ -392,39 +392,39 @@
   }
 </script>
 
-{#if !activeChain}
+{#if !activeLoop}
   <!-- ===== GALLERY ===== -->
   <div class="pi-main-inner" style="padding: var(--panel-padding);">
     <div class="section-row" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
       <h1 class="page-title" style="display:flex;align-items:center;gap:10px;">
-        chains
+        loops
         <span class="scope-chip mono">{scopeLabel}</span>
         {#if loading}<Spinner />{/if}
       </h1>
       <div style="display:flex;gap:10px;align-items:center;">
         <div class="filter" style="margin:0;width:240px;">
-          <input bind:value={query} placeholder="search chains…" />
+          <input bind:value={query} placeholder="search loops…" />
         </div>
-        <button class="btn primary" onclick={newChain}>+ new chain</button>
+        <button class="btn primary" onclick={newLoop}>+ new loop</button>
       </div>
     </div>
     <p style="color: var(--text-faint); font-size: 13px; margin: -4px 0 22px;">
-      Sequential agent pipelines — each step runs an agent or playbook, passing its output to the next via <code style="font-size:11px;">&#123;&#123;prev.output&#125;&#125;</code>. Open a chain to edit steps, set a prompt template, and run it with an input.
+      Sequential agent pipelines — each step runs an agent or playbook, passing its output to the next via <code style="font-size:11px;">&#123;&#123;prev.output&#125;&#125;</code>. Open a loop to edit steps, set a prompt template, and run it with an input.
     </p>
 
     {#if loading}
       <p style="color: var(--text-faint);">loading…</p>
-    {:else if filteredChains.length === 0}
+    {:else if filteredLoops.length === 0}
       <div class="card" style="padding: 48px; text-align: center; color: var(--text-faint);">
         <div style="margin-top: 12px; font-size: 14px; color: var(--text-muted);">
-          {query ? `no chains match "${query}"` : `no chains on ${scopeLabel} yet`}
+          {query ? `no loops match "${query}"` : `no loops on ${scopeLabel} yet`}
         </div>
       </div>
     {:else}
       <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px;">
-        {#each filteredChains as c (c.id)}
-          {@const preview = nodesFromChain(c)}
-          {@const recent = recentByChain.get(c.id) ?? []}
+        {#each filteredLoops as c (c.id)}
+          {@const preview = nodesFromLoop(c)}
+          {@const recent = recentByLoop.get(c.id) ?? []}
           <div
             class="card"
             onclick={() => (activeId = c.id)}
@@ -486,7 +486,7 @@
                 class="btn ghost sm"
                 onclick={(e) => { e.stopPropagation(); pendingDelete = c; }}
                 title="delete"
-                aria-label="delete chain"
+                aria-label="delete loop"
               >delete</button>
             </div>
           </div>
@@ -501,12 +501,12 @@
 
     <!-- toolbar -->
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;">
-      <button class="btn ghost sm" onclick={() => (activeId = null)}>← chains</button>
+      <button class="btn ghost sm" onclick={() => (activeId = null)}>← loops</button>
       <input
-        class="chain-name-input"
+        class="loop-name-input"
         bind:value={editName}
-        onblur={() => saveChainName()}
-        onkeydown={(e) => { if (e.key === 'Enter') { saveChainName(); (e.target as HTMLInputElement).blur(); } }}
+        onblur={() => saveLoopName()}
+        onkeydown={(e) => { if (e.key === 'Enter') { saveLoopName(); (e.target as HTMLInputElement).blur(); } }}
         style="font-size:20px;font-weight:700;color:var(--accent);background:transparent;border:none;border-bottom:1px solid transparent;outline:none;flex:1;min-width:160px;padding:0;font-family:inherit;"
         onfocus={(e) => ((e.target as HTMLInputElement).style.borderBottomColor = 'var(--accent)')}
       />
@@ -518,7 +518,7 @@
           </span>
         {/if}
         {#if running}<Spinner />{/if}
-        <button class="btn primary" onclick={runChainReal} disabled={running || activeChain.steps.length === 0}>
+        <button class="btn primary" onclick={runLoopReal} disabled={running || activeLoop.steps.length === 0}>
           {running ? 'running…' : '▶ run'}
         </button>
       </div>
@@ -533,9 +533,9 @@
       </div>
       <textarea
         class="step-textarea"
-        bind:value={chainInput}
+        bind:value={loopInput}
         rows={3}
-        placeholder="Enter the chain input value…"
+        placeholder="Enter the loop input value…"
         style="width:100%;resize:vertical;"
       ></textarea>
     </div>
@@ -550,23 +550,23 @@
         </div>
         <div class="legend-row">
           <code class="legend-var">&#123;&#123;prev.output&#125;&#125;</code>
-          <span class="legend-desc">The stdout of the previous step. Use this to chain steps together — each step refines or acts on what the prior step produced.</span>
+          <span class="legend-desc">The stdout of the previous step. Use this to loop steps together — each step refines or acts on what the prior step produced.</span>
         </div>
         <div class="legend-row">
           <code class="legend-var">&#123;&#123;files&#125;&#125;</code>
-          <span class="legend-desc">Shell-quoted absolute paths of files attached to this chain (set via the chain's <em>files</em> field). Resolved against the active profile's workspace home at run time.</span>
+          <span class="legend-desc">Shell-quoted absolute paths of files attached to this loop (set via the loop's <em>files</em> field). Resolved against the active profile's workspace home at run time.</span>
         </div>
       </div>
     </div>
 
     <!-- steps -->
-    {#if activeChain.steps.length === 0}
+    {#if activeLoop.steps.length === 0}
       <div class="card" style="padding:32px;text-align:center;color:var(--text-faint);margin-bottom:16px;">
         No steps yet — add one below.
       </div>
     {:else}
       <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:12px;">
-        {#each activeChain.steps as step, i (i)}
+        {#each activeLoop.steps as step, i (i)}
           {@const out = stepOutputs.get(i)}
           {@const isRunning = stepRunning.has(i)}
           {@const expanded = expandedOutputs.has(i)}
@@ -585,7 +585,7 @@
               {/if}
               <div style="margin-left:auto;display:flex;gap:4px;">
                 <button class="iconbtn" onclick={() => moveStep(i, -1)} disabled={i === 0} title="move up" aria-label="move step up">↑</button>
-                <button class="iconbtn" onclick={() => moveStep(i, 1)} disabled={i === activeChain.steps.length - 1} title="move down" aria-label="move step down">↓</button>
+                <button class="iconbtn" onclick={() => moveStep(i, 1)} disabled={i === activeLoop.steps.length - 1} title="move down" aria-label="move step down">↓</button>
                 <button class="iconbtn" onclick={() => deleteStep(i)} title="remove step" aria-label="remove step" style="color:var(--fail);">×</button>
               </div>
             </div>
@@ -612,7 +612,7 @@
               <!-- agent step -->
               <div class="field-row">
                 <div class="field-label">Agent</div>
-                {#if chainable.length === 0}
+                {#if loopable.length === 0}
                   <span style="font-size:13px;color:var(--text-faint);">no usable agents detected</span>
                 {:else}
                   <select
@@ -620,7 +620,7 @@
                     value={step.agent_id}
                     onchange={(e) => saveStep(i, { ...step, agent_id: (e.target as HTMLSelectElement).value })}
                   >
-                    {#each chainable as agent (agent.id)}
+                    {#each loopable as agent (agent.id)}
                       <option value={agent.id}>{agent.label}</option>
                     {/each}
                   </select>
@@ -644,12 +644,12 @@
               <div class="field-row">
                 <div class="field-label">
                   Working directory
-                  <span class="field-hint">optional — overrides chain cwd for this step</span>
+                  <span class="field-hint">optional — overrides loop cwd for this step</span>
                 </div>
                 <input
                   class="step-input"
                   value={step.cwd}
-                  placeholder="(inherit chain cwd)"
+                  placeholder="(inherit loop cwd)"
                   onblur={(e) => saveStep(i, { ...step, cwd: (e.target as HTMLInputElement).value })}
                 />
               </div>
@@ -696,7 +696,7 @@
       {#if availablePlaybooks.length > 0}
         <button class="btn sm ghost" onclick={() => (playbookPickerOpen = !playbookPickerOpen)}>+ playbook step</button>
         {#if playbookPickerOpen}
-          <div class="chain-add" style="position:absolute;top:38px;left:0;width:280px;background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-lg);padding:8px;z-index:20;">
+          <div class="loop-add" style="position:absolute;top:38px;left:0;width:280px;background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-lg);padding:8px;z-index:20;">
             <div style="display:flex;align-items:center;padding:4px 8px 8px;">
               <span class="mono" style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);flex:1;">pick playbook</span>
               <button class="iconbtn" style="width:22px;height:22px;" onclick={() => (playbookPickerOpen = false)}>×</button>
@@ -718,20 +718,20 @@
       {/if}
     </div>
 
-    <!-- chain cwd -->
+    <!-- loop cwd -->
     <div class="card" style="padding:14px 16px;">
       <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px;">
-        <span style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;">Chain cwd</span>
+        <span style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;">Loop cwd</span>
         <span style="font-size:11px;color:var(--text-faint);">default working directory for all steps</span>
       </div>
       <input
         class="step-input"
-        value={activeChain.cwd}
+        value={activeLoop.cwd}
         placeholder="(profile home)"
         onblur={async (e) => {
           const a = await getApi();
-          if (!a || !activeChain) return;
-          try { await a.SaveChain({ ...activeChain, cwd: (e.target as HTMLInputElement).value } as any); await load(true); }
+          if (!a || !activeLoop) return;
+          try { await a.SaveLoop({ ...activeLoop, cwd: (e.target as HTMLInputElement).value } as any); await load(true); }
           catch (err: any) { notifications.error(`Save cwd failed: ${err?.message ?? err}`); }
         }}
       />
@@ -743,13 +743,13 @@
 {#if pendingDelete}
   <Modal onClose={() => (pendingDelete = null)}>
     <div style="display:flex;flex-direction:column;gap:16px;">
-      <h3 style="font-size:15px;font-weight:600;color:var(--text);margin:0;">Delete chain?</h3>
+      <h3 style="font-size:15px;font-weight:600;color:var(--text);margin:0;">Delete loop?</h3>
       <p style="font-size:13px;color:var(--text-muted);margin:0;">
         <strong style="color:var(--text);">{pendingDelete.name}</strong> will be permanently removed.
       </p>
       <div style="display:flex;justify-content:flex-end;gap:8px;">
         <button class="btn ghost" onclick={() => (pendingDelete = null)}>cancel</button>
-        <button class="btn danger" onclick={confirmDeleteChain}>delete</button>
+        <button class="btn danger" onclick={confirmDeleteLoop}>delete</button>
       </div>
     </div>
   </Modal>

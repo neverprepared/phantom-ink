@@ -7,12 +7,12 @@ import (
 )
 
 // AttentionItemRow is the persisted form of a producer-driven attention item.
-// Producers (queue worker, chain executor) insert rows directly; the aggregator
+// Producers (queue worker, loop executor) insert rows directly; the aggregator
 // unions them with the two legacy scraped sources.
 type AttentionItemRow struct {
 	ID          string   `json:"id"`
-	Source      string   `json:"source"`    // "task" | "chain"
-	SourceID    string   `json:"source_id"` // task id or chain run id
+	Source      string   `json:"source"`    // "task" | "loop"
+	SourceID    string   `json:"source_id"` // task id or loop run id
 	Workspace   string   `json:"workspace"`
 	Title       string   `json:"title"`
 	Subtitle    string   `json:"subtitle"`

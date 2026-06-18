@@ -772,7 +772,7 @@
           </div>
 
           {#if task}
-            {@const taskCtx = (task.description ?? task.title ?? task.chain_name ?? '').toString().trim()}
+            {@const taskCtx = (task.description ?? task.title ?? task.loop_name ?? '').toString().trim()}
             {#if taskCtx}
               <div class="card-task-line" title={taskCtx}>{taskCtx}</div>
             {/if}

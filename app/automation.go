@@ -207,12 +207,12 @@ func (e *AutomationEngine) fireAction(rule AutomationRule, evt AutomationEvent) 
 		}
 		_, _ = e.app.RunPlaybook(playbookID, evt.Profile, "")
 
-	case "run_chain":
-		chainID := cfg["chain_id"]
-		if chainID == "" {
+	case "run_loop":
+		loopID := cfg["loop_id"]
+		if loopID == "" {
 			return
 		}
-		_, _ = e.app.RunChain(chainID, renderTemplate(cfg["input"], evt), "")
+		_, _ = e.app.RunLoop(loopID, renderTemplate(cfg["input"], evt), "")
 
 	case "notify":
 		title := renderTemplate(cfg["title"], evt)

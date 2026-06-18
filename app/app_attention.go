@@ -17,7 +17,7 @@ import (
 // dismissals and resolutions persist across app restarts.
 type AttentionItem struct {
 	ID          string   `json:"id"`        // "<source>:<sourceID>"
-	Source      string   `json:"source"`    // "task" | "chain" | "entry" | "hub" | "bus"
+	Source      string   `json:"source"`    // "task" | "loop" | "entry" | "hub" | "bus"
 	SourceID    string   `json:"source_id"` // raw id within the source
 	Status      string   `json:"status"`    // "failed" | "blocked" | "needs_action" — drives badge
 	Title       string   `json:"title"`
@@ -36,7 +36,7 @@ type AttentionItem struct {
 
 // OpenTarget tells the frontend which panel to navigate to for an attention item.
 type OpenTarget struct {
-	Panel string `json:"panel"` // "chains" | "jobs" | "sessions"
+	Panel string `json:"panel"` // "loops" | "jobs" | "sessions"
 	Ref   string `json:"ref"`   // run id or task id
 }
 
@@ -189,7 +189,7 @@ func (a *App) RestoreAttention(id string) error {
 // it. The retry path is driven entirely by the envelope id prefix and the
 // envelope's metadata:
 //   - task:*  → local queue task; calls RetryTask with the stripped id
-//   - chain:* → reads chain_id/input/cwd from metadata and re-enqueues
+//   - loop:* → reads loop_id/input/cwd from metadata and re-enqueues
 //   - other   → returns an error (the source doesn't support retry today)
 //
 // On success the row is dismissed so it falls out of the attention list. The
@@ -207,28 +207,28 @@ func (a *App) AttentionRetry(id string) error {
 				return fmt.Errorf("retry task: %w", err)
 			}
 
-		case strings.HasPrefix(id, "chain:"):
+		case strings.HasPrefix(id, "loop:"):
 			env, ok, err := a.client.GetAgentState(id)
 			if err != nil {
-				return fmt.Errorf("fetch chain envelope: %w", err)
+				return fmt.Errorf("fetch loop envelope: %w", err)
 			}
 			if !ok {
-				return fmt.Errorf("chain envelope %q not found", id)
+				return fmt.Errorf("loop envelope %q not found", id)
 			}
-			chainID, _ := env.Metadata["chain_id"].(string)
+			loopID, _ := env.Metadata["loop_id"].(string)
 			input, _ := env.Metadata["input"].(string)
 			cwd, _ := env.Metadata["cwd"].(string)
-			if chainID == "" {
-				return fmt.Errorf("chain envelope missing chain_id metadata")
+			if loopID == "" {
+				return fmt.Errorf("loop envelope missing loop_id metadata")
 			}
 			if _, err := a.EnqueueTask(EnqueueTaskRequest{
-				ChainID:          chainID,
+				LoopID:          loopID,
 				Input:            input,
 				Cwd:              cwd,
 				Trigger:          TriggerManual,
 				WorkspaceProfile: env.Workspace,
 			}); err != nil {
-				return fmt.Errorf("re-enqueue chain: %w", err)
+				return fmt.Errorf("re-enqueue loop: %w", err)
 			}
 
 		default:
@@ -272,8 +272,8 @@ func (a *App) AttentionOpenTarget(id string) (OpenTarget, error) {
 	switch source {
 	case "task":
 		return OpenTarget{Panel: "jobs", Ref: sourceID}, nil
-	case "chain":
-		return OpenTarget{Panel: "chains", Ref: sourceID}, nil
+	case "loop":
+		return OpenTarget{Panel: "loops", Ref: sourceID}, nil
 	case "hub":
 		return OpenTarget{Panel: "sessions", Ref: sourceID}, nil
 	case "entry":
@@ -357,15 +357,15 @@ func hasActions(raw json.RawMessage) bool {
 	return len(arr) > 0
 }
 
-// chainNameOrID returns the chain's human-readable name, falling back to the
-// id when the chain is not found.
-func chainNameOrID(db *DB, chainID string) string {
+// loopNameOrID returns the loop's human-readable name, falling back to the
+// id when the loop is not found.
+func loopNameOrID(db *DB, loopID string) string {
 	if db == nil {
-		return chainID
+		return loopID
 	}
-	row, ok := db.GetChain(chainID)
+	row, ok := db.GetLoop(loopID)
 	if !ok || row.Name == "" {
-		return chainID
+		return loopID
 	}
 	return row.Name
 }

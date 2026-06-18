@@ -18,7 +18,7 @@
 
   interface AttentionItem {
     id: string;
-    source: 'task' | 'chain' | 'entry' | 'hub' | 'bus';
+    source: 'task' | 'loop' | 'entry' | 'hub' | 'bus';
     source_id: string;
     status: 'failed' | 'blocked' | 'needs_action' | '';
     title: string;
@@ -235,7 +235,7 @@
     return Array.from(set).sort();
   });
   let availableSources = $derived.by(() => {
-    const set = new Set<string>(['task', 'chain', 'entry', 'hub', 'bus']);
+    const set = new Set<string>(['task', 'loop', 'entry', 'hub', 'bus']);
     for (const item of live) if (item.source) set.add(item.source);
     return Array.from(set).sort();
   });
@@ -463,7 +463,7 @@
 
     // Legacy events still poke a refresh so anything not yet on the bus stays
     // current (P5 retired most, but defense-in-depth is cheap).
-    const legacy = ['task:event', 'chain:run:event', 'brainbox:event'];
+    const legacy = ['task:event', 'loop:run:event', 'brainbox:event'];
     for (const ev of legacy) {
       const off = (window as any).runtime?.EventsOn?.(ev, () => {
         void refreshAttention();
@@ -1137,7 +1137,7 @@
     gap: 4px;
   }
   .attn-row.src-task  { border-left-color: #e57373; }
-  .attn-row.src-chain { border-left-color: #ce93d8; }
+  .attn-row.src-loop { border-left-color: #ce93d8; }
   .attn-row.src-hub   { border-left-color: #e57373; }
   .attn-row.src-entry { border-left-color: #ffb74d; }
   .attn-row.src-bus   { border-left-color: #4fc3f7; }

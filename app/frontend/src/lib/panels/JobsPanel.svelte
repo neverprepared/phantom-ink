@@ -29,7 +29,7 @@
 
   interface NamedItem { id: string; name: string; workspace_profile: string; }
 
-  type TargetType = 'shell' | 'playbook' | 'chain' | 'runner';
+  type TargetType = 'shell' | 'playbook' | 'loop' | 'runner';
   type ScheduleMode = 'interval' | 'time';
 
   // ── State ──────────────────────────────────────────────────────────────
@@ -38,7 +38,7 @@
 
   let jobs         = $state<CollectJob[]>([]);
   let playbooks    = $state<NamedItem[]>([]);
-  let chains       = $state<NamedItem[]>([]);
+  let loops       = $state<NamedItem[]>([]);
   let loading      = $state(false);
   let editingId    = $state<string | null>(null); // null=none, 'new'=create, id=edit
   let runningId    = $state<string | null>(null);
@@ -81,8 +81,8 @@
   let visiblePlaybooks = $derived(
     playbooks.filter(p => !p.workspace_profile || p.workspace_profile === draftProfile)
   );
-  let visibleChains = $derived(
-    chains.filter(c => !c.workspace_profile || c.workspace_profile === draftProfile)
+  let visibleLoops = $derived(
+    loops.filter(c => !c.workspace_profile || c.workspace_profile === draftProfile)
   );
 
   // ── Data loading ───────────────────────────────────────────────────────
@@ -95,14 +95,14 @@
       const [j, p, c] = await Promise.all([
         (a.ListCollectJobs as any)('').catch(() => []),
         (a.ListPlaybooks as any)('').catch(() => []),
-        (a.ListChains as any)().catch(() => []),
+        (a.ListLoops as any)().catch(() => []),
       ]);
       jobs = (j ?? []) as CollectJob[];
       playbooks = ((p ?? []) as any[]).map((x: any) => ({
         id: x.id, name: x.name,
         workspace_profile: x.profile ?? x.workspace_profile ?? '',
       }));
-      chains = ((c ?? []) as any[]).map((x: any) => ({
+      loops = ((c ?? []) as any[]).map((x: any) => ({
         id: x.id, name: x.name,
         workspace_profile: x.workspace_profile ?? '',
       }));
@@ -136,7 +136,7 @@
     };
     // Validation
     if (draft.targetType === 'shell' && !payload.command) return;
-    if ((draft.targetType === 'playbook' || draft.targetType === 'chain') && !payload.target_id) return;
+    if ((draft.targetType === 'playbook' || draft.targetType === 'loop') && !payload.target_id) return;
     if (draft.targetType === 'runner' && !payload.target_prompt) return;
     try {
       await (a.SaveCollectJob as any)(payload);
@@ -255,8 +255,8 @@
         const pb = playbooks.find(p => p.id === job.target_id);
         return pb ? pb.name : job.target_id.slice(0, 8);
       }
-      case 'chain': {
-        const ch = chains.find(c => c.id === job.target_id);
+      case 'loop': {
+        const ch = loops.find(c => c.id === job.target_id);
         return ch ? ch.name : job.target_id.slice(0, 8);
       }
       case 'runner':  return job.target_prompt.slice(0, 40) + (job.target_prompt.length > 40 ? '…' : '');
@@ -267,7 +267,7 @@
   function isFormValid(): boolean {
     if (!draft.name.trim()) return false;
     if (draft.targetType === 'shell' && !draft.command.trim()) return false;
-    if ((draft.targetType === 'playbook' || draft.targetType === 'chain') && !draft.targetId) return false;
+    if ((draft.targetType === 'playbook' || draft.targetType === 'loop') && !draft.targetId) return false;
     if (draft.targetType === 'runner' && !draft.targetPrompt.trim()) return false;
     return true;
   }
@@ -320,7 +320,7 @@
       <div class="form-row">
         <span class="form-label">target</span>
         <div class="seg-ctrl">
-          {#each (['shell', 'playbook', 'chain', 'runner'] as TargetType[]) as t (t)}
+          {#each (['shell', 'playbook', 'loop', 'runner'] as TargetType[]) as t (t)}
             <button class="seg-btn" class:active={draft.targetType === t} onclick={() => { draft.targetType = t; draft.targetId = ''; }}>{t}</button>
           {/each}
         </div>
@@ -342,12 +342,12 @@
             {/each}
           </select>
         </label>
-      {:else if draft.targetType === 'chain'}
+      {:else if draft.targetType === 'loop'}
         <label class="form-row">
-          <span class="form-label">chain</span>
+          <span class="form-label">loop</span>
           <select class="form-select" bind:value={draft.targetId}>
             <option value="">— select —</option>
-            {#each visibleChains as ch (ch.id)}
+            {#each visibleLoops as ch (ch.id)}
               <option value={ch.id}>{ch.name}</option>
             {/each}
           </select>
@@ -418,7 +418,7 @@
               <div class="form-row">
                 <span class="form-label">target</span>
                 <div class="seg-ctrl">
-                  {#each (['shell', 'playbook', 'chain', 'runner'] as TargetType[]) as t (t)}
+                  {#each (['shell', 'playbook', 'loop', 'runner'] as TargetType[]) as t (t)}
                     <button class="seg-btn" class:active={draft.targetType === t} onclick={() => { draft.targetType = t; draft.targetId = ''; }}>{t}</button>
                   {/each}
                 </div>
@@ -439,12 +439,12 @@
                     {/each}
                   </select>
                 </label>
-              {:else if draft.targetType === 'chain'}
+              {:else if draft.targetType === 'loop'}
                 <label class="form-row">
-                  <span class="form-label">chain</span>
+                  <span class="form-label">loop</span>
                   <select class="form-select" bind:value={draft.targetId}>
                     <option value="">— select —</option>
-                    {#each chains as ch (ch.id)}
+                    {#each loops as ch (ch.id)}
                       <option value={ch.id}>{ch.name}</option>
                     {/each}
                   </select>
@@ -602,7 +602,7 @@
     color: var(--color-text-muted);
   }
   .job-type-badge.type-playbook { color: #6366f1; border-color: rgba(99,102,241,0.3); background: rgba(99,102,241,0.06); }
-  .job-type-badge.type-chain    { color: #10b981; border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.06); }
+  .job-type-badge.type-loop    { color: #10b981; border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.06); }
   .job-type-badge.type-runner   { color: #f59e0b; border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.06); }
 
   .job-source-badge {

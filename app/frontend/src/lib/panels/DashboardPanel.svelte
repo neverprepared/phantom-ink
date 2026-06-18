@@ -12,7 +12,7 @@
 
   import StatCounterWidget       from '../widgets/StatCounterWidget.svelte';
   import DispatchFormWidget      from '../widgets/DispatchFormWidget.svelte';
-  import ChainsListWidget        from '../widgets/ChainsListWidget.svelte';
+  import LoopsListWidget        from '../widgets/LoopsListWidget.svelte';
   import ActionItemsWidget       from '../widgets/ActionItemsWidget.svelte';
   import ResourceMonitorWidget   from '../widgets/ResourceMonitorWidget.svelte';
   import CustomCounterWidget     from '../widgets/CustomCounterWidget.svelte';
@@ -106,7 +106,7 @@
 
     // 1) Bus attention envelopes — the highest-signal item per row. Wired
     // through AttentionOpenTarget so clicking jumps to the owning session /
-    // chain / job, not just the Stream panel.
+    // loop / job, not just the Stream panel.
     for (const att of attentionStore.items.slice(0, 5)) {
       const sev: ActionItem['severity'] =
         att.status === 'failed' || att.status === 'blocked' ? 'urgent' : 'warning';
@@ -262,7 +262,7 @@
   const WIDGET_MAP: Record<WidgetKind, any> = {
     'stat-counter':     StatCounterWidget,
     'dispatch-form':    DispatchFormWidget,
-    'chains-list':      ChainsListWidget,
+    'loops-list':      LoopsListWidget,
     'action-items':     ActionItemsWidget,
     'resource-monitor': ResourceMonitorWidget,
     'custom-counter':   CustomCounterWidget,
@@ -348,7 +348,7 @@
     'sessions-mini':     'Live Sessions',
     'notes':             'Scratchpad',
     'dispatch-form':     'Dispatch Form',
-    'chains-list':       'Scheduled Chains',
+    'loops-list':       'Scheduled Loops',
     'action-items':      'Action Items',
     'resource-monitor':  'Resource Monitor',
     'stream':            'Stream',

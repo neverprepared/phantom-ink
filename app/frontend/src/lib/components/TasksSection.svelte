@@ -6,7 +6,7 @@
 
   interface Task {
     id: string;
-    chain_id: string;
+    loop_id: string;
     status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
     priority: number;
     input: string;
@@ -24,13 +24,13 @@
     result_run_id: string;
   }
 
-  interface Chain {
+  interface Loop {
     id: string;
     name: string;
   }
 
   let tasks = $state<Task[]>([]);
-  let chains = $state<Map<string, string>>(new Map());
+  let loops = $state<Map<string, string>>(new Map());
   let filter = $state<'all' | 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'>('all');
   let loading = $state(true);
   let expandedID = $state<string | null>(null);
@@ -43,10 +43,10 @@
       const status = filter === 'all' ? '' : filter;
       const [t, c] = await Promise.all([
         a.ListTasks(status, profileState.active?.name ?? '', 100),
-        a.ListChains(),
+        a.ListLoops(),
       ]);
       tasks = (t ?? []) as Task[];
-      chains = new Map(((c ?? []) as Chain[]).map(ch => [ch.id, ch.name]));
+      loops = new Map(((c ?? []) as Loop[]).map(ch => [ch.id, ch.name]));
     } catch (err: any) {
       notifications.error(`Failed to load tasks: ${err?.message ?? err}`);
     } finally {
@@ -96,8 +96,8 @@
     }
   }
 
-  function chainName(id: string): string {
-    return chains.get(id) ?? id;
+  function loopName(id: string): string {
+    return loops.get(id) ?? id;
   }
 
   function formatTime(iso: string): string {
@@ -123,7 +123,7 @@
 
 <div class="tasks-section" aria-busy={loading}>
   <div class="section-toolbar">
-    <p class="panel-hint">Queued chain runs. The worker drains pending tasks every couple of seconds.</p>
+    <p class="panel-hint">Queued loop runs. The worker drains pending tasks every couple of seconds.</p>
     <button class="btn-refresh" onclick={load} title="Refresh" aria-label="Refresh">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
     </button>
@@ -148,14 +148,14 @@
           <button class="task-summary" onclick={() => expandedID = expandedID === t.id ? null : t.id}>
             <span class="status-dot status-{t.status}"></span>
             <span class="task-status">{t.status}</span>
-            <span class="task-chain">
+            <span class="task-loop">
               <span
-                class="chain-link"
+                class="loop-link"
                 role="link"
                 tabindex="0"
-                onclick={(e) => { e.stopPropagation(); panelFocus.focusChain(t.chain_id); }}
-                onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); panelFocus.focusChain(t.chain_id); } }}
-              >{chainName(t.chain_id)}</span>
+                onclick={(e) => { e.stopPropagation(); panelFocus.focusLoop(t.loop_id); }}
+                onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); panelFocus.focusLoop(t.loop_id); } }}
+              >{loopName(t.loop_id)}</span>
             </span>
             <span class="task-meta">
               {#if t.workspace_profile}
@@ -288,16 +288,16 @@
     letter-spacing: 0.04em;
     font-weight: 600;
   }
-  .task-chain {
+  .task-loop {
     font-size: 13px;
     color: var(--color-text-primary);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .chain-link {
+  .loop-link {
     color: var(--color-accent); cursor: pointer;
     border-bottom: 1px dotted transparent;
   }
-  .chain-link:hover { border-bottom-color: var(--color-accent); }
+  .loop-link:hover { border-bottom-color: var(--color-accent); }
   .task-meta {
     font-size: 11px; color: var(--color-text-tertiary);
     display: inline-flex; align-items: center; gap: 6px;

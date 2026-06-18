@@ -23,11 +23,11 @@ func (a *App) SaveSchedule(s Schedule) (Schedule, error) {
 	if a.db == nil {
 		return Schedule{}, fmt.Errorf("database not initialized")
 	}
-	if strings.TrimSpace(s.ChainID) == "" {
-		return Schedule{}, fmt.Errorf("chain_id is required")
+	if strings.TrimSpace(s.LoopID) == "" {
+		return Schedule{}, fmt.Errorf("loop_id is required")
 	}
-	if _, ok := a.db.GetChain(s.ChainID); !ok {
-		return Schedule{}, fmt.Errorf("chain %q not found", s.ChainID)
+	if _, ok := a.db.GetLoop(s.LoopID); !ok {
+		return Schedule{}, fmt.Errorf("loop %q not found", s.LoopID)
 	}
 	if err := validateCronExpr(s.CronExpr); err != nil {
 		return Schedule{}, fmt.Errorf("invalid cron expression %q: %w", s.CronExpr, err)
@@ -55,14 +55,14 @@ func (a *App) SaveSchedule(s Schedule) (Schedule, error) {
 	return s, nil
 }
 
-// ListSchedules returns schedules for a chain. Empty chainID returns all.
+// ListSchedules returns schedules for a loop. Empty loopID returns all.
 // NextFireAt is computed here so the UI can show "next: …" without needing
 // its own cron parser.
-func (a *App) ListSchedules(chainID string) ([]Schedule, error) {
+func (a *App) ListSchedules(loopID string) ([]Schedule, error) {
 	if a.db == nil {
 		return []Schedule{}, fmt.Errorf("database not initialized")
 	}
-	rows, err := a.db.ListSchedules(chainID)
+	rows, err := a.db.ListSchedules(loopID)
 	if err != nil {
 		return nil, err
 	}
@@ -77,11 +77,11 @@ func (a *App) ListSchedules(chainID string) ([]Schedule, error) {
 }
 
 // UpcomingFire is one entry in the dashboard "upcoming work" list — a single
-// schedule with its next computed fire time and the target chain.
+// schedule with its next computed fire time and the target loop.
 type UpcomingFire struct {
 	ScheduleID string `json:"schedule_id"`
-	ChainID    string `json:"chain_id"`
-	ChainName  string `json:"chain_name"`
+	LoopID    string `json:"loop_id"`
+	LoopName  string `json:"loop_name"`
 	CronExpr   string `json:"cron_expr"`
 	NextFireAt string `json:"next_fire_at"`
 }
@@ -100,10 +100,10 @@ func (a *App) ListUpcomingFires(limit int) ([]UpcomingFire, error) {
 	if err != nil {
 		return nil, err
 	}
-	chainsByID := make(map[string]string)
-	if list, err := a.db.ListChains(""); err == nil {
+	loopsByID := make(map[string]string)
+	if list, err := a.db.ListLoops(""); err == nil {
 		for _, c := range list {
-			chainsByID[c.ID] = c.Name
+			loopsByID[c.ID] = c.Name
 		}
 	}
 	now := time.Now().UTC()
@@ -117,8 +117,8 @@ func (a *App) ListUpcomingFires(limit int) ([]UpcomingFire, error) {
 			continue
 		}
 		out = append(out, UpcomingFire{
-			ScheduleID: r.ID, ChainID: r.ChainID,
-			ChainName: chainsByID[r.ChainID], CronExpr: r.CronExpr,
+			ScheduleID: r.ID, LoopID: r.LoopID,
+			LoopName: loopsByID[r.LoopID], CronExpr: r.CronExpr,
 			NextFireAt: next,
 		})
 	}

@@ -31,8 +31,8 @@ type CollectJob struct {
 	LastError      string `json:"last_error"`
 	CreatedAt      int64  `json:"created_at"`
 	// composable target
-	TargetType   string `json:"target_type"`   // "shell" | "playbook" | "chain" | "runner"
-	TargetID     string `json:"target_id"`     // playbook or chain ID
+	TargetType   string `json:"target_type"`   // "shell" | "playbook" | "loop" | "runner"
+	TargetID     string `json:"target_id"`     // playbook or loop ID
 	TargetPrompt string `json:"target_prompt"` // prompt text for runner target
 	// time-of-day scheduling (overrides interval_s when set)
 	RunAt string `json:"run_at"` // "HH:MM", e.g. "08:30"
@@ -427,7 +427,7 @@ func (s *collectScheduler) runJob(job CollectJob) {
 }
 
 // dispatchCollectJob executes a job according to its target_type.
-// Shell jobs return timeline entries; playbook/chain/runner jobs manage their
+// Shell jobs return timeline entries; playbook/loop/runner jobs manage their
 // own output and return nil entries (last_run_at is still recorded).
 func (a *App) dispatchCollectJob(job CollectJob) ([]CollectedEntry, error) {
 	// Dashboard-widget jobs emit a scalar value, not a timeline-entries
@@ -439,8 +439,8 @@ func (a *App) dispatchCollectJob(job CollectJob) ([]CollectedEntry, error) {
 	case "playbook":
 		_, err := a.RunPlaybook(job.TargetID, job.Profile, "")
 		return nil, err
-	case "chain":
-		_, err := a.RunChain(job.TargetID, "", "")
+	case "loop":
+		_, err := a.RunLoop(job.TargetID, "", "")
 		return nil, err
 	case "runner":
 		// Fire as a one-shot shell command using the local claude binary.
