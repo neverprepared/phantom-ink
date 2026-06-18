@@ -793,6 +793,76 @@ def _get_sessions_info() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+@app.post("/api/webhooks/github")
+async def github_webhook(request: Request):
+    """GitHub App webhook → fire a Loop run on the pr-review-loop template.
+
+    HMAC-SHA256 signature verification via X-Hub-Signature-256. The repo
+    allowlist (CL_GITHUB_LOOP_REPOS) can scope which repos trigger; empty
+    list means accept any signed payload. Supported events:
+
+      - pull_request.{opened, synchronize, reopened} → trigger
+      - issue_comment.created with "/loop" in body  → operator opt-in
+
+    Response shape:
+      { "triggered": bool, "loop_id"?: str, "reason"?: str }
+
+    Status codes:
+      200 — triggered (loop_id returned) OR understood but no trigger (reason)
+      401 — missing/invalid signature
+      403 — repo not in allowlist
+      404 — pr-review-loop template missing (operator hasn't installed it)
+      500 — start_loop raised
+    """
+    from . import github_webhook as gh
+    from . import loop_runner
+    from .config import settings
+    from .loop_template import TemplateError, load_template
+    from .loops import HandoffEnvelope
+
+    body = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    if not gh.verify_signature(body, signature, settings.github_webhook_secret):
+        raise HTTPException(status_code=401, detail="invalid signature")
+
+    try:
+        payload = json.loads(body) if body else {}
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="malformed JSON body")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="payload must be an object")
+
+    if not gh.allow_repo(payload, settings.github_loop_repos):
+        raise HTTPException(status_code=403, detail="repo not in allowlist")
+
+    event_type = request.headers.get("X-GitHub-Event", "")
+    trigger = gh.extract_loop_trigger(event_type, payload)
+    if trigger is None:
+        return {"triggered": False, "reason": f"event {event_type!r} is not a loop trigger"}
+
+    try:
+        spec = load_template("pr-review-loop")
+    except TemplateError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    envelope = HandoffEnvelope(artifact_refs=trigger)
+    try:
+        inst = await loop_runner.start_loop(spec, envelope)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"start_loop failed: {exc}")
+
+    log.info(
+        "webhook.github.loop_triggered",
+        metadata={
+            "loop_id": inst.id,
+            "event": trigger.get("trigger_event"),
+            "repo": trigger.get("repo"),
+            "pr_number": trigger.get("pr_number"),
+        },
+    )
+    return {"triggered": True, "loop_id": inst.id, "trigger": trigger}
+
+
 @app.post("/api/webhooks/{key}")
 async def webhook_trigger(key: str, request: Request):
     """Receive an inbound webhook and broadcast it to the SSE stream.
@@ -800,6 +870,9 @@ async def webhook_trigger(key: str, request: Request):
     The key in the URL path is the shared secret — anyone who knows it can
     fire this webhook.  Broadcasts action=webhook.trigger so the desktop app
     can route it to the automation engine.
+
+    Declared AFTER the explicit /api/webhooks/github route so the GitHub
+    path doesn't get captured here as key="github".
     """
     try:
         payload = await request.json()

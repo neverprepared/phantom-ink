@@ -303,6 +303,16 @@ class Settings(BaseSettings):
         default_factory=dict
     )  # host path → container path substitutions
 
+    # GitHub webhook trigger for Loop runs. When github_webhook_secret is
+    # set, /api/webhooks/github accepts signed payloads, verifies them via
+    # X-Hub-Signature-256, and fires start_loop on the pr-review-loop
+    # template. github_loop_repos optionally restricts which repos can
+    # trigger: empty list means accept any signed payload (require an
+    # external allowlist via the webhook secret rotation), non-empty means
+    # the payload's repository.full_name must be in the list.
+    github_webhook_secret: str = ""  # CL_GITHUB_WEBHOOK_SECRET
+    github_loop_repos: list[str] = Field(default_factory=list)  # CL_GITHUB_LOOP_REPOS
+
     model_config = {"env_prefix": "CL_", "env_nested_delimiter": "__"}
 
     @property
