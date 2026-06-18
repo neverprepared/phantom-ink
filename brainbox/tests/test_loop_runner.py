@@ -133,6 +133,60 @@ class TestStartLoop:
         with pytest.raises(ValueError, match="agent_id or role"):
             await start_loop(spec, HandoffEnvelope())
 
+    @pytest.mark.asyncio
+    async def test_rejects_missing_required_refs(self, reviewer_agent):
+        from brainbox.loops import RequiredRef
+
+        spec = LoopSpec(
+            name="needs-pr",
+            intent=Intent(outcome="x", convergence="`true`"),
+            body=Body(nodes=[Node(id="r", role="reviewer")]),
+            convergence_metric="`0`",
+            required_refs=[
+                RequiredRef(name="pr_number"),
+                RequiredRef(name="repo"),
+            ],
+        )
+        # No artifact_refs at all → both required missing
+        with pytest.raises(ValueError, match="pr_number.*repo|repo.*pr_number"):
+            await start_loop(spec, HandoffEnvelope())
+
+    @pytest.mark.asyncio
+    async def test_accepts_when_all_required_refs_present(self, reviewer_agent):
+        from brainbox.loops import RequiredRef
+
+        spec = LoopSpec(
+            name="needs-pr",
+            intent=Intent(outcome="x", convergence="`true`"),
+            body=Body(nodes=[Node(id="r", role="reviewer")]),
+            convergence_metric="`0`",
+            required_refs=[
+                RequiredRef(name="pr_number"),
+                RequiredRef(name="repo"),
+            ],
+        )
+        env = HandoffEnvelope(artifact_refs={"pr_number": 117, "repo": "owner/name"})
+        inst = await start_loop(spec, env)
+        assert inst.status == LoopStatus.RUNNING
+
+    @pytest.mark.asyncio
+    async def test_optional_ref_can_be_missing(self, reviewer_agent):
+        from brainbox.loops import RequiredRef
+
+        spec = LoopSpec(
+            name="optional-sha",
+            intent=Intent(outcome="x", convergence="`true`"),
+            body=Body(nodes=[Node(id="r", role="reviewer")]),
+            convergence_metric="`0`",
+            required_refs=[
+                RequiredRef(name="pr_number"),
+                RequiredRef(name="head_sha", required=False),
+            ],
+        )
+        env = HandoffEnvelope(artifact_refs={"pr_number": 117})
+        inst = await start_loop(spec, env)
+        assert inst.status == LoopStatus.RUNNING
+
 
 # ---------------------------------------------------------------------------
 # advance_loop — CONVERGED happy path

@@ -104,7 +104,7 @@ class TestListAndGet:
         async with client as c:
             start = await c.post(
                 "/api/loops/start",
-                json={"template_name": "pr-review-loop", "envelope": {}},
+                json={"template_name": "pr-review-loop", "envelope": {"artifact_refs": {"pr_number": 1, "repo": "test/repo"}}},
             )
             assert start.status_code == 200
             list_resp = await c.get("/api/loops")
@@ -123,7 +123,7 @@ class TestListAndGet:
         async with client as c:
             await c.post(
                 "/api/loops/start",
-                json={"template_name": "pr-review-loop", "envelope": {}},
+                json={"template_name": "pr-review-loop", "envelope": {"artifact_refs": {"pr_number": 1, "repo": "test/repo"}}},
             )
             resp_running = await c.get("/api/loops", params={"status": "running"})
             resp_converged = await c.get("/api/loops", params={"status": "converged"})
@@ -141,7 +141,7 @@ class TestListAndGet:
         async with client as c:
             start = await c.post(
                 "/api/loops/start",
-                json={"template_name": "pr-review-loop", "envelope": {}},
+                json={"template_name": "pr-review-loop", "envelope": {"artifact_refs": {"pr_number": 1, "repo": "test/repo"}}},
             )
             loop_id = start.json()["id"]
             resp = await c.get(f"/api/loops/{loop_id}")
@@ -173,7 +173,7 @@ class TestIterationMetrics:
         async with client as c:
             start = await c.post(
                 "/api/loops/start",
-                json={"template_name": "pr-review-loop", "envelope": {}},
+                json={"template_name": "pr-review-loop", "envelope": {"artifact_refs": {"pr_number": 1, "repo": "test/repo"}}},
             )
             loop_id = start.json()["id"]
             # Simulate an iteration directly (no agent in the loop)
@@ -197,7 +197,7 @@ class TestCancelLoop:
         async with client as c:
             start = await c.post(
                 "/api/loops/start",
-                json={"template_name": "pr-review-loop", "envelope": {}},
+                json={"template_name": "pr-review-loop", "envelope": {"artifact_refs": {"pr_number": 1, "repo": "test/repo"}}},
             )
             loop_id = start.json()["id"]
             child_id = start.json()["current_child_id"]
@@ -231,7 +231,7 @@ class TestCancelLoop:
         async with client as c:
             start = await c.post(
                 "/api/loops/start",
-                json={"template_name": "pr-review-loop", "envelope": {}},
+                json={"template_name": "pr-review-loop", "envelope": {"artifact_refs": {"pr_number": 1, "repo": "test/repo"}}},
             )
             loop_id = start.json()["id"]
             # Force convergence by emitting zero blockers + green CI
