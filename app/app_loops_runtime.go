@@ -41,6 +41,39 @@ func (a *App) ListLoopTemplates() ([]string, error) {
 	return a.client.ListLoopTemplates()
 }
 
+// GetLoopTemplate returns the raw YAML and metadata for one template.
+// Drives the Templates tab editor (display today, write in PR 5).
+func (a *App) GetLoopTemplate(name string) (brainbox.LoopTemplate, error) {
+	return a.client.GetLoopTemplate(name)
+}
+
+// ValidateLoopTemplate runs schema validation on raw YAML without saving.
+func (a *App) ValidateLoopTemplate(rawYAML string) (brainbox.LoopTemplateValidation, error) {
+	return a.client.ValidateLoopTemplate(rawYAML)
+}
+
+// DryRunLoopTemplate plans iteration 1 against a sample envelope.
+func (a *App) DryRunLoopTemplate(name string, envelope map[string]interface{}) (map[string]interface{}, error) {
+	return a.client.DryRunLoopTemplate(name, envelope)
+}
+
+// PutLoopTemplate writes raw YAML to the user dir. fork=true creates a
+// user override of a built-in.
+func (a *App) PutLoopTemplate(name, rawYAML string, fork bool) (brainbox.LoopTemplate, error) {
+	return a.client.PutLoopTemplate(name, rawYAML, fork)
+}
+
+// DeleteLoopTemplate removes a user template. 403 on built-ins.
+func (a *App) DeleteLoopTemplate(name string) error {
+	return a.client.DeleteLoopTemplate(name)
+}
+
+// GetLoopTemplateSchema returns the LoopSpec JSON Schema for editor
+// Intellisense (PR 5 + 6).
+func (a *App) GetLoopTemplateSchema() (map[string]interface{}, error) {
+	return a.client.GetLoopTemplateSchema()
+}
+
 // StartLiveLoop fires a Loop by template name with initial artifact_refs.
 // Used by the "Run a loop" UI (and by future drill-in retry buttons).
 func (a *App) StartLiveLoop(templateName string, artifactRefs map[string]interface{}) (brainbox.LiveLoop, error) {

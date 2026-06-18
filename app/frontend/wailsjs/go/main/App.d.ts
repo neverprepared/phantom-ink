@@ -46,6 +46,8 @@ export function DeleteChannel(arg1:string):Promise<void>;
 
 export function DeleteCollectJob(arg1:string):Promise<void>;
 
+export function DeleteLoopTemplate(arg1:string):Promise<void>;
+
 export function DeleteOllamaModel(arg1:string):Promise<void>;
 
 export function DeletePlaybook(arg1:string):Promise<void>;
@@ -65,6 +67,8 @@ export function DeleteSession(arg1:string):Promise<brainbox.SessionActionRespons
 export function DisableLocalRunner():Promise<void>;
 
 export function DismissAttention(arg1:string):Promise<void>;
+
+export function DryRunLoopTemplate(arg1:string,arg2:Record<string, any>):Promise<Record<string, any>>;
 
 export function EnableLocalRunner(arg1:string):Promise<void>;
 
@@ -121,6 +125,10 @@ export function GetLiveLoop(arg1:string):Promise<brainbox.LiveLoop>;
 export function GetLiveLoopIterations(arg1:string):Promise<Array<brainbox.LiveLoopIteration>>;
 
 export function GetLocalRunnerStatus():Promise<main.LocalRunnerStatus>;
+
+export function GetLoopTemplate(arg1:string):Promise<brainbox.LoopTemplate>;
+
+export function GetLoopTemplateSchema():Promise<Record<string, any>>;
 
 export function GetMatchingRules(arg1:string,arg2:string):Promise<Array<main.AutomationRule>>;
 
@@ -230,6 +238,8 @@ export function PullOllamaModel(arg1:string):Promise<string>;
 
 export function PurgeBackup(arg1:string):Promise<void>;
 
+export function PutLoopTemplate(arg1:string,arg2:string,arg3:boolean):Promise<brainbox.LoopTemplate>;
+
 export function RemoveChannelParticipant(arg1:string,arg2:string):Promise<brainbox.Channel>;
 
 export function RescanAgents():Promise<Array<main.DetectedAgent>>;
@@ -309,3 +319,5 @@ export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promis
 export function UpdatePlaybook(arg1:string,arg2:brainbox.UpdatePlaybookRequest):Promise<brainbox.Playbook>;
 
 export function UsableAgents():Promise<Array<main.DetectedAgent>>;
+
+export function ValidateLoopTemplate(arg1:string):Promise<brainbox.LoopTemplateValidation>;

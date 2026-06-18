@@ -111,7 +111,7 @@ func (c *Client) CancelLiveLoop(id, reason string) (LiveLoop, error) {
 }
 
 // ListLoopTemplates returns the names of every loop template visible to
-// the brainbox install. Used by the future "Start a loop" modal.
+// the brainbox install. Used by the Templates tab + Trigger tab dropdown.
 func (c *Client) ListLoopTemplates() ([]string, error) {
 	var resp struct {
 		Templates []string `json:"templates"`
@@ -120,6 +120,100 @@ func (c *Client) ListLoopTemplates() ([]string, error) {
 		return nil, err
 	}
 	return resp.Templates, nil
+}
+
+// LoopTemplate is the raw text + metadata for one template, returned by
+// GET /api/loops/templates/{name}. The Templates tab renders `yaml` in the
+// editor; `origin` controls whether Save is enabled vs. requiring fork.
+type LoopTemplate struct {
+	Name    string `json:"name"`
+	Origin  string `json:"origin"` // "built-in" | "user"
+	Version string `json:"version"`
+	Hash    string `json:"hash"`
+	YAML    string `json:"yaml"`
+}
+
+// GetLoopTemplate fetches one template by name.
+func (c *Client) GetLoopTemplate(name string) (LoopTemplate, error) {
+	var t LoopTemplate
+	if err := c.get("/api/loops/templates/"+name, &t); err != nil {
+		return LoopTemplate{}, err
+	}
+	return t, nil
+}
+
+// LoopTemplateValidation is the result shape of POST /validate. Editor
+// renders errors as inline lint annotations; line/col is supplied for
+// YAML syntax errors, field paths for pydantic schema errors.
+type LoopTemplateValidation struct {
+	OK       bool                          `json:"ok"`
+	Errors   []LoopTemplateValidationEntry `json:"errors"`
+	Warnings []LoopTemplateValidationEntry `json:"warnings"`
+}
+
+type LoopTemplateValidationEntry struct {
+	Line    *int   `json:"line,omitempty"`
+	Col     *int   `json:"col,omitempty"`
+	Field   string `json:"field,omitempty"`
+	Message string `json:"message"`
+}
+
+// ValidateLoopTemplate runs server-side validation on raw template YAML
+// without saving. Editor calls this on debounced keystrokes.
+func (c *Client) ValidateLoopTemplate(rawYAML string) (LoopTemplateValidation, error) {
+	body := map[string]string{"yaml": rawYAML}
+	var resp LoopTemplateValidation
+	if err := c.doWith(c.httpClient, http.MethodPost, "/api/loops/templates/validate", body, &resp); err != nil {
+		return LoopTemplateValidation{}, err
+	}
+	return resp, nil
+}
+
+// DryRunLoopTemplate plans iteration 1 of the template against an optional
+// sample envelope without enqueueing. Returns the structured plan as a
+// loosely-typed map — the operator-facing JSON shape is rich and not yet
+// stable.
+func (c *Client) DryRunLoopTemplate(name string, envelope map[string]interface{}) (map[string]interface{}, error) {
+	body := map[string]interface{}{}
+	if envelope != nil {
+		body["envelope"] = envelope
+	}
+	var resp map[string]interface{}
+	if err := c.doWith(c.httpClient, http.MethodPost, "/api/loops/templates/"+name+"/dry-run", body, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// PutLoopTemplate writes raw YAML to the user templates dir. Pass fork=true
+// to create a user override of a built-in. Returns the freshly-read
+// template metadata.
+func (c *Client) PutLoopTemplate(name, rawYAML string, fork bool) (LoopTemplate, error) {
+	path := "/api/loops/templates/" + name
+	if fork {
+		path += "?fork=true"
+	}
+	body := map[string]string{"yaml": rawYAML}
+	var resp LoopTemplate
+	if err := c.doWith(c.httpClient, http.MethodPut, path, body, &resp); err != nil {
+		return LoopTemplate{}, err
+	}
+	return resp, nil
+}
+
+// DeleteLoopTemplate removes a user template by name. 403 on built-ins.
+func (c *Client) DeleteLoopTemplate(name string) error {
+	return c.doWith(c.httpClient, http.MethodDelete, "/api/loops/templates/"+name, nil, nil)
+}
+
+// GetLoopTemplateSchema returns the LoopSpec JSON Schema. Editor consumes
+// this to drive Intellisense and inline validation hints.
+func (c *Client) GetLoopTemplateSchema() (map[string]interface{}, error) {
+	var resp map[string]interface{}
+	if err := c.get("/api/loops/templates/schema", &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // StartLiveLoop kicks off a Loop by template name with the given initial
