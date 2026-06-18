@@ -322,6 +322,46 @@ class TestAdvanceThrashing:
 # ---------------------------------------------------------------------------
 
 
+class TestIterationChildLoopContext:
+    """Loop iteration children carry loop_id / loop_iteration / permission_tier
+    / node_requires through router.submit_task → Task so the dispatch path
+    can inject env vars and (later) filter by permission tier."""
+
+    @pytest.mark.asyncio
+    async def test_first_child_has_loop_context_fields(self, reviewer_agent):
+        spec = _spec()
+        inst = await start_loop(spec, HandoffEnvelope())
+        child = router_module._tasks[inst.current_child_id]
+        assert child.loop_id == inst.id
+        assert child.loop_iteration == 1
+        # pr-review template uses default tier
+        assert child.permission_tier == "default"
+
+    @pytest.mark.asyncio
+    async def test_node_requires_propagate_to_child(self, reviewer_agent):
+        spec = LoopSpec(
+            name="strict-test",
+            intent=Intent(outcome="x", convergence="`true`"),
+            body=Body(nodes=[
+                Node(id="reviewer", role="reviewer", prompt="x",
+                     requires=["repo:read", "memory:write"]),
+            ]),
+            convergence_metric="`0`",
+        )
+        inst = await start_loop(spec, HandoffEnvelope())
+        child = router_module._tasks[inst.current_child_id]
+        assert child.node_requires == ["repo:read", "memory:write"]
+
+    @pytest.mark.asyncio
+    async def test_subsequent_iteration_has_correct_counter(self, reviewer_agent):
+        spec = _spec(max_iterations=10)
+        inst = await start_loop(spec, HandoffEnvelope())
+        await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": [1]}))
+        # iter 2's child should carry loop_iteration == 2
+        child = router_module._tasks[inst.current_child_id]
+        assert child.loop_iteration == 2
+
+
 class TestCancelLoop:
     @pytest.mark.asyncio
     async def test_cancel_running_loop(self, reviewer_agent):

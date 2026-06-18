@@ -112,9 +112,13 @@ When your task is part of a phantom-ink **loop** — i.e. `$BRAINBOX_LOOP_ID` is
 
 ### When this mode applies
 
-- `$BRAINBOX_LOOP_ID` is set (the iteration runner injects it)
-- Task description begins with `loop <id> iter <N>:`
-- Either signal means: emit the envelope. Don't emit a prose summary to `complete.sh` as you would in Mode B.
+The dispatch path injects these env vars on every loop iteration child session:
+
+- `$BRAINBOX_LOOP_ID` — the Loop instance id
+- `$BRAINBOX_LOOP_ITERATION` — the current iteration number (1-indexed)
+- `$BRAINBOX_LOOP_PERMISSIONS` — the Loop's permission tier (`inherit` | `default` | `strict`)
+
+Either: (a) `$BRAINBOX_LOOP_ID` is set, or (b) your task description begins with `loop <id> iter <N>:`. Either signal means: emit the envelope. Don't emit a prose summary to `complete.sh` as you would in Mode B.
 
 ### The envelope schema
 

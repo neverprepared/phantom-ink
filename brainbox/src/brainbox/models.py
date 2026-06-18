@@ -201,6 +201,17 @@ class Task(BaseModel):
     resume_on_children: list[str] = Field(default_factory=list)  # JOIN/CHILD: wake when all are COMPLETED
     resume_payload: dict[str, Any] = Field(default_factory=dict) # carried into the next iteration on resume
 
+    # Loop iteration context — populated when this task IS an iteration child
+    # of a Loop. The dispatch path reads these to inject BRAINBOX_LOOP_ID and
+    # BRAINBOX_ITERATION env vars into the session (so reviewer Mode C
+    # detects loop context reliably) and to apply the Loop's permission tier
+    # to the session's env merge. All optional — non-loop tasks default to
+    # backward-compatible "no loop context."
+    loop_id: str | None = None
+    loop_iteration: int = 0
+    permission_tier: str | None = None  # "inherit" | "default" | "strict"
+    node_requires: list[str] = Field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
