@@ -134,6 +134,23 @@ class TaskStatus(str, Enum):
     NEEDS_ACTION = "needs_action"  # waiting on human input (attention-eligible)
 
 
+class SuspensionKind(str, Enum):
+    """Why a task is currently suspended.
+
+    Set in tandem with TaskStatus.BLOCKED (JOIN/SCHEDULE/CHILD — auto-resumed
+    by the scheduler) or TaskStatus.NEEDS_ACTION (HUMAN — only resumed by an
+    explicit resume_task() call).
+
+    Suspended tasks do not consume queue slots — they're invisible to
+    _select_next() until they transition back to PENDING.
+    """
+
+    HUMAN = "human"        # awaiting UI button / webhook → resume_task(id, payload)
+    JOIN = "join"          # awaiting N upstream children to COMPLETED
+    SCHEDULE = "schedule"  # awaiting wall-clock resume_at_ms
+    CHILD = "child"        # variant of JOIN with N=1 (single specific child)
+
+
 class TaskCreate(BaseModel):
     description: str
     agent_name: str
@@ -176,6 +193,13 @@ class Task(BaseModel):
     deadline_ms: int | None = None       # Epoch ms; fail if not RUNNING by this time
     next_attempt_at: int | None = None   # Epoch ms; backoff: don't retry before this
     last_error: str | None = None        # Error from the most recent failed dispatch attempt
+
+    # Suspension primitive — populated only while status is BLOCKED or NEEDS_ACTION.
+    # See SuspensionKind docstring for the four shapes and resume mechanics.
+    suspension_kind: SuspensionKind | None = None
+    resume_at_ms: int | None = None                              # SCHEDULE: wake when wall-clock passes
+    resume_on_children: list[str] = Field(default_factory=list)  # JOIN/CHILD: wake when all are COMPLETED
+    resume_payload: dict[str, Any] = Field(default_factory=dict) # carried into the next iteration on resume
 
 
 # ---------------------------------------------------------------------------

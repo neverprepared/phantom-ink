@@ -14,7 +14,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from .log import get_logger
-from .models import TaskStatus
+from .models import SuspensionKind, TaskStatus
 from .utils import now_ms as _now_ms
 
 if TYPE_CHECKING:
@@ -68,7 +68,11 @@ def stop() -> None:
 
 
 def _select_next() -> Task | None:
-    """Return the highest-priority ready PENDING task, or None."""
+    """Return the highest-priority ready PENDING task, or None.
+
+    Suspended tasks (BLOCKED / NEEDS_ACTION) are intentionally invisible here
+    so they don't consume queue slots while waiting for their resume condition.
+    """
     from . import router
 
     now = _now_ms()
@@ -81,6 +85,60 @@ def _select_next() -> Task | None:
     if not pending:
         return None
     return min(pending, key=lambda t: (-t.priority, t.next_attempt_at or 0, t.created_at))
+
+
+def _wake_resumable() -> None:
+    """Walk suspended tasks and resume those whose condition has fired.
+
+    SCHEDULE      → resume when wall-clock passes resume_at_ms.
+    JOIN / CHILD  → resume when every task in resume_on_children is COMPLETED.
+                    If any of them FAILED, fail the parent instead of resuming.
+    HUMAN         → never auto-wakes; awaits an explicit resume_task() call.
+
+    Called once per scheduler tick before dispatch. Auto-resume goes directly
+    through router.resume_task so the same emit/notify path runs.
+    """
+    from . import router
+
+    now = _now_ms()
+    for task in list(router._tasks.values()):
+        if task.status not in (TaskStatus.BLOCKED, TaskStatus.NEEDS_ACTION):
+            continue
+        kind = task.suspension_kind
+        if kind == SuspensionKind.SCHEDULE:
+            if task.resume_at_ms is not None and now >= task.resume_at_ms:
+                router.resume_task(task.id)
+                log.info(
+                    "scheduler.task_resumed_schedule",
+                    metadata={"task_id": task.id},
+                )
+        elif kind in (SuspensionKind.JOIN, SuspensionKind.CHILD):
+            child_states = [
+                (cid, router._tasks.get(cid).status if router._tasks.get(cid) else None)
+                for cid in task.resume_on_children
+            ]
+            # Missing child = treat as failure — parent should not silently stall
+            if any(state is None for _, state in child_states):
+                task.status = TaskStatus.FAILED
+                task.error = "join child missing from task store"
+                task.updated_at = now
+                router._emit("task.failed", task)
+                continue
+            if any(state == TaskStatus.FAILED for _, state in child_states):
+                task.status = TaskStatus.FAILED
+                task.error = "join child failed"
+                task.updated_at = now
+                router._emit("task.failed", task)
+                continue
+            if all(state == TaskStatus.COMPLETED for _, state in child_states):
+                router.resume_task(task.id)
+                log.info(
+                    "scheduler.task_resumed_join",
+                    metadata={
+                        "task_id": task.id,
+                        "children": task.resume_on_children,
+                    },
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +283,11 @@ async def _scheduler_loop() -> None:
             except asyncio.TimeoutError:
                 pass
             _wakeup.clear()
+
+            # Wake suspended tasks whose resume condition has fired.
+            # Runs before deadline expiry so a just-resumed task with a tight
+            # deadline still gets its dispatch attempt this tick.
+            _wake_resumable()
 
             # Expire deadline-missed PENDING tasks
             from . import router
