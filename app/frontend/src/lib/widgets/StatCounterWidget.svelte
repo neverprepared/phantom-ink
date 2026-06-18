@@ -14,6 +14,9 @@
       case 'failedTasks':     return data.failedTasks;
       case 'scheduledFires':  return data.fires.length;
       case 'actionItems':     return data.actionItems.length;
+      case 'attentionItems':  return data.attentionItems;
+      case 'offlineRunners':  return data.offlineRunners;
+      case 'peakQueue1h':     return data.peakQueue1h;
       default:                return 0;
     }
   });

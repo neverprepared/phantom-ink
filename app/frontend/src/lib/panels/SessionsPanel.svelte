@@ -771,6 +771,13 @@
             {/if}
           </div>
 
+          {#if task}
+            {@const taskCtx = (task.description ?? task.title ?? task.chain_name ?? '').toString().trim()}
+            {#if taskCtx}
+              <div class="card-task-line" title={taskCtx}>{taskCtx}</div>
+            {/if}
+          {/if}
+
           <div class="card-meta">
             {#if session.llm_provider}
               <span class="meta-item">{session.llm_provider}{session.llm_model ? ` / ${session.llm_model}` : ''}</span>
@@ -1352,6 +1359,19 @@
     gap: 12px;
     margin-bottom: 6px;
     font-size: 12px;
+  }
+
+  .card-task-line {
+    margin: 2px 0 6px 0;
+    padding-left: 2px;
+    font-size: 12.5px;
+    color: var(--text-muted, var(--color-text-secondary));
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
   }
 
   .meta-item {

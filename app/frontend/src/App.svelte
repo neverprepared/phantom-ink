@@ -71,6 +71,20 @@
         return;
       }
 
+      // Vim-style panel cycling: ⌘[ jumps to the most-recent panel, ⌘] to
+      // the oldest entry in the recency stack. Lets keyboard users avoid
+      // memorizing numeric mappings.
+      if (e.key === '[') {
+        e.preventDefault();
+        currentPanel.cyclePrev();
+        return;
+      }
+      if (e.key === ']') {
+        e.preventDefault();
+        currentPanel.cycleNext();
+        return;
+      }
+
       const panelMap: Record<string, string> = {
         '1': 'dashboard',
         '2': 'sessions',

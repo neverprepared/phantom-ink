@@ -1,7 +1,5 @@
 <script lang="ts">
-  import { scaleLinear } from 'd3-scale';
-  import { area, curveMonotoneX } from 'd3-shape';
-  import { max } from 'd3-array';
+  import { linearScale, arrayMax, monotonePath, type Pt } from './chartMath';
 
   interface Sample {
     ts: number;
@@ -26,34 +24,35 @@
 
   const VB_W = 300;
 
-  let maxVal = $derived(Math.max(max(data, d => d.value) ?? 1, 0.001));
+  let maxVal = $derived(Math.max(arrayMax(data, d => d.value), 0.001));
   let bandSize = $derived(maxVal / bands);
 
   let xScale = $derived.by(() => {
     if (data.length < 2) return null;
-    return scaleLinear().domain([0, data.length - 1]).range([0, VB_W]);
+    return linearScale(0, data.length - 1, 0, VB_W);
   });
 
   let bandPaths = $derived.by(() => {
     if (!xScale || data.length < 2) return [];
 
-    const yScale = scaleLinear().domain([0, bandSize]).range([height, 0]).clamp(true);
+    const yToPx = linearScale(0, bandSize, height, 0);
+    const clampedY = (v: number) => yToPx(Math.max(0, Math.min(bandSize, v)));
 
     return Array.from({ length: bands }, (_, i) => {
       const offset = i * bandSize;
-
-      const gen = area<Sample>()
-        .x((_d, idx) => xScale!(idx))
-        .y0(height)
-        .y1((d) => {
-          const shifted = d.value - offset;
-          const clamped = Math.max(0, Math.min(bandSize, shifted));
-          return yScale(clamped);
-        })
-        .curve(curveMonotoneX);
-
+      // Each band's path follows the value above its lower bound, clamped to
+      // the band height. Stack same-color paths with rising opacity to fake
+      // the d3 horizon look without d3's area generator.
+      const pts: Pt[] = data.map((d, idx) => ({
+        x: xScale!(idx),
+        y: clampedY(d.value - offset),
+      }));
+      const top = monotonePath(pts);
+      const last = pts[pts.length - 1];
+      const first = pts[0];
+      const d = `${top}L${last.x},${height}L${first.x},${height}Z`;
       return {
-        d: gen(data) ?? '',
+        d,
         opacity: 0.3 + (i * 0.35),
       };
     });

@@ -1,10 +1,18 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { getApi, openInBrowser } from '../utils/api';
-  import { featureFlags, profileState, currentPanel } from '../stores.svelte';
+  import { featureFlags, profileState, currentPanel, attentionStore, streamFocus, playbookSeed } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import ContextMenu from '../components/ContextMenu.svelte';
+
+  interface CtxMenuItem {
+    label: string;
+    onClick: () => void;
+    danger?: boolean;
+    disabled?: boolean;
+  }
 
   // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -21,6 +29,8 @@
     url?: string;
     actions: string[]; // "retry" | "open" | "respond" | "dismiss"
     user_reply?: string;
+    session_name?: string;
+    runner_name?: string;
   }
 
   interface OpenTarget {
@@ -76,10 +86,21 @@
   // ── State ──────────────────────────────────────────────────────────────────
 
   let tab = $state<Tab>('attention');
-  let attention = $state<AttentionItem[]>([]);
+  // Attention list is sourced from the singleton attentionStore so the sidebar
+  // badge, dashboard ActionItems widget, and this panel always agree without
+  // duplicating polls.
+  let attention = $derived<AttentionItem[]>(attentionStore.items as unknown as AttentionItem[]);
+  let attentionLoading = $derived(!attentionStore.loaded);
   let live = $state<AgentStateItem[]>([]);
   let logs = $state<LogEntry[]>([]);
-  let attentionLoading = $state(true);
+  // Optional sort key for the logs tab. Set via cross-panel streamFocus signal
+  // (e.g. the OpenSearch cost widget jumps in with sortBy='cost').
+  let logsSortBy = $state<'cost' | 'duration' | 'tokens' | null>(null);
+  let displayLogs = $derived.by(() => {
+    if (!logsSortBy) return logs;
+    const key = logsSortBy === 'duration' ? 'duration_ms' : logsSortBy;
+    return [...logs].sort((a, b) => ((b as any)[key] ?? 0) - ((a as any)[key] ?? 0));
+  });
   let liveLoading = $state(true);
   let logsLoading = $state(false);
   let attentionError = $state<string | null>(null);
@@ -98,13 +119,11 @@
   // Outbox pending indicator, polled separately from list refresh.
   let outboxPending = $state(0);
 
-  let attentionPoll: number | undefined;
   let livePoll: number | undefined;
   let logsPoll: number | undefined;
   let outboxPoll: number | undefined;
   let sseCleanup: Array<() => void> = [];
 
-  const ATTN_POLL_MS = 5_000;
   const LIVE_POLL_MS = 5_000;     // SSE drives instant updates; this is a safety net
   const LOGS_POLL_MS = 3_000;
   const OUTBOX_POLL_MS = 5_000;
@@ -117,23 +136,194 @@
   let activeProfile    = $derived(profileState.active);
   let workspaceFilter  = $derived(activeProfile?.name ?? '');
 
+  // ── Right-click context menu ───────────────────────────────────────────────
+  let ctxOpen = $state(false);
+  let ctxX = $state(0);
+  let ctxY = $state(0);
+  let ctxItems = $state<CtxMenuItem[]>([]);
+
+  function openAttentionMenu(item: AttentionItem, evt: MouseEvent): void {
+    evt.preventDefault();
+    ctxX = evt.clientX;
+    ctxY = evt.clientY;
+    const supports = (a: string) => item.actions.includes(a);
+    const items: CtxMenuItem[] = [
+      {
+        label: 'Open source',
+        onClick: () => openTarget(item),
+        disabled: !supports('open') && !item.url,
+      },
+      { label: 'Retry', onClick: () => retry(item), disabled: !supports('retry') },
+      { label: 'Respond…', onClick: () => openRespond(item), disabled: !supports('respond') },
+      { label: 'Copy ID', onClick: () => copyToClipboard(item.id, 'id') },
+      { label: 'Copy reason', onClick: () => copyToClipboard(item.reason || item.subtitle || item.title, 'reason'), disabled: !item.reason && !item.subtitle && !item.title },
+      { label: 'Dismiss', onClick: () => dismiss(item), danger: true, disabled: !supports('dismiss') },
+    ];
+    ctxItems = items;
+    ctxOpen = true;
+  }
+
+  async function copyToClipboard(text: string, kind: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+      notifications.success(`copied ${kind}`);
+    } catch {
+      notifications.error('clipboard unavailable');
+    }
+  }
+
+  // ── Live tab filters + presets ─────────────────────────────────────────────
+  // Multi-select chip filters: a row matches when each non-empty bucket has at
+  // least one chip matching the envelope (AND across buckets, OR within).
+  // Persisted client-side so the same operator view survives a reload.
+
+  interface LiveFilters {
+    sources: string[];   // e.g. ['task','hub']
+    statuses: string[];  // 'upcoming' | 'active' | 'blocked' | 'needs_action'
+    tags: string[];
+  }
+  interface LivePreset {
+    name: string;
+    filters: LiveFilters;
+  }
+
+  const FILTERS_KEY = 'pi-stream-filters-v1';
+  const PRESETS_KEY = 'pi-stream-presets-v1';
+  const STATUS_OPTIONS = ['upcoming', 'active', 'blocked', 'needs_action'];
+
+  function loadFilters(): LiveFilters {
+    try {
+      const raw = localStorage.getItem(FILTERS_KEY);
+      if (raw) return JSON.parse(raw) as LiveFilters;
+    } catch {}
+    return { sources: [], statuses: [], tags: [] };
+  }
+  function loadPresets(): LivePreset[] {
+    try {
+      const raw = localStorage.getItem(PRESETS_KEY);
+      if (raw) return JSON.parse(raw) as LivePreset[];
+    } catch {}
+    return [];
+  }
+
+  let liveFilters = $state<LiveFilters>(loadFilters());
+  let presets = $state<LivePreset[]>(loadPresets());
+
+  $effect(() => {
+    try { localStorage.setItem(FILTERS_KEY, JSON.stringify(liveFilters)); } catch {}
+  });
+
+  function toggleFilter(bucket: keyof LiveFilters, value: string): void {
+    const cur = liveFilters[bucket];
+    liveFilters = {
+      ...liveFilters,
+      [bucket]: cur.includes(value) ? cur.filter(v => v !== value) : [...cur, value],
+    };
+  }
+  function clearFilters(): void {
+    liveFilters = { sources: [], statuses: [], tags: [] };
+  }
+  let activeFilterCount = $derived(
+    liveFilters.sources.length + liveFilters.statuses.length + liveFilters.tags.length
+  );
+
+  // Tag chip universe = every tag we've seen on a live envelope, plus filter
+  // tags so removed-then-readded chips stick around.
+  let availableTags = $derived.by(() => {
+    const set = new Set<string>(liveFilters.tags);
+    for (const item of live) for (const t of item.tags ?? []) set.add(t);
+    return Array.from(set).sort();
+  });
+  let availableSources = $derived.by(() => {
+    const set = new Set<string>(['task', 'chain', 'entry', 'hub', 'bus']);
+    for (const item of live) if (item.source) set.add(item.source);
+    return Array.from(set).sort();
+  });
+
+  function passesFilters(it: AgentStateItem): boolean {
+    if (liveFilters.sources.length && !liveFilters.sources.includes(it.source)) return false;
+    if (liveFilters.statuses.length && !liveFilters.statuses.includes(it.status)) return false;
+    if (liveFilters.tags.length) {
+      const itemTags = new Set(it.tags ?? []);
+      if (!liveFilters.tags.some(t => itemTags.has(t))) return false;
+    }
+    return true;
+  }
+
+  let filteredLive = $derived(live.filter(passesFilters));
+
+  function savePreset(): void {
+    const name = window.prompt('Name this preset (e.g. "blocked-only"):');
+    if (!name?.trim()) return;
+    const next = [
+      { name: name.trim(), filters: { ...liveFilters, sources: [...liveFilters.sources], statuses: [...liveFilters.statuses], tags: [...liveFilters.tags] } },
+      ...presets.filter(p => p.name !== name.trim()),
+    ].slice(0, 9);
+    presets = next;
+    try { localStorage.setItem(PRESETS_KEY, JSON.stringify(next)); } catch {}
+  }
+  function applyPreset(p: LivePreset): void {
+    liveFilters = {
+      sources: [...p.filters.sources],
+      statuses: [...p.filters.statuses],
+      tags: [...p.filters.tags],
+    };
+  }
+  function deletePreset(name: string): void {
+    const next = presets.filter(p => p.name !== name);
+    presets = next;
+    try { localStorage.setItem(PRESETS_KEY, JSON.stringify(next)); } catch {}
+  }
+
+  // ── Live-tab selection mode (drives Save-as-playbook) ──────────────────────
+  let selectMode = $state(false);
+  let selected = $state<Set<string>>(new Set());
+
+  function toggleSelect(id: string): void {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    selected = next;
+  }
+  function clearSelection(): void { selected = new Set(); }
+  function exitSelectMode(): void { selectMode = false; clearSelection(); }
+
+  function saveAsPlaybook(): void {
+    if (selected.size === 0) return;
+    // Preserve the user's visible order so the playbook reads top-to-bottom.
+    const picked = filteredLive.filter(it => selected.has(it.id));
+    if (picked.length === 0) return;
+    const lines = picked.map(it => {
+      const title = (it.title || it.source || it.type || 'step').replace(/\s+/g, ' ').trim();
+      const sub = (it.subtitle ?? '').trim();
+      return sub ? `- [ ] ${title} — ${sub}` : `- [ ] ${title}`;
+    });
+    const seedName = `from-stream-${new Date().toISOString().slice(0, 10)}`;
+    playbookSeed.seed({
+      name: seedName,
+      markdown: lines.join('\n'),
+      scope: workspaceFilter ? 'profile' : 'global',
+    });
+    exitSelectMode();
+  }
+
   $effect(() => {
     if (tab === 'logs' && !opensearchActive) tab = 'attention';
+  });
+
+  // If the user clicks an OpenSearch widget while Stream is already mounted,
+  // the streamFocus store fires after onMount — pick it up reactively.
+  $effect(() => {
+    const f = streamFocus.value;
+    if (!f) return;
+    if (f.tab) tab = f.tab;
+    if (f.sortBy) logsSortBy = f.sortBy;
+    streamFocus.consume();
   });
 
   // ── Loaders ────────────────────────────────────────────────────────────────
 
   async function refreshAttention() {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      attention = ((await a.ListAttention(workspaceFilter)) ?? []) as AttentionItem[];
-      attentionError = null;
-    } catch (err: any) {
-      attentionError = `${err?.message ?? err}`;
-    } finally {
-      attentionLoading = false;
-    }
+    await attentionStore.refresh();
   }
 
   async function refreshLive() {
@@ -253,10 +443,14 @@
   }
 
   onMount(() => {
-    void refreshAttention();
+    // Consume any cross-panel focus signal first so other tabs can land us
+    // here on the right tab (e.g. an OpenSearch metric widget jumping to logs).
+    const f = streamFocus.consume();
+    if (f?.tab) tab = f.tab;
+    if (f?.sortBy) logsSortBy = f.sortBy;
+
     void refreshLive();
     void refreshOutbox();
-    attentionPoll = window.setInterval(refreshAttention, ATTN_POLL_MS);
     livePoll      = window.setInterval(refreshLive, LIVE_POLL_MS);
     outboxPoll    = window.setInterval(refreshOutbox, OUTBOX_POLL_MS);
 
@@ -280,7 +474,6 @@
   });
 
   onDestroy(() => {
-    if (attentionPoll !== undefined) window.clearInterval(attentionPoll);
     if (livePoll      !== undefined) window.clearInterval(livePoll);
     if (logsPoll      !== undefined) window.clearInterval(logsPoll);
     if (outboxPoll    !== undefined) window.clearInterval(outboxPoll);
@@ -325,27 +518,25 @@
   // ── Actions ────────────────────────────────────────────────────────────────
 
   async function dismiss(item: AttentionItem) {
-    const prev = attention;
-    attention = attention.filter(i => i.id !== item.id);
+    attentionStore.removeLocal(item.id);
     const a = await getApi();
     if (!a) return;
     try {
       await a.DismissAttention(item.id);
     } catch (err: any) {
-      attention = prev;
+      void attentionStore.refresh(); // restore canonical state
       notifications.error(`Failed to dismiss: ${err?.message ?? err}`);
     }
   }
 
   async function retry(item: AttentionItem) {
-    const prev = attention;
-    attention = attention.filter(i => i.id !== item.id);
+    attentionStore.removeLocal(item.id);
     const a = await getApi();
     if (!a) return;
     try {
       await a.AttentionRetry(item.id);
     } catch (err: any) {
-      attention = prev;
+      void attentionStore.refresh();
       notifications.error(`Retry failed: ${err?.message ?? err}`);
     }
   }
@@ -473,6 +664,67 @@
 
   {#if tab === 'live'}
     <section class="tab-body">
+      <!-- Filter + selection control strip -->
+      <div class="filter-strip">
+        <div class="filter-buckets">
+          <div class="filter-bucket">
+            <span class="bucket-label">source</span>
+            {#each availableSources as src (src)}
+              <button
+                class="filter-chip"
+                class:on={liveFilters.sources.includes(src)}
+                onclick={() => toggleFilter('sources', src)}>{src}</button>
+            {/each}
+          </div>
+          <div class="filter-bucket">
+            <span class="bucket-label">status</span>
+            {#each STATUS_OPTIONS as s (s)}
+              <button
+                class="filter-chip"
+                class:on={liveFilters.statuses.includes(s)}
+                onclick={() => toggleFilter('statuses', s)}>{s.replace('_', ' ')}</button>
+            {/each}
+          </div>
+          {#if availableTags.length > 0}
+            <div class="filter-bucket">
+              <span class="bucket-label">tag</span>
+              {#each availableTags as t (t)}
+                <button
+                  class="filter-chip"
+                  class:on={liveFilters.tags.includes(t)}
+                  onclick={() => toggleFilter('tags', t)}>{t}</button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        <div class="filter-actions">
+          {#if activeFilterCount > 0}
+            <button class="btn ghost small" onclick={clearFilters} title="Clear all filters">clear ({activeFilterCount})</button>
+            <button class="btn ghost small" onclick={savePreset} title="Save current filters as a preset">save preset</button>
+          {/if}
+          <button
+            class="btn ghost small"
+            class:active={selectMode}
+            onclick={() => { selectMode = !selectMode; if (!selectMode) clearSelection(); }}>{selectMode ? 'cancel select' : 'select'}</button>
+          {#if selectMode && selected.size > 0}
+            <button class="btn ghost small accent" onclick={saveAsPlaybook}>
+              save as playbook ({selected.size})
+            </button>
+          {/if}
+        </div>
+      </div>
+
+      {#if presets.length > 0}
+        <div class="preset-strip" title="Click to apply a saved view">
+          {#each presets as p (p.name)}
+            <span class="preset-chip-wrap">
+              <button class="preset-chip" onclick={() => applyPreset(p)}>{p.name}</button>
+              <button class="preset-x" onclick={() => deletePreset(p.name)} title="Delete preset">×</button>
+            </span>
+          {/each}
+        </div>
+      {/if}
+
       {#if liveError}
         <EmptyState title="Failed to load live state" message={liveError} />
       {:else if liveLoading && live.length === 0}
@@ -481,11 +733,24 @@
         <EmptyState
           title="Nothing currently running"
           message="Live shows envelopes whose status is upcoming, active, blocked, or needs_action across every machine." />
+      {:else if filteredLive.length === 0}
+        <EmptyState
+          title="No envelopes match your filters"
+          message="{live.length} envelope{live.length === 1 ? '' : 's'} hidden by active filters. Clear filters above to see them." />
       {:else}
         <ul class="attn-list">
-          {#each live as item (item.id)}
-            <li class="attn-row src-bus">
+          {#each filteredLive as item (item.id)}
+            <li class="attn-row src-bus" class:selected={selected.has(item.id)}>
               <div class="attn-meta">
+                {#if selectMode}
+                  <input
+                    type="checkbox"
+                    class="select-box"
+                    checked={selected.has(item.id)}
+                    onchange={() => toggleSelect(item.id)}
+                    aria-label="Select for playbook"
+                  />
+                {/if}
                 <span class="attn-source">{item.source || 'bus'}</span>
                 {#if item.status}
                   <span class="attn-status status-{item.status}">{statusLabel(item.status)}</span>
@@ -546,7 +811,7 @@
       {:else}
         <ul class="attn-list">
           {#each attention as item (item.id)}
-            <li class="attn-row src-{item.source}">
+            <li class="attn-row src-{item.source}" oncontextmenu={(e) => openAttentionMenu(item, e)}>
               <div class="attn-meta">
                 <span class="attn-source">{item.source}</span>
                 {#if item.status}
@@ -556,6 +821,18 @@
                   <span class="attn-reason">{item.reason}</span>
                 {/if}
                 {#if item.workspace}<span class="attn-ws">{item.workspace}</span>{/if}
+                {#if item.session_name}
+                  <button
+                    class="attn-chip chip-session"
+                    title="Open session"
+                    onclick={() => currentPanel.value = 'sessions'}>{item.session_name}</button>
+                {/if}
+                {#if item.runner_name}
+                  <button
+                    class="attn-chip chip-runner"
+                    title="Open runners"
+                    onclick={() => currentPanel.value = 'runners'}>{item.runner_name}</button>
+                {/if}
                 <span class="attn-time">{fmtAgo(item.time)}</span>
               </div>
               <div class="attn-title">{item.title}</div>
@@ -646,8 +923,14 @@
           title="No logs in the last 24h"
           message="Start a Claude Code session or widen your workspace filter." />
       {:else}
+        {#if logsSortBy}
+          <div class="log-sort-chip">
+            sorted by <strong>{logsSortBy === 'duration' ? 'latency' : logsSortBy}</strong> desc
+            <button class="link-btn" onclick={() => logsSortBy = null}>clear</button>
+          </div>
+        {/if}
         <ol class="log-list">
-          {#each logs as l, i (l.time + ':' + i)}
+          {#each displayLogs as l, i (l.time + ':' + i)}
             <li class="log-row">
               <span class="log-time">{fmtTime(l.time)}</span>
               <span class="log-body">{l.body}</span>
@@ -666,6 +949,14 @@
     </section>
   {/if}
 </div>
+
+<ContextMenu
+  open={ctxOpen}
+  x={ctxX}
+  y={ctxY}
+  items={ctxItems}
+  onClose={() => (ctxOpen = false)}
+/>
 
 <style>
   .panel {
@@ -880,6 +1171,26 @@
   }
   .attn-time { margin-left: auto; }
 
+  .attn-chip {
+    background: var(--bg, var(--color-bg-primary));
+    border: 1px solid var(--border, var(--color-border-primary));
+    color: var(--text-muted, var(--color-text-secondary));
+    padding: 1px 7px;
+    border-radius: var(--r-sm, var(--radius-sm));
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 10.5px;
+    letter-spacing: 0;
+    text-transform: none;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .attn-chip:hover {
+    color: var(--text, var(--color-text-primary));
+    border-color: var(--accent, var(--color-accent));
+  }
+  .chip-session { border-left: 2px solid var(--color-info, #1565c0); }
+  .chip-runner  { border-left: 2px solid var(--color-warning, #ef6c00); }
+
   .attn-title { font-size: 14px; font-weight: 600; color: var(--text, var(--color-text-primary)); }
   .attn-sub   { font-size: 12.5px; color: var(--text-muted, var(--color-text-secondary)); }
   .attn-reply {
@@ -950,6 +1261,20 @@
   .tag-sess { font-family: var(--font-mono, ui-monospace, monospace); }
   .log-dur  { color: var(--text-faint, var(--color-text-tertiary)); margin-left: auto; }
 
+  .log-sort-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding: 3px 10px;
+    font-size: 11.5px;
+    background: var(--bg-elev, var(--color-bg-tertiary));
+    border: 1px solid var(--border, var(--color-border-primary));
+    border-radius: var(--r-sm, var(--radius-sm));
+    color: var(--text-muted, var(--color-text-secondary));
+  }
+  .log-sort-chip strong { color: var(--text, var(--color-text-primary)); font-weight: 700; }
+
   .log-footer {
     margin-top: 12px;
     font-size: 11.5px;
@@ -993,5 +1318,113 @@
     padding: 60px 20px;
     color: var(--text-faint, var(--color-text-tertiary));
     font-size: 13px;
+  }
+
+  /* ── Filter + preset strip ─────────────────────────────────────────────── */
+  .filter-strip {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed var(--border, var(--color-border-primary));
+    flex-wrap: wrap;
+  }
+  .filter-buckets {
+    flex: 1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    min-width: 0;
+  }
+  .filter-bucket {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .bucket-label {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint, var(--color-text-tertiary));
+    margin-right: 4px;
+  }
+  .filter-chip {
+    background: transparent;
+    border: 1px solid var(--border, var(--color-border-primary));
+    color: var(--text-muted, var(--color-text-secondary));
+    border-radius: 999px;
+    padding: 2px 9px;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 10.5px;
+    cursor: pointer;
+    transition: all 0.12s;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .filter-chip:hover {
+    color: var(--text, var(--color-text-primary));
+    border-color: var(--text-muted, var(--color-text-secondary));
+  }
+  .filter-chip.on {
+    background: var(--accent, var(--color-accent));
+    color: white;
+    border-color: var(--accent, var(--color-accent));
+  }
+  .filter-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .btn.ghost.accent {
+    color: var(--accent, var(--color-accent));
+    border-color: var(--accent, var(--color-accent));
+  }
+  .preset-strip {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .preset-chip-wrap {
+    display: inline-flex;
+    align-items: stretch;
+    border: 1px solid var(--border, var(--color-border-primary));
+    border-radius: var(--r-sm, var(--radius-sm));
+    overflow: hidden;
+  }
+  .preset-chip {
+    background: var(--bg-elev, var(--color-bg-tertiary));
+    border: none;
+    color: var(--text-muted, var(--color-text-secondary));
+    padding: 2px 10px;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 10.5px;
+    cursor: pointer;
+  }
+  .preset-chip:hover { color: var(--text, var(--color-text-primary)); }
+  .preset-x {
+    background: var(--bg-elev, var(--color-bg-tertiary));
+    border: none;
+    border-left: 1px solid var(--border, var(--color-border-primary));
+    color: var(--text-faint, var(--color-text-tertiary));
+    padding: 0 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .preset-x:hover { color: var(--color-error); }
+
+  .attn-row.selected {
+    box-shadow: 0 0 0 2px var(--accent, var(--color-accent));
+  }
+  .select-box {
+    margin: 0 4px 0 0;
+    width: 14px;
+    height: 14px;
+    accent-color: var(--accent, var(--color-accent));
+    cursor: pointer;
   }
 </style>

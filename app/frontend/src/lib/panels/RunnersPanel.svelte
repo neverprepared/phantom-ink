@@ -5,6 +5,7 @@
   import PairRunnerModal from '../components/PairRunnerModal.svelte';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import { runnerQueueHistory } from '../metricsHistory.svelte';
 
   interface Runner {
     name: string;
@@ -48,12 +49,48 @@
     try {
       const list = await a.ListRunners();
       runners = (list ?? []) as Runner[];
+      // Record a queue-depth sample per runner so the inline sparkline and
+      // dashboard peak card have history without any backend work.
+      const ts = Date.now();
+      const activeNames = new Set<string>();
+      for (const r of runners) {
+        activeNames.add(r.name);
+        runnerQueueHistory.update(r.name, {
+          ts,
+          depth: r.queue_depth || 0,
+          inflight: r.in_flight || 0,
+        });
+      }
+      runnerQueueHistory.pruneKeys(activeNames);
       loadError = null;
     } catch (err: any) {
       loadError = `${err?.message ?? err}`;
     } finally {
       loaded = true;
     }
+  }
+
+  // Build a polyline path for a 60x20 sparkline normalised by the max value
+  // observed in the sample window. Returns '' when there isn't enough data.
+  function sparkPath(name: string): string {
+    const samples = runnerQueueHistory.value[name] ?? [];
+    if (samples.length < 2) return '';
+    const max = samples.reduce((acc, s) => Math.max(acc, s.depth), 0);
+    if (max === 0) return '';
+    const w = 60, h = 18;
+    const stepX = w / (samples.length - 1);
+    return samples
+      .map((s, i) => {
+        const x = (i * stepX).toFixed(1);
+        const y = (h - (s.depth / max) * h).toFixed(1);
+        return `${i === 0 ? 'M' : 'L'}${x},${y}`;
+      })
+      .join(' ');
+  }
+
+  function peakLabel(name: string): string {
+    const peak = runnerQueueHistory.peak(name, 60 * 60_000);
+    return peak > 0 ? `peak ${peak}` : '';
   }
 
   async function removeRunner(r: Runner) {
@@ -161,6 +198,13 @@
               <span class="cap-label">{r.in_flight || 0}/{r.max_concurrent || 4}</span>
               {#if (r.queue_depth || 0) > 0}
                 <span class="queue-badge">+{r.queue_depth} queued</span>
+              {/if}
+              {#if sparkPath(r.name)}
+                <span class="spark" title="{peakLabel(r.name)} (1h)">
+                  <svg width="60" height="18" viewBox="0 0 60 18" aria-hidden="true">
+                    <path d={sparkPath(r.name)} fill="none" stroke="currentColor" stroke-width="1.2" />
+                  </svg>
+                </span>
               {/if}
             </td>
             <td class="muted">{r.version || '—'}</td>
@@ -319,6 +363,12 @@
     font-family: var(--font-mono);
     font-size: 10px;
     color: var(--color-text-secondary);
+  }
+  .spark {
+    display: inline-flex;
+    color: var(--color-info);
+    opacity: 0.65;
+    flex-shrink: 0;
   }
   .queue-badge {
     font-family: var(--font-mono);

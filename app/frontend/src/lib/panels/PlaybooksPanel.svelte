@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
-  import { profileState, refreshTick } from '../stores.svelte';
+  import { profileState, refreshTick, playbookSeed } from '../stores.svelte';
   import Modal from '../components/Modal.svelte';
   import Spinner from '../components/Spinner.svelte';
 
@@ -106,6 +106,27 @@
       const rs = await api.ListRunners();
       runners = (rs ?? []).map((r: any) => r.name);
     } catch {}
+
+    // Consume any one-shot seed left by Stream's "save as playbook" flow.
+    const seed = playbookSeed.consume();
+    if (seed) {
+      newName = seed.name;
+      newMarkdown = seed.markdown;
+      newScope = seed.scope ?? (activeProfileName ? 'profile' : 'global');
+      showCreate = true;
+    }
+  });
+
+  // If the user is already on the Playbooks panel when the seed arrives, the
+  // onMount above won't fire — pick it up reactively too.
+  $effect(() => {
+    const seed = playbookSeed.value;
+    if (!seed) return;
+    playbookSeed.consume();
+    newName = seed.name;
+    newMarkdown = seed.markdown;
+    newScope = seed.scope ?? (activeProfileName ? 'profile' : 'global');
+    showCreate = true;
   });
 
   async function createPlaybook() {

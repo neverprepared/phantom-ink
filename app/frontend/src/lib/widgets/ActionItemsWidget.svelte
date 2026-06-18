@@ -1,9 +1,29 @@
 <script lang="ts">
   import { dashboardDataStore, currentPanel } from '../stores.svelte';
+  import { getApi } from '../utils/api';
   import Icon from '../components/Icon.svelte';
+  import type { ActionItem } from './types';
 
   let data = $derived(dashboardDataStore.value);
   let items = $derived(data?.actionItems ?? []);
+
+  async function activate(item: ActionItem) {
+    if (item.openAttentionId) {
+      const a = await getApi();
+      if (a) {
+        try {
+          const target: any = await a.AttentionOpenTarget(item.openAttentionId);
+          if (target?.panel) {
+            currentPanel.value = target.panel;
+            return;
+          }
+        } catch {
+          // fall through to the navTarget below
+        }
+      }
+    }
+    currentPanel.value = item.navTarget ?? 'stream';
+  }
 </script>
 
 <div class="widget">
@@ -24,20 +44,21 @@
       </div>
     {:else}
       {#each items as item}
-        <div class="action-row sev-{item.severity}">
+        <button
+          type="button"
+          class="action-row sev-{item.severity}"
+          onclick={() => activate(item)}
+          title="open"
+        >
           <span class="check">[ ]</span>
           <div class="action-body">
             <span class="action-title">{item.title}</span>
             {#if item.desc}<span class="action-desc">{item.desc}</span>{/if}
           </div>
           {#if item.ref}
-            <button
-              class="action-ref mono"
-              onclick={() => currentPanel.value = 'stream'}
-              title="view in stream"
-            >{item.ref.slice(0, 8)}</button>
+            <span class="action-ref mono">{item.ref.slice(0, 8)}</span>
           {/if}
-        </div>
+        </button>
       {/each}
     {/if}
   </div>
@@ -114,10 +135,24 @@
     gap: var(--spacing-sm);
     padding: var(--spacing-xs) var(--spacing-md);
     border-left: 2px solid transparent;
+    background: transparent;
+    border-top: none;
+    border-right: none;
+    border-bottom: none;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    transition: background 0.12s;
   }
+  .action-row:hover { background: var(--color-surface-hover, rgba(0,0,0,0.04)); }
   .action-row.sev-urgent  { border-left-color: var(--color-error); background: rgba(239, 68, 68, 0.04); }
   .action-row.sev-warning { border-left-color: var(--color-warning); background: rgba(234, 179, 8, 0.04); }
   .action-row.sev-info    { border-left-color: var(--color-info); background: rgba(14, 165, 233, 0.04); }
+  .action-row.sev-urgent:hover  { background: rgba(239, 68, 68, 0.08); }
+  .action-row.sev-warning:hover { background: rgba(234, 179, 8, 0.08); }
+  .action-row.sev-info:hover    { background: rgba(14, 165, 233, 0.08); }
 
   .check {
     font-family: var(--font-mono);
@@ -150,12 +185,8 @@
     font-size: 10px;
     color: var(--color-text-muted);
     flex-shrink: 0;
-    background: none;
-    border: none;
-    cursor: pointer;
     padding: 0;
   }
-  .action-ref:hover { color: var(--color-accent); }
 
   .mono { font-family: var(--font-mono); }
 </style>

@@ -16,18 +16,22 @@ import (
 // from a variety of backend sources and gets a stable composite ID so
 // dismissals and resolutions persist across app restarts.
 type AttentionItem struct {
-	ID        string   `json:"id"`        // "<source>:<sourceID>"
-	Source    string   `json:"source"`    // "task" | "chain" | "entry" | "hub" | "bus"
-	SourceID  string   `json:"source_id"` // raw id within the source
-	Status    string   `json:"status"`    // "failed" | "blocked" | "needs_action" — drives badge
-	Title     string   `json:"title"`
-	Subtitle  string   `json:"subtitle"`
-	Reason    string   `json:"reason"`    // why this needs attention (often the error message)
-	Workspace string   `json:"workspace"` // for profile filter
-	Time      int64    `json:"time"`      // epoch ms (sort key, newest first)
-	URL       string   `json:"url,omitempty"`
-	Actions   []string `json:"actions"`   // ["retry","open","respond","dismiss"]
-	UserReply string   `json:"user_reply,omitempty"`
+	ID          string   `json:"id"`        // "<source>:<sourceID>"
+	Source      string   `json:"source"`    // "task" | "chain" | "entry" | "hub" | "bus"
+	SourceID    string   `json:"source_id"` // raw id within the source
+	Status      string   `json:"status"`    // "failed" | "blocked" | "needs_action" — drives badge
+	Title       string   `json:"title"`
+	Subtitle    string   `json:"subtitle"`
+	Reason      string   `json:"reason"`    // why this needs attention (often the error message)
+	Workspace   string   `json:"workspace"` // for profile filter
+	Time        int64    `json:"time"`      // epoch ms (sort key, newest first)
+	URL         string   `json:"url,omitempty"`
+	Actions     []string `json:"actions"`   // ["retry","open","respond","dismiss"]
+	UserReply   string   `json:"user_reply,omitempty"`
+	// Owning resources extracted from envelope metadata so the UI can show
+	// session / runner chips without forcing an extra round-trip per row.
+	SessionName string   `json:"session_name,omitempty"`
+	RunnerName  string   `json:"runner_name,omitempty"`
 }
 
 // OpenTarget tells the frontend which panel to navigate to for an attention item.
@@ -69,23 +73,40 @@ func (a *App) ListAttention(workspace string) ([]AttentionItem, error) {
 			continue
 		}
 		items = append(items, AttentionItem{
-			ID:        it.ID,
-			Source:    "bus",
-			SourceID:  it.ID,
-			Status:    it.Status,
-			Title:     it.Title,
-			Subtitle:  it.Subtitle,
-			Reason:    busReason(it),
-			Workspace: it.Workspace,
-			Time:      it.UpdatedAt,
-			URL:       it.URL,
-			Actions:   busActions(it),
-			UserReply: replies[it.ID],
+			ID:          it.ID,
+			Source:      "bus",
+			SourceID:    it.ID,
+			Status:      it.Status,
+			Title:       it.Title,
+			Subtitle:    it.Subtitle,
+			Reason:      busReason(it),
+			Workspace:   it.Workspace,
+			Time:        it.UpdatedAt,
+			URL:         it.URL,
+			Actions:     busActions(it),
+			UserReply:   replies[it.ID],
+			SessionName: metaString(it.Metadata, "session_name", "session", "session_id"),
+			RunnerName:  metaString(it.Metadata, "runner_name", "runner", "runner_id"),
 		})
 	}
 
 	sort.Slice(items, func(i, j int) bool { return items[i].Time > items[j].Time })
 	return items, nil
+}
+
+// metaString returns the first non-empty string value found under any of the
+// supplied keys in m. Envelope producers are inconsistent about naming
+// (session vs session_name vs session_id), so we tolerate several shapes.
+func metaString(m map[string]interface{}, keys ...string) string {
+	if m == nil {
+		return ""
+	}
+	for _, k := range keys {
+		if v, ok := m[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // busReason extracts the human-readable error from a bus envelope's metadata.

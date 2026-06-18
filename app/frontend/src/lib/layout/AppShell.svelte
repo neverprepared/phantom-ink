@@ -2,7 +2,8 @@
   import TitleBar from './TitleBar.svelte';
   import Sidebar from './Sidebar.svelte';
   import StatusBar from './StatusBar.svelte';
-  import { currentPanel } from '../stores.svelte';
+  import { currentPanel, attentionStore, profileState } from '../stores.svelte';
+  import { onMount } from 'svelte';
 
   // Panels (lazy imports)
   import SessionsPanel from '../panels/SessionsPanel.svelte';
@@ -17,6 +18,18 @@
   import DashboardPanel from '../panels/DashboardPanel.svelte';
   import StreamPanel from '../panels/StreamPanel.svelte';
   import RunnersPanel from '../panels/RunnersPanel.svelte';
+
+  // Attention store powers the sidebar badge + Dashboard ActionItems fold-in.
+  // Bootstrapping it here means the count is fresh on every panel, not only
+  // while StreamPanel is mounted.
+  onMount(() => {
+    attentionStore.setWorkspace(profileState.active?.name ?? '');
+    attentionStore.start();
+  });
+
+  $effect(() => {
+    attentionStore.setWorkspace(profileState.active?.name ?? '');
+  });
 </script>
 
 <div class="shell">
