@@ -168,6 +168,12 @@
       selectedTemplate = updated;
       savedMarkdown = updated.markdown;
       editorValue = updated.markdown;
+      // Refresh the sidebar list if this was a brand-new draft so the
+      // new name appears there. Cheap — reuses the existing loader.
+      if (!templateNames.includes(updated.name)) {
+        await loadTemplateList();
+        selectedName = updated.name;
+      }
       notifications.success(`${updated.name} saved`);
       void refreshDiagram(updated.name);
     } catch (err) {
@@ -175,6 +181,69 @@
     } finally {
       templateBusy = false;
     }
+  }
+
+  // Seed for a brand-new template. Minimal valid LoopMarkdown — every
+  // required key + section so the operator's first Save doesn't 422.
+  function _newTemplateSkeleton(name: string): string {
+    return `---
+name: ${name}
+trigger: manual
+max_iterations: 3
+---
+
+# Role
+
+Describe what the agent does each iteration.
+
+# When to stop
+
+- The goal is reached.
+
+# When to escalate
+
+- A blocker persists across iterations.
+- The budget is exhausted.
+`;
+  }
+
+  function newTemplate() {
+    const raw = window.prompt(
+      'New template name (lowercase letters, digits, hyphens):',
+      'my-loop',
+    );
+    if (raw === null) return;
+    const name = raw.trim();
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
+      notifications.error('Invalid name. Use lowercase letters, digits, and hyphens; must start with a letter or digit.');
+      return;
+    }
+    if (templateNames.includes(name)) {
+      notifications.error(`A template named "${name}" already exists. Pick a different name.`);
+      return;
+    }
+    if (isDirty()) {
+      const ok = window.confirm(`${selectedName ?? 'Current template'} has unsaved changes. Discard them?`);
+      if (!ok) return;
+    }
+
+    const skeleton = _newTemplateSkeleton(name);
+    // Synthetic in-memory draft. origin='user' so Save is enabled;
+    // empty savedMarkdown keeps the dirty-dot lit until the first
+    // save persists the file.
+    selectedTemplate = {
+      name,
+      origin: 'user',
+      hash: '',
+      markdown: skeleton,
+    } as LoopTemplate;
+    selectedName = name;
+    editorValue = skeleton;
+    savedMarkdown = '';
+    templateError = null;
+    detailTab = 'markdown';
+    diagramMermaid = '';   // dry-run only fires for persisted templates
+    diagramError = null;
   }
 
   async function forkTemplate() {
@@ -471,12 +540,18 @@
   {#if activeTab === 'templates'}
     <div class="templates-tab">
       <aside class="template-list">
+        <div class="template-list-head">
+          <span class="template-list-label">Templates</span>
+          <button class="btn-new" onclick={newTemplate} title="Create a new loop template">
+            + New
+          </button>
+        </div>
         {#if templatesLoading}
           <div class="loading"><Spinner /></div>
         {:else if templateNames.length === 0}
           <EmptyState
             title="No templates"
-            message="Loop templates live in brainbox/loop-templates/. Add one there or via PUT /api/loops/templates/<name>."
+            message="Click + New to create your first loop, or add one under brainbox/loop-templates/."
           />
         {:else}
           {#each templateNames as name (name)}
@@ -766,6 +841,35 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+  }
+  .template-list-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 4px 8px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .template-list-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+  }
+  .btn-new {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--r-sm);
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.12s;
+  }
+  .btn-new:hover {
+    background: color-mix(in srgb, var(--accent) 88%, #000);
   }
   .template-item {
     background: transparent;
