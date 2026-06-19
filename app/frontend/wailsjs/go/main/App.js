@@ -6,6 +6,10 @@ export function AddChannelParticipant(arg1, arg2) {
   return window['go']['main']['App']['AddChannelParticipant'](arg1, arg2);
 }
 
+export function AssistLoopTemplate(arg1) {
+  return window['go']['main']['App']['AssistLoopTemplate'](arg1);
+}
+
 export function AttentionOpenTarget(arg1) {
   return window['go']['main']['App']['AttentionOpenTarget'](arg1);
 }

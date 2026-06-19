@@ -6,6 +6,8 @@ import {opensearch} from '../models';
 
 export function AddChannelParticipant(arg1:string,arg2:brainbox.ChannelParticipantRequest):Promise<brainbox.Channel>;
 
+export function AssistLoopTemplate(arg1:brainbox.LoopAssistRequest):Promise<brainbox.LoopAssistResult>;
+
 export function AttentionOpenTarget(arg1:string):Promise<main.OpenTarget>;
 
 export function AttentionRespond(arg1:string,arg2:string):Promise<void>;

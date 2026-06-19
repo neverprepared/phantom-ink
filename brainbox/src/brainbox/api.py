@@ -3860,6 +3860,55 @@ async def api_loop_template_validate(request: Request):
     return validate_yaml(raw)
 
 
+@app.post("/api/loops/templates/assist", dependencies=[Depends(require_api_key)])
+async def api_loop_template_assist(request: Request):
+    """AI-assisted YAML generation / refinement / explanation.
+
+    Body shape:
+      {
+        "mode":         "generate" | "refine" | "explain",
+        "prompt":       "<operator natural language>",
+        "current_yaml": "<editor contents>",                // optional
+        "selection":    {"start_line": N, "end_line": N}    // refine/explain
+      }
+
+    Returns the AssistResult shape from loop_assist.AssistResult.to_dict().
+
+    Status codes:
+      200 — produced output (may include warnings if retry budget was used)
+      400 — bad body (missing prompt, invalid mode)
+      503 — anthropic_api_key not configured
+      502 — upstream LLM call failed
+    """
+    from .loop_assist import AssistError, assist
+
+    body = await request.json()
+    mode = body.get("mode")
+    prompt = body.get("prompt", "")
+    if mode not in ("generate", "refine", "explain"):
+        raise HTTPException(status_code=400, detail="mode must be generate, refine, or explain")
+    if not prompt or not prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt is required")
+    current_yaml = body.get("current_yaml") or None
+    selection = body.get("selection") or None
+
+    try:
+        result = assist(
+            mode=mode,
+            prompt=prompt,
+            current_yaml=current_yaml,
+            selection=selection,
+        )
+    except AssistError as exc:
+        msg = str(exc)
+        if "not configured" in msg:
+            raise HTTPException(status_code=503, detail=msg)
+        if "upstream" in msg:
+            raise HTTPException(status_code=502, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
+    return result.to_dict()
+
+
 @app.post("/api/loops/templates/{name}/dry-run", dependencies=[Depends(require_api_key)])
 async def api_loop_template_dry_run(name: str, request: Request):
     """Plan iteration 1 against a sample envelope without enqueueing.

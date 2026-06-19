@@ -21,14 +21,21 @@
     message: string;
   }
 
+  interface Selection {
+    startLine: number; // 1-indexed
+    endLine: number;   // 1-indexed inclusive
+    isEmpty: boolean;
+  }
+
   interface Props {
     value: string;
     onChange?: (next: string) => void;
     readonly?: boolean;
     lintRequest?: (text: string) => Promise<LintError[]>;
+    onSelectionChange?: (sel: Selection) => void;
   }
 
-  let { value, onChange, readonly = false, lintRequest }: Props = $props();
+  let { value, onChange, readonly = false, lintRequest, onSelectionChange }: Props = $props();
 
   let container: HTMLDivElement;
   let view: EditorView | null = null;
@@ -101,6 +108,16 @@
         if (suppressOnChange) return;
         if (update.docChanged && onChange) {
           onChange(update.state.doc.toString());
+        }
+        if ((update.docChanged || update.selectionSet) && onSelectionChange) {
+          const sel = update.state.selection.main;
+          const startLine = update.state.doc.lineAt(sel.from).number;
+          const endLine = update.state.doc.lineAt(sel.to).number;
+          onSelectionChange({
+            startLine,
+            endLine,
+            isEmpty: sel.from === sel.to,
+          });
         }
       }),
     ];

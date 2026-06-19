@@ -74,6 +74,12 @@ func (a *App) GetLoopTemplateSchema() (map[string]interface{}, error) {
 	return a.client.GetLoopTemplateSchema()
 }
 
+// AssistLoopTemplate runs an AI Assist call (generate / refine / explain)
+// against the brainbox-side claude-backed authoring helper.
+func (a *App) AssistLoopTemplate(req brainbox.LoopAssistRequest) (brainbox.LoopAssistResult, error) {
+	return a.client.AssistLoopTemplate(req)
+}
+
 // StartLiveLoop fires a Loop by template name with initial artifact_refs.
 // Used by the "Run a loop" UI (and by future drill-in retry buttons).
 func (a *App) StartLiveLoop(templateName string, artifactRefs map[string]interface{}) (brainbox.LiveLoop, error) {

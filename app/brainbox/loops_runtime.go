@@ -216,6 +216,37 @@ func (c *Client) GetLoopTemplateSchema() (map[string]interface{}, error) {
 	return resp, nil
 }
 
+// LoopAssistRequest is the body shape for POST /api/loops/templates/assist.
+type LoopAssistRequest struct {
+	Mode        string                 `json:"mode"` // "generate" | "refine" | "explain"
+	Prompt      string                 `json:"prompt"`
+	CurrentYAML string                 `json:"current_yaml,omitempty"`
+	Selection   map[string]interface{} `json:"selection,omitempty"`
+}
+
+// LoopAssistResult is the response shape — yaml for generate/refine,
+// explanation for explain mode. Tokens + cost feed the operator-facing
+// session cost ticker.
+type LoopAssistResult struct {
+	YAML        string                 `json:"yaml"`
+	Explanation string                 `json:"explanation"`
+	Model       string                 `json:"model"`
+	Tokens      map[string]int         `json:"tokens"`
+	CostUSD     float64                `json:"cost_usd"`
+	Warnings    []map[string]interface{} `json:"warnings"`
+	Retries     int                    `json:"retries"`
+}
+
+// AssistLoopTemplate runs a single AI Assist round. The brainbox endpoint
+// handles validation + retry server-side; this is a thin pass-through.
+func (c *Client) AssistLoopTemplate(req LoopAssistRequest) (LoopAssistResult, error) {
+	var resp LoopAssistResult
+	if err := c.doWith(c.httpClient, http.MethodPost, "/api/loops/templates/assist", req, &resp); err != nil {
+		return LoopAssistResult{}, err
+	}
+	return resp, nil
+}
+
 // StartLiveLoop kicks off a Loop by template name with the given initial
 // artifact_refs. The full envelope is built server-side around the refs.
 func (c *Client) StartLiveLoop(templateName string, artifactRefs map[string]interface{}) (LiveLoop, error) {
