@@ -31,6 +31,42 @@
   let renderCounter = 0;
   let errorMessage = $state<string | null>(null);
 
+  // Click-and-drag panning state. Only the deltas matter; we capture
+  // the pointer so the drag survives the cursor leaving the diagram
+  // bounds.
+  let dragging = $state(false);
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let dragStartScrollLeft = 0;
+  let dragStartScrollTop = 0;
+
+  function onPointerDown(e: PointerEvent) {
+    if (!container) return;
+    // Only the primary mouse button / single-finger touch starts a drag.
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    dragging = true;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    dragStartScrollLeft = container.scrollLeft;
+    dragStartScrollTop = container.scrollTop;
+    container.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+
+  function onPointerMove(e: PointerEvent) {
+    if (!dragging || !container) return;
+    container.scrollLeft = dragStartScrollLeft - (e.clientX - dragStartX);
+    container.scrollTop = dragStartScrollTop - (e.clientY - dragStartY);
+  }
+
+  function onPointerUp(e: PointerEvent) {
+    if (!dragging) return;
+    dragging = false;
+    if (container?.hasPointerCapture(e.pointerId)) {
+      container.releasePointerCapture(e.pointerId);
+    }
+  }
+
   function ensureInit() {
     if (initialized) return;
     // 'default' is mermaid's stock palette — colored node fills, the
@@ -118,8 +154,15 @@
   {/if}
   <div
     class="diagram"
+    class:dragging
     bind:this={container}
     style:--zoom={zoom}
+    onpointerdown={onPointerDown}
+    onpointermove={onPointerMove}
+    onpointerup={onPointerUp}
+    onpointercancel={onPointerUp}
+    role="application"
+    aria-label="Diagram — drag to pan, +/− to zoom"
   ></div>
 </div>
 
@@ -180,6 +223,16 @@
     display: flex;
     justify-content: center;
     align-items: flex-start;
+    /* grab cursor signals draggable, grabbing while a drag is in
+       flight. touch-action: none lets pointermove fire on touch
+       devices without the browser claiming the gesture for native
+       scroll. */
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+  }
+  .diagram.dragging {
+    cursor: grabbing;
   }
   .diagram :global(svg) {
     /* zoom=1 fits the container (max-width 100%). zoom>1 grows the SVG
@@ -190,6 +243,9 @@
     max-width: none;
     height: auto;
     flex-shrink: 0;
+    /* Prevent the SVG itself from intercepting pointer events so the
+       drag handlers on the wrap always get them. */
+    pointer-events: none;
   }
   .placeholder {
     color: var(--text-muted);
