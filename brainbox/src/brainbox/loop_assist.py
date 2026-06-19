@@ -252,6 +252,13 @@ async def _wait_for_session(client: httpx.AsyncClient, session_name: str, max_wa
     raise AssistError(f"assist session '{session_name}' did not become ready within {max_wait}s")
 
 
+# Inside the container the agent writes its markdown to this fixed
+# path; brainbox cats it back via exec after the query returns. Reading
+# a file is leagues more reliable than parsing tmux output (no prompt
+# artifacts, ANSI codes, soft-wrap, or fence cleanup needed).
+_ASSIST_OUTPUT_PATH = "/tmp/loop-assist-output.md"
+
+
 async def _call_session(
     client: httpx.AsyncClient,
     session_name: str,
@@ -259,12 +266,45 @@ async def _call_session(
     system: str,
     user: str,
 ) -> dict[str, Any]:
-    """Send one prompt to a ready brainbox session and return its
-    response. The session /query endpoint has no system-role concept,
-    so we concatenate system + user with a separator. Returns
-    {text, input_tokens, output_tokens} — token counts are 0 because
-    the session API doesn't surface them."""
-    full_prompt = f"{system}\n\n--- operator request ---\n\n{user}"
+    """Send one prompt to a ready brainbox session, then read the
+    agent's structured output from a known file inside the container.
+
+    Flow:
+      1. Truncate ``/tmp/loop-assist-output.md`` so we never read stale
+         content from a prior retry.
+      2. Send the prompt via /query with an explicit instruction telling
+         the agent to ``Write`` its final markdown to that path and emit
+         nothing else.
+      3. After the query call returns, read the file back via /exec.
+         If the file is non-empty, that's the result. If it's empty
+         (agent ignored the instruction), fall back to scraping the
+         /query response.
+
+    Returns {text, input_tokens, output_tokens} — token counts are
+    always 0 because the session API doesn't surface usage.
+    """
+    # Step 1: clear the output file. Best-effort — if /exec is unavailable
+    # the agent's write will still produce a fresh file at step 3.
+    try:
+        await client.post(
+            f"/api/sessions/{session_name}/exec",
+            json={"command": f": > {_ASSIST_OUTPUT_PATH}"},
+        )
+    except Exception:
+        pass
+
+    # Step 2: send the prompt with the structured-output instruction
+    # appended. Putting it AFTER the operator request keeps it the last
+    # thing the agent sees, which improves compliance.
+    full_prompt = (
+        f"{system}\n\n--- operator request ---\n\n{user}\n\n"
+        f"--- output contract ---\n"
+        f"Use the Write tool to save the FINAL markdown template to "
+        f"`{_ASSIST_OUTPUT_PATH}`. Write exactly the markdown — no "
+        f"prose explanation, no code fences. Once the file is written, "
+        f"reply with the single word DONE and stop. The caller reads "
+        f"the file directly; the chat reply is not parsed."
+    )
     try:
         resp = await client.post(
             f"/api/sessions/{session_name}/query",
@@ -274,6 +314,37 @@ async def _call_session(
     except httpx.HTTPError as exc:
         raise AssistError(f"upstream session call failed: {exc}") from exc
 
+    # Step 3: read the file back. Strip nothing; the file is the
+    # authoritative artifact.
+    file_text = ""
+    try:
+        exec_resp = await client.post(
+            f"/api/sessions/{session_name}/exec",
+            json={"command": f"cat {_ASSIST_OUTPUT_PATH}"},
+        )
+        if exec_resp.status_code == 200:
+            file_text = (exec_resp.json().get("output") or "").strip()
+    except Exception as exc:
+        log.warning(
+            "loop_assist.output_read_failed",
+            metadata={"session": session_name, "reason": str(exc)},
+        )
+
+    if file_text:
+        return {
+            "text": file_text,
+            "input_tokens": 0,
+            "output_tokens": 0,
+        }
+
+    # Fallback: the agent didn't write the file (maybe ignored the
+    # contract, maybe Write tool unavailable). Fall back to parsing the
+    # /query response — same as the pre-file flow. _strip_fences in
+    # the retry loop still cleans the result.
+    log.info(
+        "loop_assist.fallback_to_query_response",
+        metadata={"session": session_name},
+    )
     body = resp.json()
     text = body.get("response") or body.get("output") or ""
     return {
