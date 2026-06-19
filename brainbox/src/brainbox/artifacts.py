@@ -136,15 +136,25 @@ def is_enabled() -> bool:
 
 
 def health() -> dict[str, Any]:
-    """Cheap reachability probe — list buckets we expect. The panel uses
-    this on mount to render a "MinIO is not reachable" empty state instead
-    of letting the operator click into folders that 502.
+    """Cheap profile-scoped reachability probe. Uses list_objects_v2
+    against the artifacts bucket bounded by the profile prefix —
+    matches the exact permission grant in the per-profile IAM policy
+    (admin-level ``list_buckets`` would 403 here).
+
+    The panel calls this on mount to render a "MinIO unreachable" empty
+    state instead of letting the operator click into folders that 502.
     """
     if not is_enabled():
         return {"ok": False, "reason": "disabled"}
     try:
         client = _client()
-        client.list_buckets()
+        prefix = settings.minio.profile_prefix.strip("/")
+        scoped = (prefix + "/") if prefix else ""
+        client.list_objects_v2(
+            Bucket=settings.minio.bucket_artifacts,
+            Prefix=scoped,
+            MaxKeys=1,
+        )
         return {
             "ok": True,
             "endpoint": settings.minio.endpoint,
