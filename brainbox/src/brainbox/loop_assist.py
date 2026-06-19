@@ -397,9 +397,17 @@ async def _with_assist_session(
 
     async with httpx.AsyncClient(base_url=base_url, timeout=600.0, headers=headers) as client:
         try:
+            # role=developer (not worker). The worker role's contract is
+            # "do the task, call complete.sh, exit" — the container
+            # auto-recycles the moment claude calls complete.sh, which
+            # races against our follow-up /query + /exec reads of the
+            # output file. Developer stays running interactively; we
+            # own the completion timing via complete_task in the finally
+            # block. The hub task still registers (operator sees it in
+            # the Tasks panel) because we pass `task`.
             create_body = {
                 "name": session_name,
-                "role": "worker",
+                "role": "developer",
                 "task": f"loop AI Assist: {short_desc}",
             }
             resp = await client.post("/api/create", json=create_body)
