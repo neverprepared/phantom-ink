@@ -16,7 +16,6 @@ dependencies = [
     "httpx>=0.28",
     "websockets>=13.0",
     "pyyaml>=6.0",
-    "anthropic>=0.40",
     "mcp-utm>=0.1.2; sys_platform == 'darwin'",
     "pyrage>=1.2",
     "zstandard>=0.22",

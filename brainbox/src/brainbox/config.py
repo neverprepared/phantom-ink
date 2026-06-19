@@ -313,13 +313,9 @@ class Settings(BaseSettings):
     github_webhook_secret: str = ""  # CL_GITHUB_WEBHOOK_SECRET
     github_loop_repos: list[str] = Field(default_factory=list)  # CL_GITHUB_LOOP_REPOS
 
-    # AI Assist for Loop templates — powers the YAML-editor "Generate" /
-    # "Refine selection" / "Explain" buttons. Empty anthropic_api_key
-    # disables the endpoint with HTTP 503; the editor still works without
-    # AI Assist for direct YAML authoring.
-    anthropic_api_key: str = ""  # CL_ANTHROPIC_API_KEY
-    loop_assist_model: str = "claude-sonnet-4-6"          # CL_LOOP_ASSIST_MODEL
-    loop_assist_explain_model: str = "claude-haiku-4-5"   # CL_LOOP_ASSIST_EXPLAIN_MODEL
+    # AI Assist for Loop templates dispatches to an ephemeral brainbox
+    # session — no API keys. See top-level CLAUDE.md "No API Keys for
+    # Agents" and the loop_assist module docstring.
 
     model_config = {"env_prefix": "CL_", "env_nested_delimiter": "__"}
 

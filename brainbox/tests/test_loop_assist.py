@@ -3,13 +3,14 @@
 Two layers:
 
   - loop_assist module: system-prompt composition, validate-and-retry
-    loop, cost computation, response cleanup (code-fence stripping)
-  - HTTP route: bad body, missing prompt, missing API key → 503,
-    mode dispatch
+    loop, response cleanup (code-fence stripping)
+  - HTTP route: bad body, missing prompt, mode dispatch, upstream
+    session failures → 502
 
-The anthropic client is monkey-patched throughout — no real API calls.
-Tests own a fake _call_anthropic that returns whatever the test wants
-to feed into the retry loop.
+No real session is provisioned. The session-call path
+(``_call_session``) is monkey-patched to return canned responses, and
+``_with_assist_session`` is short-circuited so tests don't need a
+running brainbox.
 """
 
 from __future__ import annotations
@@ -17,12 +18,10 @@ from __future__ import annotations
 import pytest
 
 import brainbox.loop_assist as loop_assist
-from brainbox.config import settings
 from brainbox.loop_assist import (
     AssistError,
     AssistResult,
     AssistWarning,
-    _cost,
     _simplify_schema,
     _strip_fences,
     _validate_yaml,
@@ -65,7 +64,7 @@ class TestBuildSystemPrompt:
 
     def test_explain_is_short_and_skips_schema(self):
         prompt = build_system_prompt("explain")
-        # Schema is heavy; explain mode runs on haiku and stays cheap.
+        # Explain is a read task, not authoring — keep it lean.
         assert "pr_number" not in prompt  # no full example
         assert "natural-language" in prompt.lower() or "explanation" in prompt.lower()
 
@@ -87,24 +86,6 @@ class TestSimplifySchema:
         assert "$defs" not in slim
         assert slim["properties"]["name"]["type"] == "string"
         assert slim["properties"]["max_iterations"]["default"] == 5
-
-
-# ---------------------------------------------------------------------------
-# Cost computation
-# ---------------------------------------------------------------------------
-
-
-class TestCost:
-    def test_known_model_pricing(self):
-        # claude-sonnet-4-6: $3/M input, $15/M output
-        assert _cost("claude-sonnet-4-6", 1_000_000, 0) == pytest.approx(3.00)
-        assert _cost("claude-sonnet-4-6", 0, 1_000_000) == pytest.approx(15.00)
-
-    def test_unknown_model_falls_back_to_sonnet_pricing(self):
-        # Defensive: an unrecognized model name shouldn't crash; fall
-        # back to a reasonable estimate so the operator-facing ticker
-        # still gives a ballpark.
-        assert _cost("imaginary-model", 1_000_000, 0) == pytest.approx(3.00)
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +120,6 @@ body:
 """
         ok, warnings = _validate_yaml(bad)
         assert ok is False
-        # Should mention convergence in either message or field
         assert any(
             "convergence" in (w.message or "").lower()
             or "convergence" in (w.field or "").lower()
@@ -163,85 +143,91 @@ class TestStripFences:
         assert _strip_fences("```\nname: x\n```") == "name: x"
 
     def test_strips_leading_fence_only(self):
-        # Half-fenced output — be tolerant
         assert _strip_fences("```yaml\nname: x") == "name: x"
 
 
 # ---------------------------------------------------------------------------
-# Validate-and-retry loop
+# Validate-and-retry loop — session-backed
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def fake_llm(monkeypatch):
-    """Replace _call_anthropic with a test-controlled responder. Returns
-    a list the test populates with the sequence of (text, in_tokens,
-    out_tokens) responses the model should hand back. Each call to the
-    LLM pops one off the front."""
+def fake_session(monkeypatch):
+    """Patch out the session-provisioning + LLM-call path.
+
+    Returns a list the test populates with the sequence of responses
+    the simulated session should hand back. Each call pops one off the
+    front. ``_with_assist_session`` is short-circuited so no real
+    brainbox session is created."""
     responses: list[dict] = []
 
-    def _fake(model, system, user, max_tokens=4096):
+    async def _fake_call(client, session_name, *, system, user):
         if not responses:
-            raise AssertionError("test ran out of fake LLM responses")
+            raise AssertionError("test ran out of fake session responses")
         return responses.pop(0)
 
-    monkeypatch.setattr(loop_assist, "_call_anthropic", _fake)
+    async def _fake_with_session(fn):
+        # Sentinel client + name — _fake_call ignores them.
+        return await fn(object(), "fake-assist-session")
+
+    monkeypatch.setattr(loop_assist, "_call_session", _fake_call)
+    monkeypatch.setattr(loop_assist, "_with_assist_session", _fake_with_session)
     return responses
 
 
 class TestRetryLoop:
-    def test_succeeds_on_first_valid_output(self, fake_llm):
-        fake_llm.append({"text": _VALID_LOOP_YAML, "input_tokens": 100, "output_tokens": 50})
-        result = assist(mode="generate", prompt="build me a thing")
+    @pytest.mark.asyncio
+    async def test_succeeds_on_first_valid_output(self, fake_session):
+        fake_session.append({"text": _VALID_LOOP_YAML, "input_tokens": 0, "output_tokens": 0})
+        result = await assist(mode="generate", prompt="build me a thing")
         assert result.retries == 0
         assert result.warnings == []
         assert "test-loop" in result.yaml
-        assert result.input_tokens == 100
-        assert result.output_tokens == 50
-        # Cost reflects the default model (claude-sonnet-4-6)
-        assert result.model == settings.loop_assist_model
+        assert result.model == "brainbox-session"
+        # Session path doesn't surface token usage.
+        assert result.input_tokens == 0
+        assert result.output_tokens == 0
+        assert result.cost_usd == 0.0
 
-    def test_retries_on_invalid_and_succeeds(self, fake_llm):
-        fake_llm.append({"text": "not [valid yaml", "input_tokens": 50, "output_tokens": 10})
-        fake_llm.append({"text": _VALID_LOOP_YAML, "input_tokens": 60, "output_tokens": 40})
-        result = assist(mode="generate", prompt="x")
+    @pytest.mark.asyncio
+    async def test_retries_on_invalid_and_succeeds(self, fake_session):
+        fake_session.append({"text": "not [valid yaml", "input_tokens": 0, "output_tokens": 0})
+        fake_session.append({"text": _VALID_LOOP_YAML, "input_tokens": 0, "output_tokens": 0})
+        result = await assist(mode="generate", prompt="x")
         assert result.retries == 1
         assert result.warnings == []
-        # Aggregate tokens accumulate across retries
-        assert result.input_tokens == 110
-        assert result.output_tokens == 50
 
-    def test_exhausts_retries_returns_last_yaml_with_warnings(self, fake_llm):
+    @pytest.mark.asyncio
+    async def test_exhausts_retries_returns_last_yaml_with_warnings(self, fake_session):
         # 4 invalid responses: initial + 3 retries
         for _ in range(4):
-            fake_llm.append({
+            fake_session.append({
                 "text": "name: no-convergence-here\n",
-                "input_tokens": 20,
-                "output_tokens": 10,
+                "input_tokens": 0,
+                "output_tokens": 0,
             })
-        result = assist(mode="generate", prompt="x")
+        result = await assist(mode="generate", prompt="x")
         assert result.retries == 3
-        # Last YAML is returned even when invalid — operator can hand-fix
+        # Last YAML returned even when invalid — operator can hand-fix.
         assert "no-convergence-here" in result.yaml
-        # Warnings carry the validation error from the final attempt
         assert len(result.warnings) > 0
 
-    def test_strips_fences_before_validating(self, fake_llm):
+    @pytest.mark.asyncio
+    async def test_strips_fences_before_validating(self, fake_session):
         fenced = "```yaml\n" + _VALID_LOOP_YAML + "```"
-        fake_llm.append({"text": fenced, "input_tokens": 50, "output_tokens": 30})
-        result = assist(mode="generate", prompt="x")
-        # Validation succeeded because the fence was stripped first
+        fake_session.append({"text": fenced, "input_tokens": 0, "output_tokens": 0})
+        result = await assist(mode="generate", prompt="x")
         assert result.retries == 0
         assert "```" not in result.yaml
 
 
 class TestRefineMode:
-    def test_refine_assembles_head_replacement_tail(self, fake_llm):
+    @pytest.mark.asyncio
+    async def test_refine_assembles_head_replacement_tail(self, fake_session):
         current = _VALID_LOOP_YAML
-        # Replace lines 1-2 (the `name: test-loop` and `intent:` lines)
         replacement = "name: refined-loop\nintent:"
-        fake_llm.append({"text": replacement, "input_tokens": 80, "output_tokens": 20})
-        result = assist(
+        fake_session.append({"text": replacement, "input_tokens": 0, "output_tokens": 0})
+        result = await assist(
             mode="refine",
             prompt="rename it",
             current_yaml=current,
@@ -252,9 +238,10 @@ class TestRefineMode:
         # Following content preserved
         assert "outcome: x" in result.yaml
 
-    def test_refine_without_selection_errors(self):
+    @pytest.mark.asyncio
+    async def test_refine_without_selection_errors(self):
         with pytest.raises(AssistError, match="selection"):
-            assist(
+            await assist(
                 mode="refine",
                 prompt="x",
                 current_yaml=_VALID_LOOP_YAML,
@@ -263,14 +250,14 @@ class TestRefineMode:
 
 
 class TestExplainMode:
-    def test_explain_returns_text_no_validation(self, fake_llm, monkeypatch):
-        # Explain runs on the explain model — different default
-        fake_llm.append({
+    @pytest.mark.asyncio
+    async def test_explain_returns_text_no_validation(self, fake_session):
+        fake_session.append({
             "text": "This predicate checks that no blockers remain and CI is green.",
-            "input_tokens": 100,
-            "output_tokens": 30,
+            "input_tokens": 0,
+            "output_tokens": 0,
         })
-        result = assist(
+        result = await assist(
             mode="explain",
             prompt="what does this convergence predicate do?",
             current_yaml=_VALID_LOOP_YAML,
@@ -278,28 +265,31 @@ class TestExplainMode:
         )
         assert result.yaml == ""
         assert "blockers" in result.explanation
-        assert result.model == settings.loop_assist_explain_model
+        assert result.model == "brainbox-session"
 
-    def test_explain_no_selection_works(self, fake_llm):
-        fake_llm.append({
+    @pytest.mark.asyncio
+    async def test_explain_no_selection_works(self, fake_session):
+        fake_session.append({
             "text": "A general answer.",
-            "input_tokens": 50,
-            "output_tokens": 10,
+            "input_tokens": 0,
+            "output_tokens": 0,
         })
-        result = assist(mode="explain", prompt="explain loops")
+        result = await assist(mode="explain", prompt="explain loops")
         assert "general answer" in result.explanation
 
 
 class TestModeDispatch:
-    def test_unknown_mode_raises(self):
+    @pytest.mark.asyncio
+    async def test_unknown_mode_raises(self):
         with pytest.raises(AssistError, match="unknown mode"):
-            assist(mode="frobnicate", prompt="x")
+            await assist(mode="frobnicate", prompt="x")
 
-    def test_empty_prompt_raises(self):
+    @pytest.mark.asyncio
+    async def test_empty_prompt_raises(self):
         with pytest.raises(AssistError, match="prompt"):
-            assist(mode="generate", prompt="")
+            await assist(mode="generate", prompt="")
         with pytest.raises(AssistError, match="prompt"):
-            assist(mode="generate", prompt="   ")
+            await assist(mode="generate", prompt="   ")
 
 
 # ---------------------------------------------------------------------------
@@ -309,11 +299,11 @@ class TestModeDispatch:
 
 class TestAssistEndpoint:
     @pytest.mark.asyncio
-    async def test_happy_path(self, client, fake_llm):
-        fake_llm.append({
+    async def test_happy_path(self, client, fake_session):
+        fake_session.append({
             "text": _VALID_LOOP_YAML,
-            "input_tokens": 100,
-            "output_tokens": 50,
+            "input_tokens": 0,
+            "output_tokens": 0,
         })
         async with client as c:
             resp = await c.post(
@@ -323,20 +313,23 @@ class TestAssistEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert "test-loop" in data["yaml"]
-        assert data["tokens"]["input"] == 100
-        assert data["cost_usd"] >= 0
+        # No API keys path — token + cost surfaces are placeholders.
+        assert data["tokens"]["input"] == 0
+        assert data["cost_usd"] == 0.0
+        assert data["model"] == "brainbox-session"
 
     @pytest.mark.asyncio
-    async def test_missing_api_key_returns_503(self, client, monkeypatch):
-        # Force the LLM call path (no fake_llm patch) so the real
-        # _call_anthropic runs and raises AssistError on missing key.
-        monkeypatch.setattr(settings, "anthropic_api_key", "")
+    async def test_session_failure_returns_502(self, client, monkeypatch):
+        async def _boom(fn):
+            raise loop_assist.AssistError("upstream session call failed: boom")
+
+        monkeypatch.setattr(loop_assist, "_with_assist_session", _boom)
         async with client as c:
             resp = await c.post(
                 "/api/loops/templates/assist",
                 json={"mode": "generate", "prompt": "build a thing"},
             )
-        assert resp.status_code == 503
+        assert resp.status_code == 502
 
     @pytest.mark.asyncio
     async def test_bad_mode_returns_400(self, client):

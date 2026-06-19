@@ -3877,8 +3877,11 @@ async def api_loop_template_assist(request: Request):
     Status codes:
       200 — produced output (may include warnings if retry budget was used)
       400 — bad body (missing prompt, invalid mode)
-      503 — anthropic_api_key not configured
-      502 — upstream LLM call failed
+      502 — upstream session call failed (provisioning or query error)
+
+    No API keys: the request is dispatched to an ephemeral brainbox
+    session (see loop_assist module docstring). The session runs Claude
+    Code under the operator's existing OAuth credentials.
     """
     from .loop_assist import AssistError, assist
 
@@ -3893,7 +3896,7 @@ async def api_loop_template_assist(request: Request):
     selection = body.get("selection") or None
 
     try:
-        result = assist(
+        result = await assist(
             mode=mode,
             prompt=prompt,
             current_yaml=current_yaml,
@@ -3901,9 +3904,7 @@ async def api_loop_template_assist(request: Request):
         )
     except AssistError as exc:
         msg = str(exc)
-        if "not configured" in msg:
-            raise HTTPException(status_code=503, detail=msg)
-        if "upstream" in msg:
+        if "upstream" in msg or "session" in msg.lower():
             raise HTTPException(status_code=502, detail=msg)
         raise HTTPException(status_code=400, detail=msg)
     return result.to_dict()
