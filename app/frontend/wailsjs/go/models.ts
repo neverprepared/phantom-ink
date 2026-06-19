@@ -487,12 +487,16 @@ export namespace brainbox {
 	}
 	export class LiveLoop {
 	    id: string;
-	    spec_snapshot: Record<string, any>;
+	    template_name: string;
+	    template_text: string;
+	    template_hash: string;
+	    mermaid: string;
 	    parent_task_id: string;
 	    status: string;
 	    iteration: number;
 	    envelope: Record<string, any>;
-	    metric_history: number[];
+	    cost_history: number[];
+	    cost_usd: number;
 	    current_child_id?: string;
 	    workspace_profile?: string;
 	    created_at: number;
@@ -507,12 +511,16 @@ export namespace brainbox {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
-	        this.spec_snapshot = source["spec_snapshot"];
+	        this.template_name = source["template_name"];
+	        this.template_text = source["template_text"];
+	        this.template_hash = source["template_hash"];
+	        this.mermaid = source["mermaid"];
 	        this.parent_task_id = source["parent_task_id"];
 	        this.status = source["status"];
 	        this.iteration = source["iteration"];
 	        this.envelope = source["envelope"];
-	        this.metric_history = source["metric_history"];
+	        this.cost_history = source["cost_history"];
+	        this.cost_usd = source["cost_usd"];
 	        this.current_child_id = source["current_child_id"];
 	        this.workspace_profile = source["workspace_profile"];
 	        this.created_at = source["created_at"];
@@ -557,7 +565,9 @@ export namespace brainbox {
 	    max_iterations: number;
 	    parent_task_id: string;
 	    current_child_id?: string;
-	    metric_history: number[];
+	    cost_history: number[];
+	    cost_usd: number;
+	    mermaid?: string;
 	    stop_reason?: string;
 	    error?: string;
 	    workspace_profile?: string;
@@ -577,7 +587,9 @@ export namespace brainbox {
 	        this.max_iterations = source["max_iterations"];
 	        this.parent_task_id = source["parent_task_id"];
 	        this.current_child_id = source["current_child_id"];
-	        this.metric_history = source["metric_history"];
+	        this.cost_history = source["cost_history"];
+	        this.cost_usd = source["cost_usd"];
+	        this.mermaid = source["mermaid"];
 	        this.stop_reason = source["stop_reason"];
 	        this.error = source["error"];
 	        this.workspace_profile = source["workspace_profile"];
@@ -630,9 +642,8 @@ export namespace brainbox {
 	export class LoopTemplate {
 	    name: string;
 	    origin: string;
-	    version: string;
 	    hash: string;
-	    yaml: string;
+	    markdown: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new LoopTemplate(source);
@@ -642,9 +653,8 @@ export namespace brainbox {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.origin = source["origin"];
-	        this.version = source["version"];
 	        this.hash = source["hash"];
-	        this.yaml = source["yaml"];
+	        this.markdown = source["markdown"];
 	    }
 	}
 	export class LoopTemplateValidationEntry {
@@ -867,34 +877,6 @@ export namespace brainbox {
 	        this.content = source["content"];
 	        this.summary = source["summary"];
 	        this.addressed_to = source["addressed_to"];
-	    }
-	}
-	export class Repo {
-	    name: string;
-	    url: string;
-	    merge_queue_enabled: boolean;
-	    pr_shepherd_enabled: boolean;
-	    target_branch: string;
-	    is_fork: boolean;
-	    upstream_url: string;
-	    workspace_profile: string;
-	    workspace_home: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Repo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.url = source["url"];
-	        this.merge_queue_enabled = source["merge_queue_enabled"];
-	        this.pr_shepherd_enabled = source["pr_shepherd_enabled"];
-	        this.target_branch = source["target_branch"];
-	        this.is_fork = source["is_fork"];
-	        this.upstream_url = source["upstream_url"];
-	        this.workspace_profile = source["workspace_profile"];
-	        this.workspace_home = source["workspace_home"];
 	    }
 	}
 	export class Runner {
@@ -1661,7 +1643,6 @@ export namespace main {
 	    agents: brainbox.AgentDefinition[];
 	    tasks: HubTask[];
 	    tokens: any[];
-	    repos: brainbox.Repo[];
 	
 	    static createFrom(source: any = {}) {
 	        return new HubStateView(source);
@@ -1672,7 +1653,6 @@ export namespace main {
 	        this.agents = this.convertValues(source["agents"], brainbox.AgentDefinition);
 	        this.tasks = this.convertValues(source["tasks"], HubTask);
 	        this.tokens = source["tokens"];
-	        this.repos = this.convertValues(source["repos"], brainbox.Repo);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

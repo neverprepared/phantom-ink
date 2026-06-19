@@ -6,8 +6,7 @@ import (
 )
 
 // LiveLoopSummary is the slim projection returned by GET /api/loops. It drops
-// the full template snapshot to keep list payloads small; use GetLiveLoop to
-// fetch the full instance including the spec snapshot.
+// the full template text from list payloads; use GetLiveLoop for the full instance.
 type LiveLoopSummary struct {
 	ID               string    `json:"id"`
 	Name             string    `json:"name"`
@@ -16,7 +15,9 @@ type LiveLoopSummary struct {
 	MaxIterations    int       `json:"max_iterations"`
 	ParentTaskID     string    `json:"parent_task_id"`
 	CurrentChildID   string    `json:"current_child_id,omitempty"`
-	MetricHistory    []float64 `json:"metric_history"`
+	CostHistory      []float64 `json:"cost_history"`
+	CostUSD          float64   `json:"cost_usd"`
+	Mermaid          string    `json:"mermaid,omitempty"`
 	StopReason       string    `json:"stop_reason,omitempty"`
 	Error            string    `json:"error,omitempty"`
 	WorkspaceProfile string    `json:"workspace_profile,omitempty"`
@@ -24,16 +25,20 @@ type LiveLoopSummary struct {
 	UpdatedAt        int64     `json:"updated_at"`
 }
 
-// LiveLoop is the full LoopInstance with the pinned template snapshot.
-// Only used by GET /api/loops/{id} when drilling in.
+// LiveLoop is the full LoopInstance with the frozen template snapshot and
+// pre-rendered mermaid diagram. Used by GET /api/loops/{id} when drilling in.
 type LiveLoop struct {
 	ID               string                 `json:"id"`
-	SpecSnapshot     map[string]interface{} `json:"spec_snapshot"`
+	TemplateName     string                 `json:"template_name"`
+	TemplateText     string                 `json:"template_text"`
+	TemplateHash     string                 `json:"template_hash"`
+	Mermaid          string                 `json:"mermaid"`
 	ParentTaskID     string                 `json:"parent_task_id"`
 	Status           string                 `json:"status"`
 	Iteration        int                    `json:"iteration"`
 	Envelope         map[string]interface{} `json:"envelope"`
-	MetricHistory    []float64              `json:"metric_history"`
+	CostHistory      []float64              `json:"cost_history"`
+	CostUSD          float64                `json:"cost_usd"`
 	CurrentChildID   string                 `json:"current_child_id,omitempty"`
 	WorkspaceProfile string                 `json:"workspace_profile,omitempty"`
 	CreatedAt        int64                  `json:"created_at"`
@@ -42,8 +47,9 @@ type LiveLoop struct {
 	StopReason       string                 `json:"stop_reason,omitempty"`
 }
 
-// LiveLoopIteration is one row from the loop_iteration_metric table.
-// Feeds the per-loop convergence trend chart and the cost-per-iteration view.
+// LiveLoopIteration is one row from the loop_iteration_metric table. The
+// ``convergence_metric_value`` column name is preserved for schema
+// continuity; semantically it now carries the iteration's USD cost.
 type LiveLoopIteration struct {
 	LoopID                 string  `json:"loop_id"`
 	Iteration              int     `json:"iteration"`
@@ -73,7 +79,8 @@ func (c *Client) ListLiveLoops(status string) ([]LiveLoopSummary, error) {
 }
 
 // GetLiveLoop returns the full LoopInstance for the given id, including the
-// pinned template snapshot. Falls back to a DB lookup for terminal loops.
+// frozen template text + mermaid diagram. Falls back to a DB lookup for
+// terminal loops.
 func (c *Client) GetLiveLoop(id string) (LiveLoop, error) {
 	var loop LiveLoop
 	if err := c.get("/api/loops/"+id, &loop); err != nil {
@@ -83,7 +90,7 @@ func (c *Client) GetLiveLoop(id string) (LiveLoop, error) {
 }
 
 // GetLiveLoopIterations returns the per-iteration metric rows in iteration
-// order. Feeds the convergence trend chart.
+// order. Feeds the per-iteration cost chart.
 func (c *Client) GetLiveLoopIterations(id string) ([]LiveLoopIteration, error) {
 	var resp struct {
 		LoopID     string              `json:"loop_id"`
@@ -122,15 +129,14 @@ func (c *Client) ListLoopTemplates() ([]string, error) {
 	return resp.Templates, nil
 }
 
-// LoopTemplate is the raw text + metadata for one template, returned by
-// GET /api/loops/templates/{name}. The Templates tab renders `yaml` in the
-// editor; `origin` controls whether Save is enabled vs. requiring fork.
+// LoopTemplate is the raw markdown + metadata for one template, returned
+// by GET /api/loops/templates/{name}. ``origin`` controls whether Save is
+// enabled vs. requiring fork.
 type LoopTemplate struct {
-	Name    string `json:"name"`
-	Origin  string `json:"origin"` // "built-in" | "user"
-	Version string `json:"version"`
-	Hash    string `json:"hash"`
-	YAML    string `json:"yaml"`
+	Name     string `json:"name"`
+	Origin   string `json:"origin"` // "built-in" | "user"
+	Hash     string `json:"hash"`
+	Markdown string `json:"markdown"`
 }
 
 // GetLoopTemplate fetches one template by name.
@@ -143,8 +149,8 @@ func (c *Client) GetLoopTemplate(name string) (LoopTemplate, error) {
 }
 
 // LoopTemplateValidation is the result shape of POST /validate. Editor
-// renders errors as inline lint annotations; line/col is supplied for
-// YAML syntax errors, field paths for pydantic schema errors.
+// renders errors as inline lint annotations. Line/col are usually null
+// for the markdown parser; the editor falls back to annotating line 1.
 type LoopTemplateValidation struct {
 	OK       bool                          `json:"ok"`
 	Errors   []LoopTemplateValidationEntry `json:"errors"`
@@ -158,10 +164,10 @@ type LoopTemplateValidationEntry struct {
 	Message string `json:"message"`
 }
 
-// ValidateLoopTemplate runs server-side validation on raw template YAML
-// without saving. Editor calls this on debounced keystrokes.
-func (c *Client) ValidateLoopTemplate(rawYAML string) (LoopTemplateValidation, error) {
-	body := map[string]string{"yaml": rawYAML}
+// ValidateLoopTemplate runs server-side validation on raw template
+// markdown without saving. Editor calls this on debounced keystrokes.
+func (c *Client) ValidateLoopTemplate(rawMarkdown string) (LoopTemplateValidation, error) {
+	body := map[string]string{"markdown": rawMarkdown}
 	var resp LoopTemplateValidation
 	if err := c.doWith(c.httpClient, http.MethodPost, "/api/loops/templates/validate", body, &resp); err != nil {
 		return LoopTemplateValidation{}, err
@@ -172,7 +178,7 @@ func (c *Client) ValidateLoopTemplate(rawYAML string) (LoopTemplateValidation, e
 // DryRunLoopTemplate plans iteration 1 of the template against an optional
 // sample envelope without enqueueing. Returns the structured plan as a
 // loosely-typed map — the operator-facing JSON shape is rich and not yet
-// stable.
+// stable. Includes the rendered mermaid diagram under "mermaid".
 func (c *Client) DryRunLoopTemplate(name string, envelope map[string]interface{}) (map[string]interface{}, error) {
 	body := map[string]interface{}{}
 	if envelope != nil {
@@ -185,15 +191,15 @@ func (c *Client) DryRunLoopTemplate(name string, envelope map[string]interface{}
 	return resp, nil
 }
 
-// PutLoopTemplate writes raw YAML to the user templates dir. Pass fork=true
-// to create a user override of a built-in. Returns the freshly-read
-// template metadata.
-func (c *Client) PutLoopTemplate(name, rawYAML string, fork bool) (LoopTemplate, error) {
+// PutLoopTemplate writes raw markdown to the user templates dir. Pass
+// fork=true to create a user override of a built-in. Returns the
+// freshly-read template metadata.
+func (c *Client) PutLoopTemplate(name, rawMarkdown string, fork bool) (LoopTemplate, error) {
 	path := "/api/loops/templates/" + name
 	if fork {
 		path += "?fork=true"
 	}
-	body := map[string]string{"yaml": rawYAML}
+	body := map[string]string{"markdown": rawMarkdown}
 	var resp LoopTemplate
 	if err := c.doWith(c.httpClient, http.MethodPut, path, body, &resp); err != nil {
 		return LoopTemplate{}, err
@@ -206,8 +212,9 @@ func (c *Client) DeleteLoopTemplate(name string) error {
 	return c.doWith(c.httpClient, http.MethodDelete, "/api/loops/templates/"+name, nil, nil)
 }
 
-// GetLoopTemplateSchema returns the LoopSpec JSON Schema. Editor consumes
-// this to drive Intellisense and inline validation hints.
+// GetLoopTemplateSchema returns the markdown frontmatter/section contract.
+// Editor uses this for the AI Assist prompt builder and for hinting in
+// future schema-aware editor modes.
 func (c *Client) GetLoopTemplateSchema() (map[string]interface{}, error) {
 	var resp map[string]interface{}
 	if err := c.get("/api/loops/templates/schema", &resp); err != nil {
@@ -217,24 +224,25 @@ func (c *Client) GetLoopTemplateSchema() (map[string]interface{}, error) {
 }
 
 // LoopAssistRequest is the body shape for POST /api/loops/templates/assist.
+// The ``current_yaml`` field name is preserved for one release for
+// server-side compatibility; semantically it now carries markdown.
 type LoopAssistRequest struct {
-	Mode        string                 `json:"mode"` // "generate" | "refine" | "explain"
-	Prompt      string                 `json:"prompt"`
-	CurrentYAML string                 `json:"current_yaml,omitempty"`
-	Selection   map[string]interface{} `json:"selection,omitempty"`
+	Mode            string                 `json:"mode"` // "generate" | "refine" | "explain"
+	Prompt          string                 `json:"prompt"`
+	CurrentMarkdown string                 `json:"current_yaml,omitempty"`
+	Selection       map[string]interface{} `json:"selection,omitempty"`
 }
 
-// LoopAssistResult is the response shape — yaml for generate/refine,
-// explanation for explain mode. Tokens + cost feed the operator-facing
-// session cost ticker.
+// LoopAssistResult is the response shape. ``yaml`` field name preserved
+// for one release; payload is now markdown text.
 type LoopAssistResult struct {
-	YAML        string                 `json:"yaml"`
-	Explanation string                 `json:"explanation"`
-	Model       string                 `json:"model"`
-	Tokens      map[string]int         `json:"tokens"`
-	CostUSD     float64                `json:"cost_usd"`
+	Markdown    string                   `json:"yaml"`
+	Explanation string                   `json:"explanation"`
+	Model       string                   `json:"model"`
+	Tokens      map[string]int           `json:"tokens"`
+	CostUSD     float64                  `json:"cost_usd"`
 	Warnings    []map[string]interface{} `json:"warnings"`
-	Retries     int                    `json:"retries"`
+	Retries     int                      `json:"retries"`
 }
 
 // AssistLoopTemplate runs a single AI Assist round. The brainbox endpoint

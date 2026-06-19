@@ -4,9 +4,12 @@
   import { notifications } from '../notifications.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import MermaidDiagram from '../components/MermaidDiagram.svelte';
   import { linearScale, monotonePath, extent } from '../components/chartMath';
 
-  // Slim summary shape from Go-side LiveLoopSummary
+  // Slim summary shape from Go-side LiveLoopSummary. After the markdown
+  // loop format cutover, the per-iteration value is USD cost (was a
+  // convergence metric); the field is named cost_history accordingly.
   interface LoopRun {
     id: string;
     name: string;
@@ -15,7 +18,9 @@
     max_iterations: number;
     parent_task_id: string;
     current_child_id?: string;
-    metric_history: number[];
+    cost_history: number[];
+    cost_usd: number;
+    mermaid?: string;
     stop_reason?: string;
     error?: string;
     workspace_profile?: string;
@@ -28,6 +33,9 @@
   let pollHandle: ReturnType<typeof setInterval> | null = null;
   let statusFilter = $state<string>('');
   let cancellingIds = $state<Set<string>>(new Set());
+  let selectedLoopId = $state<string | null>(null);
+  let selectedLoopMermaid = $state<string>('');
+  let selectedLoopError = $state<string | null>(null);
 
   const POLL_MS = 5000;
 
@@ -106,9 +114,11 @@
     return monotonePath(pts);
   }
 
-  function lastMetric(history: number[]): string {
+  function lastCost(history: number[]): string {
     if (!history || history.length === 0) return '—';
-    return history[history.length - 1].toString();
+    const v = history[history.length - 1];
+    if (v < 0.01) return `$${v.toFixed(4)}`;
+    return `$${v.toFixed(3)}`;
   }
 
   function trendDirection(history: number[]): 'down' | 'up' | 'flat' | '' {
@@ -140,6 +150,32 @@
     } finally {
       cancellingIds.delete(loop.id);
       cancellingIds = cancellingIds;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Drill-in — fetch the full LiveLoop to display its mermaid diagram
+  // ---------------------------------------------------------------------------
+
+  async function selectLoop(loop: LoopRun) {
+    if (selectedLoopId === loop.id) {
+      // Toggle off
+      selectedLoopId = null;
+      selectedLoopMermaid = '';
+      selectedLoopError = null;
+      return;
+    }
+    selectedLoopId = loop.id;
+    selectedLoopMermaid = loop.mermaid ?? '';
+    selectedLoopError = null;
+    // Always refetch the full instance to pick up the freshest diagram +
+    // template snapshot (summary mermaid is best-effort).
+    try {
+      const api = await getApi();
+      const full = await api.GetLiveLoop(loop.id);
+      selectedLoopMermaid = (full as { mermaid?: string })?.mermaid ?? selectedLoopMermaid;
+    } catch (err) {
+      selectedLoopError = err instanceof Error ? err.message : String(err);
     }
   }
 
@@ -189,14 +225,14 @@
   {:else}
     <div class="loop-list">
       {#each loops as loop (loop.id)}
-        <div class="loop-card">
-          <div class="card-head">
+        <div class="loop-card" class:selected={selectedLoopId === loop.id}>
+          <button class="card-head card-head-btn" onclick={() => selectLoop(loop)} type="button">
             <div class="name-block">
               <span class="loop-name">{loop.name}</span>
               <code class="loop-id">{loop.id.slice(0, 8)}</code>
             </div>
             <span class={statusClass(loop.status)}>{statusLabel(loop.status)}</span>
-          </div>
+          </button>
 
           <div class="card-body">
             <div class="metric-block">
@@ -205,11 +241,11 @@
                 <span class="value">{loop.iteration}<span class="dim">/ {loop.max_iterations}</span></span>
               </div>
               <div class="metric-line">
-                <span class="label">metric</span>
-                <span class="value">{lastMetric(loop.metric_history)}</span>
-                {#if trendDirection(loop.metric_history)}
-                  <span class="trend trend-{trendDirection(loop.metric_history)}">
-                    {trendDirection(loop.metric_history) === 'down' ? '↓' : trendDirection(loop.metric_history) === 'up' ? '↑' : '→'}
+                <span class="label">cost</span>
+                <span class="value">{lastCost(loop.cost_history)}</span>
+                {#if trendDirection(loop.cost_history)}
+                  <span class="trend trend-{trendDirection(loop.cost_history)}">
+                    {trendDirection(loop.cost_history) === 'down' ? '↓' : trendDirection(loop.cost_history) === 'up' ? '↑' : '→'}
                   </span>
                 {/if}
               </div>
@@ -222,9 +258,9 @@
             </div>
 
             <div class="chart-block">
-              {#if loop.metric_history && loop.metric_history.length >= 2}
+              {#if loop.cost_history && loop.cost_history.length >= 2}
                 <svg viewBox="0 0 {SPARK_W} {SPARK_H}" width={SPARK_W} height={SPARK_H} class="sparkline">
-                  <path d={sparklinePath(loop.metric_history)} fill="none" stroke="currentColor" stroke-width="1.5" />
+                  <path d={sparklinePath(loop.cost_history)} fill="none" stroke="currentColor" stroke-width="1.5" />
                 </svg>
               {:else}
                 <div class="no-spark">—</div>
@@ -243,6 +279,19 @@
               {/if}
             </div>
           </div>
+
+          {#if selectedLoopId === loop.id}
+            <div class="diagram-drawer">
+              <div class="diagram-head">
+                <span class="diagram-label">Diagram</span>
+              </div>
+              {#if selectedLoopError}
+                <div class="error">{selectedLoopError}</div>
+              {:else}
+                <MermaidDiagram source={selectedLoopMermaid} />
+              {/if}
+            </div>
+          {/if}
 
           <div class="card-foot">
             <span class="updated">{fmtAge(loop.updated_at)}</span>
@@ -330,6 +379,41 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+  }
+  .card-head-btn {
+    background: transparent;
+    border: none;
+    color: inherit;
+    text-align: left;
+    width: 100%;
+    cursor: pointer;
+    padding: 0;
+  }
+  .loop-card.selected {
+    border-color: var(--color-accent, #88c1ff);
+  }
+  .diagram-drawer {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    background: var(--color-surface-2, #1a1a1a);
+    border: 1px solid var(--color-border, #2a2a2a);
+    border-radius: 4px;
+    max-height: 320px;
+    overflow: auto;
+  }
+  .diagram-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+  }
+  .diagram-label {
+    font-weight: 600;
+    color: var(--color-text-muted, #888);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 
   .name-block {

@@ -3,8 +3,7 @@
    * Three-tab Loops panel — the main operator surface for the loop-engineering
    * runtime. Replaces the standalone Loop Runs sidebar entry.
    *
-   *   Templates — list of templates + raw YAML preview (CodeMirror editor
-   *               lands in PR 5).
+   *   Templates — list of templates + markdown editor + mermaid preview.
    *   Runs      — live + history view of LoopInstance records (lifted as
    *               LoopRunsPanel child component).
    *   Trigger   — pick a template, fill its required_refs, fire start_loop.
@@ -15,7 +14,8 @@
   import { notifications } from '../notifications.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Spinner from '../components/Spinner.svelte';
-  import YamlEditor from '../components/YamlEditor.svelte';
+  import MarkdownEditor from '../components/MarkdownEditor.svelte';
+  import MermaidDiagram from '../components/MermaidDiagram.svelte';
   import LoopRunsPanel from './LoopRunsPanel.svelte';
 
   type TabId = 'templates' | 'runs' | 'trigger';
@@ -28,9 +28,8 @@
   interface LoopTemplate {
     name: string;
     origin: 'built-in' | 'user';
-    version: string;
     hash: string;
-    yaml: string;
+    markdown: string;
   }
 
   let templateNames = $state<string[]>([]);
@@ -38,9 +37,14 @@
   let selectedName = $state<string | null>(null);
   let selectedTemplate = $state<LoopTemplate | null>(null);
   let templateError = $state<string | null>(null);
-  let editorValue = $state('');     // editor buffer (drifts from selectedTemplate.yaml when dirty)
-  let savedYaml = $state('');       // last persisted text — diff against editorValue = dirty
+  let editorValue = $state('');     // editor buffer (drifts from selectedTemplate.markdown when dirty)
+  let savedMarkdown = $state('');   // last persisted text — diff against editorValue = dirty
   let templateBusy = $state(false); // true while save/fork/delete is in flight
+
+  // Mermaid diagram preview state — recomputed on template change / save
+  let diagramMermaid = $state<string>('');
+  let diagramError = $state<string | null>(null);
+  let diagramBusy = $state(false);
 
   // AI Assist state
   let assistPrompt = $state('');
@@ -72,7 +76,7 @@
   }
 
   function isDirty(): boolean {
-    return editorValue !== savedYaml;
+    return editorValue !== savedMarkdown;
   }
 
   async function selectName(name: string) {
@@ -89,10 +93,28 @@
       const api = await getApi();
       const tpl = (await api.GetLoopTemplate(name)) as LoopTemplate;
       selectedTemplate = tpl;
-      savedYaml = tpl.yaml;
-      editorValue = tpl.yaml;
+      savedMarkdown = tpl.markdown;
+      editorValue = tpl.markdown;
+      void refreshDiagram(name);
     } catch (err) {
       templateError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  // Fetch the mermaid diagram for the currently-saved template via dry-run.
+  // Dry-run returns a structured plan with the rendered "mermaid" field.
+  async function refreshDiagram(name: string) {
+    diagramBusy = true;
+    diagramError = null;
+    try {
+      const api = await getApi();
+      const result = (await api.DryRunLoopTemplate(name, {})) as { mermaid?: string };
+      diagramMermaid = result?.mermaid ?? '';
+    } catch (err) {
+      diagramError = err instanceof Error ? err.message : String(err);
+      diagramMermaid = '';
+    } finally {
+      diagramBusy = false;
     }
   }
 
@@ -140,9 +162,10 @@
         false,
       )) as LoopTemplate;
       selectedTemplate = updated;
-      savedYaml = updated.yaml;
-      editorValue = updated.yaml;
+      savedMarkdown = updated.markdown;
+      editorValue = updated.markdown;
       notifications.success(`${updated.name} saved`);
+      void refreshDiagram(updated.name);
     } catch (err) {
       notifications.error(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -164,10 +187,11 @@
       // re-select it so the editor reflects origin: "user" and Save is enabled.
       await loadTemplateList();
       selectedTemplate = updated;
-      savedYaml = updated.yaml;
-      editorValue = updated.yaml;
+      savedMarkdown = updated.markdown;
+      editorValue = updated.markdown;
       selectedName = updated.name;
       notifications.success(`Forked ${updated.name} to user dir`);
+      void refreshDiagram(updated.name);
     } catch (err) {
       notifications.error(`Fork failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -187,7 +211,7 @@
       return;
     }
     if (mode === 'refine' && editorSelection.isEmpty) {
-      assistError = 'Highlight a YAML range in the editor first.';
+      assistError = 'Highlight a markdown range in the editor first.';
       return;
     }
     assistError = null;
@@ -198,12 +222,15 @@
       const result = (await api.AssistLoopTemplate({
         mode,
         prompt,
+        // Field name preserved on the wire as `current_yaml` for one
+        // release for server-side compat; semantically it's markdown.
         current_yaml: editorValue,
         selection: mode === 'generate' ? {} : {
           start_line: editorSelection.startLine,
           end_line: editorSelection.endLine,
         },
       })) as unknown as {
+        // Wire key still `yaml` for one release; payload is markdown.
         yaml: string;
         explanation: string;
         model: string;
@@ -274,9 +301,10 @@
       await api.DeleteLoopTemplate(selectedTemplate.name);
       notifications.success(`${selectedTemplate.name} deleted`);
       selectedTemplate = null;
-      savedYaml = '';
+      savedMarkdown = '';
       editorValue = '';
       selectedName = null;
+      diagramMermaid = '';
       await loadTemplateList();
     } catch (err) {
       notifications.error(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -318,7 +346,7 @@
     try {
       const api = await getApi();
       const tpl = (await api.GetLoopTemplate(name)) as LoopTemplate;
-      const refs = parseRequiredRefs(tpl.yaml);
+      const refs = parseRequiredRefs(frontmatterFromMarkdown(tpl.markdown));
       triggerRequiredRefs = refs;
       // Reset values, preserving any the operator already typed for keys
       // that still exist in the new template.
@@ -332,9 +360,7 @@
     }
   }
 
-  function parseRequiredRefs(rawYaml: string): RequiredRef[] {
-    // Strip the markdown body so js-yaml only sees frontmatter.
-    const fm = extractFrontmatter(rawYaml);
+  function parseRequiredRefs(fm: string | null): RequiredRef[] {
     if (!fm) return [];
     try {
       const parsed = yaml.load(fm) as Record<string, unknown> | null;
@@ -351,9 +377,11 @@
     }
   }
 
-  function extractFrontmatter(content: string): string | null {
-    if (!content.startsWith('---')) return null;
-    const after = content.slice(3).replace(/^\n+/, '');
+  // Returns the YAML frontmatter slice (between opening and closing ---)
+  // from a markdown template, or null if no frontmatter is present.
+  function frontmatterFromMarkdown(text: string): string | null {
+    if (!text || !text.startsWith('---')) return null;
+    const after = text.slice(3).replace(/^\n+/, '');
     const idx = after.indexOf('\n---');
     if (idx === -1) return null;
     return after.slice(0, idx);
@@ -466,9 +494,6 @@
             <div class="title-row">
               <span class="template-title">{selectedTemplate.name}</span>
               <span class={originBadge(selectedTemplate.origin)}>{selectedTemplate.origin}</span>
-              {#if selectedTemplate.version}
-                <span class="dim">v{selectedTemplate.version}</span>
-              {/if}
               {#if isDirty()}
                 <span class="dirty-dot" title="Unsaved changes"></span>
               {/if}
@@ -487,7 +512,7 @@
               class="assist-prompt"
               bind:value={assistPrompt}
               onkeydown={onAssistKeydown}
-              placeholder="Describe what you want, or ask a question about the selected YAML. ⌘↵ Generate · ⌘⇧↵ Refine · ⌘/ Explain"
+              placeholder="Describe what you want, or ask a question about the selected markdown. ⌘↵ Generate · ⌘⇧↵ Refine · ⌘/ Explain"
               rows="2"
               disabled={assistBusy}
             ></textarea>
@@ -503,7 +528,7 @@
                 class="btn-refine"
                 onclick={() => runAssist('refine')}
                 disabled={assistBusy || !assistPrompt.trim() || editorSelection.isEmpty}
-                title={editorSelection.isEmpty ? 'Highlight a YAML range first' : ''}
+                title={editorSelection.isEmpty ? 'Highlight a markdown range first' : ''}
               >
                 Refine selection
               </button>
@@ -528,9 +553,20 @@
               </div>
             {/if}
           </div>
+          <div class="diagram-section">
+            <div class="diagram-head">
+              <span class="diagram-label">Diagram</span>
+              {#if diagramBusy}<span class="dim">rendering…</span>{/if}
+            </div>
+            {#if diagramError}
+              <div class="error">{diagramError}</div>
+            {:else}
+              <MermaidDiagram source={diagramMermaid} />
+            {/if}
+          </div>
           <div class="editor-wrap">
-            <YamlEditor
-              value={editorValue || selectedTemplate.yaml}
+            <MarkdownEditor
+              value={editorValue || selectedTemplate.markdown}
               onChange={handleEditorChange}
               lintRequest={lintTemplate}
               onSelectionChange={(sel) => (editorSelection = sel)}
@@ -754,6 +790,29 @@
     font-family: var(--font-mono, monospace);
     font-size: 11px;
     color: var(--color-text-muted, #888);
+  }
+  .diagram-section {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 12px;
+    background: var(--color-surface-1, #181818);
+    border: 1px solid var(--color-border, #2a2a2a);
+    border-radius: 4px;
+    max-height: 280px;
+    overflow: auto;
+  }
+  .diagram-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+  }
+  .diagram-label {
+    font-weight: 600;
+    color: var(--color-text-muted, #888);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
   .editor-wrap {
     flex: 1;
