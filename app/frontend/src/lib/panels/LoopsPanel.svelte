@@ -561,17 +561,26 @@
             {#if diagramError}
               <div class="error">{diagramError}</div>
             {:else}
-              <MermaidDiagram source={diagramMermaid} />
+              <MermaidDiagram source={diagramMermaid} scale={0.5} />
             {/if}
           </div>
-          <div class="editor-wrap">
-            <MarkdownEditor
-              value={editorValue || selectedTemplate.markdown}
-              onChange={handleEditorChange}
-              lintRequest={lintTemplate}
-              onSelectionChange={(sel) => (editorSelection = sel)}
-            />
-          </div>
+          <details class="markdown-collapse">
+            <summary class="markdown-summary">
+              <span class="markdown-label">Markdown source</span>
+              {#if isDirty()}
+                <span class="dirty-dot" title="Unsaved changes"></span>
+              {/if}
+              <span class="dim summary-hint">click to expand</span>
+            </summary>
+            <div class="editor-wrap">
+              <MarkdownEditor
+                value={editorValue || selectedTemplate.markdown}
+                onChange={handleEditorChange}
+                lintRequest={lintTemplate}
+                onSelectionChange={(sel) => (editorSelection = sel)}
+              />
+            </div>
+          </details>
           <div class="editor-actions">
             {#if selectedTemplate.origin === 'user'}
               <button
@@ -792,14 +801,19 @@
     color: var(--color-text-muted, #888);
   }
   .diagram-section {
+    /* Dominant visual — claims the largest share of the detail pane.
+       flex:1 alongside the (closed) markdown <details> gives it
+       virtually the whole height; when the operator expands the
+       markdown, both regions split available space. */
+    flex: 1;
+    min-height: 220px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 8px 12px;
-    background: var(--color-surface-1, #181818);
-    border: 1px solid var(--color-border, #2a2a2a);
-    border-radius: 4px;
-    max-height: 280px;
+    gap: 6px;
+    padding: 12px 14px;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
     overflow: auto;
   }
   .diagram-head {
@@ -810,15 +824,63 @@
   }
   .diagram-label {
     font-weight: 600;
-    color: var(--color-text-muted, #888);
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
-  .editor-wrap {
-    flex: 1;
-    min-height: 0;
+  /* Collapsible markdown — keeps the editor available without it
+     occupying chrome when the operator just wants to see the loop. */
+  .markdown-collapse {
     display: flex;
     flex-direction: column;
+    min-height: 0;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+  }
+  .markdown-collapse[open] {
+    /* When expanded, claim space alongside the diagram. */
+    flex: 1;
+    min-height: 220px;
+  }
+  .markdown-summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .markdown-summary::-webkit-details-marker { display: none; }
+  .markdown-summary::before {
+    content: '▸';
+    display: inline-block;
+    color: var(--text-faint);
+    transition: transform 0.15s ease;
+  }
+  .markdown-collapse[open] .markdown-summary::before {
+    transform: rotate(90deg);
+    color: var(--accent);
+  }
+  .markdown-label {
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .summary-hint {
+    margin-left: auto;
+    font-style: italic;
+  }
+  .markdown-collapse[open] .summary-hint { display: none; }
+  .editor-wrap {
+    flex: 1;
+    min-height: 200px;
+    display: flex;
+    flex-direction: column;
+    padding: 0 8px 8px;
   }
   .editor-actions {
     display: flex;

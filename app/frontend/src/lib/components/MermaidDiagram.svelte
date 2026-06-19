@@ -10,9 +10,13 @@
 
   interface Props {
     source: string;
+    /** Render the SVG at this fraction of its natural size. 1.0 = native;
+     *  0.5 ≈ half scale (denser overview). Layout space is reclaimed —
+     *  the wrap shrinks with the SVG so it doesn't leave empty padding. */
+    scale?: number;
   }
 
-  let { source }: Props = $props();
+  let { source, scale = 1.0 }: Props = $props();
 
   let container: HTMLDivElement;
   let initialized = false;
@@ -63,7 +67,11 @@
   {:else if errorMessage}
     <div class="error">Diagram render failed: {errorMessage}</div>
   {/if}
-  <div class="diagram" bind:this={container}></div>
+  <div
+    class="diagram"
+    bind:this={container}
+    style:--scale={scale}
+  ></div>
 </div>
 
 <style>
@@ -76,9 +84,17 @@
   .diagram {
     width: 100%;
     overflow: auto;
+    /* Center the SVG horizontally — at small scales the diagram is
+       narrower than the container, so this stops it hugging the left. */
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
   }
   .diagram :global(svg) {
-    max-width: 100%;
+    /* `--scale` is multiplied into max-width so the SVG actually shrinks
+       its layout box (not just its visual paint). max-width 50% at
+       scale=1 still falls back to a sane size; scale=0.5 gives ~half. */
+    max-width: calc(100% * var(--scale, 1));
     height: auto;
   }
   .placeholder {
