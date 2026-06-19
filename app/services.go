@@ -204,6 +204,13 @@ var knownServices = []ServiceDef{
 		Port:        11434,
 		Native:      true,
 	},
+	{
+		Name:        "minio",
+		Label:       "MinIO",
+		Description: "S3-compatible artifact store — vault + loops + sessions",
+		DefaultURL:  "http://localhost:9090",
+		Port:        9090,
+	},
 }
 
 // isPortOpen checks if a TCP port is accepting connections.
