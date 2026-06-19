@@ -585,6 +585,48 @@ export namespace brainbox {
 	        this.updated_at = source["updated_at"];
 	    }
 	}
+	export class LoopAssistRequest {
+	    mode: string;
+	    prompt: string;
+	    current_yaml?: string;
+	    selection?: Record<string, any>;
+	
+	    static createFrom(source: any = {}) {
+	        return new LoopAssistRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mode = source["mode"];
+	        this.prompt = source["prompt"];
+	        this.current_yaml = source["current_yaml"];
+	        this.selection = source["selection"];
+	    }
+	}
+	export class LoopAssistResult {
+	    yaml: string;
+	    explanation: string;
+	    model: string;
+	    tokens: Record<string, number>;
+	    cost_usd: number;
+	    warnings: any[];
+	    retries: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LoopAssistResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.yaml = source["yaml"];
+	        this.explanation = source["explanation"];
+	        this.model = source["model"];
+	        this.tokens = source["tokens"];
+	        this.cost_usd = source["cost_usd"];
+	        this.warnings = source["warnings"];
+	        this.retries = source["retries"];
+	    }
+	}
 	export class LoopTemplate {
 	    name: string;
 	    origin: string;

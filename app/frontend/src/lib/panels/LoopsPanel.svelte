@@ -42,6 +42,19 @@
   let savedYaml = $state('');       // last persisted text — diff against editorValue = dirty
   let templateBusy = $state(false); // true while save/fork/delete is in flight
 
+  // AI Assist state
+  let assistPrompt = $state('');
+  let assistBusy = $state(false);
+  let assistError = $state<string | null>(null);
+  let assistModel = $state('');
+  let sessionCost = $state(0);   // cumulative USD across this editor session
+  let editorSelection = $state<{ startLine: number; endLine: number; isEmpty: boolean }>({
+    startLine: 1,
+    endLine: 1,
+    isEmpty: true,
+  });
+  let explanation = $state<string | null>(null);
+
   async function loadTemplateList() {
     templatesLoading = true;
     try {
@@ -160,6 +173,91 @@
     } finally {
       templateBusy = false;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // AI Assist — Generate / Refine / Explain
+  // ---------------------------------------------------------------------------
+
+  async function runAssist(mode: 'generate' | 'refine' | 'explain') {
+    if (assistBusy) return;
+    const prompt = assistPrompt.trim();
+    if (!prompt) {
+      assistError = 'Type what you want before firing.';
+      return;
+    }
+    if (mode === 'refine' && editorSelection.isEmpty) {
+      assistError = 'Highlight a YAML range in the editor first.';
+      return;
+    }
+    assistError = null;
+    assistBusy = true;
+    explanation = null;
+    try {
+      const api = await getApi();
+      const result = (await api.AssistLoopTemplate({
+        mode,
+        prompt,
+        current_yaml: editorValue,
+        selection: mode === 'generate' ? {} : {
+          start_line: editorSelection.startLine,
+          end_line: editorSelection.endLine,
+        },
+      })) as unknown as {
+        yaml: string;
+        explanation: string;
+        model: string;
+        tokens: { input?: number; output?: number };
+        cost_usd: number;
+        warnings: { field: string | null; message: string }[];
+      };
+
+      assistModel = result.model;
+      sessionCost += Number(result.cost_usd ?? 0);
+
+      if (mode === 'explain') {
+        explanation = result.explanation;
+      } else {
+        // Generate / Refine replace the editor doc. Confirm if dirty.
+        if (isDirty()) {
+          const ok = window.confirm('Editor has unsaved changes. Replace with AI output?');
+          if (!ok) return;
+        }
+        editorValue = result.yaml;
+        if (result.warnings && result.warnings.length > 0) {
+          notifications.error(
+            `AI output had ${result.warnings.length} validation warning(s) — review before saving`,
+          );
+        } else {
+          notifications.success(`${mode === 'generate' ? 'Generated' : 'Refined'} via ${result.model}`);
+        }
+      }
+      assistPrompt = '';
+    } catch (err) {
+      assistError = err instanceof Error ? err.message : String(err);
+    } finally {
+      assistBusy = false;
+    }
+  }
+
+  function onAssistKeydown(ev: KeyboardEvent) {
+    const meta = ev.metaKey || ev.ctrlKey;
+    if (!meta) return;
+    if (ev.key === 'Enter' && !ev.shiftKey) {
+      ev.preventDefault();
+      void runAssist('generate');
+    } else if (ev.key === 'Enter' && ev.shiftKey) {
+      ev.preventDefault();
+      void runAssist('refine');
+    } else if (ev.key === '/') {
+      ev.preventDefault();
+      void runAssist('explain');
+    }
+  }
+
+  function fmtCost(usd: number): string {
+    if (usd < 0.01) return `$${usd.toFixed(4)}`;
+    return `$${usd.toFixed(3)}`;
   }
 
   async function deleteTemplate() {
@@ -377,11 +475,65 @@
             </div>
             <div class="hash">hash {selectedTemplate.hash}</div>
           </div>
+          <div class="assist-box">
+            <div class="assist-head">
+              <span class="assist-label">AI Assist</span>
+              <span class="assist-meta">
+                {#if assistModel}<span class="assist-model">{assistModel}</span>{/if}
+                {#if sessionCost > 0}<span class="assist-cost">Cost: {fmtCost(sessionCost)}</span>{/if}
+              </span>
+            </div>
+            <textarea
+              class="assist-prompt"
+              bind:value={assistPrompt}
+              onkeydown={onAssistKeydown}
+              placeholder="Describe what you want, or ask a question about the selected YAML. ⌘↵ Generate · ⌘⇧↵ Refine · ⌘/ Explain"
+              rows="2"
+              disabled={assistBusy}
+            ></textarea>
+            <div class="assist-actions">
+              <button
+                class="btn-generate"
+                onclick={() => runAssist('generate')}
+                disabled={assistBusy || !assistPrompt.trim()}
+              >
+                {assistBusy ? '…' : '✨ Generate'}
+              </button>
+              <button
+                class="btn-refine"
+                onclick={() => runAssist('refine')}
+                disabled={assistBusy || !assistPrompt.trim() || editorSelection.isEmpty}
+                title={editorSelection.isEmpty ? 'Highlight a YAML range first' : ''}
+              >
+                Refine selection
+              </button>
+              <button
+                class="btn-explain"
+                onclick={() => runAssist('explain')}
+                disabled={assistBusy || !assistPrompt.trim()}
+              >
+                Explain
+              </button>
+            </div>
+            {#if assistError}
+              <div class="error">{assistError}</div>
+            {/if}
+            {#if explanation}
+              <div class="explanation">
+                <div class="explanation-head">
+                  <span>Explanation</span>
+                  <button class="explanation-close" onclick={() => (explanation = null)}>×</button>
+                </div>
+                <div class="explanation-body">{explanation}</div>
+              </div>
+            {/if}
+          </div>
           <div class="editor-wrap">
             <YamlEditor
-              value={selectedTemplate.yaml}
+              value={editorValue || selectedTemplate.yaml}
               onChange={handleEditorChange}
               lintRequest={lintTemplate}
+              onSelectionChange={(sel) => (editorSelection = sel)}
             />
           </div>
           <div class="editor-actions">
@@ -655,6 +807,113 @@
     border-radius: 50%;
     background: #ffb070;
     margin-left: 4px;
+  }
+
+  /* AI Assist box */
+  .assist-box {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--color-surface-1, #181818);
+    border: 1px solid var(--color-border, #2a2a2a);
+    border-radius: 4px;
+  }
+  .assist-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+  }
+  .assist-label {
+    font-weight: 600;
+    color: var(--color-text-muted, #888);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .assist-meta {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .assist-model {
+    color: var(--color-accent, #88c1ff);
+    font-family: var(--font-mono, monospace);
+  }
+  .assist-cost {
+    color: var(--color-text-muted, #888);
+  }
+  .assist-prompt {
+    background: var(--color-surface-2, #1a1a1a);
+    border: 1px solid var(--color-border, #2a2a2a);
+    color: var(--color-text, #ddd);
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: var(--font-sans, sans-serif);
+    resize: vertical;
+    min-height: 38px;
+  }
+  .assist-prompt:focus {
+    outline: 1px solid var(--color-accent, #88c1ff);
+    outline-offset: -1px;
+  }
+  .assist-actions {
+    display: flex;
+    gap: 6px;
+  }
+  .btn-generate,
+  .btn-refine,
+  .btn-explain {
+    background: var(--color-surface-2, #1a1a1a);
+    border: 1px solid var(--color-border, #2a2a2a);
+    color: var(--color-text, #ddd);
+    padding: 4px 10px;
+    font-size: 11px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .btn-generate {
+    background: var(--color-accent, #88c1ff);
+    color: #111;
+    border-color: var(--color-accent, #88c1ff);
+    font-weight: 600;
+  }
+  .btn-generate:disabled,
+  .btn-refine:disabled,
+  .btn-explain:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .explanation {
+    background: var(--color-surface-2, #1a1a1a);
+    border: 1px solid var(--color-accent, #88c1ff);
+    border-radius: 4px;
+    padding: 8px 10px;
+  }
+  .explanation-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--color-text-muted, #888);
+    margin-bottom: 4px;
+  }
+  .explanation-close {
+    background: transparent;
+    border: none;
+    color: var(--color-text-muted, #888);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 4px;
+  }
+  .explanation-body {
+    font-size: 12px;
+    color: var(--color-text, #ddd);
+    white-space: pre-wrap;
+    line-height: 1.5;
   }
 
   /* Runs tab — child panel takes over */
