@@ -331,153 +331,180 @@
         <div class="config-form">
           {#if addKind === 'stat-counter'}
             <div class="field">
-              <label>Label</label>
-              <input class="metric-label" type="text" bind:value={scLabel} placeholder="MY COUNTER" autocorrect="off" autocapitalize="characters" spellcheck="false" autocomplete="off" />
+              <label>Label
+                <input class="metric-label" type="text" bind:value={scLabel} placeholder="MY COUNTER" autocorrect="off" autocapitalize="characters" spellcheck="false" autocomplete="off" />
+              </label>
             </div>
             <div class="field">
-              <label>Data</label>
-              <select bind:value={scDataKey}>
+              <label>Data
+                <select bind:value={scDataKey}>
                 {#each DATA_KEYS as d (d.key)}
                   <option value={d.key}>{d.label}</option>
                 {/each}
               </select>
+              </label>
             </div>
             <div class="field">
-              <label>Color</label>
-              <select bind:value={scColor}>
+              <label>Color
+                <select bind:value={scColor}>
                 {#each COLORS as c (c.val)}
                   <option value={c.val}>{c.label}</option>
                 {/each}
               </select>
+              </label>
             </div>
             <div class="field">
-              <label>Navigate to</label>
-              <select bind:value={scNavTarget}>
+              <label>Navigate to
+                <select bind:value={scNavTarget}>
                 {#each NAV_TARGETS as t (t)}
                   <option value={t}>{t || '(none)'}</option>
                 {/each}
               </select>
+              </label>
             </div>
           {:else if addKind === 'custom-counter'}
             <div class="field">
-              <label>Label</label>
-              <input class="metric-label" type="text" bind:value={ccLabel} placeholder="MY METRIC" autocorrect="off" autocapitalize="characters" spellcheck="false" autocomplete="off" />
+              <label>Label
+                <input class="metric-label" type="text" bind:value={ccLabel} placeholder="MY METRIC" autocorrect="off" autocapitalize="characters" spellcheck="false" autocomplete="off" />
+              </label>
             </div>
             <div class="field">
-              <label>API</label>
-              <select bind:value={ccApi}>
+              <label>API
+                <select bind:value={ccApi}>
                 <option value="hub_tasks">Hub Tasks</option>
                 <option value="sessions">Sessions</option>
               </select>
+              </label>
             </div>
             <div class="field">
-              <label>Status filter</label>
-              <input type="text" bind:value={ccStatus} placeholder="running, failed, … (optional)" />
+              <label>Status filter
+                <input type="text" bind:value={ccStatus} placeholder="running, failed, … (optional)" />
+              </label>
             </div>
             <div class="field">
-              <label>Color (CSS)</label>
-              <input type="text" bind:value={ccColor} placeholder="#22c55e or var(--color-success)" />
+              <label>Color (CSS)
+                <input type="text" bind:value={ccColor} placeholder="#22c55e or var(--color-success)" />
+              </label>
             </div>
           {:else if addKind === 'script-metric'}
             <div class="field">
-              <label>Label</label>
-              <input class="metric-label" type="text" bind:value={smLabel} placeholder="UNREAD EMAILS" autocorrect="off" autocapitalize="characters" spellcheck="false" autocomplete="off" />
+              <label>Label
+                <input class="metric-label" type="text" bind:value={smLabel} placeholder="UNREAD EMAILS" autocorrect="off" autocapitalize="characters" spellcheck="false" autocomplete="off" />
+              </label>
             </div>
             <div class="field">
-              <label>Command</label>
-              <textarea bind:value={smCommand} rows="3" placeholder="echo 42&#10;# or: echo 'hello world'"></textarea>
+              <label>Command
+                <textarea bind:value={smCommand} rows="3" placeholder="echo 42&#10;# or: echo 'hello world'"></textarea>
+              </label>
             </div>
             <div class="field">
-              <label>Value type</label>
-              <select bind:value={smValueType}>
+              <label>Value type
+                <select bind:value={smValueType}>
                 <option value="number">Number</option>
                 <option value="string">String</option>
               </select>
+              </label>
             </div>
             <div class="field">
-              <label>Color (CSS)</label>
-              <input type="text" bind:value={smColor} placeholder="#22c55e or var(--color-success)" />
+              <label>Color (CSS)
+                <input type="text" bind:value={smColor} placeholder="#22c55e or var(--color-success)" />
+              </label>
             </div>
             <div class="field">
-              <label>Interval (seconds)</label>
-              <input type="number" bind:value={smInterval} min="10" max="3600" />
+              <label>Interval (seconds)
+                <input type="number" bind:value={smInterval} min="10" max="3600" />
+              </label>
             </div>
           {:else if addKind === 'http-metric'}
             <div class="field">
-              <label>Label</label>
-              <input class="metric-label" type="text" bind:value={hmLabel} placeholder="OPEN PRS" autocorrect="off" autocapitalize="characters" spellcheck="false" autocomplete="off" />
+              <label>Label
+                <input class="metric-label" type="text" bind:value={hmLabel} placeholder="OPEN PRS" autocorrect="off" autocapitalize="characters" spellcheck="false" autocomplete="off" />
+              </label>
             </div>
             <div class="field">
-              <label>URL</label>
-              <input type="text" bind:value={hmUrl} placeholder="https://api.example.com/count" />
+              <label>URL
+                <input type="text" bind:value={hmUrl} placeholder="https://api.example.com/count" />
+              </label>
             </div>
             <div class="field">
-              <label>JSON path</label>
-              <input type="text" bind:value={hmPath} placeholder="data.total (leave blank for root)" />
+              <label>JSON path
+                <input type="text" bind:value={hmPath} placeholder="data.total (leave blank for root)" />
+              </label>
             </div>
             <div class="field">
-              <label>Header (optional)</label>
-              <input type="text" bind:value={hmHeader} placeholder="Authorization: Bearer TOKEN" />
+              <label>Header (optional)
+                <input type="text" bind:value={hmHeader} placeholder="Authorization: Bearer TOKEN" />
+              </label>
             </div>
             <div class="field">
-              <label>Value type</label>
-              <select bind:value={hmValueType}>
+              <label>Value type
+                <select bind:value={hmValueType}>
                 <option value="number">Number</option>
                 <option value="string">String</option>
               </select>
+              </label>
             </div>
             <div class="field">
-              <label>Color (CSS)</label>
-              <input type="text" bind:value={hmColor} placeholder="#22c55e or var(--color-info)" />
+              <label>Color (CSS)
+                <input type="text" bind:value={hmColor} placeholder="#22c55e or var(--color-info)" />
+              </label>
             </div>
             <div class="field">
-              <label>Interval (seconds)</label>
-              <input type="number" bind:value={hmInterval} min="10" max="3600" />
+              <label>Interval (seconds)
+                <input type="number" bind:value={hmInterval} min="10" max="3600" />
+              </label>
             </div>
           {:else if addKind === 'stream'}
             <div class="field">
-              <label>Label</label>
-              <input type="text" bind:value={stLabel} placeholder="stream" />
+              <label>Label
+                <input type="text" bind:value={stLabel} placeholder="stream" />
+              </label>
             </div>
             <div class="field">
-              <label>Profile (leave blank for all)</label>
-              <input type="text" bind:value={stProfile} placeholder="personal" />
+              <label>Profile (leave blank for all)
+                <input type="text" bind:value={stProfile} placeholder="personal" />
+              </label>
             </div>
             <div class="field">
-              <label>Tag filter (optional)</label>
-              <input type="text" bind:value={stTag} placeholder="calendar" />
+              <label>Tag filter (optional)
+                <input type="text" bind:value={stTag} placeholder="calendar" />
+              </label>
             </div>
             <div class="field">
-              <label>Sources</label>
+              <span class="group-label">Sources</span>
               <div class="check-row">
                 <label class="check-label"><input type="checkbox" checked={stSources.includes('event')} onchange={e => { if ((e.target as HTMLInputElement).checked) { stSources = [...stSources, 'event']; } else { stSources = stSources.filter(s => s !== 'event'); } }} /> Events</label>
                 <label class="check-label"><input type="checkbox" checked={stSources.includes('task')} onchange={e => { if ((e.target as HTMLInputElement).checked) { stSources = [...stSources, 'task']; } else { stSources = stSources.filter(s => s !== 'task'); } }} /> Tasks</label>
               </div>
             </div>
             <div class="field">
-              <label>Max items</label>
-              <input type="number" bind:value={stLimit} min="5" max="100" />
+              <label>Max items
+                <input type="number" bind:value={stLimit} min="5" max="100" />
+              </label>
             </div>
           {:else if addKind === 'opensearch-metric'}
             <div class="field">
-              <label>Metric</label>
-              <select bind:value={osMetric}>
+              <label>Metric
+                <select bind:value={osMetric}>
                 {#each OS_METRICS as m}
                   <option value={m.val}>{m.label}</option>
                 {/each}
               </select>
+              </label>
             </div>
             <div class="field">
-              <label>Label (optional)</label>
-              <input class="metric-label" type="text" bind:value={osLabel} placeholder="leave blank for default" autocorrect="off" autocapitalize="characters" spellcheck="false" autocomplete="off" />
+              <label>Label (optional)
+                <input class="metric-label" type="text" bind:value={osLabel} placeholder="leave blank for default" autocorrect="off" autocapitalize="characters" spellcheck="false" autocomplete="off" />
+              </label>
             </div>
             <div class="field">
-              <label>Color</label>
-              <select bind:value={osColor}>
+              <label>Color
+                <select bind:value={osColor}>
                 {#each COLORS as c}
                   <option value={c.val}>{c.label}</option>
                 {/each}
               </select>
+              </label>
             </div>
           {:else}
             <p class="no-config">No configuration needed.</p>
@@ -496,45 +523,45 @@
 
           <div class="config-form">
             {#if editingWidget.kind === 'script-metric'}
-              <div class="field"><label>Label</label><input type="text" bind:value={smLabel} placeholder="UNREAD EMAILS" /></div>
-              <div class="field"><label>Command</label><textarea bind:value={smCommand} rows="3" placeholder="echo 42"></textarea></div>
-              <div class="field"><label>Value type</label><select bind:value={smValueType}><option value="number">Number</option><option value="string">String</option></select></div>
-              <div class="field"><label>Color (CSS)</label><input type="text" bind:value={smColor} placeholder="#22c55e" /></div>
-              <div class="field"><label>Interval (seconds)</label><input type="number" bind:value={smInterval} min="10" max="3600" /></div>
+              <div class="field"><label>Label <input type="text" bind:value={smLabel} placeholder="UNREAD EMAILS" /></label></div>
+              <div class="field"><label>Command <textarea bind:value={smCommand} rows="3" placeholder="echo 42"></textarea></label></div>
+              <div class="field"><label>Value type <select bind:value={smValueType}><option value="number">Number</option><option value="string">String</option></select></label></div>
+              <div class="field"><label>Color (CSS) <input type="text" bind:value={smColor} placeholder="#22c55e" /></label></div>
+              <div class="field"><label>Interval (seconds) <input type="number" bind:value={smInterval} min="10" max="3600" /></label></div>
             {:else if editingWidget.kind === 'http-metric'}
-              <div class="field"><label>Label</label><input type="text" bind:value={hmLabel} placeholder="OPEN PRS" /></div>
-              <div class="field"><label>URL</label><input type="text" bind:value={hmUrl} placeholder="https://api.example.com/count" /></div>
-              <div class="field"><label>JSON path</label><input type="text" bind:value={hmPath} placeholder="data.total" /></div>
-              <div class="field"><label>Header (optional)</label><input type="text" bind:value={hmHeader} placeholder="Authorization: Bearer TOKEN" /></div>
-              <div class="field"><label>Value type</label><select bind:value={hmValueType}><option value="number">Number</option><option value="string">String</option></select></div>
-              <div class="field"><label>Color (CSS)</label><input type="text" bind:value={hmColor} /></div>
-              <div class="field"><label>Interval (seconds)</label><input type="number" bind:value={hmInterval} min="10" max="3600" /></div>
+              <div class="field"><label>Label <input type="text" bind:value={hmLabel} placeholder="OPEN PRS" /></label></div>
+              <div class="field"><label>URL <input type="text" bind:value={hmUrl} placeholder="https://api.example.com/count" /></label></div>
+              <div class="field"><label>JSON path <input type="text" bind:value={hmPath} placeholder="data.total" /></label></div>
+              <div class="field"><label>Header (optional) <input type="text" bind:value={hmHeader} placeholder="Authorization: Bearer TOKEN" /></label></div>
+              <div class="field"><label>Value type <select bind:value={hmValueType}><option value="number">Number</option><option value="string">String</option></select></label></div>
+              <div class="field"><label>Color (CSS) <input type="text" bind:value={hmColor} /></label></div>
+              <div class="field"><label>Interval (seconds) <input type="number" bind:value={hmInterval} min="10" max="3600" /></label></div>
             {:else if editingWidget.kind === 'stat-counter'}
-              <div class="field"><label>Label</label><input type="text" bind:value={scLabel} placeholder="MY COUNTER" /></div>
-              <div class="field"><label>Data</label><select bind:value={scDataKey}>{#each DATA_KEYS as d (d.key)}<option value={d.key}>{d.label}</option>{/each}</select></div>
-              <div class="field"><label>Color</label><select bind:value={scColor}>{#each COLORS as c (c.val)}<option value={c.val}>{c.label}</option>{/each}</select></div>
-              <div class="field"><label>Navigate to</label><select bind:value={scNavTarget}>{#each NAV_TARGETS as t (t)}<option value={t}>{t || '(none)'}</option>{/each}</select></div>
+              <div class="field"><label>Label <input type="text" bind:value={scLabel} placeholder="MY COUNTER" /></label></div>
+              <div class="field"><label>Data <select bind:value={scDataKey}>{#each DATA_KEYS as d (d.key)}<option value={d.key}>{d.label}</option>{/each}</select></label></div>
+              <div class="field"><label>Color <select bind:value={scColor}>{#each COLORS as c (c.val)}<option value={c.val}>{c.label}</option>{/each}</select></label></div>
+              <div class="field"><label>Navigate to <select bind:value={scNavTarget}>{#each NAV_TARGETS as t (t)}<option value={t}>{t || '(none)'}</option>{/each}</select></label></div>
             {:else if editingWidget.kind === 'custom-counter'}
-              <div class="field"><label>Label</label><input type="text" bind:value={ccLabel} placeholder="MY METRIC" /></div>
-              <div class="field"><label>API</label><select bind:value={ccApi}><option value="hub_tasks">Hub Tasks</option><option value="sessions">Sessions</option><option value="repos">Repos</option></select></div>
-              <div class="field"><label>Status filter</label><input type="text" bind:value={ccStatus} placeholder="running, failed, … (optional)" /></div>
-              <div class="field"><label>Color (CSS)</label><input type="text" bind:value={ccColor} /></div>
+              <div class="field"><label>Label <input type="text" bind:value={ccLabel} placeholder="MY METRIC" /></label></div>
+              <div class="field"><label>API <select bind:value={ccApi}><option value="hub_tasks">Hub Tasks</option><option value="sessions">Sessions</option><option value="repos">Repos</option></select></label></div>
+              <div class="field"><label>Status filter <input type="text" bind:value={ccStatus} placeholder="running, failed, … (optional)" /></label></div>
+              <div class="field"><label>Color (CSS) <input type="text" bind:value={ccColor} /></label></div>
             {:else if editingWidget.kind === 'stream'}
-              <div class="field"><label>Label</label><input type="text" bind:value={stLabel} /></div>
-              <div class="field"><label>Profile (blank = all)</label><input type="text" bind:value={stProfile} placeholder="personal" /></div>
-              <div class="field"><label>Tag filter</label><input type="text" bind:value={stTag} placeholder="calendar" /></div>
+              <div class="field"><label>Label <input type="text" bind:value={stLabel} /></label></div>
+              <div class="field"><label>Profile (blank = all) <input type="text" bind:value={stProfile} placeholder="personal" /></label></div>
+              <div class="field"><label>Tag filter <input type="text" bind:value={stTag} placeholder="calendar" /></label></div>
               <div class="field">
-                <label>Sources</label>
+                <span class="group-label">Sources</span>
                 <div class="check-row">
                   <label class="check-label"><input type="checkbox" checked={stSources.includes('event')} onchange={e => { if ((e.target as HTMLInputElement).checked) { stSources = [...stSources, 'event']; } else { stSources = stSources.filter(s => s !== 'event'); } }} /> Events</label>
                   <label class="check-label"><input type="checkbox" checked={stSources.includes('task')} onchange={e => { if ((e.target as HTMLInputElement).checked) { stSources = [...stSources, 'task']; } else { stSources = stSources.filter(s => s !== 'task'); } }} /> Tasks</label>
                 </div>
               </div>
-              <div class="field"><label>Max items</label><input type="number" bind:value={stLimit} min="5" max="100" /></div>
+              <div class="field"><label>Max items <input type="number" bind:value={stLimit} min="5" max="100" /></label></div>
             {:else if editingWidget.kind === 'opensearch-metric'}
-              <div class="field"><label>Metric</label><select bind:value={osMetric}>{#each OS_METRICS as m (m.val)}<option value={m.val}>{m.label}</option>{/each}</select></div>
-              <div class="field"><label>Label (optional)</label><input type="text" bind:value={osLabel} placeholder="leave blank for default" /></div>
-              <div class="field"><label>Color</label><select bind:value={osColor}>{#each COLORS as c (c.val)}<option value={c.val}>{c.label}</option>{/each}</select></div>
+              <div class="field"><label>Metric <select bind:value={osMetric}>{#each OS_METRICS as m (m.val)}<option value={m.val}>{m.label}</option>{/each}</select></label></div>
+              <div class="field"><label>Label (optional) <input type="text" bind:value={osLabel} placeholder="leave blank for default" /></label></div>
+              <div class="field"><label>Color <select bind:value={osColor}>{#each COLORS as c (c.val)}<option value={c.val}>{c.label}</option>{/each}</select></label></div>
             {:else}
               <p class="no-config">No editable configuration for this widget type.</p>
             {/if}
@@ -696,7 +723,8 @@
     gap: 4px;
   }
 
-  .field label {
+  .field label,
+  .field .group-label {
     font-size: 11px;
     font-weight: 500;
     color: var(--color-text-secondary);
