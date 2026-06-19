@@ -21,6 +21,10 @@
   type TabId = 'templates' | 'runs' | 'trigger';
   let activeTab = $state<TabId>('templates');
 
+  // Sub-tabs inside the Templates → detail pane.
+  type DetailTabId = 'diagram' | 'markdown' | 'assist';
+  let detailTab = $state<DetailTabId>('diagram');
+
   // ---------------------------------------------------------------------------
   // Templates tab
   // ---------------------------------------------------------------------------
@@ -500,78 +504,46 @@
             </div>
             <div class="hash">hash {selectedTemplate.hash}</div>
           </div>
-          <div class="assist-box">
-            <div class="assist-head">
-              <span class="assist-label">AI Assist</span>
-              <span class="assist-meta">
-                {#if assistModel}<span class="assist-model">{assistModel}</span>{/if}
-                {#if sessionCost > 0}<span class="assist-cost">Cost: {fmtCost(sessionCost)}</span>{/if}
-              </span>
-            </div>
-            <textarea
-              class="assist-prompt"
-              bind:value={assistPrompt}
-              onkeydown={onAssistKeydown}
-              placeholder="Describe what you want, or ask a question about the selected markdown. ⌘↵ Generate · ⌘⇧↵ Refine · ⌘/ Explain"
-              rows="2"
-              disabled={assistBusy}
-            ></textarea>
-            <div class="assist-actions">
-              <button
-                class="btn-generate"
-                onclick={() => runAssist('generate')}
-                disabled={assistBusy || !assistPrompt.trim()}
-              >
-                {assistBusy ? '…' : '✨ Generate'}
-              </button>
-              <button
-                class="btn-refine"
-                onclick={() => runAssist('refine')}
-                disabled={assistBusy || !assistPrompt.trim() || editorSelection.isEmpty}
-                title={editorSelection.isEmpty ? 'Highlight a markdown range first' : ''}
-              >
-                Refine selection
-              </button>
-              <button
-                class="btn-explain"
-                onclick={() => runAssist('explain')}
-                disabled={assistBusy || !assistPrompt.trim()}
-              >
-                Explain
-              </button>
-            </div>
-            {#if assistError}
-              <div class="error">{assistError}</div>
-            {/if}
-            {#if explanation}
-              <div class="explanation">
-                <div class="explanation-head">
-                  <span>Explanation</span>
-                  <button class="explanation-close" onclick={() => (explanation = null)}>×</button>
-                </div>
-                <div class="explanation-body">{explanation}</div>
+
+          <nav class="sub-tabs" aria-label="Template view">
+            <button
+              class="sub-tab"
+              class:active={detailTab === 'diagram'}
+              onclick={() => (detailTab = 'diagram')}
+            >
+              Diagram
+            </button>
+            <button
+              class="sub-tab"
+              class:active={detailTab === 'markdown'}
+              onclick={() => (detailTab = 'markdown')}
+            >
+              Markdown
+              {#if isDirty()}<span class="dirty-dot inline" title="Unsaved changes"></span>{/if}
+            </button>
+            <button
+              class="sub-tab"
+              class:active={detailTab === 'assist'}
+              onclick={() => (detailTab = 'assist')}
+            >
+              AI Assist
+              {#if assistBusy}<span class="dim sub-tab-hint">…</span>{/if}
+            </button>
+          </nav>
+
+          {#if detailTab === 'diagram'}
+            <div class="diagram-section">
+              <div class="diagram-head">
+                <span class="diagram-label">Diagram</span>
+                {#if diagramBusy}<span class="dim">rendering…</span>{/if}
               </div>
-            {/if}
-          </div>
-          <div class="diagram-section">
-            <div class="diagram-head">
-              <span class="diagram-label">Diagram</span>
-              {#if diagramBusy}<span class="dim">rendering…</span>{/if}
-            </div>
-            {#if diagramError}
-              <div class="error">{diagramError}</div>
-            {:else}
-              <MermaidDiagram source={diagramMermaid} initialZoom={0.25} />
-            {/if}
-          </div>
-          <details class="markdown-collapse">
-            <summary class="markdown-summary">
-              <span class="markdown-label">Markdown source</span>
-              {#if isDirty()}
-                <span class="dirty-dot" title="Unsaved changes"></span>
+              {#if diagramError}
+                <div class="error">{diagramError}</div>
+              {:else}
+                <MermaidDiagram source={diagramMermaid} initialZoom={0.25} />
               {/if}
-              <span class="dim summary-hint">click to expand</span>
-            </summary>
+            </div>
+          {:else if detailTab === 'markdown'}
             <div class="editor-wrap">
               <MarkdownEditor
                 value={editorValue || selectedTemplate.markdown}
@@ -580,7 +552,69 @@
                 onSelectionChange={(sel) => (editorSelection = sel)}
               />
             </div>
-          </details>
+          {:else if detailTab === 'assist'}
+            <div class="assist-box">
+              <div class="assist-head">
+                <span class="assist-label">AI Assist</span>
+                <span class="assist-meta">
+                  {#if assistModel}<span class="assist-model">{assistModel}</span>{/if}
+                  {#if sessionCost > 0}<span class="assist-cost">Cost: {fmtCost(sessionCost)}</span>{/if}
+                </span>
+              </div>
+              <textarea
+                class="assist-prompt"
+                bind:value={assistPrompt}
+                onkeydown={onAssistKeydown}
+                placeholder="Describe what you want, or ask a question about the selected markdown. ⌘↵ Generate · ⌘⇧↵ Refine · ⌘/ Explain"
+                rows="3"
+                disabled={assistBusy}
+              ></textarea>
+              <div class="assist-actions">
+                <button
+                  class="btn-generate"
+                  onclick={() => runAssist('generate')}
+                  disabled={assistBusy || !assistPrompt.trim()}
+                >
+                  {assistBusy ? '…' : '✨ Generate'}
+                </button>
+                <button
+                  class="btn-refine"
+                  onclick={() => runAssist('refine')}
+                  disabled={assistBusy || !assistPrompt.trim() || editorSelection.isEmpty}
+                  title={editorSelection.isEmpty ? 'Highlight a markdown range in the Markdown tab first' : ''}
+                >
+                  Refine selection
+                </button>
+                <button
+                  class="btn-explain"
+                  onclick={() => runAssist('explain')}
+                  disabled={assistBusy || !assistPrompt.trim()}
+                >
+                  Explain
+                </button>
+              </div>
+              {#if assistError}
+                <div class="error">{assistError}</div>
+              {/if}
+              {#if explanation}
+                <div class="explanation">
+                  <div class="explanation-head">
+                    <span>Explanation</span>
+                    <button class="explanation-close" onclick={() => (explanation = null)}>×</button>
+                  </div>
+                  <div class="explanation-body">{explanation}</div>
+                </div>
+              {/if}
+              <div class="dim assist-hint">
+                Refine needs a highlighted range in the
+                <button
+                  class="link-btn"
+                  type="button"
+                  onclick={() => (detailTab = 'markdown')}
+                >Markdown</button> tab.
+              </div>
+            </div>
+          {/if}
           <div class="editor-actions">
             {#if selectedTemplate.origin === 'user'}
               <button
@@ -828,59 +862,65 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
-  /* Collapsible markdown — keeps the editor available without it
-     occupying chrome when the operator just wants to see the loop. */
-  .markdown-collapse {
+  /* Sub-tabs inside the Templates → detail pane. Visually distinct
+     from the top tabs (smaller, no underline strip) so the operator
+     can tell which level they're navigating. */
+  .sub-tabs {
     display: flex;
-    flex-direction: column;
-    min-height: 0;
-    background: var(--bg-elev);
+    gap: 2px;
+    padding: 2px;
+    background: var(--bg-sunken);
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
+    align-self: flex-start;
   }
-  .markdown-collapse[open] {
-    /* When expanded, claim space alongside the diagram. */
-    flex: 1;
-    min-height: 220px;
-  }
-  .markdown-summary {
-    list-style: none;
-    cursor: pointer;
-    user-select: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
-    font-size: 11px;
+  .sub-tab {
+    background: transparent;
+    border: none;
     color: var(--text-muted);
+    padding: 5px 12px;
+    font-size: 12px;
+    border-radius: calc(var(--r-sm) - 1px);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: background-color 0.12s, color 0.12s;
   }
-  .markdown-summary::-webkit-details-marker { display: none; }
-  .markdown-summary::before {
-    content: '▸';
-    display: inline-block;
-    color: var(--text-faint);
-    transition: transform 0.15s ease;
+  .sub-tab:hover { color: var(--text); }
+  .sub-tab.active {
+    background: var(--bg-elev);
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
   }
-  .markdown-collapse[open] .markdown-summary::before {
-    transform: rotate(90deg);
-    color: var(--accent);
+  .sub-tab-hint {
+    font-size: 10px;
   }
-  .markdown-label {
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+  .dirty-dot.inline {
+    width: 6px;
+    height: 6px;
+    margin: 0;
   }
-  .summary-hint {
-    margin-left: auto;
-    font-style: italic;
-  }
-  .markdown-collapse[open] .summary-hint { display: none; }
   .editor-wrap {
     flex: 1;
-    min-height: 200px;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-    padding: 0 8px 8px;
+  }
+  /* Hint linking AI Assist → Markdown for the Refine flow. */
+  .assist-hint {
+    padding-top: 4px;
+    border-top: 1px dashed var(--border);
+    margin-top: 4px;
+  }
+  .link-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+    text-decoration: underline;
   }
   .editor-actions {
     display: flex;
