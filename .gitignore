@@ -30,6 +30,9 @@ dist/
 # Environment / secrets
 .env.secrets
 .env.local
+# Compose .env files — they carry MINIO_ROOT_PASSWORD and similar
+# bootstrap secrets that must never be committed.
+docker/**/.env
 
 # Worker task output (ratchet review/fix artifacts)
 tasks/
