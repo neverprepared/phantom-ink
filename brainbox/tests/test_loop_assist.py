@@ -120,6 +120,46 @@ class TestValidateMarkdown:
 # ---------------------------------------------------------------------------
 
 
+class TestRewriteFrontmatterName:
+    def test_replaces_existing_name(self):
+        from brainbox.loop_assist import _rewrite_frontmatter_name
+
+        md = "---\nname: original\ntrigger: manual\nmax_iterations: 1\n---\n\n# Role\nx\n"
+        out = _rewrite_frontmatter_name(md, "renamed")
+        # The frontmatter slice should carry the new name, the body
+        # is untouched.
+        fm = out.split("---")[1]
+        assert "name: renamed" in fm
+        assert "name: original" not in fm
+
+    def test_only_rewrites_first_occurrence(self):
+        # A body mention of "name:" shouldn't be rewritten.
+        from brainbox.loop_assist import _rewrite_frontmatter_name
+
+        md = (
+            "---\nname: a\ntrigger: manual\nmax_iterations: 1\n---\n\n"
+            "# Role\nremember to set name: <slug>\n"
+        )
+        out = _rewrite_frontmatter_name(md, "b")
+        assert "name: b" in out
+        # Body line intact
+        assert "name: <slug>" in out
+
+    def test_prepends_when_name_absent(self):
+        from brainbox.loop_assist import _rewrite_frontmatter_name
+
+        md = "---\ntrigger: manual\nmax_iterations: 1\n---\n\n# Role\nx\n"
+        out = _rewrite_frontmatter_name(md, "fresh")
+        fm = out.split("---")[1]
+        assert "name: fresh" in fm
+
+    def test_returns_input_when_no_frontmatter(self):
+        from brainbox.loop_assist import _rewrite_frontmatter_name
+
+        md = "# Role\njust a body, no fence\n"
+        assert _rewrite_frontmatter_name(md, "x") == md
+
+
 class TestStripFences:
     def test_no_fences_passthrough(self):
         assert _strip_fences("name: x") == "name: x"

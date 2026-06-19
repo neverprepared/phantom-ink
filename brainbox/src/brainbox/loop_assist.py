@@ -700,22 +700,34 @@ async def assist(
 def _persist_generated_template(name: str, markdown: str, result: AssistResult) -> None:
     """Write a freshly-generated template to the user templates dir.
 
+    Rewrites the frontmatter's ``name:`` field to match ``name`` before
+    writing so the filename and the parsed ``LoopMarkdown.name`` never
+    disagree. The AI tends to name templates after the operator's
+    prompt (``joke-generator-loop``) rather than the slug the operator
+    typed into the New modal (``wat``); without this rewrite, the
+    runner would default the agent / display name to the prompt-derived
+    string and the operator would see surprises at Start time.
+
     ``validate=False`` so a draft that doesn't yet pass LoopMarkdown's
     required-section rules still lands on disk — the operator can fix
-    it in-editor. Success/failure is recorded on the AssistResult so
-    the UI can surface it directly instead of relying on the operator
-    to spot a missing sidebar entry.
+    it in-editor.
     """
     from .loop_template import TemplateError, write_user_template
+
+    aligned = _rewrite_frontmatter_name(markdown, name)
 
     try:
         write_user_template(
             name,
-            markdown,
+            aligned,
             fork_from_builtin=True,
             validate=False,
         )
         result.saved_to = name
+        # Surface the aligned markdown back in result.yaml so the editor
+        # shows what was actually persisted, not the original AI output
+        # with the mismatched name.
+        result.yaml = aligned
         log.info("loop_assist.template_persisted", metadata={"name": name})
     except TemplateError as exc:
         result.save_error = str(exc)
@@ -723,3 +735,37 @@ def _persist_generated_template(name: str, markdown: str, result: AssistResult) 
             "loop_assist.template_persist_failed",
             metadata={"name": name, "reason": str(exc)},
         )
+
+
+import re as _re_for_name
+
+_NAME_LINE_RE = _re_for_name.compile(r"^(name\s*:\s*)\S.*$", _re_for_name.MULTILINE)
+
+
+def _rewrite_frontmatter_name(markdown: str, target_name: str) -> str:
+    """Replace the first ``name:`` line inside the frontmatter fence
+    with ``name: <target_name>``. If the frontmatter has no ``name:``
+    line, prepend one immediately inside the opening fence. Markdown
+    outside the fence is left untouched.
+
+    Conservative: only touches the FIRST occurrence of ``name:`` and
+    only if it's before the closing ``---`` fence — so a body that
+    happens to mention ``name:`` in prose isn't rewritten.
+    """
+    if not markdown.startswith("---"):
+        return markdown
+
+    rest = markdown[3:].lstrip("\n")
+    end = rest.find("\n---")
+    if end == -1:
+        return markdown
+
+    fm = rest[:end]
+    after = rest[end:]   # starts with "\n---"
+
+    if _NAME_LINE_RE.search(fm):
+        new_fm = _NAME_LINE_RE.sub(rf"\1{target_name}", fm, count=1)
+    else:
+        new_fm = f"name: {target_name}\n{fm}"
+
+    return f"---\n{new_fm}{after}"
