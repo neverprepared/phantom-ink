@@ -85,9 +85,12 @@ You do a thing.
 
 @pytest.fixture
 def reviewer_agent():
-    # Template name is the default agent name; register it so router can dispatch.
-    agent = AgentDefinition(name="test-loop", image="test-image", capabilities=["hub_messaging"])
-    reg_module._agents["test-loop"] = agent
+    # Register 'worker' (current default) and 'test-loop' (legacy, kept
+    # for templates that set agent: test-loop explicitly).
+    legacy = AgentDefinition(name="test-loop", image="test-image", capabilities=["hub_messaging"])
+    reg_module._agents["test-loop"] = legacy
+    agent = AgentDefinition(name="worker", image="test-image", capabilities=["hub_messaging"])
+    reg_module._agents["worker"] = agent
     return agent
 
 

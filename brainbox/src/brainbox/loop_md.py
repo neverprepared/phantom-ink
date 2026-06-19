@@ -12,9 +12,13 @@ Frontmatter (required keys):
 
 Frontmatter (optional):
     agent             — registered agent name that runs each iteration.
-                        Defaults to ``name`` (so a template named
-                        ``pr-review-loop`` looks for an agent of the
-                        same name unless overridden).
+                        Must match a registered agent in
+                        ``brainbox/agents/*.json`` (today: assistant,
+                        reviewer, supervisor, worker). Defaults to
+                        ``worker`` since that's the generic write-
+                        capable role and the right starting point for
+                        most loops. Override when the loop has stronger
+                        constraints (e.g. ``reviewer`` for read-only).
     permissions       — "inherit" | "default" | "strict". Defaults to
                         "default". Same semantics as the prior YAML
                         format's PermissionTier.
@@ -132,7 +136,10 @@ def parse(text: str) -> LoopMarkdown:
     budget_usd = float(budget_raw) if budget_raw is not None else None
 
     name = str(frontmatter["name"])
-    agent = str(frontmatter.get("agent") or name)
+    # 'worker' is the generic write-capable registered agent — sensible
+    # default for a fresh template since the template name itself is
+    # almost never the name of a registered agent.
+    agent = str(frontmatter.get("agent") or "worker")
     perm_raw = (frontmatter.get("permissions") or "default").lower()
     try:
         permissions = PermissionTier(perm_raw)

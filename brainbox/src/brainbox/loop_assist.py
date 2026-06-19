@@ -107,10 +107,15 @@ Hard rules — non-negotiable:
    '---' lines, then named '# ' sections. No prose outside this shape.
 2. Frontmatter MUST include: name (slug), trigger (free-form string),
    max_iterations (positive integer).
-3. Frontmatter MAY include: agent (defaults to name), permissions
-   (inherit|default|strict; default: "default"), budget_usd (positive
-   number), objective (mapping of envelope path → expected value),
-   required_refs (list of {name, type: int|string|sha, required?}).
+3. Frontmatter MAY include: agent, permissions, budget_usd, objective,
+   required_refs.
+     - agent MUST be one of the registered roles: assistant, reviewer,
+       supervisor, worker. Defaults to "worker" when omitted. Do NOT
+       invent agent names — start_loop rejects unknown agents.
+     - permissions: inherit | default | strict. Defaults to "default".
+     - budget_usd: positive number.
+     - objective: mapping of envelope path → expected value/comparator.
+     - required_refs: list of {name, type: int|string|sha, required?}.
 4. Body MUST include these top-level sections, in this order:
        # Role
        # When to stop

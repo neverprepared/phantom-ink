@@ -124,6 +124,21 @@ async def start_loop(
     if not loop.agent.strip():
         raise ValueError(f"loop {loop.name!r}: agent not set and name is empty")
 
+    # Fail fast if the template names an agent that isn't registered.
+    # Without this guard we'd create the parent task + LoopInstance,
+    # then router.submit_task would 400 on the iteration child, leaving
+    # an orphan parent in RUNNING state.
+    from .registry import get_agent
+
+    if get_agent(loop.agent) is None:
+        from .registry import list_agents
+
+        known = ", ".join(sorted(a.name for a in list_agents())) or "(none registered)"
+        raise ValueError(
+            f"Agent {loop.agent!r} not registered. "
+            f"Edit the template's `agent:` frontmatter — known agents: {known}."
+        )
+
     loop_id = str(uuid.uuid4())
     now = _now_ms()
 

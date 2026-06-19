@@ -59,10 +59,12 @@ class TestParseMinimal:
         assert loop.trigger == "manual"
         assert loop.max_iterations == 3
 
-    def test_agent_defaults_to_name(self):
-        """When frontmatter omits 'agent', it falls back to the loop name."""
+    def test_agent_defaults_to_worker(self):
+        """When frontmatter omits 'agent', it falls back to the generic
+        'worker' registered agent — defaulting to the template name
+        produced "Agent not found" errors at start_loop time."""
         loop = parse_template(_MINIMAL)
-        assert loop.agent == "test-loop"
+        assert loop.agent == "worker"
 
     def test_agent_override_wins(self):
         text = _MINIMAL.replace(

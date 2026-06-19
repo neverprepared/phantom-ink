@@ -51,12 +51,19 @@ from brainbox.models import AgentDefinition, TaskStatus
 
 @pytest.fixture
 def reviewer_agent():
-    """A registered agent named 'test-loop' (default template name)
-    so the runner can dispatch iteration children without hitting the
-    registry's unknown-agent path."""
-    agent = AgentDefinition(name="test-loop", image="test-image", capabilities=["hub_messaging"])
-    reg_module._agents["test-loop"] = agent
-    return agent
+    """Register the agent names the runner looks up.
+
+    The runner now defaults to ``agent: worker`` when the template
+    omits one, and start_loop validates that the agent exists in the
+    registry. We register both ``worker`` (the default) and the
+    legacy ``test-loop`` (used by a couple of tests that build a
+    template with an explicit agent override) so every test path
+    finds an agent."""
+    worker = AgentDefinition(name="worker", image="test-image", capabilities=["hub_messaging"])
+    reg_module._agents["worker"] = worker
+    legacy = AgentDefinition(name="test-loop", image="test-image", capabilities=["hub_messaging"])
+    reg_module._agents["test-loop"] = legacy
+    return worker
 
 
 def _template(
@@ -157,7 +164,7 @@ class TestStartLoop:
         child = router_module._tasks[inst.current_child_id]
         assert parent.status == TaskStatus.RUNNING
         assert child.status == TaskStatus.PENDING
-        assert child.agent_name == "test-loop"
+        assert child.agent_name == "worker"  # default after agent-from-name → worker
         assert child.job_id == parent.id
 
     @pytest.mark.asyncio

@@ -91,15 +91,18 @@ class TestParseMinimal:
         assert loop.name == "minimal-loop"
         assert loop.trigger == "manual"
         assert loop.max_iterations == 1
-        assert loop.agent == "minimal-loop"  # defaults to name
+        assert loop.agent == "worker"  # defaults to 'worker' (registered agent)
         assert loop.permissions == PermissionTier.DEFAULT
         assert loop.budget_usd is None
         assert loop.objective == {}
         assert loop.required_refs == []
 
-    def test_agent_defaults_to_name(self):
+    def test_agent_defaults_to_worker(self):
+        # Defaults to the generic write-capable registered agent rather
+        # than the template name (which is almost never a registered
+        # agent and produced "Agent 'X' not found" at start_loop time).
         loop = parse(_MINIMAL)
-        assert loop.agent == loop.name
+        assert loop.agent == "worker"
 
     def test_agent_override(self):
         text = _MINIMAL.replace("max_iterations: 1", "max_iterations: 1\nagent: reviewer")
