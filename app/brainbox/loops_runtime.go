@@ -3,6 +3,7 @@ package brainbox
 import (
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // LiveLoopSummary is the slim projection returned by GET /api/loops. It drops
@@ -246,10 +247,14 @@ type LoopAssistResult struct {
 }
 
 // AssistLoopTemplate runs a single AI Assist round. The brainbox endpoint
-// handles validation + retry server-side; this is a thin pass-through.
+// provisions an ephemeral worker session (container bootstrap ~10-30s)
+// plus runs Claude (~10-60s), so a long-lived HTTP client is required —
+// the default 15s would race the session-create call. Five minutes
+// covers the slowest worst case (cold image pull + retry loop).
 func (c *Client) AssistLoopTemplate(req LoopAssistRequest) (LoopAssistResult, error) {
+	longClient := &http.Client{Timeout: 5 * time.Minute}
 	var resp LoopAssistResult
-	if err := c.doWith(c.httpClient, http.MethodPost, "/api/loops/templates/assist", req, &resp); err != nil {
+	if err := c.doWith(longClient, http.MethodPost, "/api/loops/templates/assist", req, &resp); err != nil {
 		return LoopAssistResult{}, err
 	}
 	return resp, nil
