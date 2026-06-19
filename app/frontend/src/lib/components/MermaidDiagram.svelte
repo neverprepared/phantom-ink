@@ -33,7 +33,13 @@
 
   function ensureInit() {
     if (initialized) return;
-    mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+    // 'default' is mermaid's stock palette — colored node fills, the
+    // operator gets the standard graph-engineering visual language
+    // (pink decisions, blue boxes, green terminals) rather than a
+    // washed-out black/white render. Works across phantom-ink themes
+    // because the SVG carries its own fills and never inherits from
+    // the page.
+    mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
     initialized = true;
   }
 

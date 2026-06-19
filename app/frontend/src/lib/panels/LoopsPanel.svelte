@@ -561,7 +561,7 @@
             {#if diagramError}
               <div class="error">{diagramError}</div>
             {:else}
-              <MermaidDiagram source={diagramMermaid} />
+              <MermaidDiagram source={diagramMermaid} initialZoom={0.25} />
             {/if}
           </div>
           <details class="markdown-collapse">
