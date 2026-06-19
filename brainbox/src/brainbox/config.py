@@ -144,6 +144,33 @@ class LangfuseSettings(BaseSettings):
     secret_key: SecretStr = Field(default_factory=_langfuse_secret_key)
 
 
+class MinioSettings(BaseSettings):
+    """MinIO / S3-compatible object store.
+
+    Two buckets, profile-prefixed within each. The credential pair
+    here is a per-profile IAM key minted by ``docker/minio/bootstrap-
+    buckets.sh``; cross-profile reads return 403 by policy.
+
+    ``enabled=False`` (the default) means the artifact store is off —
+    no client created, no bucket calls made, the app hides the Files
+    panel. Operator opts in by setting CL_MINIO__ENABLED=true alongside
+    the endpoint + creds.
+    """
+
+    enabled: bool = False
+    endpoint: str = "http://localhost:9090"
+    access_key: SecretStr = SecretStr("")
+    secret_key: SecretStr = SecretStr("")
+    region: str = "us-east-1"
+    # Two buckets, separate access patterns.
+    bucket_artifacts: str = "phantom-artifacts"
+    bucket_vault: str = "phantom-vault"
+    # Profile prefix root inside each bucket. Operator's brainbox.env
+    # sets this to the active profile so the daemon's reads/writes
+    # land under the right namespace.
+    profile_prefix: str = ""
+
+
 def _qdrant_url() -> str:
     import os
 
@@ -291,6 +318,7 @@ class Settings(BaseSettings):
     hardening: HardeningSettings = Field(default_factory=HardeningSettings)
     cosign: CosignSettings = Field(default_factory=CosignSettings)
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
+    minio: MinioSettings = Field(default_factory=MinioSettings)
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
     profile: ProfileSettings = Field(default_factory=ProfileSettings)
     hub: HubSettings = Field(default_factory=HubSettings)

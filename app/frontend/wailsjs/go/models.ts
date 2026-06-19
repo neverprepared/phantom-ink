@@ -110,6 +110,152 @@ export namespace brainbox {
 	        this.updated_at = source["updated_at"];
 	    }
 	}
+	export class ArtifactBucket {
+	    key: string;
+	    name: string;
+	    label: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ArtifactBucket(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.name = source["name"];
+	        this.label = source["label"];
+	    }
+	}
+	export class ArtifactFile {
+	    name: string;
+	    key: string;
+	    size: number;
+	    etag: string;
+	    last_modified_ms: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ArtifactFile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.key = source["key"];
+	        this.size = source["size"];
+	        this.etag = source["etag"];
+	        this.last_modified_ms = source["last_modified_ms"];
+	    }
+	}
+	export class ArtifactFolder {
+	    name: string;
+	    prefix: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ArtifactFolder(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.prefix = source["prefix"];
+	    }
+	}
+	export class ArtifactListing {
+	    bucket: string;
+	    prefix: string;
+	    truncated: boolean;
+	    folders: ArtifactFolder[];
+	    files: ArtifactFile[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ArtifactListing(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.bucket = source["bucket"];
+	        this.prefix = source["prefix"];
+	        this.truncated = source["truncated"];
+	        this.folders = this.convertValues(source["folders"], ArtifactFolder);
+	        this.files = this.convertValues(source["files"], ArtifactFile);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ArtifactObjectHead {
+	    bucket: string;
+	    key: string;
+	    size: number;
+	    etag: string;
+	    content_type: string;
+	    last_modified_ms: number;
+	    metadata: Record<string, string>;
+	
+	    static createFrom(source: any = {}) {
+	        return new ArtifactObjectHead(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.bucket = source["bucket"];
+	        this.key = source["key"];
+	        this.size = source["size"];
+	        this.etag = source["etag"];
+	        this.content_type = source["content_type"];
+	        this.last_modified_ms = source["last_modified_ms"];
+	        this.metadata = source["metadata"];
+	    }
+	}
+	export class ArtifactPresignedURL {
+	    url: string;
+	    expires_in: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ArtifactPresignedURL(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.url = source["url"];
+	        this.expires_in = source["expires_in"];
+	    }
+	}
+	export class ArtifactsHealth {
+	    ok: boolean;
+	    reason?: string;
+	    endpoint?: string;
+	    buckets?: Record<string, string>;
+	    profile_prefix?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ArtifactsHealth(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.reason = source["reason"];
+	        this.endpoint = source["endpoint"];
+	        this.buckets = source["buckets"];
+	        this.profile_prefix = source["profile_prefix"];
+	    }
+	}
 	export class ChannelParticipant {
 	    name: string;
 	    type: string;

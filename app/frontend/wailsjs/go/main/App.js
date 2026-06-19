@@ -78,6 +78,10 @@ export function DeleteAgent(arg1) {
   return window['go']['main']['App']['DeleteAgent'](arg1);
 }
 
+export function DeleteArtifactObject(arg1, arg2) {
+  return window['go']['main']['App']['DeleteArtifactObject'](arg1, arg2);
+}
+
 export function DeleteAutomationRule(arg1) {
   return window['go']['main']['App']['DeleteAutomationRule'](arg1);
 }
@@ -180,6 +184,10 @@ export function GetAgentState(arg1) {
 
 export function GetAppLogs() {
   return window['go']['main']['App']['GetAppLogs']();
+}
+
+export function GetArtifactsHealth() {
+  return window['go']['main']['App']['GetArtifactsHealth']();
 }
 
 export function GetChannel(arg1) {
@@ -350,6 +358,10 @@ export function GetWidgetCount(arg1, arg2) {
   return window['go']['main']['App']['GetWidgetCount'](arg1, arg2);
 }
 
+export function HeadArtifactObject(arg1, arg2) {
+  return window['go']['main']['App']['HeadArtifactObject'](arg1, arg2);
+}
+
 export function LaunchTeam(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['LaunchTeam'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
@@ -368,6 +380,14 @@ export function ListAgentState(arg1) {
 
 export function ListAgents() {
   return window['go']['main']['App']['ListAgents']();
+}
+
+export function ListArtifactsBuckets() {
+  return window['go']['main']['App']['ListArtifactsBuckets']();
+}
+
+export function ListArtifactsFolder(arg1, arg2) {
+  return window['go']['main']['App']['ListArtifactsFolder'](arg1, arg2);
 }
 
 export function ListAttention(arg1) {
@@ -460,6 +480,10 @@ export function OutboxPending() {
 
 export function PostChannelMessage(arg1, arg2) {
   return window['go']['main']['App']['PostChannelMessage'](arg1, arg2);
+}
+
+export function PresignArtifactURL(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['PresignArtifactURL'](arg1, arg2, arg3, arg4);
 }
 
 export function PreviewDispatch(arg1) {

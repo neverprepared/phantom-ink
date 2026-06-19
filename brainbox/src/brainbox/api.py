@@ -4176,6 +4176,113 @@ async def api_cancel_loop(loop_id: str, request: Request):
     return inst.model_dump()
 
 
+# ---------------------------------------------------------------------------
+# Artifacts (MinIO-backed file browser + presign endpoints)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/artifacts/health", dependencies=[Depends(require_api_key)])
+async def api_artifacts_health():
+    """Probe MinIO. Frontend uses this to decide whether to surface the
+    Files panel and whether to render a "MinIO unreachable" state."""
+    from . import artifacts
+
+    return artifacts.health()
+
+
+@app.get("/api/artifacts/buckets", dependencies=[Depends(require_api_key)])
+async def api_artifacts_list_buckets():
+    """Two-bucket catalog the file browser uses as its root entries."""
+    from . import artifacts
+
+    if not artifacts.is_enabled():
+        raise HTTPException(status_code=503, detail="minio integration is disabled")
+    return {"buckets": artifacts.known_buckets()}
+
+
+@app.get("/api/artifacts/{bucket}/list", dependencies=[Depends(require_api_key)])
+async def api_artifacts_list_folder(bucket: str, prefix: str = ""):
+    """List one folder level. ``bucket`` is the logical name
+    (``vault`` | ``artifacts``); ``prefix`` is the path within the
+    profile namespace."""
+    from . import artifacts
+
+    if not artifacts.is_enabled():
+        raise HTTPException(status_code=503, detail="minio integration is disabled")
+    try:
+        listing = artifacts.list_folder(bucket, prefix)
+    except artifacts.ArtifactError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "bucket": listing.bucket,
+        "prefix": listing.prefix,
+        "truncated": listing.truncated,
+        "folders": [
+            {"name": f.name, "prefix": f.prefix}
+            for f in listing.folders
+        ],
+        "files": [
+            {
+                "name": f.name,
+                "key": f.key,
+                "size": f.size,
+                "etag": f.etag,
+                "last_modified_ms": f.last_modified_ms,
+            }
+            for f in listing.files
+        ],
+    }
+
+
+@app.get("/api/artifacts/{bucket}/head", dependencies=[Depends(require_api_key)])
+async def api_artifacts_head(bucket: str, key: str):
+    """Object metadata for the file detail pane."""
+    from . import artifacts
+
+    if not artifacts.is_enabled():
+        raise HTTPException(status_code=503, detail="minio integration is disabled")
+    try:
+        return artifacts.head_object(bucket, key)
+    except artifacts.ArtifactError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
+
+
+@app.delete("/api/artifacts/{bucket}/object", dependencies=[Depends(require_api_key)])
+async def api_artifacts_delete(bucket: str, key: str):
+    from . import artifacts
+
+    if not artifacts.is_enabled():
+        raise HTTPException(status_code=503, detail="minio integration is disabled")
+    try:
+        artifacts.delete_object(bucket, key)
+    except artifacts.ArtifactError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"deleted": key}
+
+
+@app.get("/api/artifacts/{bucket}/presign", dependencies=[Depends(require_api_key)])
+async def api_artifacts_presign(bucket: str, key: str, op: str = "get", ttl: int = 3600):
+    """Mint a presigned URL. ``op=get`` is for the operator opening a
+    file; ``op=put`` is reserved for the Phase 4 assist worker writes."""
+    from . import artifacts
+
+    if not artifacts.is_enabled():
+        raise HTTPException(status_code=503, detail="minio integration is disabled")
+    if op not in ("get", "put"):
+        raise HTTPException(status_code=400, detail="op must be 'get' or 'put'")
+    try:
+        if op == "get":
+            url = artifacts.presigned_get_url(bucket, key, expires_seconds=ttl)
+        else:
+            url = artifacts.presigned_put_url(bucket, key, expires_seconds=ttl)
+    except artifacts.ArtifactError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"url": url, "expires_in": ttl}
+
+
 if _dashboard_dist.is_dir():
     # Serve static assets (JS, CSS, etc.)
     app.mount("/assets", StaticFiles(directory=str(_dashboard_dist / "assets")), name="assets")

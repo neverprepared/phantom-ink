@@ -1,0 +1,40 @@
+name: minio
+
+# MinIO object store — phantom-ink's artifact + vault backing store.
+#
+# Two buckets are provisioned out-of-band (see ./bootstrap-buckets.sh):
+#   - phantom-vault     — Obsidian markdown vault, mounted via s3fs-mac
+#                         on each developer machine. Small-file
+#                         write-heavy.
+#   - phantom-artifacts — Loop templates, instances, iteration
+#                         envelopes, assist outputs, session recordings.
+#                         Larger object-at-a-time via SDK.
+#
+# Profile isolation is enforced via prefix + per-profile IAM policies:
+#   phantom-artifacts/{profile}/{kind}/{name}/{sha256}
+# Cross-profile reads return 403, never silently merge.
+
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      - "9090:9000"  # S3 API (9090 avoids conflict with ClickHouse on 9000)
+      - "9001:9001"  # Console (browser admin UI)
+    user: "1000:1000"
+    volumes:
+      - minio-data:/data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  minio-data:

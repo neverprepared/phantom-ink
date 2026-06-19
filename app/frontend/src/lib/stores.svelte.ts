@@ -100,26 +100,13 @@ if (typeof window !== 'undefined') {
 }
 
 // ---------------------------------------------------------------------------
-// Panel focus — one-shot signal for cross-panel navigation. Setter sets the
-// target loop ID and switches the current panel; reader clears after use.
-// Used by TasksSection (and later, others) to "open this loop" without
-// reinventing routing.
+// Panel focus — one-shot signal for cross-panel navigation. Used to seed a
+// new conversation with pre-selected sessions without reinventing routing.
 // ---------------------------------------------------------------------------
 
-let _loopFocus = $state<string>('');
 let _conversationSeed = $state<string[]>([]);
 
 export const panelFocus = {
-  get sequenceID() { return _loopFocus; },
-  focusSequence(id: string) {
-    _loopFocus = id;
-    currentPanel.value = 'sequences';
-  },
-  consumeSequenceFocus(): string {
-    const id = _loopFocus;
-    _loopFocus = '';
-    return id;
-  },
   /** Start a new conversation with the named sessions pre-selected. */
   startConversationWith(sessionNames: string[]) {
     _conversationSeed = [...sessionNames];
@@ -207,6 +194,19 @@ export const featureFlags = {
   isActive(name: string): boolean {
     return _serviceFlags.some(s => s.name === name && s.enabled && s.running);
   },
+};
+
+// ---------------------------------------------------------------------------
+// Integration state — drives conditional sidebar entries (e.g. Files panel
+// only shows when MinIO is configured + reachable). AppShell.svelte
+// refreshes this on mount and on a 30s timer.
+// ---------------------------------------------------------------------------
+
+let _minioEnabled = $state(false);
+
+export const integrationState = {
+  get minioEnabled() { return _minioEnabled; },
+  set minioEnabled(v: boolean) { _minioEnabled = v; },
 };
 
 // ---------------------------------------------------------------------------

@@ -42,6 +42,8 @@ export function CreateSession(arg1:brainbox.CreateSessionRequest):Promise<brainb
 
 export function DeleteAgent(arg1:string):Promise<void>;
 
+export function DeleteArtifactObject(arg1:string,arg2:string):Promise<void>;
+
 export function DeleteAutomationRule(arg1:string):Promise<void>;
 
 export function DeleteChannel(arg1:string):Promise<void>;
@@ -93,6 +95,8 @@ export function GetAgentRole(arg1:string):Promise<brainbox.AgentDefinition>;
 export function GetAgentState(arg1:string):Promise<brainbox.AgentStateItem>;
 
 export function GetAppLogs():Promise<Array<string>>;
+
+export function GetArtifactsHealth():Promise<brainbox.ArtifactsHealth>;
 
 export function GetChannel(arg1:string):Promise<brainbox.Channel>;
 
@@ -178,6 +182,8 @@ export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;
 
 export function GetWidgetCount(arg1:string,arg2:string):Promise<number>;
 
+export function HeadArtifactObject(arg1:string,arg2:string):Promise<brainbox.ArtifactObjectHead>;
+
 export function LaunchTeam(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<brainbox.SessionActionResponse>;
 
 export function ListAgentEvents(arg1:string,arg2:string,arg3:number):Promise<Array<brainbox.AgentEventEntry>>;
@@ -187,6 +193,10 @@ export function ListAgentRoles():Promise<Array<brainbox.AgentDefinition>>;
 export function ListAgentState(arg1:main.AgentStateFilter):Promise<Array<brainbox.AgentStateItem>>;
 
 export function ListAgents():Promise<Array<main.DetectedAgent>>;
+
+export function ListArtifactsBuckets():Promise<Array<brainbox.ArtifactBucket>>;
+
+export function ListArtifactsFolder(arg1:string,arg2:string):Promise<brainbox.ArtifactListing>;
 
 export function ListAttention(arg1:string):Promise<Array<main.AttentionItem>>;
 
@@ -233,6 +243,8 @@ export function OpenLocalSession(arg1:string):Promise<void>;
 export function OutboxPending():Promise<number>;
 
 export function PostChannelMessage(arg1:string,arg2:brainbox.PostChannelMessageRequest):Promise<brainbox.ChannelMessage>;
+
+export function PresignArtifactURL(arg1:string,arg2:string,arg3:string,arg4:number):Promise<brainbox.ArtifactPresignedURL>;
 
 export function PreviewDispatch(arg1:brainbox.DispatchPreviewRequest):Promise<brainbox.DispatchPreview>;
 
