@@ -23,7 +23,10 @@ services:
     ports:
       - "9090:9000"  # S3 API (9090 avoids conflict with ClickHouse on 9000)
       - "9001:9001"  # Console (browser admin UI)
-    user: "1000:1000"
+    # No explicit user: macOS Docker Desktop doesn't preserve a Linux
+    # UID/GID across the volume mount, so "1000:1000" yields permission-
+    # denied on /data/.minio.sys. Default user (minio inside the image)
+    # is fine — volume permissions inherit from the container.
     volumes:
       - minio-data:/data
     environment:
