@@ -397,30 +397,39 @@ async def _with_assist_session(
 
     async with httpx.AsyncClient(base_url=base_url, timeout=600.0, headers=headers) as client:
         try:
-            # role=assistant (not worker, not developer). Two constraints:
-            #   - Worker auto-recycles via complete.sh once claude finishes
-            #     the task — racing against our /exec read of the output
-            #     file. This is the bug the gungamstyle log surfaced.
-            #   - Developer isn't a registered agent in this build
-            #     (validate_role on /api/create returns 422), even though
-            #     the role markdown exists. Only assistant/reviewer/
-            #     supervisor/worker are registered today.
-            # Assistant is generic, interactive, and has no
-            # complete.sh-on-done contract — exactly the shape we want
-            # for an LLM round-trip. We own the completion timing via
-            # complete_task in the finally block.
-            create_body = {
-                "name": session_name,
-                "role": "assistant",
-                "task": f"loop AI Assist: {short_desc}",
-            }
+            # Plain session — NO role + NO task. Earlier iterations tried
+            # role=worker and role=assistant with task=<desc> for
+            # Tasks-panel visibility, but both racey:
+            #
+            #   1. /api/create with task= triggers the container's
+            #      startup to run claude NON-INTERACTIVELY with that
+            #      task. Claude finishes fast, calls complete.sh, the
+            #      task transitions to COMPLETED and lifecycle.recycle
+            #      tears the container down.
+            #   2. Our follow-up /query (or /exec to read the output
+            #      file) then 500s with "No such container".
+            #   3. result.yaml ends up empty and persist skips. The
+            #      operator sees a worker session do real work but
+            #      no template lands on disk.
+            #
+            # Matches the playbook pattern (brainbox.playbooks._run_task)
+            # which has been working reliably for the same shape. The
+            # cost: assist sessions don't appear as hub tasks. Operator
+            # still sees the session in the Sessions panel during the
+            # ~30-60s the assist runs; for explicit hub-task tracking
+            # we'd need register_ci_ratchet_task-style manual hub
+            # registration AFTER session creation, which is a separate
+            # feature.
+            create_body = {"name": session_name}
             resp = await client.post("/api/create", json=create_body)
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise AssistError(f"could not create assist session: {exc}") from exc
 
-        # The /api/create handler registers a hub task whose session_name
-        # matches our session. Find it so we can complete it structurally.
+        # No hub task is registered for plain sessions, so there's
+        # nothing to finalize. Keep the field for the finally block's
+        # branch; _find_hub_task_for_session returns None when no
+        # task row matches.
         hub_task_id = _find_hub_task_for_session(session_name)
 
         result: AssistResult | None = None
