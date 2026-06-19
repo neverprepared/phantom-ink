@@ -68,6 +68,11 @@ class AssistResult:
     cost_usd: float = 0.0
     warnings: list[AssistWarning] = field(default_factory=list)
     retries: int = 0
+    # Set when the generate path persisted the produced markdown to a
+    # user template — UI surfaces this so the operator knows the file
+    # is on disk regardless of what they do next.
+    saved_to: str = ""
+    save_error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +83,8 @@ class AssistResult:
             "cost_usd": round(self.cost_usd, 6),
             "warnings": [{"field": w.field, "message": w.message} for w in self.warnings],
             "retries": self.retries,
+            "saved_to": self.saved_to,
+            "save_error": self.save_error,
         }
 
 
@@ -586,8 +593,13 @@ async def assist(
 
     if mode == "generate":
         result = await _generate(prompt, current_yaml)
-        if save_as and result.yaml and not result.warnings:
-            _persist_generated_template(save_as, result.yaml)
+        # Persist whenever the model produced *any* markdown for a draft
+        # the operator named. Warnings are not a gate — the file lands
+        # as a draft and the operator can fix issues in-editor. The
+        # operator's work shouldn't be discarded because validation
+        # was imperfect.
+        if save_as and result.yaml:
+            _persist_generated_template(save_as, result.yaml, result)
         return result
     if mode == "refine":
         if not current_yaml or not selection:
@@ -598,24 +610,28 @@ async def assist(
     raise AssistError(f"unknown mode: {mode!r}")
 
 
-def _persist_generated_template(name: str, markdown: str) -> None:
+def _persist_generated_template(name: str, markdown: str, result: AssistResult) -> None:
     """Write a freshly-generated template to the user templates dir.
 
-    Errors are logged but not raised — the assist result is the
-    operator-facing artifact; a write failure surfaces via the
-    sidebar-refresh path (template won't appear) and operator can
-    still copy the editor content. We don't want to fail the whole
-    assist call just because the file couldn't be written.
+    ``validate=False`` so a draft that doesn't yet pass LoopMarkdown's
+    required-section rules still lands on disk — the operator can fix
+    it in-editor. Success/failure is recorded on the AssistResult so
+    the UI can surface it directly instead of relying on the operator
+    to spot a missing sidebar entry.
     """
     from .loop_template import TemplateError, write_user_template
 
     try:
-        # fork_from_builtin=True is harmless when the name doesn't exist
-        # built-in; it just lets the call succeed when the operator picks
-        # an existing built-in name (rare but supported).
-        write_user_template(name, markdown, fork_from_builtin=True)
+        write_user_template(
+            name,
+            markdown,
+            fork_from_builtin=True,
+            validate=False,
+        )
+        result.saved_to = name
         log.info("loop_assist.template_persisted", metadata={"name": name})
     except TemplateError as exc:
+        result.save_error = str(exc)
         log.warning(
             "loop_assist.template_persist_failed",
             metadata={"name": name, "reason": str(exc)},

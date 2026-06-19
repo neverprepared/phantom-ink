@@ -162,13 +162,23 @@ def write_user_template(
     raw_markdown: str,
     *,
     fork_from_builtin: bool = False,
+    validate: bool = True,
 ) -> dict[str, Any]:
     """Write a template to the user dir. Atomic rename; refuses to
-    overwrite a built-in of the same name unless ``fork_from_builtin``."""
+    overwrite a built-in of the same name unless ``fork_from_builtin``.
+
+    ``validate=False`` skips the markdown parse check before writing.
+    Use for draft saves where the operator wants the file persisted
+    even when it doesn't yet pass LoopMarkdown's required-section
+    rules — they can fix it in-editor afterwards. The Save button
+    keeps the default (validate=True) so a manual save always lands
+    parseable content.
+    """
     if not _is_safe_name(name):
         raise TemplateError(f"invalid template name: {name!r}")
 
-    parse_template(raw_markdown)  # validate before touching disk
+    if validate:
+        parse_template(raw_markdown)  # validate before touching disk
 
     existing = template_path(name)
     if existing is not None and _origin_for(existing) == "built-in" and not fork_from_builtin:

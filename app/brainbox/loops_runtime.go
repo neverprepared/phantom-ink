@@ -239,6 +239,10 @@ type LoopAssistRequest struct {
 
 // LoopAssistResult is the response shape. ``yaml`` field name preserved
 // for one release; payload is now markdown text.
+//
+// SavedTo / SaveError surface the server-side persist outcome when the
+// request set ``save_as``. SavedTo is the template name on success;
+// SaveError carries the operator-readable reason on failure.
 type LoopAssistResult struct {
 	Markdown    string                   `json:"yaml"`
 	Explanation string                   `json:"explanation"`
@@ -247,6 +251,8 @@ type LoopAssistResult struct {
 	CostUSD     float64                  `json:"cost_usd"`
 	Warnings    []map[string]interface{} `json:"warnings"`
 	Retries     int                      `json:"retries"`
+	SavedTo     string                   `json:"saved_to,omitempty"`
+	SaveError   string                   `json:"save_error,omitempty"`
 }
 
 // AssistLoopTemplate runs a single AI Assist round. The brainbox endpoint

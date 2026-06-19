@@ -625,6 +625,8 @@ export namespace brainbox {
 	    cost_usd: number;
 	    warnings: any[];
 	    retries: number;
+	    saved_to?: string;
+	    save_error?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new LoopAssistResult(source);
@@ -639,6 +641,8 @@ export namespace brainbox {
 	        this.cost_usd = source["cost_usd"];
 	        this.warnings = source["warnings"];
 	        this.retries = source["retries"];
+	        this.saved_to = source["saved_to"];
+	        this.save_error = source["save_error"];
 	    }
 	}
 	export class LoopTemplate {

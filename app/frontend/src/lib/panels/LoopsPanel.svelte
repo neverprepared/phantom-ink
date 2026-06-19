@@ -315,11 +315,14 @@ Describe what the agent does each iteration.
     explanation = null;
     try {
       const api = await getApi();
-      // Persist the produced markdown server-side when Generate runs
-      // for a freshly-named draft. Saves the operator from losing the
-      // result if they navigate away mid-call.
+      // Persist the produced markdown server-side on every Generate
+      // for a user-owned template (including fresh drafts AND existing
+      // user templates the operator is regenerating). The operator's
+      // work shouldn't be lost just because they navigate away. The
+      // backend uses validate=False so even an imperfect draft lands
+      // on disk — they can fix issues in-editor.
       const saveAs =
-        mode === 'generate' && selectedTemplate && savedMarkdown === ''
+        mode === 'generate' && selectedTemplate && selectedTemplate.origin === 'user'
           ? selectedTemplate.name
           : '';
 
@@ -342,6 +345,8 @@ Describe what the agent does each iteration.
         tokens: { input?: number; output?: number };
         cost_usd: number;
         warnings: { field: string | null; message: string }[];
+        saved_to: string;
+        save_error: string;
       };
 
       assistModel = result.model;
@@ -362,6 +367,38 @@ Describe what the agent does each iteration.
           );
         } else {
           notifications.success(`${mode === 'generate' ? 'Generated' : 'Refined'} via ${result.model}`);
+        }
+
+        // Surface the server-side persist outcome so the operator
+        // knows whether their work is on disk regardless of what they
+        // do next.
+        if (mode === 'generate') {
+          if (result.saved_to) {
+            notifications.success(`Saved as ${result.saved_to}`);
+            savedMarkdown = result.yaml;
+            // Refresh sidebar so the new file appears immediately.
+            if (!templateNames.includes(result.saved_to)) {
+              await loadTemplateList();
+              selectedName = result.saved_to;
+            }
+            // selectedTemplate.hash is stale after a save — clear so
+            // the dirty-dot doesn't lie. Reload the template to pick
+            // up the new hash.
+            if (selectedTemplate) {
+              try {
+                const api2 = await getApi();
+                const reloaded = (await api2.GetLoopTemplate(result.saved_to)) as LoopTemplate;
+                selectedTemplate = reloaded;
+                savedMarkdown = reloaded.markdown;
+                editorValue = reloaded.markdown;
+              } catch {
+                // Best-effort reload; ignore.
+              }
+            }
+            void refreshDiagram(result.saved_to);
+          } else if (result.save_error) {
+            notifications.error(`Persist failed: ${result.save_error}`);
+          }
         }
       }
       assistPrompt = '';
