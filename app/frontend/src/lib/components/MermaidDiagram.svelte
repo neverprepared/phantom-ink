@@ -25,6 +25,10 @@
   const ZOOM_MAX = 4.0;
   const ZOOM_STEP = 1.25;
 
+  // svelte-ignore state_referenced_locally
+  // Intentional: initialZoom is a one-shot initializer, not a reactive
+  // source. The operator drives zoom via the +/− controls after mount;
+  // we don't want the prop to override their manual zoom on re-render.
   let zoom = $state(initialZoom);
   let container: HTMLDivElement;
   let initialized = false;
