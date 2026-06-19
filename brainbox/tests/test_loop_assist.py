@@ -154,8 +154,10 @@ def fake_session(monkeypatch):
             raise AssertionError("test ran out of fake session responses")
         return responses.pop(0)
 
-    async def _fake_with_session(fn):
+    async def _fake_with_session(fn, *, operator_prompt=""):
         # Sentinel client + name — _fake_call ignores them.
+        # operator_prompt is the worker-task description; tests don't
+        # exercise the hub-task lifecycle, just consume the kwarg.
         return await fn(object(), "fake-assist-session")
 
     monkeypatch.setattr(loop_assist, "_call_session", _fake_call)
@@ -311,7 +313,7 @@ class TestAssistEndpoint:
 
     @pytest.mark.asyncio
     async def test_session_failure_returns_502(self, client, monkeypatch):
-        async def _boom(fn):
+        async def _boom(fn, *, operator_prompt=""):
             raise loop_assist.AssistError("upstream session call failed: boom")
 
         monkeypatch.setattr(loop_assist, "_with_assist_session", _boom)

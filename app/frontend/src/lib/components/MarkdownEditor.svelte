@@ -12,6 +12,8 @@
   import { markdown } from '@codemirror/lang-markdown';
   import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
   import { linter, lintGutter, type Diagnostic } from '@codemirror/lint';
+  import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+  import { tags as t } from '@lezer/highlight';
 
   interface LintError {
     line: number | null;
@@ -74,29 +76,100 @@
   }
 
   function makeExtensions() {
+    // Theme-aware editor surface. All colors come from the design tokens
+    // in styles/tokens.css so the editor follows the active theme
+    // (paper / light / dark / brew / vision).
+    const editorTheme = EditorView.theme({
+      '&': {
+        height: '100%',
+        fontSize: '13px',
+        color: 'var(--text)',
+        backgroundColor: 'var(--bg-elev)',
+      },
+      '.cm-scroller': { fontFamily: 'var(--font-mono)' },
+      '.cm-content': { padding: '10px 0', caretColor: 'var(--accent)' },
+      '&.cm-focused': { outline: 'none' },
+      '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },
+      '&.cm-focused .cm-selectionBackground, ::selection, .cm-selectionBackground': {
+        backgroundColor: 'color-mix(in srgb, var(--accent) 24%, transparent)',
+      },
+      '.cm-gutters': {
+        backgroundColor: 'var(--bg-sunken)',
+        color: 'var(--text-faint)',
+        border: 'none',
+        borderRight: '1px solid var(--border)',
+      },
+      '.cm-activeLine': {
+        backgroundColor: 'color-mix(in srgb, var(--bg-hover) 60%, transparent)',
+      },
+      '.cm-activeLineGutter': {
+        backgroundColor: 'transparent',
+        color: 'var(--text-muted)',
+      },
+      '.cm-lineNumbers .cm-gutterElement': { padding: '0 8px 0 6px' },
+      '.cm-foldGutter .cm-gutterElement': { color: 'var(--text-faint)' },
+      // Lint underline + gutter marker pulled from the design tokens
+      // so red doesn't punch through every theme equally.
+      '.cm-diagnostic-error': {
+        borderLeft: '3px solid var(--fail)',
+        backgroundColor: 'var(--fail-soft)',
+        color: 'var(--text)',
+      },
+      '.cm-tooltip': {
+        backgroundColor: 'var(--bg-elev)',
+        border: '1px solid var(--border)',
+        color: 'var(--text)',
+        borderRadius: 'var(--r-sm)',
+        boxShadow: 'var(--shadow-md)',
+      },
+      '.cm-panels': {
+        backgroundColor: 'var(--bg-elev)',
+        color: 'var(--text)',
+      },
+    });
+
+    // Markdown syntax highlighting tuned for the phantom-ink ink theme.
+    // Tokens (--text, --accent, --text-muted, --run, --task) inherit the
+    // current theme so the editor reads the same across paper/dark/brew.
+    const editorHighlight = HighlightStyle.define([
+      { tag: t.heading,        color: 'var(--text)',        fontWeight: '700' },
+      { tag: t.heading1,       color: 'var(--text)',        fontWeight: '700' },
+      { tag: t.heading2,       color: 'var(--text)',        fontWeight: '700' },
+      { tag: t.heading3,       color: 'var(--text)',        fontWeight: '700' },
+      { tag: t.strong,         color: 'var(--text)',        fontWeight: '700' },
+      { tag: t.emphasis,       color: 'var(--text)',        fontStyle: 'italic' },
+      { tag: t.link,           color: 'var(--accent)',      textDecoration: 'underline' },
+      { tag: t.url,            color: 'var(--accent)' },
+      { tag: t.monospace,      color: 'var(--accent)' },     // inline code
+      { tag: t.literal,        color: 'var(--accent)' },     // literal nodes
+      { tag: t.list,           color: 'var(--text-muted)' }, // bullets/numbers
+      { tag: t.quote,          color: 'var(--text-muted)',  fontStyle: 'italic' },
+      { tag: t.processingInstruction, color: 'var(--text-faint)' },
+      { tag: t.contentSeparator,      color: 'var(--text-faint)' },   // --- fences
+      // YAML frontmatter (lezer parses YAML inside the fences when we
+      // pass it through markdown's default config); fall back to base
+      // tokens so values stay legible.
+      { tag: t.propertyName,   color: 'var(--task)' },        // YAML keys
+      { tag: t.string,         color: 'var(--text)' },
+      { tag: t.number,         color: 'var(--run)' },
+      { tag: t.bool,           color: 'var(--run)' },
+      { tag: t.keyword,        color: 'var(--sched)' },
+      { tag: t.comment,        color: 'var(--text-muted)',  fontStyle: 'italic' },
+      { tag: t.invalid,        color: 'var(--fail)' },
+    ]);
+
     return [
       lineNumbers(),
       history(),
       highlightActiveLine(),
       markdown(),
+      syntaxHighlighting(editorHighlight),
       lintGutter(),
       makeLinter(),
       EditorView.lineWrapping,
       keymap.of([...defaultKeymap, ...historyKeymap]),
       readonlyCompartment.of(EditorState.readOnly.of(readonly)),
-      EditorView.theme({
-        '&': { height: '100%', fontSize: '13px' },
-        '.cm-scroller': { fontFamily: 'var(--font-mono, monospace)' },
-        '.cm-content': { padding: '8px 0' },
-        '&.cm-focused': { outline: 'none' },
-        '.cm-gutters': {
-          backgroundColor: 'transparent',
-          color: 'var(--color-text-muted, #888)',
-          border: 'none',
-        },
-        '.cm-activeLine': { backgroundColor: 'rgba(255,255,255,0.03)' },
-        '.cm-activeLineGutter': { backgroundColor: 'transparent' },
-      }),
+      editorTheme,
       EditorView.updateListener.of((update) => {
         if (suppressOnChange) return;
         if (update.docChanged && onChange) {
@@ -156,9 +229,19 @@
   .editor {
     height: 100%;
     min-height: 0;
-    border: 1px solid var(--color-border, #2a2a2a);
-    border-radius: 4px;
-    background: var(--color-surface-1, #181818);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-elev);
     overflow: hidden;
+  }
+  /* Make sure the inner CodeMirror surface follows the theme even when
+     a parent injects a different background. */
+  .editor :global(.cm-editor) {
+    height: 100%;
+    background: var(--bg-elev);
+    color: var(--text);
+  }
+  .editor :global(.cm-editor.cm-focused) {
+    outline: none;
   }
 </style>

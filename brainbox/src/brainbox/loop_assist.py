@@ -18,7 +18,11 @@ markdown the AI produced plus a warnings list — the operator can hand-fix.
 
 **No API keys.** Per project convention (see top-level CLAUDE.md), this
 module dispatches to an ephemeral brainbox session, not the Anthropic
-API. All retries within a single request share that one session.
+API. The session is registered as a real hub task with ``role=worker``
++ ``task=<prompt>`` — visible in the Tasks panel, lifecycled through
+``complete_task`` so the result flows back through the standard
+worker-completion path. The structure mirrors the ratchet-worker
+pattern; all retries within a single request share the one session.
 """
 
 from __future__ import annotations
@@ -274,12 +278,26 @@ async def _call_session(
 
 async def _with_assist_session(
     fn: Callable[[httpx.AsyncClient, str], Awaitable[AssistResult]],
+    *,
+    operator_prompt: str,
 ) -> AssistResult:
-    """Create an ephemeral session, run fn(client, session_name), clean up.
+    """Create a worker-role brainbox session registered as a hub task,
+    run ``fn(client, session_name)``, mark the hub task completed with
+    the assist result, then clean up.
 
-    All LLM round-trips for a single assist request share this one session
-    — cheaper than re-provisioning per retry, and the session sees its own
-    earlier output when iterating on corrections."""
+    Worker-pattern shape (mirrors ratchet workers):
+      - role=worker, task=<short description> so the session appears in
+        the Tasks panel as a real task.
+      - When ``fn`` returns, the hub task is finalized via
+        ``complete_task(task_id, result.yaml or result.explanation)`` so
+        the output flows through the standard task-completion path. On
+        failure the task is marked FAILED with the exception message.
+      - All retries within one assist request share this one session;
+        the session sees its own earlier output when iterating on
+        corrections.
+    """
+    from . import router
+
     api_key = _load_api_key()
     if not api_key:
         raise AssistError("brainbox api_key not available — cannot dispatch assist session")
@@ -288,17 +306,56 @@ async def _with_assist_session(
     session_name = f"loop-assist-{secrets.token_hex(3)}"
     headers = {"X-API-Key": api_key}
 
+    # Truncate the operator prompt for the Tasks-panel description so the
+    # row reads at a glance.
+    short_desc = operator_prompt.strip().splitlines()[0] if operator_prompt.strip() else "loop AI Assist"
+    if len(short_desc) > 120:
+        short_desc = short_desc[:117] + "…"
+
     async with httpx.AsyncClient(base_url=base_url, timeout=600.0, headers=headers) as client:
         try:
-            resp = await client.post("/api/create", json={"name": session_name})
+            create_body = {
+                "name": session_name,
+                "role": "worker",
+                "task": f"loop AI Assist: {short_desc}",
+            }
+            resp = await client.post("/api/create", json=create_body)
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise AssistError(f"could not create assist session: {exc}") from exc
 
+        # The /api/create handler registers a hub task whose session_name
+        # matches our session. Find it so we can complete it structurally.
+        hub_task_id = _find_hub_task_for_session(session_name)
+
+        result: AssistResult | None = None
+        failure: BaseException | None = None
         try:
             await _wait_for_session(client, session_name)
-            return await fn(client, session_name)
+            result = await fn(client, session_name)
+            return result
+        except BaseException as exc:
+            failure = exc
+            raise
         finally:
+            # Finalize the hub task before tearing the session down so the
+            # row in the Tasks panel reflects the assist outcome.
+            if hub_task_id is not None:
+                try:
+                    if result is not None and failure is None:
+                        payload = result.yaml or result.explanation or ""
+                        await router.complete_task(hub_task_id, payload)
+                    else:
+                        await router.fail_task(
+                            hub_task_id,
+                            error=str(failure) if failure else "assist failed",
+                        )
+                except Exception as task_exc:
+                    log.warning(
+                        "loop_assist.task_finalize_failed",
+                        metadata={"task_id": hub_task_id, "reason": str(task_exc)},
+                    )
+
             try:
                 await client.post("/api/stop", json={"name": session_name})
                 await client.post("/api/delete", json={"name": session_name})
@@ -307,6 +364,20 @@ async def _with_assist_session(
                     "loop_assist.session_cleanup_failed",
                     metadata={"session": session_name, "reason": str(cleanup_exc)},
                 )
+
+
+def _find_hub_task_for_session(session_name: str) -> str | None:
+    """Look up the hub task /api/create registered for our session. The
+    task is created with ``session_name=session_name`` so a single
+    linear scan over the in-memory task store finds it. Returns the
+    task_id or None if not found (e.g. caller did not pass a ``task``
+    in the create body)."""
+    from . import router
+
+    for tid, task in router._tasks.items():
+        if getattr(task, "session_name", None) == session_name:
+            return tid
+    return None
 
 
 def _strip_fences(text: str) -> str:
@@ -335,7 +406,8 @@ async def _generate(prompt: str, current_yaml: str | None) -> AssistResult:
     system = build_system_prompt("generate")
     user = _generate_user_prompt(prompt, current_yaml)
     return await _with_assist_session(
-        lambda client, name: _retry_loop(client, name, system=system, user=user)
+        lambda client, name: _retry_loop(client, name, system=system, user=user),
+        operator_prompt=f"generate — {prompt}",
     )
 
 
@@ -355,7 +427,8 @@ async def _refine(prompt: str, current_yaml: str, selection: dict[str, int]) -> 
         return "\n".join([*head_lines, replacement, *tail_lines])
 
     return await _with_assist_session(
-        lambda client, name: _retry_loop(client, name, system=system, user=user, assemble=_assemble)
+        lambda client, name: _retry_loop(client, name, system=system, user=user, assemble=_assemble),
+        operator_prompt=f"refine — {prompt}",
     )
 
 
@@ -379,7 +452,7 @@ async def _explain(prompt: str, current_yaml: str, selection: dict[str, int] | N
             cost_usd=0.0,
         )
 
-    return await _with_assist_session(_run)
+    return await _with_assist_session(_run, operator_prompt=f"explain — {prompt}")
 
 
 async def _retry_loop(
