@@ -13,6 +13,7 @@
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import Modal from '../components/Modal.svelte';
   import Spinner from '../components/Spinner.svelte';
   import MarkdownEditor from '../components/MarkdownEditor.svelte';
   import MermaidDiagram from '../components/MermaidDiagram.svelte';
@@ -207,30 +208,44 @@ Describe what the agent does each iteration.
 `;
   }
 
-  function newTemplate() {
-    const raw = window.prompt(
-      'New template name (lowercase letters, digits, hyphens):',
-      'my-loop',
-    );
-    if (raw === null) return;
-    const name = raw.trim();
+  // Modal state for the "+ New" flow. window.prompt is unreliable in
+  // some Wails webviews, so we use the existing Modal component for the
+  // name input.
+  let newTemplateModalOpen = $state(false);
+  let newTemplateName = $state('my-loop');
+  let newTemplateError = $state<string | null>(null);
+
+  function openNewTemplateModal() {
+    if (isDirty()) {
+      const ok = window.confirm(
+        `${selectedName ?? 'Current template'} has unsaved changes. Discard them?`,
+      );
+      if (!ok) return;
+    }
+    newTemplateName = 'my-loop';
+    newTemplateError = null;
+    newTemplateModalOpen = true;
+  }
+
+  function closeNewTemplateModal() {
+    newTemplateModalOpen = false;
+    newTemplateError = null;
+  }
+
+  function confirmNewTemplate() {
+    const name = newTemplateName.trim();
     if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
-      notifications.error('Invalid name. Use lowercase letters, digits, and hyphens; must start with a letter or digit.');
+      newTemplateError = 'Use lowercase letters, digits, and hyphens; must start with a letter or digit.';
       return;
     }
     if (templateNames.includes(name)) {
-      notifications.error(`A template named "${name}" already exists. Pick a different name.`);
+      newTemplateError = `A template named "${name}" already exists.`;
       return;
     }
-    if (isDirty()) {
-      const ok = window.confirm(`${selectedName ?? 'Current template'} has unsaved changes. Discard them?`);
-      if (!ok) return;
-    }
-
     const skeleton = _newTemplateSkeleton(name);
     // Synthetic in-memory draft. origin='user' so Save is enabled;
-    // empty savedMarkdown keeps the dirty-dot lit until the first
-    // save persists the file.
+    // empty savedMarkdown keeps the dirty-dot lit until the first save
+    // persists the file.
     selectedTemplate = {
       name,
       origin: 'user',
@@ -242,8 +257,16 @@ Describe what the agent does each iteration.
     savedMarkdown = '';
     templateError = null;
     detailTab = 'markdown';
-    diagramMermaid = '';   // dry-run only fires for persisted templates
+    diagramMermaid = '';
     diagramError = null;
+    closeNewTemplateModal();
+  }
+
+  function onNewTemplateKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      confirmNewTemplate();
+    }
   }
 
   async function forkTemplate() {
@@ -542,7 +565,7 @@ Describe what the agent does each iteration.
       <aside class="template-list">
         <div class="template-list-head">
           <span class="template-list-label">Templates</span>
-          <button class="btn-new" onclick={newTemplate} title="Create a new loop template">
+          <button class="btn-new" onclick={openNewTemplateModal} title="Create a new loop template">
             + New
           </button>
         </div>
@@ -781,6 +804,37 @@ Describe what the agent does each iteration.
     </div>
   {/if}
 </div>
+
+{#if newTemplateModalOpen}
+  <Modal onClose={closeNewTemplateModal} maxWidth="420px">
+    <div class="new-modal">
+      <h3>New loop template</h3>
+      <p class="dim modal-help">
+        Pick a slug: lowercase letters, digits, and hyphens. Must start
+        with a letter or digit.
+      </p>
+      <label class="modal-label">
+        Template name
+        <input
+          type="text"
+          class="modal-input"
+          bind:value={newTemplateName}
+          onkeydown={onNewTemplateKeydown}
+          placeholder="my-loop"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </label>
+      {#if newTemplateError}
+        <div class="modal-error">{newTemplateError}</div>
+      {/if}
+      <div class="modal-actions">
+        <button class="btn-modal-cancel" onclick={closeNewTemplateModal}>Cancel</button>
+        <button class="btn-modal-create" onclick={confirmNewTemplate}>Create</button>
+      </div>
+    </div>
+  </Modal>
+{/if}
 
 <style>
   .panel {
@@ -1291,5 +1345,79 @@ Describe what the agent does each iteration.
     padding: 6px 10px;
     background: rgba(255, 0, 0, 0.05);
     border-left: 2px solid #ff9a9a;
+  }
+
+  /* New-template modal */
+  .new-modal {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    color: var(--text);
+  }
+  .new-modal h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .modal-help {
+    font-size: 12px;
+    margin: 0;
+    line-height: 1.5;
+  }
+  .modal-label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .modal-input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-sunken);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+  .modal-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .modal-error {
+    font-size: 12px;
+    color: var(--fail);
+    padding: 6px 8px;
+    background: var(--fail-soft);
+    border-left: 2px solid var(--fail);
+    border-radius: 2px;
+  }
+  .modal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .btn-modal-cancel,
+  .btn-modal-create {
+    border: 1px solid var(--border);
+    background: var(--bg-elev);
+    color: var(--text);
+    padding: 7px 16px;
+    font-size: 13px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .btn-modal-create {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .btn-modal-create:hover {
+    background: color-mix(in srgb, var(--accent) 88%, #000);
+  }
+  .btn-modal-cancel:hover {
+    background: var(--bg-hover);
   }
 </style>
