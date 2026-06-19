@@ -1,33 +1,24 @@
-"""AI Assist for Loop template authoring (loop-spec PR 6).
+"""AI Assist for Loop template authoring — markdown edition.
 
-Three operator-facing modes drive one server-side path:
+Three operator-facing modes:
 
-    Generate   — natural language → full LoopSpec YAML. The result
-                 replaces the editor doc after operator confirms.
-    Refine     — operator highlights a YAML range, types an instruction,
-                 AI returns a replacement for the range. We assemble the
-                 full doc (head + replacement + tail) and validate it
-                 against LoopSpec before returning, so the editor never
-                 sees malformed output.
+    Generate   — natural language → full markdown loop template.
+                 Replaces the editor doc after operator confirms.
+    Refine     — operator highlights a range, types an instruction,
+                 AI returns a replacement. We assemble head + replacement
+                 + tail and validate the WHOLE thing via ``loop_md.parse``
+                 before returning.
     Explain    — operator highlights a range, asks a question, AI returns
                  a natural-language answer. No edit; popover UI.
 
-Generate and Refine run a validate-and-retry loop server-side. The
-output must parse as YAML AND validate against LoopSpec; if either
-fails, we feed the error back to the model up to 3 times before giving
-up. Even an exhausted retry budget returns whatever YAML the AI produced
-plus a warnings list — the operator can hand-fix; we never waste the
-call.
-
-Explain skips validation (it's prose).
+Generate and Refine run a validate-and-retry loop. The output must
+parse as a valid LoopMarkdown; on failure we feed the error back to the
+model up to 3 times. Even an exhausted retry budget returns whatever
+markdown the AI produced plus a warnings list — the operator can hand-fix.
 
 **No API keys.** Per project convention (see top-level CLAUDE.md), this
-module does NOT call the Anthropic API directly. Every LLM round-trip
-goes through an ephemeral brainbox session — same pattern as
-``playbooks._run_task``. The session runs Claude Code under the
-operator's existing OAuth credentials. All retries within a single
-assist request share the same session for latency and so the model
-sees prior context.
+module dispatches to an ephemeral brainbox session, not the Anthropic
+API. All retries within a single request share that one session.
 """
 
 from __future__ import annotations
@@ -38,12 +29,10 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 import httpx
-import yaml as yaml_module
-from pydantic import ValidationError
 
 from .config import settings
 from .log import get_logger
-from .loops import LoopSpec
+from .loop_md import LoopMarkdownError, parse as parse_loop_md
 
 log = get_logger()
 
@@ -103,41 +92,44 @@ def _cost(_model: str, _input_tokens: int, _output_tokens: int) -> float:
 _HARD_RULES = """\
 Hard rules — non-negotiable:
 
-1. Output ONLY raw YAML for the LoopSpec frontmatter. No prose explanation.
-2. Do NOT include the surrounding '---' fences. The caller adds them.
-3. The output MUST include either intent.convergence (a JMESPath bool
-   expression) OR a top-level convergence_predicate. A template without
-   convergence cannot load and will be rejected.
-4. The output MUST include max_iterations (integer >= 1) and body.nodes
-   (non-empty list). Day 1 the runner only executes body.nodes[0].
-5. Every Node MUST declare an executor ("agent" | "playbook" | "join" |
-   "human" | "schedule") and either an agent_id or a role.
-6. Use only valid JMESPath in convergence_predicate, convergence_metric,
-   edge predicates, stop_conditions[].predicate. Common shapes:
-     length(findings.blockers) == `0`
-     observations.ci_status == 'green'
-     length(findings.blockers) == `0` && observations.ci_status == 'green'
-     observations.diff_lines > `500`
-7. Permission tier defaults to "default" — use "strict" only when the
-   loop runs against attacker-controllable input. Use "inherit" only
-   for trusted internal loops.
+1. Output a COMPLETE markdown loop template. Frontmatter fenced with
+   '---' lines, then named '# ' sections. No prose outside this shape.
+2. Frontmatter MUST include: name (slug), trigger (free-form string),
+   max_iterations (positive integer).
+3. Frontmatter MAY include: agent (defaults to name), permissions
+   (inherit|default|strict; default: "default"), budget_usd (positive
+   number), objective (mapping of envelope path → expected value),
+   required_refs (list of {name, type: int|string|sha, required?}).
+4. Body MUST include these top-level sections, in this order:
+       # Role
+       # When to stop
+       # When to escalate
+   Body MAY include: # Tools, # Notes.
+5. The "When to stop" and "When to escalate" sections are PROSE
+   checklists evaluated each iteration by a separate judge agent. Be
+   concrete and verifiable: "CI is green on the head commit", not
+   "the code is good". The judge defaults to NOT firing on ambiguity.
+6. The "objective" frontmatter block holds CHEAP DETERMINISTIC checks
+   that short-circuit the judge. Each entry is an envelope path → an
+   expected literal (equality), a truthiness flag (true|false), or an
+   operator dict ({"<=": N}, {">=": N}, {"in": [...]}, {"not_empty": true}).
+   If every objective check passes, the loop converges without paying
+   for a judge call. Use objective for the cheap stuff (CI status,
+   simple counters); use prose for the qualitative stuff.
+7. Permissions default to "default". Use "strict" only when the loop
+   runs against attacker-controllable input.
 """
 
 
-def _canonical_example_yaml() -> str:
+def _canonical_example() -> str:
     """Read the bundled pr-review-loop template as an in-context example.
-    Falls back to a small inline example if the file isn't there."""
+    Falls back to empty if the file isn't there."""
     try:
         from .loop_template import _builtin_templates_dir  # type: ignore[attr-defined]
 
         path = _builtin_templates_dir() / "pr-review-loop.md"
         if path.is_file():
-            text = path.read_text()
-            if text.startswith("---"):
-                rest = text[3:].lstrip("\n")
-                end = rest.find("\n---")
-                if end != -1:
-                    return rest[:end]
+            return path.read_text()
     except Exception:
         pass
     return ""
@@ -145,51 +137,30 @@ def _canonical_example_yaml() -> str:
 
 def build_system_prompt(mode: str) -> str:
     """Compose the model's system prompt for the given mode."""
-    schema = LoopSpec.model_json_schema()
-    schema_summary = yaml_module.safe_dump(_simplify_schema(schema), sort_keys=False)
-    example = _canonical_example_yaml()
+    example = _canonical_example()
 
     if mode == "explain":
         return (
-            "You are a code review assistant for phantom-ink Loop templates.\n"
-            "A Loop template is a YAML document that drives a phantom-ink "
-            "loop-engineering runtime. Convergence is a JMESPath predicate "
-            "evaluated against a HandoffEnvelope after each iteration. "
-            "Respond with a clear, brief natural-language explanation of "
-            "whatever the operator highlighted or asked about. No YAML, no "
-            "markdown fences, just the explanation."
+            "You are a documentation assistant for phantom-ink loop templates.\n"
+            "A loop template is a markdown file with YAML frontmatter plus "
+            "named prose sections. Each iteration, a separate judge agent "
+            "reads the 'When to stop' / 'When to escalate' sections against "
+            "the latest envelope. Respond with a clear, brief natural-language "
+            "explanation of whatever the operator highlighted or asked about. "
+            "No markdown fences, no template syntax — just the explanation."
         )
 
     return (
-        "You are an authoring assistant for phantom-ink Loop templates.\n"
-        "A Loop template is a YAML document that drives the loop-engineering "
-        "runtime. Convergence is a JMESPath predicate evaluated against a "
-        "HandoffEnvelope after each iteration.\n\n"
+        "You are an authoring assistant for phantom-ink loop templates.\n"
+        "A loop template is a markdown file with YAML frontmatter plus "
+        "named prose sections. Each iteration, a judge agent reads the "
+        "prose sections against the envelope to decide stop / escalate.\n\n"
         f"{_HARD_RULES}\n"
-        "LoopSpec schema (summarized):\n"
-        f"{schema_summary}\n\n"
-        "Canonical example — pr-review-loop:\n"
-        f"---\n{example}\n---\n\n"
-        "Output ONLY the YAML frontmatter for the requested template, no "
-        "wrapping fences, no commentary."
+        "Canonical example — the bundled pr-review-loop template:\n\n"
+        f"{example}\n\n"
+        "Output ONLY the full markdown template for the requested loop. "
+        "No wrapping fences, no commentary."
     )
-
-
-def _simplify_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """Strip the LoopSpec JSON Schema down to the fields a model needs."""
-    out: dict[str, Any] = {}
-    for key in ("type", "required"):
-        if key in schema:
-            out[key] = schema[key]
-    if "properties" in schema:
-        out["properties"] = {}
-        for name, prop in schema["properties"].items():
-            slim: dict[str, Any] = {}
-            for k in ("type", "description", "default", "enum"):
-                if k in prop:
-                    slim[k] = prop[k]
-            out["properties"][name] = slim
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -197,28 +168,19 @@ def _simplify_schema(schema: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _validate_yaml(raw: str) -> tuple[bool, list[AssistWarning]]:
-    """Check whether raw YAML parses as a LoopSpec."""
+def _validate_markdown(raw: str) -> tuple[bool, list[AssistWarning]]:
+    """Check whether the raw text parses as a valid LoopMarkdown."""
     warnings: list[AssistWarning] = []
     try:
-        data = yaml_module.safe_load(raw) or {}
-    except yaml_module.YAMLError as exc:
-        warnings.append(AssistWarning(field=None, message=f"YAML parse error: {exc}"))
-        return False, warnings
-    if not isinstance(data, dict):
-        warnings.append(AssistWarning(field=None, message="output must be a YAML mapping"))
-        return False, warnings
-    try:
-        LoopSpec.model_validate(data)
-    except ValidationError as exc:
-        for err in exc.errors():
-            field_path = ".".join(str(p) for p in err.get("loc", ()))
-            warnings.append(AssistWarning(field=field_path or None, message=err.get("msg", "validation error")))
-        return False, warnings
-    except ValueError as exc:
+        parse_loop_md(raw)
+    except LoopMarkdownError as exc:
         warnings.append(AssistWarning(field=None, message=str(exc)))
         return False, warnings
     return True, warnings
+
+
+# Kept as an alias for the existing test fixtures during the cutover.
+_validate_yaml = _validate_markdown
 
 
 # ---------------------------------------------------------------------------
@@ -348,8 +310,8 @@ async def _with_assist_session(
 
 
 def _strip_fences(text: str) -> str:
-    """Strip code fences that wrap the YAML. Models sometimes add them
-    despite the system prompt; cheaper to clean than to retry."""
+    """Strip code fences that wrap the markdown output. Models sometimes
+    pad despite the system prompt; cheaper to clean than to retry."""
     t = text.strip()
     if t.startswith("```"):
         lines = t.split("\n")

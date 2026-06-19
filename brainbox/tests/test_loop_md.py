@@ -18,7 +18,7 @@ from __future__ import annotations
 import pytest
 
 from brainbox.loop_md import LoopMarkdown, LoopMarkdownError, parse
-from brainbox.loops import RequiredRefType
+from brainbox.loops import PermissionTier, RequiredRefType
 
 
 _MINIMAL = """\
@@ -91,9 +91,30 @@ class TestParseMinimal:
         assert loop.name == "minimal-loop"
         assert loop.trigger == "manual"
         assert loop.max_iterations == 1
+        assert loop.agent == "minimal-loop"  # defaults to name
+        assert loop.permissions == PermissionTier.DEFAULT
         assert loop.budget_usd is None
         assert loop.objective == {}
         assert loop.required_refs == []
+
+    def test_agent_defaults_to_name(self):
+        loop = parse(_MINIMAL)
+        assert loop.agent == loop.name
+
+    def test_agent_override(self):
+        text = _MINIMAL.replace("max_iterations: 1", "max_iterations: 1\nagent: reviewer")
+        loop = parse(text)
+        assert loop.agent == "reviewer"
+
+    def test_permissions_override_strict(self):
+        text = _MINIMAL.replace("max_iterations: 1", "max_iterations: 1\npermissions: strict")
+        loop = parse(text)
+        assert loop.permissions == PermissionTier.STRICT
+
+    def test_permissions_bad_value(self):
+        text = _MINIMAL.replace("max_iterations: 1", "max_iterations: 1\npermissions: bogus")
+        with pytest.raises(LoopMarkdownError, match="inherit\\|default\\|strict"):
+            parse(text)
 
     def test_extracts_required_sections(self):
         loop = parse(_MINIMAL)

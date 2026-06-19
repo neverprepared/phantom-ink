@@ -11,6 +11,13 @@ Frontmatter (required keys):
     max_iterations    — hard iteration cap
 
 Frontmatter (optional):
+    agent             — registered agent name that runs each iteration.
+                        Defaults to ``name`` (so a template named
+                        ``pr-review-loop`` looks for an agent of the
+                        same name unless overridden).
+    permissions       — "inherit" | "default" | "strict". Defaults to
+                        "default". Same semantics as the prior YAML
+                        format's PermissionTier.
     budget_usd        — hard cost cap; runner stops the loop if exceeded
     objective         — dict of cheap deterministic checks evaluated
                         BEFORE the prose judge each iteration. If any
@@ -50,10 +57,7 @@ from typing import Any
 
 import yaml as yaml_module
 
-# Shapes carried over from the YAML era. RequiredRef is still useful as
-# the typed declaration for Trigger-tab form rendering and webhook
-# pre-population. HandoffEnvelope is the runtime payload and unchanged.
-from .loops import HandoffEnvelope, RequiredRef, RequiredRefType  # noqa: F401 (re-export)
+from .loops import HandoffEnvelope, PermissionTier, RequiredRef, RequiredRefType  # noqa: F401 (re-export)
 
 
 class LoopMarkdownError(ValueError):
@@ -85,6 +89,8 @@ class LoopMarkdown:
     name: str
     trigger: str
     max_iterations: int
+    agent: str
+    permissions: PermissionTier
     budget_usd: float | None
     objective: dict[str, Any]
     required_refs: list[RequiredRef]
@@ -125,13 +131,25 @@ def parse(text: str) -> LoopMarkdown:
     budget_raw = frontmatter.get("budget_usd")
     budget_usd = float(budget_raw) if budget_raw is not None else None
 
+    name = str(frontmatter["name"])
+    agent = str(frontmatter.get("agent") or name)
+    perm_raw = (frontmatter.get("permissions") or "default").lower()
+    try:
+        permissions = PermissionTier(perm_raw)
+    except ValueError as exc:
+        raise LoopMarkdownError(
+            f"frontmatter 'permissions' must be one of inherit|default|strict (got {perm_raw!r})"
+        ) from exc
+
     return LoopMarkdown(
         raw=text,
         frontmatter=frontmatter,
         sections=sections,
-        name=str(frontmatter["name"]),
+        name=name,
         trigger=str(frontmatter["trigger"]),
         max_iterations=int(frontmatter["max_iterations"]),
+        agent=agent,
+        permissions=permissions,
         budget_usd=budget_usd,
         objective=dict(frontmatter.get("objective", {}) or {}),
         required_refs=required_refs,

@@ -1,55 +1,13 @@
 ---
 name: pr-review-loop
-version: "0.1.0"
-description: |
-  Review-driven repair loop. Reviewer reads the PR, emits structured findings
-  (blockers + suggested fixes). Loop iterates until blockers reach zero and
-  CI is green, or until iteration / diff caps trip. First fully-automated
-  loop for phantom-ink — Phase B of the loop-engineering plan.
-intent:
-  outcome: This PR should be mergeable per repo conventions and the linked issue.
-  verification:
-    - gh pr checks $pr_number --watch
-    - all reviewer blockers resolved
-  non_goals:
-    - modifying files outside the PR's changed paths
-    - merging the PR (merge-queue handles that separately)
-  convergence: "length(findings.blockers) == `0` && observations.ci_status == 'green'"
-  escalation:
-    - predicate: "iteration >= `3`"
-      action: human
-body:
-  nodes:
-    - id: reviewer
-      kind: agent
-      executor: brainbox-session
-      role: reviewer
-      prompt: |
-        Review the pull request referenced in your handoff envelope's
-        artifact_refs (pr_number, repo, head_sha). Emit a final
-        HandoffEnvelope at the end of your session with the schema:
-
-          findings:
-            blockers: [{file, line, reason, suggested_fix?}, ...]
-            approved: bool
-          observations:
-            ci_status: "green" | "red" | "pending"
-            diff_lines: int
-
-        See `brainbox/agents/roles/reviewer.md` for the full reviewer
-        contract. Read prior iterations from the envelope's findings
-        history if it's not iteration 1.
-      requires:
-        - repo:read
-      timeout_ms: 600000
-  edges: []
-convergence_predicate: "length(findings.blockers) == `0` && observations.ci_status == 'green'"
-convergence_metric: "length(findings.blockers)"
+agent: reviewer
+trigger: github:pull_request
 max_iterations: 3
-stop_conditions:
-  - predicate: "observations.diff_lines > `500`"
-    reason: diff_too_large
+budget_usd: 2.00
 permissions: default
+objective:
+  observations.ci_status: green
+  findings.approved: true
 required_refs:
   - name: pr_number
     type: int
@@ -63,52 +21,64 @@ required_refs:
     required: false
 ---
 
-# pr-review-loop
+# Role
 
-A review-driven repair loop for incoming PRs. The first loop phantom-ink
-runs end-to-end, and the first place we exercise loop engineering on real
-software work.
+You are a code reviewer for the phantom-ink repo. Read the pull
+request referenced by `artifact_refs.pr_number` on `artifact_refs.repo`
+and emit a HandoffEnvelope describing what would block merging.
 
-## When to use this template
+Find blockers, not nits. A blocker is something a maintainer would
+refuse to merge: a real bug, a regression, a missing test for a
+high-risk change, a security issue, a contract violation. Style
+preferences are not blockers.
 
-- A PR has opened or been updated on a repo the operator has opted into.
-- The PR is small enough to be reviewable in one pass (diff under ~500 lines
-  — past that, the `diff_too_large` stop condition fires by design).
-- The reviewing agent has read access to the repo and to CI.
+Each iteration: read the prior envelope (if not iteration 1) so you
+don't re-flag what was already resolved. Emit a final envelope with:
 
-## What this loop does NOT do
+    findings:
+      blockers:
+        - {file, line, reason, suggested_fix?}
+      approved: bool
+    observations:
+      ci_status: green | red | pending
+      diff_lines: int
+      files_touched: [string]
 
-- **Merge.** That's the merge-queue agent's job; this loop only converges
-  on "should be mergeable" and hands off.
-- **Repair.** Phase B1 ships a single-node review-only iteration. The
-  worker node that applies suggested fixes lands when multi-node flowchart
-  traversal lands (post-A3b).
-- **Author commits.** No write access in `permissions: default`; the
-  reviewer reads and emits findings only.
+See `brainbox/agents/roles/reviewer.md` for the full contract.
 
-## Convergence and the metric
+# When to stop
 
-- **Convergence predicate** — `length(findings.blockers) == 0 && observations.ci_status == 'green'`. Both must be true. A reviewer who reports zero blockers on a PR with red CI does NOT converge; CI is the second signal that addresses Kilo's "overfitting to tests" failure mode in reverse — we don't trust the agent alone, we require the world to agree.
-- **Convergence metric** — `length(findings.blockers)`. Charted per iteration in the future Loops Panel. Non-decreasing across two consecutive iterations triggers thrash detection.
+- CI is green on the PR's `head_sha` (objective check covers this).
+- The reviewer's findings block reports `approved: true` with an empty
+  `blockers` list (objective check covers this).
+- The same file has not been touched in more than two consecutive
+  iterations — a sign the loop is thrashing on it.
+- No new blockers have appeared compared to the prior iteration.
 
-## Stop conditions
+# When to escalate
 
-- `observations.diff_lines > 500` → `diff_too_large`. A PR that grew past
-  the cap during the loop's lifetime stops; the operator decides whether
-  to split it and retry.
+- A blocker recurs in two consecutive iterations with the same
+  `file:line:reason` — the loop cannot move past it alone.
+- The PR touched a file under `/security/`, `/credentials/`, or any
+  path containing `secret` — these require human review regardless of
+  the loop's verdict.
+- The PR diff grew past 500 lines during the loop's lifetime — the
+  reviewer's confidence drops at scale and a maintainer should split
+  it.
+- The reviewer requested credentials, tokens, or anything in
+  `~/.config/` to complete its task — the loop's permission tier
+  should never need that.
 
-## Escalation
+# Tools
 
-- `iteration >= 3` → `human`. The default cap is conservative; once we have
-  data from real loops we'll tune it. Human escalation fires a
-  `bus.attention` envelope through the existing attention pipeline.
+- `gh pr view`, `gh pr checks`, `gh pr diff` — for reading the PR
+- repo r/o on the PR's head ref
+- the second-brain via `brain_recall` — for prior-context lookups
 
-## Permissions
+# Notes
 
-`default` tier:
-- Reviewer node inherits read-level profile scopes (`repo:read` is
-  explicitly required).
-- No write scopes inherited — the reviewer cannot push, merge, or
-  modify files. This is the prompt-injection mitigation: the most
-  attacker-exposed node (it reads the PR description) has the least
-  blast radius.
+This is phantom-ink's first end-to-end loop. The reviewer node has
+NO write access by design — the most attacker-exposed node (it reads
+PR descriptions, which may be operator-untrusted input) has the
+smallest blast radius. A follow-on worker loop will apply fixes
+once the multi-node body lands.
