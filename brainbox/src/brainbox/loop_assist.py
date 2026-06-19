@@ -416,8 +416,17 @@ async def _with_assist_session(
             failure = exc
             raise
         finally:
-            # Finalize the hub task before tearing the session down so the
-            # row in the Tasks panel reflects the assist outcome.
+            # complete_task / fail_task call lifecycle.recycle internally,
+            # which already stops + removes the container and revokes
+            # tokens. If we ALSO call /api/stop + /api/delete afterwards,
+            # we race against a session that no longer exists — that
+            # second call has been observed to hang for the operator.
+            #
+            # So: when we have a hub task, finalize it and let recycle
+            # own the teardown. Only fall back to the raw stop+delete
+            # path when there's no hub task to finalize (e.g. /api/create
+            # registered the session but no task row got bound).
+            finalized = False
             if hub_task_id is not None:
                 try:
                     if result is not None and failure is None:
@@ -428,20 +437,22 @@ async def _with_assist_session(
                             hub_task_id,
                             error=str(failure) if failure else "assist failed",
                         )
+                    finalized = True
                 except Exception as task_exc:
                     log.warning(
                         "loop_assist.task_finalize_failed",
                         metadata={"task_id": hub_task_id, "reason": str(task_exc)},
                     )
 
-            try:
-                await client.post("/api/stop", json={"name": session_name})
-                await client.post("/api/delete", json={"name": session_name})
-            except Exception as cleanup_exc:
-                log.warning(
-                    "loop_assist.session_cleanup_failed",
-                    metadata={"session": session_name, "reason": str(cleanup_exc)},
-                )
+            if not finalized:
+                try:
+                    await client.post("/api/stop", json={"name": session_name})
+                    await client.post("/api/delete", json={"name": session_name})
+                except Exception as cleanup_exc:
+                    log.warning(
+                        "loop_assist.session_cleanup_failed",
+                        metadata={"session": session_name, "reason": str(cleanup_exc)},
+                    )
 
 
 def _find_hub_task_for_session(session_name: str) -> str | None:

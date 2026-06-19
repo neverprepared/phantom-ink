@@ -429,15 +429,28 @@ Describe what the agent does each iteration.
     return `$${usd.toFixed(3)}`;
   }
 
-  async function deleteTemplate() {
+  // Delete confirmation modal — window.confirm is unreliable in Wails
+  // webviews (same root cause as the + New / window.prompt bug).
+  let deleteModalOpen = $state(false);
+  let deleteBusy = $state(false);
+
+  function openDeleteModal() {
     if (!selectedTemplate) return;
     if (selectedTemplate.origin === 'built-in') {
       notifications.error('Built-in templates can\'t be deleted.');
       return;
     }
-    const ok = window.confirm(`Delete user template ${selectedTemplate.name}?`);
-    if (!ok) return;
-    templateBusy = true;
+    deleteModalOpen = true;
+  }
+
+  function closeDeleteModal() {
+    if (deleteBusy) return;
+    deleteModalOpen = false;
+  }
+
+  async function confirmDeleteTemplate() {
+    if (!selectedTemplate) return;
+    deleteBusy = true;
     try {
       const api = await getApi();
       await api.DeleteLoopTemplate(selectedTemplate.name);
@@ -447,11 +460,12 @@ Describe what the agent does each iteration.
       editorValue = '';
       selectedName = null;
       diagramMermaid = '';
+      deleteModalOpen = false;
       await loadTemplateList();
     } catch (err) {
       notifications.error(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
-      templateBusy = false;
+      deleteBusy = false;
     }
   }
 
@@ -823,7 +837,7 @@ Describe what the agent does each iteration.
               </button>
               <button
                 class="btn-delete"
-                onclick={deleteTemplate}
+                onclick={openDeleteModal}
                 disabled={templateBusy}
               >
                 Delete
@@ -903,6 +917,35 @@ Describe what the agent does each iteration.
     </div>
   {/if}
 </div>
+
+{#if deleteModalOpen && selectedTemplate}
+  <Modal onClose={closeDeleteModal} maxWidth="420px">
+    <div class="new-modal">
+      <h3>Delete template?</h3>
+      <p class="dim modal-help">
+        This permanently removes the user template
+        <code class="modal-code">{selectedTemplate.name}</code>.
+        In-flight loops continue running with their frozen
+        template_text; only new triggers from the Templates list are
+        affected.
+      </p>
+      <div class="modal-actions">
+        <button
+          class="btn-modal-cancel"
+          onclick={closeDeleteModal}
+          disabled={deleteBusy}
+        >Cancel</button>
+        <button
+          class="btn-modal-delete"
+          onclick={confirmDeleteTemplate}
+          disabled={deleteBusy}
+        >
+          {deleteBusy ? 'Deleting…' : 'Delete'}
+        </button>
+      </div>
+    </div>
+  </Modal>
+{/if}
 
 {#if newTemplateModalOpen}
   <Modal onClose={closeNewTemplateModal} maxWidth="420px">
@@ -1545,5 +1588,31 @@ Describe what the agent does each iteration.
   }
   .btn-modal-cancel:hover {
     background: var(--bg-hover);
+  }
+  .btn-modal-delete {
+    border: 1px solid var(--fail);
+    background: var(--fail);
+    color: #fff;
+    padding: 7px 16px;
+    font-size: 13px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .btn-modal-delete:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--fail) 88%, #000);
+  }
+  .btn-modal-delete:disabled,
+  .btn-modal-cancel:disabled,
+  .btn-modal-create:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .modal-code {
+    font-family: var(--font-mono);
+    background: var(--bg-sunken);
+    padding: 1px 6px;
+    border-radius: 3px;
+    color: var(--text);
   }
 </style>
