@@ -227,11 +227,14 @@ func (c *Client) GetLoopTemplateSchema() (map[string]interface{}, error) {
 // LoopAssistRequest is the body shape for POST /api/loops/templates/assist.
 // The ``current_yaml`` field name is preserved for one release for
 // server-side compatibility; semantically it now carries markdown.
+// ``save_as`` (generate only) persists the result server-side so the
+// new template survives the operator navigating away from the panel.
 type LoopAssistRequest struct {
 	Mode            string                 `json:"mode"` // "generate" | "refine" | "explain"
 	Prompt          string                 `json:"prompt"`
 	CurrentMarkdown string                 `json:"current_yaml,omitempty"`
 	Selection       map[string]interface{} `json:"selection,omitempty"`
+	SaveAs          string                 `json:"save_as,omitempty"`
 }
 
 // LoopAssistResult is the response shape. ``yaml`` field name preserved

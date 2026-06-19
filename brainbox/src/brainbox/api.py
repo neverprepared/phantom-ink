@@ -3915,6 +3915,7 @@ async def api_loop_template_assist(request: Request):
         raise HTTPException(status_code=400, detail="prompt is required")
     current_yaml = body.get("current_yaml") or None
     selection = body.get("selection") or None
+    save_as = body.get("save_as") or None
 
     try:
         result = await assist(
@@ -3922,6 +3923,7 @@ async def api_loop_template_assist(request: Request):
             prompt=prompt,
             current_yaml=current_yaml,
             selection=selection,
+            save_as=save_as,
         )
     except AssistError as exc:
         msg = str(exc)

@@ -602,6 +602,7 @@ export namespace brainbox {
 	    prompt: string;
 	    current_yaml?: string;
 	    selection?: Record<string, any>;
+	    save_as?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new LoopAssistRequest(source);
@@ -613,6 +614,7 @@ export namespace brainbox {
 	        this.prompt = source["prompt"];
 	        this.current_yaml = source["current_yaml"];
 	        this.selection = source["selection"];
+	        this.save_as = source["save_as"];
 	    }
 	}
 	export class LoopAssistResult {

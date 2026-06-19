@@ -520,7 +520,7 @@ def _generate_user_prompt(prompt: str, current_yaml: str | None) -> str:
             "replacement informed by it but matching the new request:\n\n"
             f"{current_yaml}"
         )
-    return f"Operator request: {prompt}\n\nProduce a complete LoopSpec YAML."
+    return f"Operator request: {prompt}\n\nProduce a complete loop markdown template (YAML frontmatter + Role / When to stop / When to escalate sections)."
 
 
 def _refine_user_prompt(
@@ -553,7 +553,7 @@ def _refine_user_prompt(
 
 def _explain_user_prompt(prompt: str, excerpt: str) -> str:
     if excerpt:
-        return f"Operator question: {prompt}\n\nHighlighted YAML:\n```\n{excerpt}\n```"
+        return f"Operator question: {prompt}\n\nHighlighted markdown:\n```\n{excerpt}\n```"
     return f"Operator question: {prompt}"
 
 
@@ -568,17 +568,27 @@ async def assist(
     prompt: str,
     current_yaml: str | None = None,
     selection: dict[str, int] | None = None,
+    save_as: str | None = None,
 ) -> AssistResult:
     """Route a single AI Assist request to the right mode handler.
 
     Modes: 'generate' | 'refine' | 'explain'.
     Refine requires both ``current_yaml`` and ``selection``.
+
+    ``save_as`` (generate only): if set, the produced markdown is
+    persisted server-side via ``loop_template.write_user_template``
+    immediately on success. Operator can navigate away from the editor
+    while assist is in flight and the new template will still appear
+    in the list on next refresh. Ignored on refine/explain.
     """
     if not prompt or not prompt.strip():
         raise AssistError("prompt is required")
 
     if mode == "generate":
-        return await _generate(prompt, current_yaml)
+        result = await _generate(prompt, current_yaml)
+        if save_as and result.yaml and not result.warnings:
+            _persist_generated_template(save_as, result.yaml)
+        return result
     if mode == "refine":
         if not current_yaml or not selection:
             raise AssistError("refine requires current_yaml and selection")
@@ -586,3 +596,27 @@ async def assist(
     if mode == "explain":
         return await _explain(prompt, current_yaml or "", selection)
     raise AssistError(f"unknown mode: {mode!r}")
+
+
+def _persist_generated_template(name: str, markdown: str) -> None:
+    """Write a freshly-generated template to the user templates dir.
+
+    Errors are logged but not raised — the assist result is the
+    operator-facing artifact; a write failure surfaces via the
+    sidebar-refresh path (template won't appear) and operator can
+    still copy the editor content. We don't want to fail the whole
+    assist call just because the file couldn't be written.
+    """
+    from .loop_template import TemplateError, write_user_template
+
+    try:
+        # fork_from_builtin=True is harmless when the name doesn't exist
+        # built-in; it just lets the call succeed when the operator picks
+        # an existing built-in name (rare but supported).
+        write_user_template(name, markdown, fork_from_builtin=True)
+        log.info("loop_assist.template_persisted", metadata={"name": name})
+    except TemplateError as exc:
+        log.warning(
+            "loop_assist.template_persist_failed",
+            metadata={"name": name, "reason": str(exc)},
+        )

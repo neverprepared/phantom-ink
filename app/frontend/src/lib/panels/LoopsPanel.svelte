@@ -315,6 +315,14 @@ Describe what the agent does each iteration.
     explanation = null;
     try {
       const api = await getApi();
+      // Persist the produced markdown server-side when Generate runs
+      // for a freshly-named draft. Saves the operator from losing the
+      // result if they navigate away mid-call.
+      const saveAs =
+        mode === 'generate' && selectedTemplate && savedMarkdown === ''
+          ? selectedTemplate.name
+          : '';
+
       const result = (await api.AssistLoopTemplate({
         mode,
         prompt,
@@ -325,6 +333,7 @@ Describe what the agent does each iteration.
           start_line: editorSelection.startLine,
           end_line: editorSelection.endLine,
         },
+        save_as: saveAs,
       })) as unknown as {
         // Wire key still `yaml` for one release; payload is markdown.
         yaml: string;
@@ -522,8 +531,48 @@ Describe what the agent does each iteration.
   // Mount
   // ---------------------------------------------------------------------------
 
+  // Count of active (pending/running) loops — surfaced as a badge on
+  // the Runs tab so the operator sees in-flight work the moment they
+  // open the panel.
+  let runningLoopCount = $state(0);
+  let runningLoopByName = $state<Record<string, number>>({});
+  let runningPollHandle: number | null = null;
+
+  async function refreshRunningLoops() {
+    try {
+      const api = await getApi();
+      // No status filter → returns all; we count the active ones
+      // client-side so we get a stable badge across the two active
+      // statuses (pending + running). Cheap; payload is slim.
+      const summaries =
+        ((await api.ListLiveLoops('')) ?? []) as Array<{ status: string; name: string }>;
+      let total = 0;
+      const byName: Record<string, number> = {};
+      for (const s of summaries) {
+        if (s.status === 'running' || s.status === 'pending') {
+          total += 1;
+          byName[s.name] = (byName[s.name] ?? 0) + 1;
+        }
+      }
+      runningLoopCount = total;
+      runningLoopByName = byName;
+    } catch (err) {
+      console.warn('LoopsPanel: failed to fetch running loops', err);
+    }
+  }
+
   onMount(() => {
     void loadTemplateList();
+    void refreshRunningLoops();
+    // Poll every 15s — the count is informational, not a control
+    // surface, so we don't need SSE here.
+    runningPollHandle = window.setInterval(refreshRunningLoops, 15_000);
+    return () => {
+      if (runningPollHandle !== null) {
+        window.clearInterval(runningPollHandle);
+        runningPollHandle = null;
+      }
+    };
   });
 
   function originBadge(origin: string): string {
@@ -549,6 +598,11 @@ Describe what the agent does each iteration.
         onclick={() => (activeTab = 'runs')}
       >
         Runs
+        {#if runningLoopCount > 0}
+          <span class="running-badge" title="{runningLoopCount} loop{runningLoopCount === 1 ? '' : 's'} in flight">
+            {runningLoopCount}
+          </span>
+        {/if}
       </button>
       <button
         class="tab"
@@ -584,6 +638,14 @@ Describe what the agent does each iteration.
               onclick={() => selectName(name)}
             >
               <span class="template-name">{name}</span>
+              {#if runningLoopByName[name]}
+                <span
+                  class="running-badge sidebar"
+                  title="{runningLoopByName[name]} in flight"
+                >
+                  {runningLoopByName[name]}
+                </span>
+              {/if}
             </button>
           {/each}
         {/if}
@@ -934,6 +996,33 @@ Describe what the agent does each iteration.
     border-radius: 4px;
     cursor: pointer;
     font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: space-between;
+  }
+  /* Active-run count chip — reused on the Runs tab and per-template in
+     the sidebar so the operator sees in-flight loops at a glance. */
+  .running-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 6px;
+    margin-left: 6px;
+    border-radius: 99px;
+    background: var(--run);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    line-height: 1;
+    /* Pulse so the operator catches in-flight work peripherally. */
+    animation: pulse 2.2s ease-in-out infinite;
+  }
+  .running-badge.sidebar {
+    margin-left: 0;
   }
   .template-item:hover {
     background: var(--color-surface-2, #1a1a1a);
