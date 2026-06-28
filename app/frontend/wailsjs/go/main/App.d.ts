@@ -50,6 +50,8 @@ export function DeleteChannel(arg1:string):Promise<void>;
 
 export function DeleteCollectJob(arg1:string):Promise<void>;
 
+export function DeleteGatewayEnv(arg1:string):Promise<void>;
+
 export function DeleteLoopTemplate(arg1:string):Promise<void>;
 
 export function DeleteOllamaModel(arg1:string):Promise<void>;
@@ -86,6 +88,8 @@ export function FindClaudeProcesses():Promise<Array<main.LocalProcess>>;
 
 export function FocusTerminalTab(arg1:string):Promise<void>;
 
+export function GatewayInfo():Promise<brainbox.GatewayProfilesInfo>;
+
 export function GetAPILogs(arg1:number):Promise<Array<main.LogEntry>>;
 
 export function GetActiveProfile():Promise<main.Profile>;
@@ -115,6 +119,8 @@ export function GetDiskBreakdown():Promise<main.DiskBreakdown>;
 export function GetDiskOverview():Promise<main.DiskOverview>;
 
 export function GetDockerStats():Promise<Array<main.ContainerStat>>;
+
+export function GetGatewayEnv(arg1:string):Promise<Record<string, string>>;
 
 export function GetHiddenProfiles():Promise<Array<string>>;
 
@@ -238,6 +244,8 @@ export function ListTasks(arg1:string,arg2:string,arg3:number):Promise<Array<mai
 
 export function ListUpcomingFires(arg1:number):Promise<Array<main.UpcomingFire>>;
 
+export function MintGatewayToken(arg1:string,arg2:Array<string>,arg3:number):Promise<brainbox.GatewayToken>;
+
 export function OpenLocalSession(arg1:string):Promise<void>;
 
 export function OutboxPending():Promise<number>;
@@ -297,6 +305,8 @@ export function SetActiveProfile(arg1:string):Promise<void>;
 export function SetAgentEnabled(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetConfig(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function SetGatewayEnv(arg1:string,arg2:Record<string, string>):Promise<void>;
 
 export function SetHiddenProfiles(arg1:Array<string>):Promise<void>;
 

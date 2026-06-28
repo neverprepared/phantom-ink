@@ -1,0 +1,85 @@
+package brainbox
+
+import (
+	"fmt"
+	"net/url"
+)
+
+// MCP gateway operator surface (ADR-002 phase 3).
+//
+// These wrap the operator-only /api/gateway/* routes (all require_api_key):
+// the per-profile encrypted env store (phase 1) and Tier-0 token minting
+// (phase 3). The env values are plaintext in transit — they are the operator
+// editing their own secrets; agents never reach these routes. The gateway
+// holds only ciphertext at rest, decrypting with CL_GATEWAY__SECRET_KEY.
+
+// GatewayProfilesInfo is the response from GET /api/gateway/profiles.
+type GatewayProfilesInfo struct {
+	Profiles []string `json:"profiles"` // profiles that have a stored env file
+	Unlocked bool     `json:"unlocked"` // whether the operator key is configured
+}
+
+// GatewayToken is the response from POST /api/gateway/tokens — returned once.
+type GatewayToken struct {
+	Token   string   `json:"token"`
+	Profile string   `json:"profile"`
+	Scope   []string `json:"scope"`
+	Expiry  int64    `json:"expiry"` // epoch ms
+}
+
+// ListGatewayProfiles returns which profiles have a stored env file and
+// whether the gateway is unlocked (operator key configured).
+func (c *Client) ListGatewayProfiles() (GatewayProfilesInfo, error) {
+	var info GatewayProfilesInfo
+	if err := c.get("/api/gateway/profiles", &info); err != nil {
+		return GatewayProfilesInfo{}, err
+	}
+	return info, nil
+}
+
+// GetGatewayProfileEnv returns the decrypted env map for a profile. A profile
+// with no stored env yet returns an empty map (the API 404s; callers treat
+// that as "none stored").
+func (c *Client) GetGatewayProfileEnv(profile string) (map[string]string, error) {
+	var resp struct {
+		Profile string            `json:"profile"`
+		Env     map[string]string `json:"env"`
+	}
+	path := fmt.Sprintf("/api/gateway/profiles/%s/env", url.PathEscape(profile))
+	if err := c.get(path, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Env == nil {
+		resp.Env = map[string]string{}
+	}
+	return resp.Env, nil
+}
+
+// SetGatewayProfileEnv replaces the stored env for a profile (full
+// overwrite; the server re-encrypts the whole map).
+func (c *Client) SetGatewayProfileEnv(profile string, env map[string]string) error {
+	path := fmt.Sprintf("/api/gateway/profiles/%s/env", url.PathEscape(profile))
+	body := map[string]interface{}{"env": env}
+	return c.put(path, body, nil)
+}
+
+// DeleteGatewayProfileEnv removes a profile's stored env file entirely.
+func (c *Client) DeleteGatewayProfileEnv(profile string) error {
+	path := fmt.Sprintf("/api/gateway/profiles/%s/env", url.PathEscape(profile))
+	return c.delete(path, nil)
+}
+
+// MintGatewayToken mints a Tier-0 gateway token bound to a profile with an
+// explicit tool scope (empty = all tools). The token is the secret — it is
+// returned once and not stored in plaintext anywhere.
+func (c *Client) MintGatewayToken(profile string, scope []string, ttlSeconds int) (GatewayToken, error) {
+	if scope == nil {
+		scope = []string{}
+	}
+	body := map[string]interface{}{"profile": profile, "scope": scope, "ttl": ttlSeconds}
+	var tok GatewayToken
+	if err := c.post("/api/gateway/tokens", body, &tok); err != nil {
+		return GatewayToken{}, err
+	}
+	return tok, nil
+}

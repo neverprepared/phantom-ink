@@ -94,6 +94,10 @@ export function DeleteCollectJob(arg1) {
   return window['go']['main']['App']['DeleteCollectJob'](arg1);
 }
 
+export function DeleteGatewayEnv(arg1) {
+  return window['go']['main']['App']['DeleteGatewayEnv'](arg1);
+}
+
 export function DeleteLoopTemplate(arg1) {
   return window['go']['main']['App']['DeleteLoopTemplate'](arg1);
 }
@@ -166,6 +170,10 @@ export function FocusTerminalTab(arg1) {
   return window['go']['main']['App']['FocusTerminalTab'](arg1);
 }
 
+export function GatewayInfo() {
+  return window['go']['main']['App']['GatewayInfo']();
+}
+
 export function GetAPILogs(arg1) {
   return window['go']['main']['App']['GetAPILogs'](arg1);
 }
@@ -224,6 +232,10 @@ export function GetDiskOverview() {
 
 export function GetDockerStats() {
   return window['go']['main']['App']['GetDockerStats']();
+}
+
+export function GetGatewayEnv(arg1) {
+  return window['go']['main']['App']['GetGatewayEnv'](arg1);
 }
 
 export function GetHiddenProfiles() {
@@ -470,6 +482,10 @@ export function ListUpcomingFires(arg1) {
   return window['go']['main']['App']['ListUpcomingFires'](arg1);
 }
 
+export function MintGatewayToken(arg1, arg2, arg3) {
+  return window['go']['main']['App']['MintGatewayToken'](arg1, arg2, arg3);
+}
+
 export function OpenLocalSession(arg1) {
   return window['go']['main']['App']['OpenLocalSession'](arg1);
 }
@@ -588,6 +604,10 @@ export function SetAgentEnabled(arg1, arg2) {
 
 export function SetConfig(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetConfig'](arg1, arg2, arg3);
+}
+
+export function SetGatewayEnv(arg1, arg2) {
+  return window['go']['main']['App']['SetGatewayEnv'](arg1, arg2);
 }
 
 export function SetHiddenProfiles(arg1) {
