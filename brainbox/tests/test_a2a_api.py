@@ -259,6 +259,22 @@ class TestMessageSendModelTarget:
         task = router_module.get_task(resp.json()["result"]["id"])
         assert task.model_target is None
 
+    @pytest.mark.asyncio
+    async def test_metadata_scopes_workspace_profile(self, client, agents, api_key):
+        body = _send_with_metadata(23, {"workspace_profile": "personal"})
+        async with client as c:
+            resp = await c.post("/a2a/worker", json=body, headers={"x-api-key": api_key})
+        task = router_module.get_task(resp.json()["result"]["id"])
+        assert task.workspace_profile == "personal"
+
+    @pytest.mark.asyncio
+    async def test_no_metadata_leaves_profile_none(self, client, agents, api_key):
+        body = _send_with_metadata(24, {})
+        async with client as c:
+            resp = await c.post("/a2a/worker", json=body, headers={"x-api-key": api_key})
+        task = router_module.get_task(resp.json()["result"]["id"])
+        assert task.workspace_profile is None
+
 
 # ---------------------------------------------------------------------------
 # JSON-RPC: tasks/get, tasks/cancel, unknown method
