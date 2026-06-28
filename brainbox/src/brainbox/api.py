@@ -2553,6 +2553,7 @@ async def hub_submit_task(
             priority=body.priority,
             max_attempts=body.max_attempts,
             deadline_ms=body.deadline_ms,
+            model_target=body.model_target,
         )
         _broadcast_sse(json.dumps({"action": "task.submit", "agent": body.agent_name, "repo": body.repo_url or ""}))
         return task.model_dump()

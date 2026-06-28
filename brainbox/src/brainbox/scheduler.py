@@ -30,6 +30,23 @@ _RETRY_CAP_MS = 300_000    # cap at 5 min
 _LOOP_TIMEOUT_S = 5.0      # wake at least every 5 s
 
 
+def _model_pipeline_kwargs(task: "Task") -> dict:
+    """Map a task's optional ModelTarget into run_pipeline llm_* kwargs.
+
+    Returns {} when no target is set, so the dispatch call is byte-for-byte the
+    legacy default path (run_pipeline defaults provider="claude", then provision
+    applies agent-level defaults).
+    """
+    mt = task.model_target
+    if mt is None:
+        return {}
+    return {
+        "llm_provider": mt.provider or "claude",
+        "llm_model": mt.model,
+        "llm_effort": mt.effort,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -232,6 +249,7 @@ async def _dispatch_pending(task: Task) -> None:
             runner=resolved_runner,
             backend=task.backend,
             extra_env=extra_env or None,
+            **_model_pipeline_kwargs(task),
         )
     except Exception as exc:
         task.attempts += 1

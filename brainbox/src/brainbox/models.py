@@ -151,6 +151,22 @@ class SuspensionKind(str, Enum):
     CHILD = "child"        # variant of JOIN with N=1 (single specific child)
 
 
+class ModelTarget(BaseModel):
+    """Per-task LLM selection.
+
+    Carried on a Task; the scheduler unpacks it into the provider/model/effort
+    the session is provisioned with. When absent (None), the task uses the
+    agent/global defaults exactly as before — see scheduler dispatch.
+
+    Provider is a 3-value Literal today; widen it (and add an env branch in
+    lifecycle) to support gemini/aider/opencode later.
+    """
+
+    provider: Literal["claude", "ollama", "codex"] | None = None
+    model: str | None = None
+    effort: Literal["low", "medium", "high"] | None = None
+
+
 class TaskCreate(BaseModel):
     description: str
     agent_name: str
@@ -164,6 +180,7 @@ class TaskCreate(BaseModel):
     priority: int = 0                                      # higher = dispatched sooner
     max_attempts: int = 1                                  # permanent failure after N dispatch failures
     deadline_ms: int | None = None                         # epoch ms; fail if not RUNNING by then
+    model_target: ModelTarget | None = None                # per-task LLM provider/model/effort
 
 
 class Task(BaseModel):
@@ -211,6 +228,9 @@ class Task(BaseModel):
     loop_iteration: int = 0
     permission_tier: str | None = None  # "inherit" | "default" | "strict"
     node_requires: list[str] = Field(default_factory=list)
+
+    # Per-task LLM selection (Phase 2). None → agent/global defaults (unchanged).
+    model_target: ModelTarget | None = None
 
 
 # ---------------------------------------------------------------------------
