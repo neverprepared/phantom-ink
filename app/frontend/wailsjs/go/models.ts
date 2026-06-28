@@ -617,6 +617,38 @@ export namespace brainbox {
 	        this.tags = source["tags"];
 	    }
 	}
+	export class GatewayProfilesInfo {
+	    profiles: string[];
+	    unlocked: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new GatewayProfilesInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profiles = source["profiles"];
+	        this.unlocked = source["unlocked"];
+	    }
+	}
+	export class GatewayToken {
+	    token: string;
+	    profile: string;
+	    scope: string[];
+	    expiry: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new GatewayToken(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.token = source["token"];
+	        this.profile = source["profile"];
+	        this.scope = source["scope"];
+	        this.expiry = source["expiry"];
+	    }
+	}
 	export class HealthStatus {
 	    status: string;
 	    message: string;

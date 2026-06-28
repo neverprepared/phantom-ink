@@ -6,6 +6,7 @@
   import { getProfileColor, profileColorStyle, PROFILE_PALETTE } from '../utils/profileColors';
   import PieChart from '../components/PieChart.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import GatewayEnvEditor from '../components/GatewayEnvEditor.svelte';
 
   // --- Profile image state ---
   type ImageStatus = { configured: boolean; exists: boolean; tag: string; digest: string; error?: string; built_at?: string };
@@ -45,12 +46,25 @@
   let confirmDelete = $state<string | null>(null);
   let backups = $state<string[]>([]);
 
+  // MCP gateway (ADR-002): whether the operator key is configured, so the
+  // per-profile secrets editor renders the form vs a "locked" hint.
+  let gatewayUnlocked = $state(false);
+
   onMount(async () => {
-    await Promise.all([refreshProfiles(), loadBackups(), refreshDisk(), loadProfileColors()]);
+    await Promise.all([refreshProfiles(), loadBackups(), refreshDisk(), loadProfileColors(), loadGatewayInfo()]);
     for (const p of profileState.profiles) {
       checkImageStatus(p.name);
     }
   });
+
+  async function loadGatewayInfo() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const info = await a.GatewayInfo();
+      gatewayUnlocked = info?.unlocked ?? false;
+    } catch { /* gateway not configured — editor shows locked hint */ }
+  }
 
   async function loadProfileColors() {
     const a = await getApi();
@@ -455,6 +469,8 @@
           {#if status?.exists && status.digest}
             <div class="image-digest" title={status.digest}>{status.digest.replace(/^sha256:/, '').slice(0, 12)}</div>
           {/if}
+
+          <GatewayEnvEditor profile={p.name} unlocked={gatewayUnlocked} />
 
           {#if logs.length > 0}
             <button class="logs-toggle" onclick={() => imageLogsOpen[p.name] = !logsOpen}>

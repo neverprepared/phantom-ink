@@ -129,6 +129,11 @@ func (c *Client) patch(path string, body interface{}, result interface{}) error 
 	return c.do(http.MethodPatch, path, body, result)
 }
 
+// put is a convenience wrapper for PUT requests.
+func (c *Client) put(path string, body interface{}, result interface{}) error {
+	return c.do(http.MethodPut, path, body, result)
+}
+
 // delete is a convenience wrapper for DELETE requests.
 func (c *Client) delete(path string, result interface{}) error {
 	return c.do(http.MethodDelete, path, nil, result)
