@@ -2,6 +2,8 @@
 
 This document describes the current orchestration flow from host to container, including query execution, event streaming, and monitoring.
 
+> **Future direction:** see [ADR-001 — Agent Orchestration Direction](./ADR-001-agent-orchestration.md) for the decided roadmap (A2A façade + per-step model router; defer LangGraph).
+
 ## System Overview
 
 ```mermaid
