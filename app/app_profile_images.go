@@ -14,6 +14,7 @@ type ProfileImageBuildRequest struct {
 	Profile     string `json:"profile"`
 	BaseImage   string `json:"base_image"`   // defaults to "brainbox" if empty
 	RegistryURL string `json:"registry_url"` // overrides brainbox API registry if set
+	NoCache     bool   `json:"no_cache"`     // drop local base image + re-pull before building
 }
 
 // ProfileImageBuildStatus is emitted as a runtime event during a build.
@@ -65,15 +66,7 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 	// Resolve registry URL: use request override, then fall back to API info.
 	registryURL := req.RegistryURL
 	if registryURL == "" {
-		if status, err := a.client.GetProfileImageStatus(req.Profile); err == nil && status.Configured {
-			// Extract registry URL from the tag (strip /brainbox-profile:name suffix)
-			if tag := status.Tag; tag != "" {
-				// tag = "registry/brainbox-profile:name" → registry = everything before /brainbox-profile
-				if idx := len(tag) - len("/brainbox-profile:"+req.Profile); idx > 0 {
-					registryURL = tag[:idx]
-				}
-			}
-		}
+		registryURL = a.resolveRegistryURL(req.Profile)
 	}
 	if registryURL == "" {
 		return fmt.Errorf("no registry URL configured — set CL_REGISTRY_URL on the brainbox server")
@@ -117,6 +110,7 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 		RegistryPassword: registryPassword,
 		MCPCatalogPath:   prof.WorkspaceHome + "/code/phantom-ink/reflex/plugins/reflex/mcp-catalog.json",
 		OTLPHost:         a.db.GetSetting(settingOTLPHost, ""),
+		NoCache:          req.NoCache,
 		Progress: func(msg string) {
 			emit(msg, false, nil, nil)
 		},
@@ -140,6 +134,71 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 	}
 
 	emit("Build complete", true, nil, &result)
+	return nil
+}
+
+// resolveRegistryURL derives the private registry base URL from the profile's
+// image status (the tag is "<registry>/brainbox-profile:<name>"). Returns ""
+// when no registry is configured.
+func (a *App) resolveRegistryURL(profile string) string {
+	status, err := a.client.GetProfileImageStatus(profile)
+	if err != nil || !status.Configured || status.Tag == "" {
+		return ""
+	}
+	if idx := len(status.Tag) - len("/brainbox-profile:"+profile); idx > 0 {
+		return status.Tag[:idx]
+	}
+	return ""
+}
+
+// BaseImageBuildRequest specifies a base brainbox image rebuild.
+type BaseImageBuildRequest struct {
+	Profile string `json:"profile"`  // used to resolve repo root + registry
+	NoCache bool   `json:"no_cache"` // pass --no-cache to docker build
+}
+
+// RebuildBaseImage rebuilds the brainbox base image (the layer holding
+// ttyd-wrapper.sh and the Dockerfile config) and pushes it to the registry as
+// "<registry>/brainbox:latest". This is the upstream half of the chain: a
+// profile rebuild only picks up Dockerfile/script changes after the base is
+// rebuilt and pushed here. Progress streams as "base-image:progress" events.
+func (a *App) RebuildBaseImage(req BaseImageBuildRequest) error {
+	if req.Profile == "" {
+		return fmt.Errorf("profile name is required to locate the repo and registry")
+	}
+	prof, err := a.findProfile(req.Profile)
+	if err != nil {
+		return fmt.Errorf("find profile: %w", err)
+	}
+
+	registryURL := a.resolveRegistryURL(req.Profile)
+	if registryURL == "" {
+		return fmt.Errorf("no registry URL configured — set CL_REGISTRY_URL on the brainbox server")
+	}
+
+	emit := func(step string, done bool, buildErr error) {
+		status := ProfileImageBuildStatus{Profile: req.Profile, Step: step, Done: done}
+		if buildErr != nil {
+			status.Error = buildErr.Error()
+		}
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "base-image:progress", status)
+		}
+	}
+
+	buildErr := profileimage.BuildBase(profileimage.BaseBuildOptions{
+		RepoRoot:         prof.WorkspaceHome + "/code/phantom-ink",
+		RegistryURL:      registryURL,
+		RegistryUsername: a.db.GetSetting(settingRegistryUsername, ""),
+		RegistryPassword: a.db.GetSetting(settingRegistryPassword, ""),
+		NoCache:          req.NoCache,
+		Progress:         func(msg string) { emit(msg, false, nil) },
+	})
+	if buildErr != nil {
+		emit("Base build failed", true, buildErr)
+		return buildErr
+	}
+	emit("Base image rebuilt and pushed", true, nil)
 	return nil
 }
 
