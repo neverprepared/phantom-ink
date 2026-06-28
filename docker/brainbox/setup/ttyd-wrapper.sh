@@ -41,6 +41,16 @@ if 'claude_md' in d:
 " 2>/dev/null
 fi
 
+# Claude Code reads ~/.claude.json (CLAUDE_CONFIG_DIR is unset in the container),
+# but the canonical profile config lives at ~/.claude/.claude.json — the host
+# CLAUDE_CONFIG_DIR layout, written by the decrypt step above. Copy it into
+# place, overwriting any stale file baked into the image, so Claude always
+# loads the profile config. Must be a real file: Claude Code does not reliably
+# honor a symlinked ~/.claude.json.
+if [ -f "$HOME/.claude/.claude.json" ]; then
+    cp -f "$HOME/.claude/.claude.json" "$HOME/.claude.json"
+fi
+
 # In hardened mode secrets land in /run/secrets/ rather than ~/.env.
 # Read the vars we need from there if not already in the environment.
 _secret() {

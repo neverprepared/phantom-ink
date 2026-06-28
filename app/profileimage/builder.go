@@ -12,6 +12,7 @@
 package profileimage
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"encoding/base64"
@@ -54,6 +55,11 @@ type BuildOptions struct {
 	// CLAUDE_CODE_ENABLE_TELEMETRY is intentionally excluded — that remains
 	// user opt-in, set in the profile .env or shell environment.
 	OTLPHost string
+	// NoCache forces a fresh base image before building: any local copy of
+	// BaseImage is removed so the subsequent `docker pull` re-fetches the
+	// current registry digest. Use after pushing a rebuilt base so the profile
+	// build doesn't reuse a stale locally-cached base layer.
+	NoCache bool
 	// Progress receives status messages during the build.
 	Progress func(string)
 }
@@ -94,7 +100,12 @@ func Build(opts BuildOptions) (BuildResult, error) {
 		return BuildResult{}, fmt.Errorf("generate env key: %w", err)
 	}
 
-	// 1. Pull base image.
+	// 1. Pull base image. With NoCache, drop any local copy first so the pull
+	// re-fetches the current registry digest instead of reusing a stale layer.
+	if opts.NoCache {
+		opts.progress("Removing cached base image…")
+		_ = run("docker", "rmi", "-f", opts.BaseImage)
+	}
 	opts.progress("Pulling base image…")
 	if err := run("docker", "pull", opts.BaseImage); err != nil {
 		return BuildResult{}, fmt.Errorf("pull base image: %w", err)
@@ -539,18 +550,99 @@ func injectClaudeCredentials(container string, opts BuildOptions, key string) er
 
 // registryLogin runs docker login for the configured registry.
 func registryLogin(opts BuildOptions) error {
-	if opts.RegistryUsername == "" {
+	return dockerLogin(opts.RegistryURL, opts.RegistryUsername, opts.RegistryPassword)
+}
+
+// dockerLogin authenticates to a registry. A blank username is treated as an
+// anonymous registry and skipped.
+func dockerLogin(url, username, password string) error {
+	if username == "" {
 		return nil // anonymous registry, no login needed
 	}
 	cmd := exec.Command("docker", "login",
-		"--username", opts.RegistryUsername,
+		"--username", username,
 		"--password-stdin",
-		opts.RegistryURL,
+		url,
 	)
-	cmd.Stdin = strings.NewReader(opts.RegistryPassword)
+	cmd.Stdin = strings.NewReader(password)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("docker login: %w — %s", err, string(out))
+	}
+	return nil
+}
+
+// BaseBuildOptions controls a rebuild of the brainbox *base* image.
+type BaseBuildOptions struct {
+	// RepoRoot is the absolute path to the phantom-ink checkout containing
+	// brainbox/scripts/build.sh and docker/brainbox/Dockerfile.
+	RepoRoot string
+	// RegistryURL is the private registry to tag and push the base image to,
+	// as "<RegistryURL>/brainbox:latest". Required — the profile build pulls
+	// the base from here.
+	RegistryURL string
+	// RegistryUsername and RegistryPassword authenticate the push.
+	RegistryUsername string
+	RegistryPassword string
+	// NoCache passes --no-cache to `docker build` (NO_CACHE=1 to build.sh).
+	NoCache bool
+	// Progress receives each line of build output.
+	Progress func(string)
+}
+
+func (o *BaseBuildOptions) progress(msg string) {
+	if o.Progress != nil {
+		o.Progress(msg)
+	}
+}
+
+// BuildBase rebuilds the brainbox base image via brainbox/scripts/build.sh and
+// pushes it to the registry as "<RegistryURL>/brainbox:latest". It streams the
+// script's output line-by-line to Progress so the UI can show live logs.
+//
+// This is the upstream half of the chain: the script (e.g. ttyd-wrapper.sh) and
+// Dockerfile only reach a running container after the base is rebuilt here and
+// then a profile image is rebuilt on top of it. Output streams to Progress.
+func BuildBase(opts BaseBuildOptions) error {
+	if opts.RegistryURL == "" {
+		return fmt.Errorf("registry URL is required")
+	}
+	script := filepath.Join(opts.RepoRoot, "brainbox", "scripts", "build.sh")
+	if _, err := os.Stat(script); err != nil {
+		return fmt.Errorf("build script not found at %s: %w", script, err)
+	}
+
+	// Authenticate before the script pushes.
+	opts.progress("Logging in to registry…")
+	if err := dockerLogin(opts.RegistryURL, opts.RegistryUsername, opts.RegistryPassword); err != nil {
+		return err
+	}
+
+	cmd := exec.Command("bash", script)
+	cmd.Dir = opts.RepoRoot
+	cmd.Env = append(os.Environ(), "REGISTRY_URL="+opts.RegistryURL)
+	if opts.NoCache {
+		cmd.Env = append(cmd.Env, "NO_CACHE=1")
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("stdout pipe: %w", err)
+	}
+	// Merge stderr into the same pipe so build/push errors stream too.
+	// StdoutPipe set cmd.Stdout to the pipe's write end; reuse it for Stderr.
+	cmd.Stderr = cmd.Stdout
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start build.sh: %w", err)
+	}
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		opts.progress(scanner.Text())
+	}
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("build.sh failed: %w", err)
 	}
 	return nil
 }

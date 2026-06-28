@@ -26,6 +26,8 @@
   let imageBuilding = $state<Record<string, boolean>>({});
   let imageLogs = $state<Record<string, string[]>>({});
   let imageLogsOpen = $state<Record<string, boolean>>({});
+  let noCache = $state<Record<string, boolean>>({});
+  let baseBuilding = $state<Record<string, boolean>>({});
 
   let profiles = $derived(profileState.profiles);
   let activeProfile = $derived(profileState.active);
