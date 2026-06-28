@@ -27,12 +27,14 @@ Task continuation: a task an agent has parked for input surfaces as A2A
 calling ``message/send`` again with the same ``taskId``, which maps onto
 ``router.resume_task`` (the supplied text lands in ``resume_payload``).
 
-Model selection (brainbox extension): a ``message/send`` may carry
-``message.metadata.{provider,model,effort}`` to pick the LLM for the new
-task (claude/ollama/codex) — mapped onto a per-task ``ModelTarget``. So
-"Claude drafts, Ollama reviews" is just a second send with a different
-provider. ``metadata`` is A2A's free-form extension point, so this stays
-spec-compatible.
+Brainbox extensions via ``message.metadata`` (A2A's free-form extension
+point, so this stays spec-compatible):
+  - ``{provider,model,effort}`` — picks the LLM for the new task
+    (claude/ollama/codex), mapped onto a per-task ``ModelTarget``. So
+    "Claude drafts, Ollama reviews" is just a second send with a different
+    provider.
+  - ``{workspace_profile,workspace_home}`` — scopes the task to a profile.
+    Profiles are foundational; absent these the task is global.
 
 Deliberately NOT mapped: brainbox hub agent-to-agent messaging
 (``messages.route``). A2A has no separate "message bus" method — its
@@ -249,12 +251,21 @@ async def _handle_message_send(req_id: Any, agent: str, params: dict) -> dict[st
 
     # New task. contextId continuity across messages is a follow-up; a fresh
     # send starts a new task (its own job root) to avoid router parent/child
-    # assumptions. Optional metadata picks the provider/model for this task.
+    # assumptions. Optional metadata picks the provider/model and the
+    # workspace profile this task runs under (profiles are foundational —
+    # absent a profile the task is global, which is rarely what a caller wants).
     try:
         model_target = _model_target_from_metadata(message)
     except ValidationError as exc:
         return _jsonrpc_err(req_id, _INVALID_PARAMS, f"invalid model target: {exc.errors()[0]['msg']}")
-    task = await task_router.submit_task(text, agent, model_target=model_target)
+    md = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    task = await task_router.submit_task(
+        text,
+        agent,
+        workspace_profile=md.get("workspace_profile"),
+        workspace_home=md.get("workspace_home"),
+        model_target=model_target,
+    )
     return _jsonrpc_ok(req_id, _to_a2a_task(task))
 
 
