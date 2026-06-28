@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import docker
-import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -3491,7 +3490,6 @@ async def api_ollama_models(_key=Depends(require_api_key)):
     if inst is None:
         raise HTTPException(status_code=503, detail="no Ollama instances available")
     try:
-        loop = asyncio.get_running_loop()
         models = await ollama_list_models(
             inst.url, headers=inst.request_headers(), verify=inst.verify_tls,
         )
@@ -3520,7 +3518,6 @@ async def api_ollama_pull(body: OllamaPullRequest, _key=Depends(require_api_key)
         raise HTTPException(status_code=503, detail="no Ollama instances available")
     pool.acquire(inst)
     try:
-        loop = asyncio.get_running_loop()
         status = await ollama_pull_model(
             body.name, inst.url, headers=inst.request_headers(), verify=inst.verify_tls,
         )
@@ -3539,7 +3536,6 @@ async def api_ollama_delete_model(name: str, _key=Depends(require_api_key)):
     if inst is None:
         raise HTTPException(status_code=503, detail="no Ollama instances available")
     try:
-        loop = asyncio.get_running_loop()
         status = await ollama_delete_model(
             name, inst.url, headers=inst.request_headers(), verify=inst.verify_tls,
         )
@@ -3598,7 +3594,6 @@ async def api_ssh_agent_relay(websocket):
     """
     import asyncio
 
-    from fastapi import WebSocket
     from fastapi.websockets import WebSocketState
 
     ws: WebSocket = websocket
