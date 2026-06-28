@@ -27,6 +27,13 @@ Task continuation: a task an agent has parked for input surfaces as A2A
 calling ``message/send`` again with the same ``taskId``, which maps onto
 ``router.resume_task`` (the supplied text lands in ``resume_payload``).
 
+Model selection (brainbox extension): a ``message/send`` may carry
+``message.metadata.{provider,model,effort}`` to pick the LLM for the new
+task (claude/ollama/codex) — mapped onto a per-task ``ModelTarget``. So
+"Claude drafts, Ollama reviews" is just a second send with a different
+provider. ``metadata`` is A2A's free-form extension point, so this stays
+spec-compatible.
+
 Deliberately NOT mapped: brainbox hub agent-to-agent messaging
 (``messages.route``). A2A has no separate "message bus" method — its
 ``message/send`` *is* the message primitive — so there is nothing to adapt
@@ -43,10 +50,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
 
+from pydantic import ValidationError
+
 from . import registry
 from . import router as task_router
 from .auth import require_capability
-from .models import AgentDefinition, Task, TaskStatus
+from .models import AgentDefinition, ModelTarget, Task, TaskStatus
 
 # Targeted A2A protocol version (JSON-RPC binding). See module docstring.
 PROTOCOL_VERSION = "0.2.5"
@@ -198,6 +207,21 @@ async def a2a_rpc(agent: str, request: Request) -> dict[str, Any]:
     return _jsonrpc_err(req_id, _METHOD_NOT_FOUND, f"Method not found: {method}")
 
 
+def _model_target_from_metadata(message: dict) -> ModelTarget | None:
+    """Build a ModelTarget from ``message.metadata.{provider,model,effort}``.
+
+    Returns None when no model keys are present. Raises ValidationError on an
+    unknown provider/effort (caller maps that to JSON-RPC invalid-params).
+    """
+    md = message.get("metadata")
+    if not isinstance(md, dict):
+        return None
+    fields = {k: md[k] for k in ("provider", "model", "effort") if md.get(k) is not None}
+    if not fields:
+        return None
+    return ModelTarget(**fields)
+
+
 async def _handle_message_send(req_id: Any, agent: str, params: dict) -> dict[str, Any]:
     message = params.get("message") or {}
     parts = message.get("parts") or []
@@ -225,8 +249,12 @@ async def _handle_message_send(req_id: Any, agent: str, params: dict) -> dict[st
 
     # New task. contextId continuity across messages is a follow-up; a fresh
     # send starts a new task (its own job root) to avoid router parent/child
-    # assumptions.
-    task = await task_router.submit_task(text, agent)
+    # assumptions. Optional metadata picks the provider/model for this task.
+    try:
+        model_target = _model_target_from_metadata(message)
+    except ValidationError as exc:
+        return _jsonrpc_err(req_id, _INVALID_PARAMS, f"invalid model target: {exc.errors()[0]['msg']}")
+    task = await task_router.submit_task(text, agent, model_target=model_target)
     return _jsonrpc_ok(req_id, _to_a2a_task(task))
 
 

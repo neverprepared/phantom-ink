@@ -219,6 +219,48 @@ class TestMessageSendContinuation:
 
 
 # ---------------------------------------------------------------------------
+# JSON-RPC: message/send model selection via metadata (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def _send_with_metadata(req_id, metadata, text="go"):
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "method": "message/send",
+        "params": {
+            "message": {"role": "user", "parts": [{"kind": "text", "text": text}], "metadata": metadata}
+        },
+    }
+
+
+class TestMessageSendModelTarget:
+    @pytest.mark.asyncio
+    async def test_metadata_selects_provider(self, client, agents, api_key):
+        body = _send_with_metadata(20, {"provider": "ollama", "model": "qwen3:8b"})
+        async with client as c:
+            resp = await c.post("/a2a/worker", json=body, headers={"x-api-key": api_key})
+        task = router_module.get_task(resp.json()["result"]["id"])
+        assert task.model_target.provider == "ollama"
+        assert task.model_target.model == "qwen3:8b"
+
+    @pytest.mark.asyncio
+    async def test_invalid_provider_metadata_is_invalid_params(self, client, agents, api_key):
+        body = _send_with_metadata(21, {"provider": "gpt5"})
+        async with client as c:
+            resp = await c.post("/a2a/worker", json=body, headers={"x-api-key": api_key})
+        assert resp.json()["error"]["code"] == -32602
+
+    @pytest.mark.asyncio
+    async def test_no_metadata_leaves_target_none(self, client, agents, api_key):
+        body = _send_with_metadata(22, {})
+        async with client as c:
+            resp = await c.post("/a2a/worker", json=body, headers={"x-api-key": api_key})
+        task = router_module.get_task(resp.json()["result"]["id"])
+        assert task.model_target is None
+
+
+# ---------------------------------------------------------------------------
 # JSON-RPC: tasks/get, tasks/cancel, unknown method
 # ---------------------------------------------------------------------------
 
