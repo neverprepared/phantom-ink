@@ -210,6 +210,19 @@ export const featureFlags = {
 };
 
 // ---------------------------------------------------------------------------
+// Integration state — drives conditional sidebar entries (e.g. Files panel
+// only shows when MinIO is configured + reachable). AppShell.svelte
+// refreshes this on mount and on a 30s timer.
+// ---------------------------------------------------------------------------
+
+let _minioEnabled = $state(false);
+
+export const integrationState = {
+  get minioEnabled() { return _minioEnabled; },
+  set minioEnabled(v: boolean) { _minioEnabled = v; },
+};
+
+// ---------------------------------------------------------------------------
 // Profile color overrides (profile name → palette index string)
 // ---------------------------------------------------------------------------
 
