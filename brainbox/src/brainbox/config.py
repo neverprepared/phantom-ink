@@ -171,6 +171,24 @@ class MinioSettings(BaseSettings):
     profile_prefix: str = ""
 
 
+class GatewaySettings(BaseSettings):
+    """MCP gateway (ADR-002) — per-profile encrypted env store.
+
+    ``secret_key`` is the single operator-held key used to encrypt/decrypt
+    each profile's env at rest — an **age passphrase** (any strong string;
+    encryption uses age via pyrage, passphrase mode). Set
+    ``CL_GATEWAY__SECRET_KEY`` on the host where the gateway runs; it lives
+    only in the process env/memory. Empty = the store is locked (no
+    encrypt/decrypt).
+
+    ``secrets_dir`` holds the encrypted per-profile blobs; empty =
+    ``<config_dir>/gateway/secrets``.
+    """
+
+    secret_key: SecretStr = SecretStr("")
+    secrets_dir: str = ""
+
+
 def _qdrant_url() -> str:
     import os
 
@@ -319,6 +337,7 @@ class Settings(BaseSettings):
     cosign: CosignSettings = Field(default_factory=CosignSettings)
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     minio: MinioSettings = Field(default_factory=MinioSettings)
+    gateway: GatewaySettings = Field(default_factory=GatewaySettings)
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
     profile: ProfileSettings = Field(default_factory=ProfileSettings)
     hub: HubSettings = Field(default_factory=HubSettings)
