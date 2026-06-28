@@ -1,7 +1,7 @@
 #!/bin/sh
 # Stop hook — at session end, remind if web research is unstored.
 # Honors REFLEX_MEMORY_ENFORCE=hard|soft|off (default soft).
-#   hard → block stop until memory_store/memory_update/task_complete is called
+#   hard → block stop until brain_perceive/brain_learn/task_complete is called
 #   soft → warn only, don't block
 #   off  → exit immediately, no check
 

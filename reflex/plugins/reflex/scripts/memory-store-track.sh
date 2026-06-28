@@ -1,8 +1,8 @@
 #!/bin/sh
 # PostToolUse — track whether the session has unstored web research.
 # Scoped via hooks.json matcher to:
-#   WebSearch | WebFetch                         (sets pending=true)
-#   mcp__phantom-brain__brain_commit             (clears pending)
+#   WebSearch | WebFetch                                   (sets pending=true)
+#   mcp__phantom-brain__brain_perceive | brain_learn       (clears pending)
 #
 # State file: ${TMPDIR:-/tmp}/reflex-memory-state/{session_id}.json
 # Pairs with memory-store-stop, which reads this and gates session end.
@@ -58,7 +58,7 @@ case "$TOOL_NAME" in
             '. + {pending: true, last_web_at: $ts, last_url: $u}')
         write_state "$NEW"
         ;;
-    mcp__phantom-brain__brain_commit)
+    mcp__phantom-brain__brain_perceive|mcp__phantom-brain__brain_learn)
         EXISTING=$(read_state)
         # Only update if state file exists and has content
         if [ "$EXISTING" != '{}' ]; then

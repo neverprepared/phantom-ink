@@ -1,6 +1,7 @@
 #!/bin/sh
-# PostToolUse hook — sets the memory-checked flag after memory_search completes.
-# This unlocks the next WebSearch/WebFetch for this session.
+# PostToolUse hook — sets the memory-checked flag after a memory read
+# (brain_recall or brain_fetch) completes. Either counts as "consulted
+# memory first" and unlocks the next WebSearch/WebFetch for this session.
 
 set -eu
 

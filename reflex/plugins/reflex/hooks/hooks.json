@@ -59,7 +59,7 @@
         ]
       },
       {
-        "matcher": "mcp__phantom-brain__brain_recall",
+        "matcher": "mcp__phantom-brain__brain_recall|mcp__phantom-brain__brain_fetch",
         "hooks": [
           {
             "type": "command",
@@ -69,17 +69,7 @@
         ]
       },
       {
-        "matcher": "WebFetch",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/brain-perceive-hook.sh",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "WebSearch|WebFetch|mcp__phantom-brain__brain_synthesize",
+        "matcher": "WebSearch|WebFetch|mcp__phantom-brain__brain_perceive|mcp__phantom-brain__brain_learn",
         "hooks": [
           {
             "type": "command",

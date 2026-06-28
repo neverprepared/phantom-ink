@@ -2,9 +2,9 @@
 """
 Stop-hook closeout enforcement for the "store what you learned" guardrail.
 
-If the session has unstored web research (web events since the last
-brain_commit), warn or block and tell Claude to run brain_remember +
-brain_commit before stopping.
+If the session has unstored web research (web events not yet ingested
+via brain_perceive / brain_learn), warn or block and tell Claude to
+ingest it before stopping.
 
 State file:   ${TMPDIR:-/tmp}/reflex-memory-state/{session_id}.json
 
@@ -70,17 +70,16 @@ def main() -> None:
 
     msg = (
         "🧠 Memory-store guardrail: this session researched something the long-term\n"
-        "memory doesn't know about yet. Promote it before stopping.\n\n"
+        "memory doesn't know about yet. Ingest it before stopping.\n\n"
         f"Unstored web activity:\n{evidence}\n\n"
-        "Pick one path:\n"
-        "  - Run brain_remember + brain_commit to validate and store:\n"
-        "      mcp__phantom-brain__brain_remember\n"
-        '        content: "<synthesized findings>"\n'
-        '        source_url: "<source>"\n\n'
-        "  - Then commit with:\n"
-        "      mcp__phantom-brain__brain_commit\n"
-        '        decision: "store"\n'
-        '        reasoning: "<why this is worth keeping>"\n\n'
+        "Ingest the findings into phantom-brain (synthesis runs automatically daemon-side):\n"
+        "  - Gathered web content:\n"
+        "      mcp__phantom-brain__brain_perceive\n"
+        '        title: "<short title>"\n'
+        '        body:  "<synthesized findings>"\n'
+        '        url:   "<source>"\n\n'
+        "  - Or, for content you curated/trust:\n"
+        "      mcp__phantom-brain__brain_learn\n\n"
         "Toggle: set REFLEX_MEMORY_ENFORCE=soft for warnings only, or =off to disable."
     )
 
