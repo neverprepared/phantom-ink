@@ -1418,6 +1418,20 @@ export namespace main {
 	        this.trigger_count = source["trigger_count"];
 	    }
 	}
+	export class BaseImageBuildRequest {
+	    profile: string;
+	    no_cache: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new BaseImageBuildRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.no_cache = source["no_cache"];
+	    }
+	}
 	export class CollectJob {
 	    id: string;
 	    profile: string;
@@ -1939,6 +1953,7 @@ export namespace main {
 	    profile: string;
 	    base_image: string;
 	    registry_url: string;
+	    no_cache: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProfileImageBuildRequest(source);
@@ -1949,6 +1964,7 @@ export namespace main {
 	        this.profile = source["profile"];
 	        this.base_image = source["base_image"];
 	        this.registry_url = source["registry_url"];
+	        this.no_cache = source["no_cache"];
 	    }
 	}
 	export class ProfileImageRow {

@@ -758,7 +758,7 @@ def _persist_generated_template(name: str, markdown: str, result: AssistResult) 
         )
 
 
-import re as _re_for_name
+import re as _re_for_name  # noqa: E402
 
 _NAME_LINE_RE = _re_for_name.compile(r"^(name\s*:\s*)\S.*$", _re_for_name.MULTILINE)
 

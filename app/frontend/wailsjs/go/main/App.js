@@ -502,6 +502,10 @@ export function PutLoopTemplate(arg1, arg2, arg3) {
   return window['go']['main']['App']['PutLoopTemplate'](arg1, arg2, arg3);
 }
 
+export function RebuildBaseImage(arg1) {
+  return window['go']['main']['App']['RebuildBaseImage'](arg1);
+}
+
 export function RemoveChannelParticipant(arg1, arg2) {
   return window['go']['main']['App']['RemoveChannelParticipant'](arg1, arg2);
 }

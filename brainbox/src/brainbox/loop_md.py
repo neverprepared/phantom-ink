@@ -56,7 +56,7 @@ raise ``LoopMarkdownError`` with a one-line, operator-fixable message.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import yaml as yaml_module

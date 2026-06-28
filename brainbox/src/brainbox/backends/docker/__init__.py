@@ -26,7 +26,7 @@ _executor = ThreadPoolExecutor(max_workers=4)
 log = get_logger()
 
 
-from ..utils import _extract_from_bundle
+from ..utils import _extract_from_bundle  # noqa: E402  (late import avoids an import cycle)
 
 
 def _docker(docker_host: str | None = None) -> docker.DockerClient:
@@ -287,7 +287,6 @@ class DockerBackend:
     async def start(self, ctx: SessionContext) -> SessionContext:
         """Start Docker container and launch ttyd terminal."""
         from ...config import settings
-        from ...lifecycle import _resolve_profile_env
 
         slog = get_logger(session_name=ctx.session_name, container_name=ctx.container_name)
         client = _docker(ctx.docker_host)

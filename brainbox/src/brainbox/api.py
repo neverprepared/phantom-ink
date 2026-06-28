@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import docker
-import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -410,6 +409,12 @@ app.add_middleware(
 # Add rate limiter state and exception handler
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+# A2A (Agent-to-Agent) protocol façade. Registered here — well before the SPA
+# catch-all (`/{path:path}`) — so /a2a/* and the nested /.well-known/* resolve.
+from . import a2a  # noqa: E402
+
+app.include_router(a2a.router)
 
 
 # ---------------------------------------------------------------------------
@@ -2548,6 +2553,7 @@ async def hub_submit_task(
             priority=body.priority,
             max_attempts=body.max_attempts,
             deadline_ms=body.deadline_ms,
+            model_target=body.model_target,
         )
         _broadcast_sse(json.dumps({"action": "task.submit", "agent": body.agent_name, "repo": body.repo_url or ""}))
         return task.model_dump()
@@ -3485,7 +3491,6 @@ async def api_ollama_models(_key=Depends(require_api_key)):
     if inst is None:
         raise HTTPException(status_code=503, detail="no Ollama instances available")
     try:
-        loop = asyncio.get_running_loop()
         models = await ollama_list_models(
             inst.url, headers=inst.request_headers(), verify=inst.verify_tls,
         )
@@ -3514,7 +3519,6 @@ async def api_ollama_pull(body: OllamaPullRequest, _key=Depends(require_api_key)
         raise HTTPException(status_code=503, detail="no Ollama instances available")
     pool.acquire(inst)
     try:
-        loop = asyncio.get_running_loop()
         status = await ollama_pull_model(
             body.name, inst.url, headers=inst.request_headers(), verify=inst.verify_tls,
         )
@@ -3533,7 +3537,6 @@ async def api_ollama_delete_model(name: str, _key=Depends(require_api_key)):
     if inst is None:
         raise HTTPException(status_code=503, detail="no Ollama instances available")
     try:
-        loop = asyncio.get_running_loop()
         status = await ollama_delete_model(
             name, inst.url, headers=inst.request_headers(), verify=inst.verify_tls,
         )
@@ -3592,7 +3595,6 @@ async def api_ssh_agent_relay(websocket):
     """
     import asyncio
 
-    from fastapi import WebSocket
     from fastapi.websockets import WebSocketState
 
     ws: WebSocket = websocket

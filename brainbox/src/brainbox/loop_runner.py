@@ -37,7 +37,6 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from typing import Any
 
 from .log import get_logger
 from .loop_judge import evaluate_escalation, evaluate_stop
