@@ -11,7 +11,12 @@ import asyncio
 import json
 import sqlite3
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .loops import LoopInstance
+    from .models import SessionContext
+    from .runners import RunnerInfo
 
 _conn: sqlite3.Connection | None = None
 _lock = threading.Lock()
