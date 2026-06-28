@@ -17,6 +17,7 @@ dependencies = [
     "websockets>=13.0",
     "pyyaml>=6.0",
     "mcp-utm>=0.1.2; sys_platform == 'darwin'",
+    "mcp>=1.9",
     "pyrage>=1.2",
     "zstandard>=0.22",
     "jmespath>=1.1.0",
