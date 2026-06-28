@@ -17,7 +17,7 @@ import brainbox.auth as auth_module
 import brainbox.registry as reg_module
 import brainbox.router as router_module
 from brainbox.a2a import _to_a2a_task
-from brainbox.models import AgentDefinition, Task, TaskStatus
+from brainbox.models import AgentDefinition, SuspensionKind, Task, TaskStatus
 
 API_KEY = "test-a2a-key"
 
@@ -158,6 +158,64 @@ class TestMessageSend:
         async with client as c:
             resp = await c.post("/a2a/ghost", json=body, headers={"x-api-key": api_key})
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# JSON-RPC: message/send continuation (input-required → resume)
+# ---------------------------------------------------------------------------
+
+
+def _send_with_task(req_id, task_id, text="here is the input"):
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "method": "message/send",
+        "params": {
+            "message": {
+                "role": "user",
+                "taskId": task_id,
+                "parts": [{"kind": "text", "text": text}],
+            }
+        },
+    }
+
+
+class TestMessageSendContinuation:
+    @pytest.mark.asyncio
+    async def test_resumes_input_required_task(self, client, agents, api_key):
+        task = await router_module.submit_task("needs input", "worker")
+        router_module.suspend_task(task.id, SuspensionKind.HUMAN)
+        assert router_module.get_task(task.id).status == TaskStatus.NEEDS_ACTION
+
+        async with client as c:
+            resp = await c.post(
+                "/a2a/worker", json=_send_with_task(9, task.id), headers={"x-api-key": api_key}
+            )
+        assert resp.status_code == 200
+        # resume_task moves NEEDS_ACTION → PENDING → A2A "submitted".
+        assert resp.json()["result"]["status"]["state"] == "submitted"
+        resumed = router_module.get_task(task.id)
+        assert resumed.status == TaskStatus.PENDING
+        assert resumed.resume_payload.get("input") == "here is the input"
+
+    @pytest.mark.asyncio
+    async def test_continuation_unknown_task_is_task_not_found(self, client, agents, api_key):
+        async with client as c:
+            resp = await c.post(
+                "/a2a/worker", json=_send_with_task(10, "ghost"), headers={"x-api-key": api_key}
+            )
+        assert resp.json()["error"]["code"] == -32001
+
+    @pytest.mark.asyncio
+    async def test_continuation_on_non_input_required_task_is_not_resumable(
+        self, client, agents, api_key
+    ):
+        task = await router_module.submit_task("still pending", "worker")  # PENDING, not parked
+        async with client as c:
+            resp = await c.post(
+                "/a2a/worker", json=_send_with_task(11, task.id), headers={"x-api-key": api_key}
+            )
+        assert resp.json()["error"]["code"] == -32003
 
 
 # ---------------------------------------------------------------------------

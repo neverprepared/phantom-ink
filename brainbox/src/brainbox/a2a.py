@@ -22,8 +22,15 @@ No new dependency: the wire format is hand-rolled over FastAPI. Auth reuses
 ``require_capability("task_submit")`` — X-API-Key (full trust) OR a hub
 Bearer token carrying the capability. Card discovery is unauthenticated.
 
-Out of scope here (follow-up PR, still ADR Phase 1): agent-to-agent
-messages (``messages.route``) and ``input-required`` ↔ HUMAN suspend/resume.
+Task continuation: a task an agent has parked for input surfaces as A2A
+``input-required`` (brainbox ``NEEDS_ACTION``); the client continues it by
+calling ``message/send`` again with the same ``taskId``, which maps onto
+``router.resume_task`` (the supplied text lands in ``resume_payload``).
+
+Deliberately NOT mapped: brainbox hub agent-to-agent messaging
+(``messages.route``). A2A has no separate "message bus" method — its
+``message/send`` *is* the message primitive — so there is nothing to adapt
+it onto; internal hub messaging stays internal.
 """
 
 from __future__ import annotations
@@ -58,6 +65,7 @@ _INVALID_PARAMS = -32602
 # A2A-specific error codes
 _TASK_NOT_FOUND = -32001
 _TASK_NOT_CANCELABLE = -32002
+_TASK_NOT_RESUMABLE = -32003  # brainbox extension: message/send to a non-input-required task
 
 # brainbox TaskStatus -> A2A TaskState (JSON-RPC binding string values).
 _A2A_STATE: dict[TaskStatus, str] = {
@@ -198,8 +206,26 @@ async def _handle_message_send(req_id: Any, agent: str, params: dict) -> dict[st
     ).strip()
     if not text:
         return _jsonrpc_err(req_id, _INVALID_PARAMS, "message.parts must contain text")
-    # contextId continuity across messages is a follow-up; a new send starts a
-    # fresh task (its own job root) to avoid router parent/child assumptions.
+
+    # Continuation: a message carrying an existing taskId resumes a task that
+    # an agent parked for input (A2A input-required <-> brainbox NEEDS_ACTION).
+    task_id = message.get("taskId")
+    if task_id:
+        existing = task_router.get_task(task_id)
+        if existing is None:
+            return _jsonrpc_err(req_id, _TASK_NOT_FOUND, f"Task '{task_id}' not found")
+        if existing.status != TaskStatus.NEEDS_ACTION:
+            state = _A2A_STATE.get(existing.status, "unknown")
+            return _jsonrpc_err(
+                req_id, _TASK_NOT_RESUMABLE,
+                f"Task '{task_id}' is not awaiting input (state: {state})",
+            )
+        task = task_router.resume_task(task_id, {"input": text})
+        return _jsonrpc_ok(req_id, _to_a2a_task(task))
+
+    # New task. contextId continuity across messages is a follow-up; a fresh
+    # send starts a new task (its own job root) to avoid router parent/child
+    # assumptions.
     task = await task_router.submit_task(text, agent)
     return _jsonrpc_ok(req_id, _to_a2a_task(task))
 
