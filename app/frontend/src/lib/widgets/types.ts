@@ -1,7 +1,6 @@
 export type WidgetKind =
   | 'stat-counter'
   | 'dispatch-form'
-  | 'loops-list'
   | 'action-items'
   | 'resource-monitor'
   | 'custom-counter'

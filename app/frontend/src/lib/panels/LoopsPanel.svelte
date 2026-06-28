@@ -3,8 +3,7 @@
    * Three-tab Loops panel — the main operator surface for the loop-engineering
    * runtime. Replaces the standalone Loop Runs sidebar entry.
    *
-   *   Templates — list of templates + raw YAML preview (CodeMirror editor
-   *               lands in PR 5).
+   *   Templates — list of templates + markdown editor + mermaid preview.
    *   Runs      — live + history view of LoopInstance records (lifted as
    *               LoopRunsPanel child component).
    *   Trigger   — pick a template, fill its required_refs, fire start_loop.
@@ -14,12 +13,18 @@
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import Modal from '../components/Modal.svelte';
   import Spinner from '../components/Spinner.svelte';
-  import YamlEditor from '../components/YamlEditor.svelte';
+  import MarkdownEditor from '../components/MarkdownEditor.svelte';
+  import MermaidDiagram from '../components/MermaidDiagram.svelte';
   import LoopRunsPanel from './LoopRunsPanel.svelte';
 
   type TabId = 'templates' | 'runs' | 'trigger';
   let activeTab = $state<TabId>('templates');
+
+  // Sub-tabs inside the Templates → detail pane.
+  type DetailTabId = 'diagram' | 'markdown' | 'assist';
+  let detailTab = $state<DetailTabId>('diagram');
 
   // ---------------------------------------------------------------------------
   // Templates tab
@@ -28,9 +33,8 @@
   interface LoopTemplate {
     name: string;
     origin: 'built-in' | 'user';
-    version: string;
     hash: string;
-    yaml: string;
+    markdown: string;
   }
 
   let templateNames = $state<string[]>([]);
@@ -38,9 +42,14 @@
   let selectedName = $state<string | null>(null);
   let selectedTemplate = $state<LoopTemplate | null>(null);
   let templateError = $state<string | null>(null);
-  let editorValue = $state('');     // editor buffer (drifts from selectedTemplate.yaml when dirty)
-  let savedYaml = $state('');       // last persisted text — diff against editorValue = dirty
+  let editorValue = $state('');     // editor buffer (drifts from selectedTemplate.markdown when dirty)
+  let savedMarkdown = $state('');   // last persisted text — diff against editorValue = dirty
   let templateBusy = $state(false); // true while save/fork/delete is in flight
+
+  // Mermaid diagram preview state — recomputed on template change / save
+  let diagramMermaid = $state<string>('');
+  let diagramError = $state<string | null>(null);
+  let diagramBusy = $state(false);
 
   // AI Assist state
   let assistPrompt = $state('');
@@ -72,7 +81,7 @@
   }
 
   function isDirty(): boolean {
-    return editorValue !== savedYaml;
+    return editorValue !== savedMarkdown;
   }
 
   async function selectName(name: string) {
@@ -89,10 +98,28 @@
       const api = await getApi();
       const tpl = (await api.GetLoopTemplate(name)) as LoopTemplate;
       selectedTemplate = tpl;
-      savedYaml = tpl.yaml;
-      editorValue = tpl.yaml;
+      savedMarkdown = tpl.markdown;
+      editorValue = tpl.markdown;
+      void refreshDiagram(name);
     } catch (err) {
       templateError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  // Fetch the mermaid diagram for the currently-saved template via dry-run.
+  // Dry-run returns a structured plan with the rendered "mermaid" field.
+  async function refreshDiagram(name: string) {
+    diagramBusy = true;
+    diagramError = null;
+    try {
+      const api = await getApi();
+      const result = (await api.DryRunLoopTemplate(name, {})) as { mermaid?: string };
+      diagramMermaid = result?.mermaid ?? '';
+    } catch (err) {
+      diagramError = err instanceof Error ? err.message : String(err);
+      diagramMermaid = '';
+    } finally {
+      diagramBusy = false;
     }
   }
 
@@ -140,13 +167,105 @@
         false,
       )) as LoopTemplate;
       selectedTemplate = updated;
-      savedYaml = updated.yaml;
-      editorValue = updated.yaml;
+      savedMarkdown = updated.markdown;
+      editorValue = updated.markdown;
+      // Refresh the sidebar list if this was a brand-new draft so the
+      // new name appears there. Cheap — reuses the existing loader.
+      if (!templateNames.includes(updated.name)) {
+        await loadTemplateList();
+        selectedName = updated.name;
+      }
       notifications.success(`${updated.name} saved`);
+      void refreshDiagram(updated.name);
     } catch (err) {
       notifications.error(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       templateBusy = false;
+    }
+  }
+
+  // Seed for a brand-new template. Minimal valid LoopMarkdown — every
+  // required key + section so the operator's first Save doesn't 422.
+  function _newTemplateSkeleton(name: string): string {
+    return `---
+name: ${name}
+trigger: manual
+max_iterations: 3
+---
+
+# Role
+
+Describe what the agent does each iteration.
+
+# When to stop
+
+- The goal is reached.
+
+# When to escalate
+
+- A blocker persists across iterations.
+- The budget is exhausted.
+`;
+  }
+
+  // Modal state for the "+ New" flow. window.prompt is unreliable in
+  // some Wails webviews, so we use the existing Modal component for the
+  // name input.
+  let newTemplateModalOpen = $state(false);
+  let newTemplateName = $state('my-loop');
+  let newTemplateError = $state<string | null>(null);
+
+  function openNewTemplateModal() {
+    if (isDirty()) {
+      const ok = window.confirm(
+        `${selectedName ?? 'Current template'} has unsaved changes. Discard them?`,
+      );
+      if (!ok) return;
+    }
+    newTemplateName = 'my-loop';
+    newTemplateError = null;
+    newTemplateModalOpen = true;
+  }
+
+  function closeNewTemplateModal() {
+    newTemplateModalOpen = false;
+    newTemplateError = null;
+  }
+
+  function confirmNewTemplate() {
+    const name = newTemplateName.trim();
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
+      newTemplateError = 'Use lowercase letters, digits, and hyphens; must start with a letter or digit.';
+      return;
+    }
+    if (templateNames.includes(name)) {
+      newTemplateError = `A template named "${name}" already exists.`;
+      return;
+    }
+    const skeleton = _newTemplateSkeleton(name);
+    // Synthetic in-memory draft. origin='user' so Save is enabled;
+    // empty savedMarkdown keeps the dirty-dot lit until the first save
+    // persists the file.
+    selectedTemplate = {
+      name,
+      origin: 'user',
+      hash: '',
+      markdown: skeleton,
+    } as LoopTemplate;
+    selectedName = name;
+    editorValue = skeleton;
+    savedMarkdown = '';
+    templateError = null;
+    detailTab = 'markdown';
+    diagramMermaid = '';
+    diagramError = null;
+    closeNewTemplateModal();
+  }
+
+  function onNewTemplateKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      confirmNewTemplate();
     }
   }
 
@@ -164,10 +283,11 @@
       // re-select it so the editor reflects origin: "user" and Save is enabled.
       await loadTemplateList();
       selectedTemplate = updated;
-      savedYaml = updated.yaml;
-      editorValue = updated.yaml;
+      savedMarkdown = updated.markdown;
+      editorValue = updated.markdown;
       selectedName = updated.name;
       notifications.success(`Forked ${updated.name} to user dir`);
+      void refreshDiagram(updated.name);
     } catch (err) {
       notifications.error(`Fork failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -187,7 +307,7 @@
       return;
     }
     if (mode === 'refine' && editorSelection.isEmpty) {
-      assistError = 'Highlight a YAML range in the editor first.';
+      assistError = 'Highlight a markdown range in the editor first.';
       return;
     }
     assistError = null;
@@ -195,21 +315,38 @@
     explanation = null;
     try {
       const api = await getApi();
+      // Persist the produced markdown server-side on every Generate
+      // for a user-owned template (including fresh drafts AND existing
+      // user templates the operator is regenerating). The operator's
+      // work shouldn't be lost just because they navigate away. The
+      // backend uses validate=False so even an imperfect draft lands
+      // on disk — they can fix issues in-editor.
+      const saveAs =
+        mode === 'generate' && selectedTemplate && selectedTemplate.origin === 'user'
+          ? selectedTemplate.name
+          : '';
+
       const result = (await api.AssistLoopTemplate({
         mode,
         prompt,
+        // Field name preserved on the wire as `current_yaml` for one
+        // release for server-side compat; semantically it's markdown.
         current_yaml: editorValue,
         selection: mode === 'generate' ? {} : {
           start_line: editorSelection.startLine,
           end_line: editorSelection.endLine,
         },
+        save_as: saveAs,
       })) as unknown as {
+        // Wire key still `yaml` for one release; payload is markdown.
         yaml: string;
         explanation: string;
         model: string;
         tokens: { input?: number; output?: number };
         cost_usd: number;
         warnings: { field: string | null; message: string }[];
+        saved_to: string;
+        save_error: string;
       };
 
       assistModel = result.model;
@@ -230,6 +367,38 @@
           );
         } else {
           notifications.success(`${mode === 'generate' ? 'Generated' : 'Refined'} via ${result.model}`);
+        }
+
+        // Surface the server-side persist outcome so the operator
+        // knows whether their work is on disk regardless of what they
+        // do next.
+        if (mode === 'generate') {
+          if (result.saved_to) {
+            notifications.success(`Saved as ${result.saved_to}`);
+            savedMarkdown = result.yaml;
+            // Refresh sidebar so the new file appears immediately.
+            if (!templateNames.includes(result.saved_to)) {
+              await loadTemplateList();
+              selectedName = result.saved_to;
+            }
+            // selectedTemplate.hash is stale after a save — clear so
+            // the dirty-dot doesn't lie. Reload the template to pick
+            // up the new hash.
+            if (selectedTemplate) {
+              try {
+                const api2 = await getApi();
+                const reloaded = (await api2.GetLoopTemplate(result.saved_to)) as LoopTemplate;
+                selectedTemplate = reloaded;
+                savedMarkdown = reloaded.markdown;
+                editorValue = reloaded.markdown;
+              } catch {
+                // Best-effort reload; ignore.
+              }
+            }
+            void refreshDiagram(result.saved_to);
+          } else if (result.save_error) {
+            notifications.error(`Persist failed: ${result.save_error}`);
+          }
         }
       }
       assistPrompt = '';
@@ -260,28 +429,43 @@
     return `$${usd.toFixed(3)}`;
   }
 
-  async function deleteTemplate() {
+  // Delete confirmation modal — window.confirm is unreliable in Wails
+  // webviews (same root cause as the + New / window.prompt bug).
+  let deleteModalOpen = $state(false);
+  let deleteBusy = $state(false);
+
+  function openDeleteModal() {
     if (!selectedTemplate) return;
     if (selectedTemplate.origin === 'built-in') {
       notifications.error('Built-in templates can\'t be deleted.');
       return;
     }
-    const ok = window.confirm(`Delete user template ${selectedTemplate.name}?`);
-    if (!ok) return;
-    templateBusy = true;
+    deleteModalOpen = true;
+  }
+
+  function closeDeleteModal() {
+    if (deleteBusy) return;
+    deleteModalOpen = false;
+  }
+
+  async function confirmDeleteTemplate() {
+    if (!selectedTemplate) return;
+    deleteBusy = true;
     try {
       const api = await getApi();
       await api.DeleteLoopTemplate(selectedTemplate.name);
       notifications.success(`${selectedTemplate.name} deleted`);
       selectedTemplate = null;
-      savedYaml = '';
+      savedMarkdown = '';
       editorValue = '';
       selectedName = null;
+      diagramMermaid = '';
+      deleteModalOpen = false;
       await loadTemplateList();
     } catch (err) {
       notifications.error(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
-      templateBusy = false;
+      deleteBusy = false;
     }
   }
 
@@ -318,7 +502,7 @@
     try {
       const api = await getApi();
       const tpl = (await api.GetLoopTemplate(name)) as LoopTemplate;
-      const refs = parseRequiredRefs(tpl.yaml);
+      const refs = parseRequiredRefs(frontmatterFromMarkdown(tpl.markdown));
       triggerRequiredRefs = refs;
       // Reset values, preserving any the operator already typed for keys
       // that still exist in the new template.
@@ -332,9 +516,7 @@
     }
   }
 
-  function parseRequiredRefs(rawYaml: string): RequiredRef[] {
-    // Strip the markdown body so js-yaml only sees frontmatter.
-    const fm = extractFrontmatter(rawYaml);
+  function parseRequiredRefs(fm: string | null): RequiredRef[] {
     if (!fm) return [];
     try {
       const parsed = yaml.load(fm) as Record<string, unknown> | null;
@@ -351,9 +533,11 @@
     }
   }
 
-  function extractFrontmatter(content: string): string | null {
-    if (!content.startsWith('---')) return null;
-    const after = content.slice(3).replace(/^\n+/, '');
+  // Returns the YAML frontmatter slice (between opening and closing ---)
+  // from a markdown template, or null if no frontmatter is present.
+  function frontmatterFromMarkdown(text: string): string | null {
+    if (!text || !text.startsWith('---')) return null;
+    const after = text.slice(3).replace(/^\n+/, '');
     const idx = after.indexOf('\n---');
     if (idx === -1) return null;
     return after.slice(0, idx);
@@ -398,8 +582,48 @@
   // Mount
   // ---------------------------------------------------------------------------
 
+  // Count of active (pending/running) loops — surfaced as a badge on
+  // the Runs tab so the operator sees in-flight work the moment they
+  // open the panel.
+  let runningLoopCount = $state(0);
+  let runningLoopByName = $state<Record<string, number>>({});
+  let runningPollHandle: number | null = null;
+
+  async function refreshRunningLoops() {
+    try {
+      const api = await getApi();
+      // No status filter → returns all; we count the active ones
+      // client-side so we get a stable badge across the two active
+      // statuses (pending + running). Cheap; payload is slim.
+      const summaries =
+        ((await api.ListLiveLoops('')) ?? []) as Array<{ status: string; name: string }>;
+      let total = 0;
+      const byName: Record<string, number> = {};
+      for (const s of summaries) {
+        if (s.status === 'running' || s.status === 'pending') {
+          total += 1;
+          byName[s.name] = (byName[s.name] ?? 0) + 1;
+        }
+      }
+      runningLoopCount = total;
+      runningLoopByName = byName;
+    } catch (err) {
+      console.warn('LoopsPanel: failed to fetch running loops', err);
+    }
+  }
+
   onMount(() => {
     void loadTemplateList();
+    void refreshRunningLoops();
+    // Poll every 15s — the count is informational, not a control
+    // surface, so we don't need SSE here.
+    runningPollHandle = window.setInterval(refreshRunningLoops, 15_000);
+    return () => {
+      if (runningPollHandle !== null) {
+        window.clearInterval(runningPollHandle);
+        runningPollHandle = null;
+      }
+    };
   });
 
   function originBadge(origin: string): string {
@@ -425,6 +649,11 @@
         onclick={() => (activeTab = 'runs')}
       >
         Runs
+        {#if runningLoopCount > 0}
+          <span class="running-badge" title="{runningLoopCount} loop{runningLoopCount === 1 ? '' : 's'} in flight">
+            {runningLoopCount}
+          </span>
+        {/if}
       </button>
       <button
         class="tab"
@@ -439,12 +668,18 @@
   {#if activeTab === 'templates'}
     <div class="templates-tab">
       <aside class="template-list">
+        <div class="template-list-head">
+          <span class="template-list-label">Templates</span>
+          <button class="btn-new" onclick={openNewTemplateModal} title="Create a new loop template">
+            + New
+          </button>
+        </div>
         {#if templatesLoading}
           <div class="loading"><Spinner /></div>
         {:else if templateNames.length === 0}
           <EmptyState
             title="No templates"
-            message="Loop templates live in brainbox/loop-templates/. Add one there or via PUT /api/loops/templates/<name>."
+            message="Click + New to create your first loop, or add one under brainbox/loop-templates/."
           />
         {:else}
           {#each templateNames as name (name)}
@@ -454,6 +689,14 @@
               onclick={() => selectName(name)}
             >
               <span class="template-name">{name}</span>
+              {#if runningLoopByName[name]}
+                <span
+                  class="running-badge sidebar"
+                  title="{runningLoopByName[name]} in flight"
+                >
+                  {runningLoopByName[name]}
+                </span>
+              {/if}
             </button>
           {/each}
         {/if}
@@ -466,76 +709,123 @@
             <div class="title-row">
               <span class="template-title">{selectedTemplate.name}</span>
               <span class={originBadge(selectedTemplate.origin)}>{selectedTemplate.origin}</span>
-              {#if selectedTemplate.version}
-                <span class="dim">v{selectedTemplate.version}</span>
-              {/if}
               {#if isDirty()}
                 <span class="dirty-dot" title="Unsaved changes"></span>
               {/if}
             </div>
             <div class="hash">hash {selectedTemplate.hash}</div>
           </div>
-          <div class="assist-box">
-            <div class="assist-head">
-              <span class="assist-label">AI Assist</span>
-              <span class="assist-meta">
-                {#if assistModel}<span class="assist-model">{assistModel}</span>{/if}
-                {#if sessionCost > 0}<span class="assist-cost">Cost: {fmtCost(sessionCost)}</span>{/if}
-              </span>
-            </div>
-            <textarea
-              class="assist-prompt"
-              bind:value={assistPrompt}
-              onkeydown={onAssistKeydown}
-              placeholder="Describe what you want, or ask a question about the selected YAML. ⌘↵ Generate · ⌘⇧↵ Refine · ⌘/ Explain"
-              rows="2"
-              disabled={assistBusy}
-            ></textarea>
-            <div class="assist-actions">
-              <button
-                class="btn-generate"
-                onclick={() => runAssist('generate')}
-                disabled={assistBusy || !assistPrompt.trim()}
-              >
-                {assistBusy ? '…' : '✨ Generate'}
-              </button>
-              <button
-                class="btn-refine"
-                onclick={() => runAssist('refine')}
-                disabled={assistBusy || !assistPrompt.trim() || editorSelection.isEmpty}
-                title={editorSelection.isEmpty ? 'Highlight a YAML range first' : ''}
-              >
-                Refine selection
-              </button>
-              <button
-                class="btn-explain"
-                onclick={() => runAssist('explain')}
-                disabled={assistBusy || !assistPrompt.trim()}
-              >
-                Explain
-              </button>
-            </div>
-            {#if assistError}
-              <div class="error">{assistError}</div>
-            {/if}
-            {#if explanation}
-              <div class="explanation">
-                <div class="explanation-head">
-                  <span>Explanation</span>
-                  <button class="explanation-close" onclick={() => (explanation = null)}>×</button>
-                </div>
-                <div class="explanation-body">{explanation}</div>
+
+          <nav class="sub-tabs" aria-label="Template view">
+            <button
+              class="sub-tab"
+              class:active={detailTab === 'diagram'}
+              onclick={() => (detailTab = 'diagram')}
+            >
+              Diagram
+            </button>
+            <button
+              class="sub-tab"
+              class:active={detailTab === 'markdown'}
+              onclick={() => (detailTab = 'markdown')}
+            >
+              Markdown
+              {#if isDirty()}<span class="dirty-dot inline" title="Unsaved changes"></span>{/if}
+            </button>
+            <button
+              class="sub-tab"
+              class:active={detailTab === 'assist'}
+              onclick={() => (detailTab = 'assist')}
+            >
+              AI Assist
+              {#if assistBusy}<span class="dim sub-tab-hint">…</span>{/if}
+            </button>
+          </nav>
+
+          {#if detailTab === 'diagram'}
+            <div class="diagram-section">
+              <div class="diagram-head">
+                <span class="diagram-label">Diagram</span>
+                {#if diagramBusy}<span class="dim">rendering…</span>{/if}
               </div>
-            {/if}
-          </div>
-          <div class="editor-wrap">
-            <YamlEditor
-              value={editorValue || selectedTemplate.yaml}
-              onChange={handleEditorChange}
-              lintRequest={lintTemplate}
-              onSelectionChange={(sel) => (editorSelection = sel)}
-            />
-          </div>
+              {#if diagramError}
+                <div class="error">{diagramError}</div>
+              {:else}
+                <MermaidDiagram source={diagramMermaid} initialZoom={0.25} />
+              {/if}
+            </div>
+          {:else if detailTab === 'markdown'}
+            <div class="editor-wrap">
+              <MarkdownEditor
+                value={editorValue || selectedTemplate.markdown}
+                onChange={handleEditorChange}
+                lintRequest={lintTemplate}
+                onSelectionChange={(sel) => (editorSelection = sel)}
+              />
+            </div>
+          {:else if detailTab === 'assist'}
+            <div class="assist-box">
+              <div class="assist-head">
+                <span class="assist-label">AI Assist</span>
+                <span class="assist-meta">
+                  {#if assistModel}<span class="assist-model">{assistModel}</span>{/if}
+                  {#if sessionCost > 0}<span class="assist-cost">Cost: {fmtCost(sessionCost)}</span>{/if}
+                </span>
+              </div>
+              <textarea
+                class="assist-prompt"
+                bind:value={assistPrompt}
+                onkeydown={onAssistKeydown}
+                placeholder="Describe what you want, or ask a question about the selected markdown. ⌘↵ Generate · ⌘⇧↵ Refine · ⌘/ Explain"
+                rows="3"
+                disabled={assistBusy}
+              ></textarea>
+              <div class="assist-actions">
+                <button
+                  class="btn-generate"
+                  onclick={() => runAssist('generate')}
+                  disabled={assistBusy || !assistPrompt.trim()}
+                >
+                  {assistBusy ? '…' : '✨ Generate'}
+                </button>
+                <button
+                  class="btn-refine"
+                  onclick={() => runAssist('refine')}
+                  disabled={assistBusy || !assistPrompt.trim() || editorSelection.isEmpty}
+                  title={editorSelection.isEmpty ? 'Highlight a markdown range in the Markdown tab first' : ''}
+                >
+                  Refine selection
+                </button>
+                <button
+                  class="btn-explain"
+                  onclick={() => runAssist('explain')}
+                  disabled={assistBusy || !assistPrompt.trim()}
+                >
+                  Explain
+                </button>
+              </div>
+              {#if assistError}
+                <div class="error">{assistError}</div>
+              {/if}
+              {#if explanation}
+                <div class="explanation">
+                  <div class="explanation-head">
+                    <span>Explanation</span>
+                    <button class="explanation-close" onclick={() => (explanation = null)}>×</button>
+                  </div>
+                  <div class="explanation-body">{explanation}</div>
+                </div>
+              {/if}
+              <div class="dim assist-hint">
+                Refine needs a highlighted range in the
+                <button
+                  class="link-btn"
+                  type="button"
+                  onclick={() => (detailTab = 'markdown')}
+                >Markdown</button> tab.
+              </div>
+            </div>
+          {/if}
           <div class="editor-actions">
             {#if selectedTemplate.origin === 'user'}
               <button
@@ -547,7 +837,7 @@
               </button>
               <button
                 class="btn-delete"
-                onclick={deleteTemplate}
+                onclick={openDeleteModal}
                 disabled={templateBusy}
               >
                 Delete
@@ -628,6 +918,66 @@
   {/if}
 </div>
 
+{#if deleteModalOpen && selectedTemplate}
+  <Modal onClose={closeDeleteModal} maxWidth="420px">
+    <div class="new-modal">
+      <h3>Delete template?</h3>
+      <p class="dim modal-help">
+        This permanently removes the user template
+        <code class="modal-code">{selectedTemplate.name}</code>.
+        In-flight loops continue running with their frozen
+        template_text; only new triggers from the Templates list are
+        affected.
+      </p>
+      <div class="modal-actions">
+        <button
+          class="btn-modal-cancel"
+          onclick={closeDeleteModal}
+          disabled={deleteBusy}
+        >Cancel</button>
+        <button
+          class="btn-modal-delete"
+          onclick={confirmDeleteTemplate}
+          disabled={deleteBusy}
+        >
+          {deleteBusy ? 'Deleting…' : 'Delete'}
+        </button>
+      </div>
+    </div>
+  </Modal>
+{/if}
+
+{#if newTemplateModalOpen}
+  <Modal onClose={closeNewTemplateModal} maxWidth="420px">
+    <div class="new-modal">
+      <h3>New loop template</h3>
+      <p class="dim modal-help">
+        Pick a slug: lowercase letters, digits, and hyphens. Must start
+        with a letter or digit.
+      </p>
+      <label class="modal-label">
+        Template name
+        <input
+          type="text"
+          class="modal-input"
+          bind:value={newTemplateName}
+          onkeydown={onNewTemplateKeydown}
+          placeholder="my-loop"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </label>
+      {#if newTemplateError}
+        <div class="modal-error">{newTemplateError}</div>
+      {/if}
+      <div class="modal-actions">
+        <button class="btn-modal-cancel" onclick={closeNewTemplateModal}>Cancel</button>
+        <button class="btn-modal-create" onclick={confirmNewTemplate}>Create</button>
+      </div>
+    </div>
+  </Modal>
+{/if}
+
 <style>
   .panel {
     display: flex;
@@ -688,6 +1038,35 @@
     flex-direction: column;
     gap: 2px;
   }
+  .template-list-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 4px 8px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .template-list-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+  }
+  .btn-new {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--r-sm);
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.12s;
+  }
+  .btn-new:hover {
+    background: color-mix(in srgb, var(--accent) 88%, #000);
+  }
   .template-item {
     background: transparent;
     border: 1px solid transparent;
@@ -697,6 +1076,33 @@
     border-radius: 4px;
     cursor: pointer;
     font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: space-between;
+  }
+  /* Active-run count chip — reused on the Runs tab and per-template in
+     the sidebar so the operator sees in-flight loops at a glance. */
+  .running-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 6px;
+    margin-left: 6px;
+    border-radius: 99px;
+    background: var(--run);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    line-height: 1;
+    /* Pulse so the operator catches in-flight work peripherally. */
+    animation: pulse 2.2s ease-in-out infinite;
+  }
+  .running-badge.sidebar {
+    margin-left: 0;
   }
   .template-item:hover {
     background: var(--color-surface-2, #1a1a1a);
@@ -755,11 +1161,93 @@
     font-size: 11px;
     color: var(--color-text-muted, #888);
   }
+  .diagram-section {
+    /* Dominant visual — claims the largest share of the detail pane.
+       flex:1 alongside the (closed) markdown <details> gives it
+       virtually the whole height; when the operator expands the
+       markdown, both regions split available space. */
+    flex: 1;
+    min-height: 220px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 14px;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    overflow: auto;
+  }
+  .diagram-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+  }
+  .diagram-label {
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  /* Sub-tabs inside the Templates → detail pane. Visually distinct
+     from the top tabs (smaller, no underline strip) so the operator
+     can tell which level they're navigating. */
+  .sub-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    align-self: flex-start;
+  }
+  .sub-tab {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 5px 12px;
+    font-size: 12px;
+    border-radius: calc(var(--r-sm) - 1px);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: background-color 0.12s, color 0.12s;
+  }
+  .sub-tab:hover { color: var(--text); }
+  .sub-tab.active {
+    background: var(--bg-elev);
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
+  }
+  .sub-tab-hint {
+    font-size: 10px;
+  }
+  .dirty-dot.inline {
+    width: 6px;
+    height: 6px;
+    margin: 0;
+  }
   .editor-wrap {
     flex: 1;
     min-height: 0;
     display: flex;
     flex-direction: column;
+  }
+  /* Hint linking AI Assist → Markdown for the Refine flow. */
+  .assist-hint {
+    padding-top: 4px;
+    border-top: 1px dashed var(--border);
+    margin-top: 4px;
+  }
+  .link-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+    text-decoration: underline;
   }
   .editor-actions {
     display: flex;
@@ -1026,5 +1514,105 @@
     padding: 6px 10px;
     background: rgba(255, 0, 0, 0.05);
     border-left: 2px solid #ff9a9a;
+  }
+
+  /* New-template modal */
+  .new-modal {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    color: var(--text);
+  }
+  .new-modal h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .modal-help {
+    font-size: 12px;
+    margin: 0;
+    line-height: 1.5;
+  }
+  .modal-label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .modal-input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-sunken);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+  .modal-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .modal-error {
+    font-size: 12px;
+    color: var(--fail);
+    padding: 6px 8px;
+    background: var(--fail-soft);
+    border-left: 2px solid var(--fail);
+    border-radius: 2px;
+  }
+  .modal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .btn-modal-cancel,
+  .btn-modal-create {
+    border: 1px solid var(--border);
+    background: var(--bg-elev);
+    color: var(--text);
+    padding: 7px 16px;
+    font-size: 13px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .btn-modal-create {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .btn-modal-create:hover {
+    background: color-mix(in srgb, var(--accent) 88%, #000);
+  }
+  .btn-modal-cancel:hover {
+    background: var(--bg-hover);
+  }
+  .btn-modal-delete {
+    border: 1px solid var(--fail);
+    background: var(--fail);
+    color: #fff;
+    padding: 7px 16px;
+    font-size: 13px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .btn-modal-delete:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--fail) 88%, #000);
+  }
+  .btn-modal-delete:disabled,
+  .btn-modal-cancel:disabled,
+  .btn-modal-create:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .modal-code {
+    font-family: var(--font-mono);
+    background: var(--bg-sunken);
+    padding: 1px 6px;
+    border-radius: 3px;
+    color: var(--text);
   }
 </style>

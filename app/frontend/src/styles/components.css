@@ -4,47 +4,6 @@
 
 /* --- Design-spec utility classes (from prototype style contract) --- */
 
-.ds-card {
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-sm);
-}
-
-/* mono typography */
-.ds-mono { font-family: var(--font-mono); }
-.ds-mono-head {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.ds-mono-head::before { content: "»"; color: var(--accent); font-weight: 700; }
-
-/* page layout */
-.ds-page-title {
-  font-size: 28px;
-  font-weight: 800;
-  color: var(--accent);
-  letter-spacing: -.01em;
-  margin: 0;
-}
-.ds-section-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: 0 0 18px;
-}
-.ds-main-inner {
-  padding: var(--main-pad, 30px) 40px 80px;
-  max-width: 1320px;
-  margin: 0 auto;
-}
-
 /* buttons */
 .ds-btn {
   font-family: var(--font-sans);
@@ -71,29 +30,7 @@
 .ds-btn.sm { padding: 5px 10px; font-size: 12px; }
 .ds-btn.danger:hover { color: var(--fail); border-color: color-mix(in srgb, var(--fail) 40%, var(--border)); }
 
-/* icon button */
-.ds-iconbtn {
-  width: 28px; height: 28px;
-  display: grid; place-items: center;
-  border-radius: var(--r-sm);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background var(--dur), color var(--dur);
-}
-.ds-iconbtn:hover { background: var(--bg-hover); color: var(--text); }
-
 /* inline tags & type badges */
-.ds-tag {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 99px;
-  border: 1px solid var(--border);
-  color: var(--text-faint);
-  background: var(--bg);
-}
 .ds-badge-type {
   font-family: var(--font-mono);
   font-size: 10px;
@@ -108,20 +45,6 @@
 .ds-badge-type.utm    { color: var(--sched); background: var(--sched-soft); }
 .ds-badge-type.container { color: var(--task); background: var(--task-soft); }
 .ds-badge-type.vm     { color: var(--sched); background: var(--sched-soft); }
-
-/* scope chip (profile label) */
-.ds-scope-chip {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-faint);
-  background: var(--bg-sunken);
-  border: 1px solid var(--border);
-  border-radius: 99px;
-  padding: 2px 9px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
 
 /* widget state dot */
 .ds-state-dot {
@@ -144,12 +67,6 @@
 }
 .ds-fade-up { animation: ds-fade-up .3s var(--ease, ease); }
 
-@keyframes ds-pop-in {
-  from { transform: translateY(-5px) scale(.98); opacity: .6; }
-  to   { transform: none; opacity: 1; }
-}
-.ds-pop-in { animation: ds-pop-in .16s ease both; }
-
 @keyframes ds-pulse {
   0%   { box-shadow: 0 0 0 0 currentColor; }
   70%  { box-shadow: 0 0 0 6px transparent; }
@@ -162,12 +79,6 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: var(--spacing-xl);
-}
-
-.panel-title {
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
 }
 
 /* --- Row / list item --- */
@@ -183,50 +94,6 @@
 }
 .row:hover {
   border-color: var(--color-border-secondary);
-}
-
-.row-main {
-  flex: 1;
-  min-width: 0;
-}
-
-.row-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.row-name {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--color-text-primary);
-}
-
-.row-desc {
-  display: block;
-  font-size: 13px;
-  color: var(--color-text-primary);
-  margin-bottom: 6px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.row-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.meta-text {
-  font-size: 11px;
-  color: var(--color-text-secondary);
-}
-
-.meta-text.muted {
-  color: var(--color-text-tertiary);
 }
 
 .meta-url {
@@ -248,20 +115,10 @@
 }
 
 /* --- Modal dialog patterns --- */
-.modal-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-
 .modal-sub {
   font-size: 12px;
   color: var(--color-text-muted);
   margin-bottom: 20px;
-}
-
-.modal-field {
-  margin-bottom: 14px;
 }
 
 .modal-actions {
@@ -308,38 +165,7 @@
   border-color: var(--color-success-border);
 }
 
-/* --- Pill badge (rounded full) --- */
-.pill-badge {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 9999px;
-  font-weight: 500;
-}
-
-.pill-badge.mq {
-  background: var(--color-success-bg);
-  color: #6ee7b7;
-  border: 1px solid var(--color-success-border);
-}
-
-.pill-badge.ps {
-  background: rgba(168, 85, 247, 0.1);
-  color: #d8b4fe;
-  border: 1px solid rgba(168, 85, 247, 0.2);
-}
-
-/* --- Group header (repo/session groups) --- */
-.group-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 16px;
-  margin-bottom: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--color-border-primary);
-}
-.group-header:first-of-type { margin-top: 0; }
-
+/* --- Group label (used by widget drawer) --- */
 .group-label {
   font-size: 11px;
   font-weight: 600;
@@ -347,25 +173,6 @@
   letter-spacing: 0.06em;
   color: var(--color-text-tertiary);
 }
-
-.group-count {
-  font-size: 10px;
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-tertiary);
-  padding: 1px 6px;
-  border-radius: 9999px;
-}
-
-/* --- Checkbox list --- */
-.checkbox-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-.checkbox-item input[type="checkbox"] { width: auto; }
 
 /* --- Profile picker (used in modals) --- */
 .profile-picker {
@@ -429,25 +236,3 @@
   padding: 12px 0;
 }
 
-/* --- Compact inline panel header (used by Jobs, Automations, Stream) --- */
-.cpanel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-bottom: var(--spacing-md);
-  border-bottom: 1px solid var(--color-border-primary);
-  flex-shrink: 0;
-}
-
-.cpanel-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-text-primary);
-  margin: 0;
-}
-
-.cpanel-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
-}

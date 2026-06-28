@@ -125,10 +125,6 @@ code {
   50%       { opacity: 0.4; }
 }
 
-.loading-pulse {
-  animation: pulse-opacity 1.6s ease-in-out infinite;
-}
-
 .loading {
   animation: pulse-opacity 1.6s ease-in-out infinite;
 }

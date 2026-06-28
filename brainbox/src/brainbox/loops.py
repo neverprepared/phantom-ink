@@ -1,14 +1,15 @@
-"""Loop / Node / Edge / HandoffEnvelope — Python mirrors of the Go types
-in app/loops.go. Same JSON field names so both sides serialize to the same
-wire format.
+"""Loop runtime types — HandoffEnvelope, LoopInstance, LoopStatus,
+RequiredRef, PermissionTier.
 
-The Loop runner lives here in brainbox because it integrates with the queue,
-the WAITING_* suspension primitive, and child-task observation. The Go side
-owns authoring and display; brainbox owns execution. The JSON shape is the
-contract; both sides mirror it.
+The on-disk loop *definition* lives in ``loop_md`` as ``LoopMarkdown``.
+This module holds the runtime shapes the runner reads and writes.
 
-See ~/.claude/plans/okay-the-idea-of-replicated-popcorn.md for the full
-design and the Phase A breakdown.
+History note: an earlier version held a full ``LoopSpec`` Pydantic
+model with embedded JMESPath predicates, Node/Edge graphs, and
+StopCondition lists. That format was replaced with the markdown format
+(prose stop/escalate sections evaluated by a judge agent each
+iteration). See ``loop_md`` for the parser and ``loop_judge`` for the
+evaluator.
 """
 
 from __future__ import annotations
@@ -18,8 +19,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .models import ModelTarget
-
 # ---------------------------------------------------------------------------
 # Constants — kept aligned with app/loops.go
 # ---------------------------------------------------------------------------
@@ -28,11 +27,11 @@ ENVELOPE_SCHEMA_VERSION = 1
 
 
 class PermissionTier(str, Enum):
-    """How a Loop's Nodes receive permissions from the profile env.
+    """How a Loop's worker receives permissions from the profile env.
 
-    See plan: profiles isolate projects; this is the second, finer boundary
-    inside one profile that handles the reviewer-vs-worker prompt-injection
-    surface within a single Loop.
+    Profiles isolate projects; this is the second, finer boundary inside
+    one profile that handles the reviewer-vs-worker prompt-injection
+    surface within a single loop.
     """
 
     INHERIT = "inherit"
@@ -40,34 +39,13 @@ class PermissionTier(str, Enum):
     STRICT = "strict"
 
 
-class NodeKind(str, Enum):
-    AGENT = "agent"
-    PLAYBOOK = "playbook"
-    JOIN = "join"
-    HUMAN = "human"
-    SCHEDULE = "schedule"
-
-
-class NodeExecutor(str, Enum):
-    HOST_CLI = "host-cli"
-    BRAINBOX_SESSION = "brainbox-session"
-    A2A_REMOTE = "a2a-remote"
-
-
-class EscalationAction(str, Enum):
-    HUMAN = "human"
-    SKIP = "skip"
-    FAIL = "fail"
-
-
 class RequiredRefType(str, Enum):
-    """Operator-facing type hint for a Loop's required artifact_refs.
+    """Operator-facing type hint for a loop's required artifact_refs.
 
     Drives the Trigger form's input rendering (number input for int,
     text input for string, fixed-width font + length hint for sha) and
-    documents intent for AI Assist when generating templates. Day 1 the
+    documents intent for AI Assist when generating templates. The
     runner does NOT enforce type — the start_loop check is presence-only.
-    Type coercion / validation is a follow-up.
     """
 
     INT = "int"
@@ -76,8 +54,8 @@ class RequiredRefType(str, Enum):
 
 
 class RequiredRef(BaseModel):
-    """Declares an artifact_refs key that the operator (or webhook handler)
-    must populate before start_loop accepts the trigger.
+    """Declares an artifact_refs key that the operator (or webhook
+    handler) must populate before start_loop accepts the trigger.
 
     Surfaced in the desktop Trigger tab as a form field; pre-populated
     by the GitHub webhook handler from the PR payload.
@@ -90,172 +68,25 @@ class RequiredRef(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Body — Nodes and Edges
-# ---------------------------------------------------------------------------
-
-
-class EdgeTransform(BaseModel):
-    """Declarative envelope projection at a trust boundary. Select and Omit
-    are mutually exclusive on a given edge; Merge can combine with either.
-    """
-
-    select: list[str] = Field(default_factory=list)
-    omit: list[str] = Field(default_factory=list)
-    merge: dict[str, Any] = Field(default_factory=dict)
-
-
-class Edge(BaseModel):
-    """Connects two Nodes in a Loop body. Predicate (JMESPath, bool) decides
-    whether the edge fires against the envelope emitted by ``from``;
-    omitted predicate means always-fire.
-    """
-
-    from_: str = Field(alias="from")
-    to: str
-    predicate: str = ""
-    transform: EdgeTransform | None = None
-
-    model_config = {"populate_by_name": True}
-
-
-class Node(BaseModel):
-    """One unit of execution inside a Loop body. ``kind`` selects the runtime
-    shape; ``executor`` selects the runtime backend. host-cli is wired today;
-    brainbox-session and a2a-remote are forward-compat slots.
-
-    ``requires`` lists permission scopes the Node needs (consulted in
-    strict tier; in default tier, destructive scopes still require explicit
-    listing here).
-    """
-
-    id: str
-    kind: NodeKind = NodeKind.AGENT
-    executor: NodeExecutor = NodeExecutor.HOST_CLI
-    role: str = ""
-    agent_id: str = ""
-    playbook_id: str = ""
-    prompt: str = ""
-    requires: list[str] = Field(default_factory=list)
-    timeout_ms: int = 0
-    model_target: ModelTarget | None = None  # per-node LLM selection (Phase 2)
-
-
-class Body(BaseModel):
-    nodes: list[Node] = Field(default_factory=list)
-    edges: list[Edge] = Field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Intent and stop conditions
-# ---------------------------------------------------------------------------
-
-
-class EscalationClause(BaseModel):
-    predicate: str  # JMESPath, bool
-    action: EscalationAction = EscalationAction.HUMAN
-
-
-class StopCondition(BaseModel):
-    """Hard cap evaluated between iterations. If any matches, the Loop stops
-    with the corresponding reason tag attached to the instance.
-    """
-
-    predicate: str  # JMESPath, bool against envelope
-    reason: str = ""  # operator-facing tag, e.g. "diff_too_large"
-
-
-class Intent(BaseModel):
-    """Structured "done" definition for a Loop. ``convergence`` is the SAME
-    expression as ``LoopSpec.convergence_predicate`` — one source of truth.
-    A template that fails to declare convergence cannot load (enforced at
-    LoopSpec validation time).
-    """
-
-    outcome: str = ""
-    verification: list[str] = Field(default_factory=list)
-    non_goals: list[str] = Field(default_factory=list)
-    convergence: str  # JMESPath, bool — REQUIRED
-    escalation: list[EscalationClause] = Field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# LoopSpec — the on-disk Loop definition
-# ---------------------------------------------------------------------------
-
-
-class TemplateSnapshot(BaseModel):
-    """Pinned onto each LoopInstance at creation. The runner reads only from
-    the snapshot for the Loop's life; on-disk template changes after
-    creation never affect in-flight instances. Role markdown referenced by
-    Nodes does live-bind — see plan for the rationale.
-    """
-
-    name: str
-    version: str = ""
-    hash: str = ""
-    body_json: str = ""  # the full spec at snapshot time
-
-
-class LoopSpec(BaseModel):
-    """Top-level Loop definition. Mirrors Loop in app/loops.go.
-
-    Backwards compat: a 1-iteration LoopSpec with a trivially-true
-    convergence_predicate is behaviorally identical to today's Chain run.
-    """
-
-    id: str = ""
-    name: str = ""
-    description: str = ""
-    intent: Intent
-    body: Body
-    max_iterations: int = 5
-    convergence_predicate: str = ""  # JMESPath, bool — defaults to intent.convergence
-    convergence_metric: str = ""  # JMESPath, number — charted per iteration
-    stop_conditions: list[StopCondition] = Field(default_factory=list)
-    permissions: PermissionTier = PermissionTier.DEFAULT
-    # Operator-supplied refs the loop needs to trigger. start_loop validates
-    # every required entry exists in initial envelope.artifact_refs and
-    # rejects with a useful message when any is missing. The desktop Trigger
-    # tab and the AI Assist generator read this to know which form fields
-    # to render for a given template.
-    required_refs: list[RequiredRef] = Field(default_factory=list)
-    template_snapshot: TemplateSnapshot | None = None
-    cwd: str = ""
-    workspace_profile: str = ""
-    created_at: str = ""
-    updated_at: str = ""
-
-    def model_post_init(self, __context: Any) -> None:
-        # Single source of truth: if the Loop didn't explicitly declare a
-        # convergence_predicate, fall back to intent.convergence. Both being
-        # empty is the validation-error case caught below.
-        if not self.convergence_predicate:
-            self.convergence_predicate = self.intent.convergence
-        if not self.convergence_predicate:
-            raise ValueError(
-                "LoopSpec requires a convergence predicate "
-                "(either Intent.convergence or LoopSpec.convergence_predicate)"
-            )
-
-
-# ---------------------------------------------------------------------------
 # HandoffEnvelope — the unifying handoff primitive
 # ---------------------------------------------------------------------------
 
 
 class HandoffEnvelope(BaseModel):
-    """The unifying handoff payload. Every Node-to-Node, iteration-to-iteration,
-    Loop-to-Loop, and cross-runtime handoff carries one of these.
+    """The unifying handoff payload. Every iteration-to-iteration handoff
+    and every cross-runtime handoff carries one of these.
 
     Discipline (do not break):
-      - Additive-only schema. Never remove or repurpose a field; only add
-        optional ones. ``schema_version`` is stamped for cross-runtime
+      - Additive-only schema. Never remove or repurpose a field; only
+        add optional ones. ``schema_version`` is stamped for cross-runtime
         compatibility checks (e.g. A2A remote agent declaring
-        ``accepts_schema: ">=3"``). The runner does NOT do migrations on load.
+        ``accepts_schema: ">=3"``). The runner does NOT do migrations
+        on load.
       - Embed with overflow. Up to ~100 KB embedded; larger blobs go to
-        artifact storage and the envelope carries a pointer in ``artifact_refs``.
-      - JMESPath-queryable. Every predicate site in the runner shares the
-        same expression language evaluated against this shape.
+        artifact storage and the envelope carries a pointer in
+        ``artifact_refs``.
+      - Judge-readable. The judge agent reads this shape directly when
+        evaluating prose stop/escalate sections, so keep keys descriptive.
     """
 
     schema_version: int = ENVELOPE_SCHEMA_VERSION
@@ -273,47 +104,56 @@ class HandoffEnvelope(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# LoopInstance — one Loop run, projected as a parent task + iteration children
+# LoopInstance — one loop run
 # ---------------------------------------------------------------------------
 
 
 class LoopStatus(str, Enum):
-    """A Loop instance's lifecycle. PENDING / RUNNING are active; the rest are
-    terminal. CONVERGED is the success exit; the four FAILED-ish terminals
-    capture distinct failure shapes so an operator can triage at a glance.
+    """A loop instance's lifecycle. PENDING / RUNNING are active; the rest
+    are terminal. CONVERGED is the success exit; the four FAILED-ish
+    terminals capture distinct failure shapes for triage.
     """
 
     PENDING = "pending"
     RUNNING = "running"
     CONVERGED = "converged"
-    THRASHING = "thrashing"               # convergence metric not improving
-    MAX_ITER = "max_iter"                 # iteration cap hit without convergence
-    STOPPED_BY_CONDITION = "stopped_by_condition"  # a StopCondition predicate fired
-    FAILED = "failed"                     # iteration child task failed / runner error
+    THRASHING = "thrashing"
+    MAX_ITER = "max_iter"
+    STOPPED_BY_CONDITION = "stopped_by_condition"  # set when judge says escalate
+    FAILED = "failed"
     CANCELLED = "cancelled"
 
 
 class LoopInstance(BaseModel):
-    """One execution of a LoopSpec. Each iteration is projected as a child
-    task in the router; this instance holds the cross-iteration state the
-    runner needs to decide whether to advance, converge, or stop.
+    """One execution of a parsed loop template. Each iteration is
+    projected as a child task in the router; this instance holds the
+    cross-iteration state the runner needs to decide whether to advance,
+    converge, or stop.
 
-    ``spec_snapshot`` is pinned at creation. The runner only reads from this
-    snapshot; on-disk template changes never affect in-flight instances.
-    ``metric_history`` is the per-iteration convergence-metric series that
-    feeds the convergence trend chart and the thrash detector.
+    ``template_text`` is the full raw markdown frozen at creation. The
+    runner only reads from this snapshot for the loop's life; on-disk
+    template changes never affect in-flight instances. ``mermaid`` is
+    generated alongside it and survives template edits.
+
+    ``cost_history`` is the per-iteration USD cost series; ``cost_usd``
+    is the running total. Used to enforce ``budget_usd`` from the
+    template frontmatter.
     """
 
     id: str
-    spec_snapshot: LoopSpec
+    template_name: str = ""
+    template_text: str = ""        # raw markdown — the spec snapshot
+    template_hash: str = ""        # short content hash for telemetry
+    mermaid: str = ""              # rendered at create time
     parent_task_id: str
     status: LoopStatus = LoopStatus.PENDING
     iteration: int = 0
     envelope: HandoffEnvelope
-    metric_history: list[float] = Field(default_factory=list)
+    cost_history: list[float] = Field(default_factory=list)
+    cost_usd: float = 0.0
     current_child_id: str | None = None
     workspace_profile: str | None = None
     created_at: int  # epoch ms
     updated_at: int  # epoch ms
     error: str | None = None
-    stop_reason: str | None = None  # set when status == STOPPED_BY_CONDITION
+    stop_reason: str | None = None  # judge "reason" string when terminal

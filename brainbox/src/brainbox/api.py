@@ -3838,28 +3838,49 @@ async def api_list_loop_templates():
 
 @app.get("/api/loops/templates/schema", dependencies=[Depends(require_api_key)])
 async def api_loop_template_schema():
-    """LoopSpec JSON Schema — drives the YAML editor's Intellisense."""
-    from .loops import LoopSpec
+    """Return the frontmatter contract for the markdown loop format.
 
-    return LoopSpec.model_json_schema()
+    Drove a JSON-Schema-style YAML editor in the legacy format; with the
+    markdown switch the editor lints via /validate instead. This shape
+    is preserved for the AI Assist prompt builder and for a future
+    schema-aware editor mode."""
+    return {
+        "frontmatter": {
+            "required": ["name", "trigger", "max_iterations"],
+            "optional": [
+                "agent",
+                "permissions",
+                "budget_usd",
+                "objective",
+                "required_refs",
+            ],
+        },
+        "sections": {
+            "required": ["Role", "When to stop", "When to escalate"],
+            "optional": ["Tools", "Notes"],
+        },
+        "permissions": ["inherit", "default", "strict"],
+        "required_ref_types": ["int", "string", "sha"],
+    }
 
 
 @app.post("/api/loops/templates/validate", dependencies=[Depends(require_api_key)])
 async def api_loop_template_validate(request: Request):
-    """Validate raw template YAML without saving.
+    """Validate raw template markdown without saving.
 
-    Body: ``{"yaml": "<raw text>"}``
-    Returns the structured error report from ``validate_yaml`` — ``ok``
-    flag plus ``errors[]`` and ``warnings[]`` with line/col/field info
-    where the parser supplies it.
+    Body: ``{"markdown": "<raw text>"}`` (legacy ``{"yaml": ...}`` is
+    still accepted for one release to ease the frontend swap).
+    Returns the structured error report from ``validate_markdown``.
     """
-    from .loop_template import validate_yaml
+    from .loop_template import validate_markdown
 
     body = await request.json()
-    raw = body.get("yaml")
+    raw = body.get("markdown")
+    if raw is None:
+        raw = body.get("yaml")  # legacy key
     if not isinstance(raw, str):
-        raise HTTPException(status_code=400, detail="body.yaml must be a string")
-    return validate_yaml(raw)
+        raise HTTPException(status_code=400, detail="body.markdown must be a string")
+    return validate_markdown(raw)
 
 
 @app.post("/api/loops/templates/assist", dependencies=[Depends(require_api_key)])
@@ -3896,6 +3917,7 @@ async def api_loop_template_assist(request: Request):
         raise HTTPException(status_code=400, detail="prompt is required")
     current_yaml = body.get("current_yaml") or None
     selection = body.get("selection") or None
+    save_as = body.get("save_as") or None
 
     try:
         result = await assist(
@@ -3903,6 +3925,7 @@ async def api_loop_template_assist(request: Request):
             prompt=prompt,
             current_yaml=current_yaml,
             selection=selection,
+            save_as=save_as,
         )
     except AssistError as exc:
         msg = str(exc)
@@ -3959,7 +3982,8 @@ async def api_put_loop_template(
 ):
     """Write a template to the user templates dir.
 
-    Body: ``{"yaml": "<raw text>"}``.
+    Body: ``{"markdown": "<raw text>"}`` (legacy ``{"yaml": ...}`` is
+    still accepted for one release).
     Query: ``?fork=true`` allows creating a user override of a built-in
     template of the same name. Without it, writing to a built-in name
     returns 409.
@@ -3967,9 +3991,11 @@ async def api_put_loop_template(
     from .loop_template import TemplateError, write_user_template
 
     body = await request.json()
-    raw = body.get("yaml")
+    raw = body.get("markdown")
+    if raw is None:
+        raw = body.get("yaml")  # legacy
     if not isinstance(raw, str):
-        raise HTTPException(status_code=400, detail="body.yaml must be a string")
+        raise HTTPException(status_code=400, detail="body.markdown must be a string")
 
     try:
         return write_user_template(name, raw, fork_from_builtin=fork)
@@ -3979,7 +4005,7 @@ async def api_put_loop_template(
             raise HTTPException(status_code=409, detail=msg)
         if "invalid template name" in msg:
             raise HTTPException(status_code=400, detail=msg)
-        if "spec validation failed" in msg or "not valid YAML" in msg or "frontmatter" in msg:
+        if "frontmatter" in msg or "section" in msg or "slug" in msg:
             raise HTTPException(status_code=422, detail=msg)
         raise HTTPException(status_code=400, detail=msg)
 
@@ -4059,17 +4085,28 @@ async def api_start_loop(request: Request):
 
 
 def _loop_summary(inst) -> dict:
-    """Slim LoopInstance projection for list views — drops the full spec
-    snapshot (can be 5-10KB) and keeps the operator-facing fields."""
+    """Slim LoopInstance projection for list views — drops the raw
+    template text (can be 5–10 KB) and keeps the operator-facing fields.
+    Frontmatter values like max_iterations are re-parsed cheaply for
+    the list view; pin them on LoopInstance later if it shows up in
+    profiling."""
+    max_iter = 0
+    try:
+        from .loop_md import parse as _parse
+        max_iter = _parse(inst.template_text).max_iterations
+    except Exception:
+        pass
     return {
         "id": inst.id,
-        "name": inst.spec_snapshot.name,
+        "name": inst.template_name,
         "status": inst.status.value,
         "iteration": inst.iteration,
-        "max_iterations": inst.spec_snapshot.max_iterations,
+        "max_iterations": max_iter,
         "parent_task_id": inst.parent_task_id,
         "current_child_id": inst.current_child_id,
-        "metric_history": inst.metric_history,
+        "cost_history": inst.cost_history,
+        "cost_usd": inst.cost_usd,
+        "mermaid": inst.mermaid,
         "stop_reason": inst.stop_reason,
         "error": inst.error,
         "workspace_profile": inst.workspace_profile,
@@ -4141,6 +4178,7 @@ async def api_cancel_loop(loop_id: str, request: Request):
     return inst.model_dump()
 
 
+# ---------------------------------------------------------------------------
 # Artifacts (MinIO-backed file browser + presign endpoints)
 # ---------------------------------------------------------------------------
 

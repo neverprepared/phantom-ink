@@ -1,16 +1,26 @@
-"""Tests for the Loop runner core (Phase A3b).
+"""Tests for the Loop runner core (markdown edition).
 
-Covers the five terminal paths of advance_loop and the start_loop wiring:
-  - CONVERGED (convergence predicate fires) → parent task COMPLETED
-  - STOPPED_BY_CONDITION (stop predicate matches) → parent FAILED, reason recorded
-  - MAX_ITER (iteration cap hit) → parent FAILED
-  - THRASHING (non-decreasing metric twice) → parent FAILED
-  - FAILED (iteration child task failed) → parent FAILED
-  - Normal continue → next iteration child enqueued, metric_history grows
+The runner now drives a parsed ``LoopMarkdown`` template. Stop and
+escalation decisions are delegated to ``loop_judge.evaluate_stop`` and
+``loop_judge.evaluate_escalation``, which dispatch real brainbox
+sessions in production. Tests monkeypatch those two functions in
+``brainbox.loop_runner`` with async fakes that return ``JudgeVerdict``s
+so we never spin up a session.
 
-Tests skip the router event listener entirely and call advance_loop
-directly with synthetic envelopes. The listener wiring lands with A3c so
-each PR can be reviewed for one concern.
+Covers:
+  - start_loop happy path: instance, parent task, first child enqueued
+  - start_loop wiring: envelope stamping, template snapshot, mermaid,
+    child→loop mapping
+  - missing required_refs raises before any task is created
+  - advance_loop CONVERGED (stop verdict fires)
+  - advance_loop STOPPED_BY_CONDITION (escalation verdict fires)
+  - advance_loop MAX_ITER (iteration cap reached, escalation fires
+    with "iteration cap" reason)
+  - advance_loop continue → next iteration enqueued, cost_history grows
+  - advance_loop validation: unknown id, terminal id
+  - cancel_loop: running → CANCELLED, terminal → noop, unknown raises
+  - on_iteration_failed: child failure → loop FAILED, unknown child noop
+  - child task carries loop_id / loop_iteration / permission_tier
 """
 
 from __future__ import annotations
@@ -18,25 +28,20 @@ from __future__ import annotations
 import pytest
 
 import brainbox.loop_runner as runner
+import brainbox.registry as reg_module
 import brainbox.router as router_module
+from brainbox.loop_judge import JudgeVerdict
+from brainbox.loop_md import parse
 from brainbox.loop_runner import (
     advance_loop,
+    cancel_loop,
     get_instance,
     loop_id_for_child,
     on_iteration_failed,
     start_loop,
 )
-from brainbox.loops import (
-    Body,
-    HandoffEnvelope,
-    Intent,
-    LoopSpec,
-    LoopStatus,
-    Node,
-    StopCondition,
-)
+from brainbox.loops import HandoffEnvelope, LoopStatus
 from brainbox.models import AgentDefinition, TaskStatus
-import brainbox.registry as reg_module
 
 
 # ---------------------------------------------------------------------------
@@ -46,52 +51,98 @@ import brainbox.registry as reg_module
 
 @pytest.fixture
 def reviewer_agent():
-    agent = AgentDefinition(name="reviewer", image="test-image", capabilities=["hub_messaging"])
-    reg_module._agents["reviewer"] = agent
-    return agent
+    """Register the agent names the runner looks up.
+
+    The runner now defaults to ``agent: worker`` when the template
+    omits one, and start_loop validates that the agent exists in the
+    registry. We register both ``worker`` (the default) and the
+    legacy ``test-loop`` (used by a couple of tests that build a
+    template with an explicit agent override) so every test path
+    finds an agent."""
+    worker = AgentDefinition(name="worker", image="test-image", capabilities=["hub_messaging"])
+    reg_module._agents["worker"] = worker
+    legacy = AgentDefinition(name="test-loop", image="test-image", capabilities=["hub_messaging"])
+    reg_module._agents["test-loop"] = legacy
+    return worker
 
 
-def _spec(
+def _template(
     *,
-    convergence: str = "length(findings.blockers) == `0`",
-    metric: str = "length(findings.blockers)",
+    name: str = "test-loop",
     max_iterations: int = 5,
-    stop_conditions: list[StopCondition] | None = None,
-) -> LoopSpec:
-    return LoopSpec(
-        name="test-loop",
-        intent=Intent(outcome="x", convergence=convergence),
-        body=Body(nodes=[Node(id="reviewer", role="reviewer", prompt="review the diff")]),
-        convergence_metric=metric,
-        max_iterations=max_iterations,
-        stop_conditions=stop_conditions or [],
+    permissions: str | None = None,
+    required_refs: list[dict] | None = None,
+    objective: dict | None = None,
+    budget_usd: float | None = None,
+    agent: str | None = None,
+) -> str:
+    """Build a minimal valid markdown template, varying the fields the
+    runner actually reads."""
+    fm_lines = [
+        f"name: {name}",
+        "trigger: manual",
+        f"max_iterations: {max_iterations}",
+    ]
+    if permissions is not None:
+        fm_lines.append(f"permissions: {permissions}")
+    if budget_usd is not None:
+        fm_lines.append(f"budget_usd: {budget_usd}")
+    if agent is not None:
+        fm_lines.append(f"agent: {agent}")
+    if required_refs:
+        fm_lines.append("required_refs:")
+        for ref in required_refs:
+            fm_lines.append(f"  - name: {ref['name']}")
+            if "required" in ref:
+                fm_lines.append(f"    required: {str(ref['required']).lower()}")
+    if objective:
+        fm_lines.append("objective:")
+        for k, v in objective.items():
+            fm_lines.append(f"  {k}: {v}")
+
+    fm = "\n".join(fm_lines)
+    return (
+        f"---\n{fm}\n---\n\n"
+        "# Role\n"
+        "You do a thing.\n\n"
+        "# When to stop\n"
+        "- The thing is done.\n\n"
+        "# When to escalate\n"
+        "- The thing breaks.\n"
     )
 
 
-# ---------------------------------------------------------------------------
-# Node model_target → child task (Phase 2)
-# ---------------------------------------------------------------------------
+def _loop(**kwargs):
+    return parse(_template(**kwargs))
 
 
-class TestNodeModelTarget:
-    @pytest.mark.asyncio
-    async def test_node_model_target_reaches_child_task(self, reviewer_agent):
-        from brainbox.models import ModelTarget
+@pytest.fixture
+def patch_judge(monkeypatch):
+    """Default: both judges return fired=False so the loop keeps iterating.
+    Tests override individual calls by patching again after this fixture."""
+    async def _no_stop(**_kwargs):
+        return JudgeVerdict(fired=False, reason="not done", via="judge")
 
-        spec = LoopSpec(
-            name="mt-loop",
-            intent=Intent(outcome="x", convergence="length(findings.blockers) == `0`"),
-            body=Body(nodes=[Node(
-                id="reviewer", role="reviewer", prompt="review",
-                model_target=ModelTarget(provider="ollama", model="qwen3:8b"),
-            )]),
-            convergence_metric="length(findings.blockers)",
-        )
-        inst = await start_loop(spec, HandoffEnvelope())
-        child = router_module._tasks[inst.current_child_id]
-        assert child.model_target is not None
-        assert child.model_target.provider == "ollama"
-        assert child.model_target.model == "qwen3:8b"
+    async def _no_escalate(**_kwargs):
+        return JudgeVerdict(fired=False, reason="ok", via="judge")
+
+    monkeypatch.setattr(runner, "evaluate_stop", _no_stop)
+    monkeypatch.setattr(runner, "evaluate_escalation", _no_escalate)
+    return monkeypatch
+
+
+def _set_stop(monkeypatch, *, fired: bool, reason: str = "done", via: str = "judge"):
+    async def _stop(**_kwargs):
+        return JudgeVerdict(fired=fired, reason=reason, via=via)
+
+    monkeypatch.setattr(runner, "evaluate_stop", _stop)
+
+
+def _set_escalation(monkeypatch, *, fired: bool, reason: str = "escalate", via: str = "judge"):
+    async def _esc(**_kwargs):
+        return JudgeVerdict(fired=fired, reason=reason, via=via)
+
+    monkeypatch.setattr(runner, "evaluate_escalation", _esc)
 
 
 # ---------------------------------------------------------------------------
@@ -101,9 +152,8 @@ class TestNodeModelTarget:
 
 class TestStartLoop:
     @pytest.mark.asyncio
-    async def test_creates_instance_parent_and_first_child(self, reviewer_agent):
-        spec = _spec()
-        inst = await start_loop(spec, HandoffEnvelope())
+    async def test_creates_instance_parent_and_first_child(self, reviewer_agent, patch_judge):
+        inst = await start_loop(_loop(), HandoffEnvelope())
 
         assert inst.status == LoopStatus.RUNNING
         assert inst.iteration == 1
@@ -114,158 +164,97 @@ class TestStartLoop:
         child = router_module._tasks[inst.current_child_id]
         assert parent.status == TaskStatus.RUNNING
         assert child.status == TaskStatus.PENDING
-        assert child.agent_name == "reviewer"
-        assert child.job_id == parent.id  # child is parented to the loop task
+        assert child.agent_name == "worker"  # default after agent-from-name → worker
+        assert child.job_id == parent.id
 
     @pytest.mark.asyncio
-    async def test_stamps_loop_id_and_iteration_on_envelope(self, reviewer_agent):
-        spec = _spec()
-        inst = await start_loop(spec, HandoffEnvelope())
+    async def test_stamps_loop_id_and_iteration_on_envelope(self, reviewer_agent, patch_judge):
+        inst = await start_loop(_loop(), HandoffEnvelope())
         assert inst.envelope.loop_id == inst.id
         assert inst.envelope.iteration == 0
 
     @pytest.mark.asyncio
-    async def test_pins_template_snapshot(self, reviewer_agent):
-        spec = _spec()
-        inst = await start_loop(spec, HandoffEnvelope())
-        snap = inst.spec_snapshot.template_snapshot
-        assert snap is not None
-        assert snap.name == "test-loop"
-        assert snap.hash  # non-empty
+    async def test_pins_template_snapshot(self, reviewer_agent, patch_judge):
+        inst = await start_loop(_loop(), HandoffEnvelope())
+        assert inst.template_name == "test-loop"
+        assert inst.template_text  # non-empty raw markdown
+        assert inst.template_hash  # non-empty content hash
+        assert inst.mermaid  # rendered
 
     @pytest.mark.asyncio
-    async def test_registers_child_to_loop_mapping(self, reviewer_agent):
-        spec = _spec()
-        inst = await start_loop(spec, HandoffEnvelope())
+    async def test_registers_child_to_loop_mapping(self, reviewer_agent, patch_judge):
+        inst = await start_loop(_loop(), HandoffEnvelope())
         assert loop_id_for_child(inst.current_child_id) == inst.id
 
     @pytest.mark.asyncio
-    async def test_rejects_empty_body(self, reviewer_agent):
-        spec = LoopSpec(
-            name="empty",
-            intent=Intent(outcome="x", convergence="`true`"),
-            body=Body(nodes=[]),
-        )
-        with pytest.raises(ValueError, match="at least one node"):
-            await start_loop(spec, HandoffEnvelope())
+    async def test_rejects_missing_required_refs(self, reviewer_agent, patch_judge):
+        loop = _loop(required_refs=[{"name": "pr_number"}, {"name": "repo"}])
+        with pytest.raises(ValueError, match="pr_number|repo"):
+            await start_loop(loop, HandoffEnvelope())
 
     @pytest.mark.asyncio
-    async def test_rejects_first_node_without_agent_or_role(self, reviewer_agent):
-        spec = LoopSpec(
-            name="no-role",
-            intent=Intent(outcome="x", convergence="`true`"),
-            body=Body(nodes=[Node(id="x")]),
-        )
-        with pytest.raises(ValueError, match="agent_id or role"):
-            await start_loop(spec, HandoffEnvelope())
-
-    @pytest.mark.asyncio
-    async def test_rejects_missing_required_refs(self, reviewer_agent):
-        from brainbox.loops import RequiredRef
-
-        spec = LoopSpec(
-            name="needs-pr",
-            intent=Intent(outcome="x", convergence="`true`"),
-            body=Body(nodes=[Node(id="r", role="reviewer")]),
-            convergence_metric="`0`",
-            required_refs=[
-                RequiredRef(name="pr_number"),
-                RequiredRef(name="repo"),
-            ],
-        )
-        # No artifact_refs at all → both required missing
-        with pytest.raises(ValueError, match="pr_number.*repo|repo.*pr_number"):
-            await start_loop(spec, HandoffEnvelope())
-
-    @pytest.mark.asyncio
-    async def test_accepts_when_all_required_refs_present(self, reviewer_agent):
-        from brainbox.loops import RequiredRef
-
-        spec = LoopSpec(
-            name="needs-pr",
-            intent=Intent(outcome="x", convergence="`true`"),
-            body=Body(nodes=[Node(id="r", role="reviewer")]),
-            convergence_metric="`0`",
-            required_refs=[
-                RequiredRef(name="pr_number"),
-                RequiredRef(name="repo"),
-            ],
-        )
+    async def test_accepts_when_all_required_refs_present(self, reviewer_agent, patch_judge):
+        loop = _loop(required_refs=[{"name": "pr_number"}, {"name": "repo"}])
         env = HandoffEnvelope(artifact_refs={"pr_number": 117, "repo": "owner/name"})
-        inst = await start_loop(spec, env)
+        inst = await start_loop(loop, env)
         assert inst.status == LoopStatus.RUNNING
 
     @pytest.mark.asyncio
-    async def test_optional_ref_can_be_missing(self, reviewer_agent):
-        from brainbox.loops import RequiredRef
-
-        spec = LoopSpec(
-            name="optional-sha",
-            intent=Intent(outcome="x", convergence="`true`"),
-            body=Body(nodes=[Node(id="r", role="reviewer")]),
-            convergence_metric="`0`",
-            required_refs=[
-                RequiredRef(name="pr_number"),
-                RequiredRef(name="head_sha", required=False),
-            ],
-        )
+    async def test_optional_ref_can_be_missing(self, reviewer_agent, patch_judge):
+        loop = _loop(required_refs=[
+            {"name": "pr_number"},
+            {"name": "head_sha", "required": False},
+        ])
         env = HandoffEnvelope(artifact_refs={"pr_number": 117})
-        inst = await start_loop(spec, env)
+        inst = await start_loop(loop, env)
         assert inst.status == LoopStatus.RUNNING
 
 
 # ---------------------------------------------------------------------------
-# advance_loop — CONVERGED happy path
+# advance_loop — CONVERGED
 # ---------------------------------------------------------------------------
 
 
 class TestAdvanceConverged:
     @pytest.mark.asyncio
-    async def test_zero_blockers_converges(self, reviewer_agent):
-        spec = _spec()
-        inst = await start_loop(spec, HandoffEnvelope())
+    async def test_stop_verdict_converges(self, reviewer_agent, patch_judge, monkeypatch):
+        inst = await start_loop(_loop(), HandoffEnvelope())
 
-        # Reviewer reports zero blockers and CI green — should converge
-        env = HandoffEnvelope(
-            findings={"blockers": []},
-            observations={"ci_status": "green"},
-        )
-        # Loop has just convergence=length(findings.blockers)==0, so CI status irrelevant
-        spec_simple = inst.spec_snapshot  # already has convergence_predicate set
-        result = await advance_loop(inst.id, env)
+        # After the iteration runs, judge says "done".
+        _set_stop(monkeypatch, fired=True, reason="objective satisfied")
+
+        result = await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": []}))
         assert result.status == LoopStatus.CONVERGED
+        assert result.stop_reason == "objective satisfied"
         assert result.current_child_id is None
-        # Parent task transitions to COMPLETED
+
         parent = router_module._tasks[result.parent_task_id]
         assert parent.status == TaskStatus.COMPLETED
-        # Metric recorded
-        assert result.metric_history == [0.0]
 
     @pytest.mark.asyncio
-    async def test_convergence_clears_child_mapping(self, reviewer_agent):
-        spec = _spec()
-        inst = await start_loop(spec, HandoffEnvelope())
+    async def test_convergence_clears_child_mapping(self, reviewer_agent, patch_judge, monkeypatch):
+        inst = await start_loop(_loop(), HandoffEnvelope())
         old_child = inst.current_child_id
 
-        env = HandoffEnvelope(findings={"blockers": []})
-        await advance_loop(inst.id, env)
+        _set_stop(monkeypatch, fired=True)
+        await advance_loop(inst.id, HandoffEnvelope())
         assert loop_id_for_child(old_child) is None
 
 
 # ---------------------------------------------------------------------------
-# advance_loop — normal continue path
+# advance_loop — continue
 # ---------------------------------------------------------------------------
 
 
 class TestAdvanceContinue:
     @pytest.mark.asyncio
-    async def test_blockers_present_enqueues_next_iteration(self, reviewer_agent):
-        spec = _spec(max_iterations=10)
-        inst = await start_loop(spec, HandoffEnvelope())
+    async def test_neither_judge_fires_enqueues_next_iteration(
+        self, reviewer_agent, patch_judge
+    ):
+        inst = await start_loop(_loop(max_iterations=10), HandoffEnvelope())
         original_child = inst.current_child_id
 
-        env = HandoffEnvelope(findings={"blockers": [{"file": "a.go"}, {"file": "b.go"}]})
-        result = await advance_loop(inst.id, env)
+        result = await advance_loop(inst.id, HandoffEnvelope())
 
         assert result.status == LoopStatus.RUNNING
         assert result.iteration == 2
@@ -279,34 +268,37 @@ class TestAdvanceContinue:
         assert loop_id_for_child(result.current_child_id) == inst.id
 
     @pytest.mark.asyncio
-    async def test_metric_history_accumulates_across_iterations(self, reviewer_agent):
-        spec = _spec(max_iterations=10)
-        inst = await start_loop(spec, HandoffEnvelope())
+    async def test_cost_history_grows_across_iterations(self, reviewer_agent, patch_judge):
+        inst = await start_loop(_loop(max_iterations=10), HandoffEnvelope())
 
-        await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": [1, 2, 3]}))
-        await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": [1, 2]}))
-        result = await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": [1]}))
+        await advance_loop(inst.id, HandoffEnvelope())
+        await advance_loop(inst.id, HandoffEnvelope())
+        result = await advance_loop(inst.id, HandoffEnvelope())
 
-        assert result.metric_history == [3.0, 2.0, 1.0]
+        # iter cost is 0.0 each (session-based execution doesn't surface
+        # tokens yet); shape check only.
+        assert len(result.cost_history) == 3
+        assert all(c == 0.0 for c in result.cost_history)
+        assert result.cost_usd == 0.0
         assert result.status == LoopStatus.RUNNING
 
 
 # ---------------------------------------------------------------------------
-# advance_loop — MAX_ITER
+# advance_loop — MAX_ITER (iteration cap via escalation)
 # ---------------------------------------------------------------------------
 
 
 class TestAdvanceMaxIter:
     @pytest.mark.asyncio
-    async def test_hits_cap_marks_max_iter(self, reviewer_agent):
-        spec = _spec(max_iterations=2)
-        inst = await start_loop(spec, HandoffEnvelope())  # iteration=1
+    async def test_iteration_cap_marks_max_iter(self, reviewer_agent, patch_judge, monkeypatch):
+        inst = await start_loop(_loop(max_iterations=2), HandoffEnvelope())  # iteration=1
 
-        # iteration 1 → enqueue 2 (still under cap)
-        await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": [1]}))
-        # iteration 2 → at cap, terminal
-        result = await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": [1]}))
+        # iteration 1 → escalation says "iteration cap exceeded" (the
+        # runner uses the substring "iteration cap" in the reason to
+        # pick MAX_ITER over STOPPED_BY_CONDITION).
+        _set_escalation(monkeypatch, fired=True, reason="iteration cap exceeded")
 
+        result = await advance_loop(inst.id, HandoffEnvelope())
         assert result.status == LoopStatus.MAX_ITER
         assert result.current_child_id is None
         parent = router_module._tasks[result.parent_task_id]
@@ -314,141 +306,86 @@ class TestAdvanceMaxIter:
 
 
 # ---------------------------------------------------------------------------
-# advance_loop — STOPPED_BY_CONDITION
+# advance_loop — STOPPED_BY_CONDITION (escalation fires, not a cap)
 # ---------------------------------------------------------------------------
 
 
-class TestAdvanceStopCondition:
+class TestAdvanceEscalation:
     @pytest.mark.asyncio
-    async def test_diff_size_cap_stops_loop(self, reviewer_agent):
-        spec = _spec(
-            max_iterations=10,
-            stop_conditions=[
-                StopCondition(
-                    predicate="observations.diff_lines > `100`",
-                    reason="diff_too_large",
-                ),
-            ],
-        )
-        inst = await start_loop(spec, HandoffEnvelope())
+    async def test_escalation_marks_stopped_by_condition(
+        self, reviewer_agent, patch_judge, monkeypatch
+    ):
+        inst = await start_loop(_loop(max_iterations=10), HandoffEnvelope())
 
-        env = HandoffEnvelope(
-            findings={"blockers": [1]},
-            observations={"diff_lines": 500},
-        )
-        result = await advance_loop(inst.id, env)
+        _set_escalation(monkeypatch, fired=True, reason="diff too large")
 
+        result = await advance_loop(inst.id, HandoffEnvelope())
         assert result.status == LoopStatus.STOPPED_BY_CONDITION
-        assert result.stop_reason == "diff_too_large"
+        assert result.stop_reason == "diff too large"
         parent = router_module._tasks[result.parent_task_id]
         assert parent.status == TaskStatus.FAILED
 
     @pytest.mark.asyncio
-    async def test_first_matching_condition_wins(self, reviewer_agent):
-        # Multiple conditions; the runner picks the first match for the reason tag.
-        spec = _spec(
-            max_iterations=10,
-            stop_conditions=[
-                StopCondition(predicate="observations.diff_lines > `100`", reason="diff_too_large"),
-                StopCondition(predicate="observations.cost_usd > `1.0`", reason="too_expensive"),
-            ],
-        )
-        inst = await start_loop(spec, HandoffEnvelope())
+    async def test_stop_takes_precedence_over_escalation(
+        self, reviewer_agent, patch_judge, monkeypatch
+    ):
+        """Per the runner's ordering, stop is checked before escalation —
+        if both would fire, CONVERGED wins."""
+        inst = await start_loop(_loop(), HandoffEnvelope())
 
-        env = HandoffEnvelope(
-            findings={"blockers": [1]},
-            observations={"diff_lines": 500, "cost_usd": 2.5},
-        )
-        result = await advance_loop(inst.id, env)
-        assert result.stop_reason == "diff_too_large"
+        _set_stop(monkeypatch, fired=True, reason="done")
+        _set_escalation(monkeypatch, fired=True, reason="also escalate")
+
+        result = await advance_loop(inst.id, HandoffEnvelope())
+        assert result.status == LoopStatus.CONVERGED
+        assert result.stop_reason == "done"
 
 
 # ---------------------------------------------------------------------------
-# advance_loop — THRASHING
-# ---------------------------------------------------------------------------
-
-
-class TestAdvanceThrashing:
-    @pytest.mark.asyncio
-    async def test_non_decreasing_twice_marks_thrashing(self, reviewer_agent):
-        spec = _spec(max_iterations=10)
-        inst = await start_loop(spec, HandoffEnvelope())
-
-        # iter 1: 3 blockers (history [3])
-        await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": [1, 2, 3]}))
-        # iter 2: 3 blockers (history [3, 3]) — first non-decrease, not yet thrashing
-        inst2 = await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": [1, 2, 3]}))
-        assert inst2.status == LoopStatus.RUNNING
-        # iter 3: 4 blockers (history [3, 3, 4]) — second non-decrease → thrashing
-        inst3 = await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": [1, 2, 3, 4]}))
-        assert inst3.status == LoopStatus.THRASHING
-        assert inst3.metric_history == [3.0, 3.0, 4.0]
-        parent = router_module._tasks[inst3.parent_task_id]
-        assert parent.status == TaskStatus.FAILED
-
-    @pytest.mark.asyncio
-    async def test_steady_decrease_does_not_thrash(self, reviewer_agent):
-        spec = _spec(max_iterations=10)
-        inst = await start_loop(spec, HandoffEnvelope())
-
-        await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": [1, 2, 3, 4]}))
-        await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": [1, 2, 3]}))
-        result = await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": [1, 2]}))
-        assert result.status == LoopStatus.RUNNING
-
-
-# ---------------------------------------------------------------------------
-# Iteration child failure → loop FAILED
+# Child task loop context
 # ---------------------------------------------------------------------------
 
 
 class TestIterationChildLoopContext:
-    """Loop iteration children carry loop_id / loop_iteration / permission_tier
-    / node_requires through router.submit_task → Task so the dispatch path
-    can inject env vars and (later) filter by permission tier."""
-
     @pytest.mark.asyncio
-    async def test_first_child_has_loop_context_fields(self, reviewer_agent):
-        spec = _spec()
-        inst = await start_loop(spec, HandoffEnvelope())
+    async def test_first_child_has_loop_context_fields(
+        self, reviewer_agent, patch_judge
+    ):
+        inst = await start_loop(_loop(), HandoffEnvelope())
         child = router_module._tasks[inst.current_child_id]
         assert child.loop_id == inst.id
         assert child.loop_iteration == 1
-        # pr-review template uses default tier
+        # default permission tier
         assert child.permission_tier == "default"
 
     @pytest.mark.asyncio
-    async def test_node_requires_propagate_to_child(self, reviewer_agent):
-        spec = LoopSpec(
-            name="strict-test",
-            intent=Intent(outcome="x", convergence="`true`"),
-            body=Body(nodes=[
-                Node(id="reviewer", role="reviewer", prompt="x",
-                     requires=["repo:read", "memory:write"]),
-            ]),
-            convergence_metric="`0`",
-        )
-        inst = await start_loop(spec, HandoffEnvelope())
+    async def test_strict_permission_tier_propagates(
+        self, reviewer_agent, patch_judge
+    ):
+        inst = await start_loop(_loop(permissions="strict"), HandoffEnvelope())
         child = router_module._tasks[inst.current_child_id]
-        assert child.node_requires == ["repo:read", "memory:write"]
+        assert child.permission_tier == "strict"
 
     @pytest.mark.asyncio
-    async def test_subsequent_iteration_has_correct_counter(self, reviewer_agent):
-        spec = _spec(max_iterations=10)
-        inst = await start_loop(spec, HandoffEnvelope())
-        await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": [1]}))
+    async def test_subsequent_iteration_has_correct_counter(
+        self, reviewer_agent, patch_judge
+    ):
+        inst = await start_loop(_loop(max_iterations=10), HandoffEnvelope())
+        await advance_loop(inst.id, HandoffEnvelope())
         # iter 2's child should carry loop_iteration == 2
         child = router_module._tasks[inst.current_child_id]
         assert child.loop_iteration == 2
 
 
+# ---------------------------------------------------------------------------
+# cancel_loop
+# ---------------------------------------------------------------------------
+
+
 class TestCancelLoop:
     @pytest.mark.asyncio
-    async def test_cancel_running_loop(self, reviewer_agent):
-        from brainbox.loop_runner import cancel_loop
-
-        spec = _spec()
-        inst = await start_loop(spec, HandoffEnvelope())
+    async def test_cancel_running_loop(self, reviewer_agent, patch_judge):
+        inst = await start_loop(_loop(), HandoffEnvelope())
         child_id = inst.current_child_id
 
         result = await cancel_loop(inst.id, reason="test")
@@ -456,34 +393,33 @@ class TestCancelLoop:
         assert result.error == "test"
         parent = router_module._tasks[result.parent_task_id]
         assert parent.status == TaskStatus.CANCELLED
-        # The child was cancelled too (or was already terminal)
         child = router_module._tasks[child_id]
         assert child.status == TaskStatus.CANCELLED
 
     @pytest.mark.asyncio
-    async def test_cancel_terminal_loop_is_noop(self, reviewer_agent):
-        from brainbox.loop_runner import cancel_loop
-
-        spec = _spec()
-        inst = await start_loop(spec, HandoffEnvelope())
-        await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": []}))
+    async def test_cancel_terminal_loop_is_noop(self, reviewer_agent, patch_judge, monkeypatch):
+        inst = await start_loop(_loop(), HandoffEnvelope())
+        _set_stop(monkeypatch, fired=True)
+        await advance_loop(inst.id, HandoffEnvelope())
         # Already CONVERGED — cancel should return unchanged
         result = await cancel_loop(inst.id)
         assert result.status == LoopStatus.CONVERGED
 
     @pytest.mark.asyncio
     async def test_cancel_unknown_loop_raises(self):
-        from brainbox.loop_runner import cancel_loop
-
         with pytest.raises(ValueError, match="not found"):
             await cancel_loop("ghost")
 
 
+# ---------------------------------------------------------------------------
+# on_iteration_failed
+# ---------------------------------------------------------------------------
+
+
 class TestIterationFailed:
     @pytest.mark.asyncio
-    async def test_child_failure_fails_loop(self, reviewer_agent):
-        spec = _spec()
-        inst = await start_loop(spec, HandoffEnvelope())
+    async def test_child_failure_fails_loop(self, reviewer_agent, patch_judge):
+        inst = await start_loop(_loop(), HandoffEnvelope())
 
         result = await on_iteration_failed(inst.current_child_id, "subprocess crashed")
         assert result is not None
@@ -494,7 +430,6 @@ class TestIterationFailed:
 
     @pytest.mark.asyncio
     async def test_unknown_child_is_noop(self):
-        # No registered loop for this id — should silently return None
         assert await on_iteration_failed("ghost-child", "x") is None
 
 
@@ -510,9 +445,11 @@ class TestAdvanceValidation:
             await advance_loop("ghost-loop", HandoffEnvelope())
 
     @pytest.mark.asyncio
-    async def test_already_converged_cannot_advance(self, reviewer_agent):
-        spec = _spec()
-        inst = await start_loop(spec, HandoffEnvelope())
-        await advance_loop(inst.id, HandoffEnvelope(findings={"blockers": []}))
+    async def test_already_converged_cannot_advance(
+        self, reviewer_agent, patch_judge, monkeypatch
+    ):
+        inst = await start_loop(_loop(), HandoffEnvelope())
+        _set_stop(monkeypatch, fired=True)
+        await advance_loop(inst.id, HandoffEnvelope())
         with pytest.raises(ValueError, match="not active"):
             await advance_loop(inst.id, HandoffEnvelope())

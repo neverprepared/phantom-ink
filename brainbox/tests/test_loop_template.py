@@ -1,25 +1,15 @@
-"""Tests for the Loop template loader (Phase B1).
+"""Tests for the markdown loop template loader.
 
-Two layers:
-  1. Parser correctness — frontmatter extraction, YAML errors surfaced
-     with useful messages, missing-frontmatter rejected loud, LoopSpec
-     validation forwarded through TemplateError.
-  2. The bundled pr-review-loop template loads cleanly and matches the
-     plan's stated convergence predicate / metric / iteration cap.
-
-A separate integration test feeds the loaded template through
-start_loop to confirm the on-disk shape is what the runner actually
-consumes — the template is the *contract* between authoring and
-execution; if it deserializes but start_loop can't accept it, the
-template is broken regardless of YAML correctness.
+Covers parser correctness (frontmatter + sections), the bundled
+pr-review-loop template loading cleanly, and TemplateError surfacing
+of malformed input. CRUD + dry-run live in test_loop_template_api.py.
 """
 
 from __future__ import annotations
 
 import pytest
 
-import brainbox.registry as reg_module
-from brainbox.loop_runner import start_loop
+import brainbox.loop_template as loop_template_module
 from brainbox.loop_template import (
     TemplateError,
     list_templates,
@@ -27,186 +17,244 @@ from brainbox.loop_template import (
     parse_template,
     template_path,
 )
-from brainbox.loops import HandoffEnvelope, LoopStatus, NodeExecutor, NodeKind
-from brainbox.models import AgentDefinition
+from brainbox.loops import PermissionTier, RequiredRefType
 
 
-# ---------------------------------------------------------------------------
-# Frontmatter parsing
-# ---------------------------------------------------------------------------
-
-
-_MINIMAL_VALID = """---
-name: minimal
-intent:
-  outcome: be done
-  convergence: "`true`"
-body:
-  nodes:
-    - id: only
-      role: reviewer
-convergence_metric: "`0`"
+_MINIMAL = """\
+---
+name: test-loop
+trigger: manual
+max_iterations: 3
 ---
 
-# minimal
+# Role
+You do a thing.
 
-doc body
+# When to stop
+- The thing is done.
+
+# When to escalate
+- The thing breaks.
 """
-
-
-class TestFrontmatterParsing:
-    def test_minimal_template_loads(self):
-        spec = parse_template(_MINIMAL_VALID)
-        assert spec.name == "minimal"
-        assert spec.body.nodes[0].id == "only"
-
-    def test_missing_opening_fence_rejected(self):
-        with pytest.raises(TemplateError, match="frontmatter fence"):
-            parse_template("name: x\n")
-
-    def test_missing_closing_fence_rejected(self):
-        with pytest.raises(TemplateError, match="closing"):
-            parse_template("---\nname: x\nno closing fence here")
-
-    def test_invalid_yaml_rejected_with_useful_message(self):
-        bad = "---\nname: [unclosed\n---\nbody\n"
-        with pytest.raises(TemplateError, match="not valid YAML"):
-            parse_template(bad)
-
-    def test_non_mapping_frontmatter_rejected(self):
-        bad = "---\n- just\n- a\n- list\n---\nbody\n"
-        with pytest.raises(TemplateError, match="mapping"):
-            parse_template(bad)
-
-    def test_loopspec_validation_forwarded(self):
-        # No convergence anywhere → LoopSpec validator fails →
-        # surfaces as TemplateError, not raw pydantic.
-        bad = """---
-name: no-convergence
-intent:
-  outcome: x
-body:
-  nodes:
-    - id: x
-      role: reviewer
----
-"""
-        with pytest.raises(TemplateError, match="validation"):
-            parse_template(bad)
-
-
-# ---------------------------------------------------------------------------
-# Built-in template discovery
-# ---------------------------------------------------------------------------
-
-
-class TestBuiltinTemplates:
-    def test_list_includes_pr_review_loop(self):
-        names = list_templates()
-        assert "pr-review-loop" in names
-
-    def test_template_path_resolves_pr_review_loop(self):
-        path = template_path("pr-review-loop")
-        assert path is not None
-        assert path.name == "pr-review-loop.md"
-
-    def test_unknown_template_path_is_none(self):
-        assert template_path("does-not-exist") is None
-
-    def test_load_unknown_template_raises(self):
-        with pytest.raises(TemplateError, match="not found"):
-            load_template("does-not-exist")
-
-
-# ---------------------------------------------------------------------------
-# pr-review-loop content invariants
-# ---------------------------------------------------------------------------
-
-
-class TestPRReviewLoopContent:
-    def test_loads_and_validates(self):
-        spec = load_template("pr-review-loop")
-        assert spec.name == "pr-review-loop"
-
-    def test_convergence_predicate_matches_plan(self):
-        spec = load_template("pr-review-loop")
-        # Plan: length(findings.blockers) == 0 && observations.ci_status == 'green'
-        assert "findings.blockers" in spec.convergence_predicate
-        assert "ci_status" in spec.convergence_predicate
-
-    def test_convergence_metric_is_blocker_count(self):
-        spec = load_template("pr-review-loop")
-        assert spec.convergence_metric == "length(findings.blockers)"
-
-    def test_conservative_iteration_cap(self):
-        # Plan starts max_iterations at 3 — explicit so the test fails
-        # if someone bumps it without thinking about thrash semantics.
-        spec = load_template("pr-review-loop")
-        assert spec.max_iterations == 3
-
-    def test_has_diff_size_stop_condition(self):
-        spec = load_template("pr-review-loop")
-        reasons = [sc.reason for sc in spec.stop_conditions]
-        assert "diff_too_large" in reasons
-
-    def test_reviewer_node_is_brainbox_session(self):
-        spec = load_template("pr-review-loop")
-        reviewer = spec.body.nodes[0]
-        assert reviewer.id == "reviewer"
-        assert reviewer.kind == NodeKind.AGENT
-        assert reviewer.executor == NodeExecutor.BRAINBOX_SESSION
-        assert reviewer.role == "reviewer"
-
-    def test_reviewer_node_requires_repo_read_only(self):
-        # default permission tier means destructive scopes require explicit
-        # listing — reviewer should NOT request repo:write or merge.
-        spec = load_template("pr-review-loop")
-        reviewer = spec.body.nodes[0]
-        assert "repo:read" in reviewer.requires
-        assert not any(r.startswith("repo:write") for r in reviewer.requires)
-
-    def test_declares_required_refs(self):
-        from brainbox.loops import RequiredRefType
-
-        spec = load_template("pr-review-loop")
-        names = {ref.name for ref in spec.required_refs}
-        assert names == {"pr_number", "repo", "head_sha"}
-        pr_ref = next(r for r in spec.required_refs if r.name == "pr_number")
-        assert pr_ref.type == RequiredRefType.INT
-        assert pr_ref.required is True
-        head_ref = next(r for r in spec.required_refs if r.name == "head_sha")
-        assert head_ref.required is False
-
-
-# ---------------------------------------------------------------------------
-# Integration — template → start_loop end-to-end
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def reviewer_agent():
-    agent = AgentDefinition(name="reviewer", image="test-image", capabilities=["hub_messaging"])
-    reg_module._agents["reviewer"] = agent
-    return agent
+def isolated_user_dir(tmp_path, monkeypatch):
+    """Redirect the user templates dir to a tmp path so list_templates
+    and template_path don't see operator-level overrides."""
+    user_dir = tmp_path / "loop-templates"
+    monkeypatch.setattr(loop_template_module, "_user_templates_dir", lambda: user_dir)
+    return user_dir
 
 
-class TestTemplateToStartLoop:
-    @pytest.mark.asyncio
-    async def test_pr_review_loop_starts_cleanly(self, reviewer_agent):
-        spec = load_template("pr-review-loop")
-        envelope = HandoffEnvelope(
-            artifact_refs={
-                "pr_number": 117,
-                "repo": "neverprepared/phantom-ink",
-                "head_sha": "abc123",
-            }
+# ---------------------------------------------------------------------------
+# parse_template — happy paths
+# ---------------------------------------------------------------------------
+
+
+class TestParseMinimal:
+    def test_parses_minimal_template(self):
+        loop = parse_template(_MINIMAL)
+        assert loop.name == "test-loop"
+        assert loop.trigger == "manual"
+        assert loop.max_iterations == 3
+
+    def test_agent_defaults_to_worker(self):
+        """When frontmatter omits 'agent', it falls back to the generic
+        'worker' registered agent — defaulting to the template name
+        produced "Agent not found" errors at start_loop time."""
+        loop = parse_template(_MINIMAL)
+        assert loop.agent == "worker"
+
+    def test_agent_override_wins(self):
+        text = _MINIMAL.replace(
+            "max_iterations: 3\n",
+            "max_iterations: 3\nagent: reviewer\n",
         )
-        inst = await start_loop(spec, envelope)
-        assert inst.status == LoopStatus.RUNNING
-        assert inst.iteration == 1
-        # The snapshot pinned by start_loop carries the template's predicate
-        # — once a loop starts, the template is immutable for its life.
-        assert inst.spec_snapshot.convergence_predicate == spec.convergence_predicate
-        assert inst.spec_snapshot.max_iterations == 3
-        # Initial envelope's artifact_refs survive into iteration 1
-        assert inst.envelope.artifact_refs["pr_number"] == 117
+        loop = parse_template(text)
+        assert loop.agent == "reviewer"
+
+    def test_permissions_default_is_default(self):
+        loop = parse_template(_MINIMAL)
+        assert loop.permissions == PermissionTier.DEFAULT
+
+    def test_required_sections_parsed(self):
+        loop = parse_template(_MINIMAL)
+        assert "thing is done" in loop.stop_prose
+        assert "thing breaks" in loop.escalation_prose
+        assert "do a thing" in loop.role
+
+    def test_objective_empty_by_default(self):
+        loop = parse_template(_MINIMAL)
+        assert loop.objective == {}
+        assert loop.has_objective is False
+
+
+# ---------------------------------------------------------------------------
+# parse_template — frontmatter edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestFrontmatterValidation:
+    def test_missing_frontmatter_raises(self):
+        with pytest.raises(TemplateError, match="frontmatter"):
+            parse_template("# Role\nhi\n# When to stop\nx\n# When to escalate\ny\n")
+
+    def test_unclosed_frontmatter_raises(self):
+        with pytest.raises(TemplateError, match="frontmatter"):
+            parse_template("---\nname: x\n# Role\nx\n")
+
+    def test_missing_required_key_raises(self):
+        text = """---
+name: foo
+trigger: manual
+---
+
+# Role
+x
+# When to stop
+y
+# When to escalate
+z
+"""
+        with pytest.raises(TemplateError, match="max_iterations"):
+            parse_template(text)
+
+    def test_invalid_slug_raises(self):
+        bad = _MINIMAL.replace("name: test-loop", "name: Test_Loop")
+        with pytest.raises(TemplateError, match="slug"):
+            parse_template(bad)
+
+    def test_invalid_permissions_raises(self):
+        text = _MINIMAL.replace(
+            "max_iterations: 3\n",
+            "max_iterations: 3\npermissions: superuser\n",
+        )
+        with pytest.raises(TemplateError, match="permissions"):
+            parse_template(text)
+
+    def test_permissions_enum_accepts_strict(self):
+        text = _MINIMAL.replace(
+            "max_iterations: 3\n",
+            "max_iterations: 3\npermissions: strict\n",
+        )
+        loop = parse_template(text)
+        assert loop.permissions == PermissionTier.STRICT
+
+    def test_negative_max_iterations_raises(self):
+        bad = _MINIMAL.replace("max_iterations: 3", "max_iterations: 0")
+        with pytest.raises(TemplateError, match="max_iterations"):
+            parse_template(bad)
+
+
+# ---------------------------------------------------------------------------
+# Required body sections
+# ---------------------------------------------------------------------------
+
+
+class TestRequiredSections:
+    def test_missing_role_raises(self):
+        text = """---
+name: foo
+trigger: manual
+max_iterations: 1
+---
+
+# When to stop
+x
+# When to escalate
+y
+"""
+        with pytest.raises(TemplateError, match="Role"):
+            parse_template(text)
+
+    def test_missing_stop_raises(self):
+        text = """---
+name: foo
+trigger: manual
+max_iterations: 1
+---
+
+# Role
+x
+# When to escalate
+y
+"""
+        with pytest.raises(TemplateError, match="(?i)stop"):
+            parse_template(text)
+
+    def test_empty_section_raises(self):
+        text = """---
+name: foo
+trigger: manual
+max_iterations: 1
+---
+
+# Role
+
+# When to stop
+x
+# When to escalate
+y
+"""
+        with pytest.raises(TemplateError, match="empty"):
+            parse_template(text)
+
+
+# ---------------------------------------------------------------------------
+# Bundled pr-review-loop template
+# ---------------------------------------------------------------------------
+
+
+class TestBundledTemplate:
+    def test_pr_review_loop_listed(self):
+        assert "pr-review-loop" in list_templates()
+
+    def test_pr_review_loop_loads(self):
+        loop = load_template("pr-review-loop")
+        assert loop.name == "pr-review-loop"
+        assert loop.trigger == "github:pull_request"
+        assert loop.max_iterations == 3
+        assert loop.budget_usd == 2.00
+        assert loop.agent == "reviewer"
+
+    def test_pr_review_loop_objective(self):
+        loop = load_template("pr-review-loop")
+        # objective is a dict of envelope-path -> expected value
+        assert loop.objective.get("observations.ci_status") == "green"
+        assert loop.objective.get("findings.approved") is True
+        assert loop.has_objective is True
+
+    def test_pr_review_loop_required_refs(self):
+        loop = load_template("pr-review-loop")
+        by_name = {r.name: r for r in loop.required_refs}
+        assert by_name["pr_number"].type == RequiredRefType.INT
+        assert by_name["repo"].type == RequiredRefType.STRING
+        assert by_name["head_sha"].type == RequiredRefType.SHA
+        assert by_name["head_sha"].required is False
+        assert by_name["pr_number"].required is True  # defaults to True
+
+    def test_pr_review_loop_role_nonempty(self):
+        loop = load_template("pr-review-loop")
+        assert "reviewer" in loop.role.lower()
+        assert loop.stop_prose
+        assert loop.escalation_prose
+
+
+# ---------------------------------------------------------------------------
+# template_path + missing templates
+# ---------------------------------------------------------------------------
+
+
+class TestTemplatePath:
+    def test_missing_returns_none(self):
+        assert template_path("nope-not-real") is None
+
+    def test_bundled_returns_path(self):
+        p = template_path("pr-review-loop")
+        assert p is not None
+        assert p.name == "pr-review-loop.md"
+
+    def test_load_missing_raises(self):
+        with pytest.raises(TemplateError, match="not found"):
+            load_template("does-not-exist-xyz")

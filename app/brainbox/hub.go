@@ -80,10 +80,9 @@ type Agent = AgentDefinition
 
 // HubState is the full hub state snapshot.
 type HubState struct {
-	Agents  []Agent                  `json:"agents"`
-	Tasks   []Task                   `json:"tasks"`
-	Tokens  []map[string]interface{} `json:"tokens"`
-	Repos   []Repo                   `json:"repos"`
+	Agents []Agent                  `json:"agents"`
+	Tasks  []Task                   `json:"tasks"`
+	Tokens []map[string]interface{} `json:"tokens"`
 }
 
 // Message represents an inter-agent message.
@@ -96,19 +95,6 @@ type Message struct {
 	Timestamp string      `json:"timestamp"`
 }
 
-// Repo represents a tracked GitHub repository.
-type Repo struct {
-	Name               string `json:"name"`
-	URL                string `json:"url"`
-	MergeQueueEnabled  bool   `json:"merge_queue_enabled"`
-	PRShepherdEnabled  bool   `json:"pr_shepherd_enabled"`
-	TargetBranch       string `json:"target_branch"`
-	IsFork             bool   `json:"is_fork"`
-	UpstreamURL        string `json:"upstream_url"`
-	WorkspaceProfile   string `json:"workspace_profile"`
-	WorkspaceHome      string `json:"workspace_home"`
-}
-
 // SubmitTaskRequest is the payload for POST /api/hub/tasks.
 type SubmitTaskRequest struct {
 	Description      string `json:"description"`
@@ -116,26 +102,6 @@ type SubmitTaskRequest struct {
 	RepoURL          string `json:"repo_url,omitempty"`
 	WorkspaceProfile string `json:"workspace_profile,omitempty"`
 	WorkspaceHome    string `json:"workspace_home,omitempty"`
-}
-
-// AddRepoRequest is the payload for POST /api/hub/repos.
-type AddRepoRequest struct {
-	URL              string `json:"url"`
-	Name             string `json:"name,omitempty"`
-	MergeQueue       bool   `json:"merge_queue,omitempty"`
-	PRShepherd       bool   `json:"pr_shepherd,omitempty"`
-	TargetBranch     string `json:"target_branch,omitempty"`
-	IsFork           bool   `json:"is_fork,omitempty"`
-	UpstreamURL      string `json:"upstream_url,omitempty"`
-	WorkspaceProfile string `json:"workspace_profile,omitempty"`
-	WorkspaceHome    string `json:"workspace_home,omitempty"`
-}
-
-// UpdateRepoRequest is the payload for PATCH /api/hub/repos/{name}.
-type UpdateRepoRequest struct {
-	MergeQueue   *bool  `json:"merge_queue,omitempty"`
-	PRShepherd   *bool  `json:"pr_shepherd,omitempty"`
-	TargetBranch string `json:"target_branch,omitempty"`
 }
 
 // GetHubState returns the full hub state.
@@ -241,50 +207,6 @@ func (c *Client) GetMessageLog() ([]Message, error) {
 		return nil, err
 	}
 	return messages, nil
-}
-
-// ListRepos returns tracked repositories, optionally filtered by workspace profile.
-func (c *Client) ListRepos(workspaceProfile string) ([]Repo, error) {
-	path := "/api/hub/repos"
-	if workspaceProfile != "" {
-		path += "?workspace_profile=" + workspaceProfile
-	}
-	var repos []Repo
-	if err := c.get(path, &repos); err != nil {
-		return nil, err
-	}
-	return repos, nil
-}
-
-// addRepoResponse wraps the POST /api/hub/repos response.
-type addRepoResponse struct {
-	Repo         Repo   `json:"repo"`
-	LaunchedTasks []interface{} `json:"launched_tasks"`
-}
-
-// AddRepo registers a new repository.
-func (c *Client) AddRepo(req AddRepoRequest) (Repo, error) {
-	var resp addRepoResponse
-	if err := c.post("/api/hub/repos", req, &resp); err != nil {
-		return Repo{}, err
-	}
-	return resp.Repo, nil
-}
-
-// UpdateRepo updates a repository's settings.
-func (c *Client) UpdateRepo(name string, req UpdateRepoRequest) (Repo, error) {
-	var repo Repo
-	path := fmt.Sprintf("/api/hub/repos/%s", name)
-	if err := c.patch(path, req, &repo); err != nil {
-		return repo, err
-	}
-	return repo, nil
-}
-
-// DeleteRepo removes a tracked repository.
-func (c *Client) DeleteRepo(name string) error {
-	path := fmt.Sprintf("/api/hub/repos/%s", name)
-	return c.delete(path, nil)
 }
 
 // WaitForTaskRequest is the input for SubmitTaskAndWait.

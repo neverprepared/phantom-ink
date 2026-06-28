@@ -1,33 +1,28 @@
-"""AI Assist for Loop template authoring (loop-spec PR 6).
+"""AI Assist for Loop template authoring — markdown edition.
 
-Three operator-facing modes drive one server-side path:
+Three operator-facing modes:
 
-    Generate   — natural language → full LoopSpec YAML. The result
-                 replaces the editor doc after operator confirms.
-    Refine     — operator highlights a YAML range, types an instruction,
-                 AI returns a replacement for the range. We assemble the
-                 full doc (head + replacement + tail) and validate it
-                 against LoopSpec before returning, so the editor never
-                 sees malformed output.
+    Generate   — natural language → full markdown loop template.
+                 Replaces the editor doc after operator confirms.
+    Refine     — operator highlights a range, types an instruction,
+                 AI returns a replacement. We assemble head + replacement
+                 + tail and validate the WHOLE thing via ``loop_md.parse``
+                 before returning.
     Explain    — operator highlights a range, asks a question, AI returns
                  a natural-language answer. No edit; popover UI.
 
-Generate and Refine run a validate-and-retry loop server-side. The
-output must parse as YAML AND validate against LoopSpec; if either
-fails, we feed the error back to the model up to 3 times before giving
-up. Even an exhausted retry budget returns whatever YAML the AI produced
-plus a warnings list — the operator can hand-fix; we never waste the
-call.
-
-Explain skips validation (it's prose).
+Generate and Refine run a validate-and-retry loop. The output must
+parse as a valid LoopMarkdown; on failure we feed the error back to the
+model up to 3 times. Even an exhausted retry budget returns whatever
+markdown the AI produced plus a warnings list — the operator can hand-fix.
 
 **No API keys.** Per project convention (see top-level CLAUDE.md), this
-module does NOT call the Anthropic API directly. Every LLM round-trip
-goes through an ephemeral brainbox session — same pattern as
-``playbooks._run_task``. The session runs Claude Code under the
-operator's existing OAuth credentials. All retries within a single
-assist request share the same session for latency and so the model
-sees prior context.
+module dispatches to an ephemeral brainbox session, not the Anthropic
+API. The session is registered as a real hub task with ``role=worker``
++ ``task=<prompt>`` — visible in the Tasks panel, lifecycled through
+``complete_task`` so the result flows back through the standard
+worker-completion path. The structure mirrors the ratchet-worker
+pattern; all retries within a single request share the one session.
 """
 
 from __future__ import annotations
@@ -38,12 +33,10 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 import httpx
-import yaml as yaml_module
-from pydantic import ValidationError
 
 from .config import settings
 from .log import get_logger
-from .loops import LoopSpec
+from .loop_md import LoopMarkdownError, parse as parse_loop_md
 
 log = get_logger()
 
@@ -75,6 +68,11 @@ class AssistResult:
     cost_usd: float = 0.0
     warnings: list[AssistWarning] = field(default_factory=list)
     retries: int = 0
+    # Set when the generate path persisted the produced markdown to a
+    # user template — UI surfaces this so the operator knows the file
+    # is on disk regardless of what they do next.
+    saved_to: str = ""
+    save_error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -85,6 +83,8 @@ class AssistResult:
             "cost_usd": round(self.cost_usd, 6),
             "warnings": [{"field": w.field, "message": w.message} for w in self.warnings],
             "retries": self.retries,
+            "saved_to": self.saved_to,
+            "save_error": self.save_error,
         }
 
 
@@ -103,41 +103,49 @@ def _cost(_model: str, _input_tokens: int, _output_tokens: int) -> float:
 _HARD_RULES = """\
 Hard rules — non-negotiable:
 
-1. Output ONLY raw YAML for the LoopSpec frontmatter. No prose explanation.
-2. Do NOT include the surrounding '---' fences. The caller adds them.
-3. The output MUST include either intent.convergence (a JMESPath bool
-   expression) OR a top-level convergence_predicate. A template without
-   convergence cannot load and will be rejected.
-4. The output MUST include max_iterations (integer >= 1) and body.nodes
-   (non-empty list). Day 1 the runner only executes body.nodes[0].
-5. Every Node MUST declare an executor ("agent" | "playbook" | "join" |
-   "human" | "schedule") and either an agent_id or a role.
-6. Use only valid JMESPath in convergence_predicate, convergence_metric,
-   edge predicates, stop_conditions[].predicate. Common shapes:
-     length(findings.blockers) == `0`
-     observations.ci_status == 'green'
-     length(findings.blockers) == `0` && observations.ci_status == 'green'
-     observations.diff_lines > `500`
-7. Permission tier defaults to "default" — use "strict" only when the
-   loop runs against attacker-controllable input. Use "inherit" only
-   for trusted internal loops.
+1. Output a COMPLETE markdown loop template. Frontmatter fenced with
+   '---' lines, then named '# ' sections. No prose outside this shape.
+2. Frontmatter MUST include: name (slug), trigger (free-form string),
+   max_iterations (positive integer).
+3. Frontmatter MAY include: agent, permissions, budget_usd, objective,
+   required_refs.
+     - agent MUST be one of the registered roles: assistant, reviewer,
+       supervisor, worker. Defaults to "worker" when omitted. Do NOT
+       invent agent names — start_loop rejects unknown agents.
+     - permissions: inherit | default | strict. Defaults to "default".
+     - budget_usd: positive number.
+     - objective: mapping of envelope path → expected value/comparator.
+     - required_refs: list of {name, type: int|string|sha, required?}.
+4. Body MUST include these top-level sections, in this order:
+       # Role
+       # When to stop
+       # When to escalate
+   Body MAY include: # Tools, # Notes.
+5. The "When to stop" and "When to escalate" sections are PROSE
+   checklists evaluated each iteration by a separate judge agent. Be
+   concrete and verifiable: "CI is green on the head commit", not
+   "the code is good". The judge defaults to NOT firing on ambiguity.
+6. The "objective" frontmatter block holds CHEAP DETERMINISTIC checks
+   that short-circuit the judge. Each entry is an envelope path → an
+   expected literal (equality), a truthiness flag (true|false), or an
+   operator dict ({"<=": N}, {">=": N}, {"in": [...]}, {"not_empty": true}).
+   If every objective check passes, the loop converges without paying
+   for a judge call. Use objective for the cheap stuff (CI status,
+   simple counters); use prose for the qualitative stuff.
+7. Permissions default to "default". Use "strict" only when the loop
+   runs against attacker-controllable input.
 """
 
 
-def _canonical_example_yaml() -> str:
+def _canonical_example() -> str:
     """Read the bundled pr-review-loop template as an in-context example.
-    Falls back to a small inline example if the file isn't there."""
+    Falls back to empty if the file isn't there."""
     try:
         from .loop_template import _builtin_templates_dir  # type: ignore[attr-defined]
 
         path = _builtin_templates_dir() / "pr-review-loop.md"
         if path.is_file():
-            text = path.read_text()
-            if text.startswith("---"):
-                rest = text[3:].lstrip("\n")
-                end = rest.find("\n---")
-                if end != -1:
-                    return rest[:end]
+            return path.read_text()
     except Exception:
         pass
     return ""
@@ -145,51 +153,30 @@ def _canonical_example_yaml() -> str:
 
 def build_system_prompt(mode: str) -> str:
     """Compose the model's system prompt for the given mode."""
-    schema = LoopSpec.model_json_schema()
-    schema_summary = yaml_module.safe_dump(_simplify_schema(schema), sort_keys=False)
-    example = _canonical_example_yaml()
+    example = _canonical_example()
 
     if mode == "explain":
         return (
-            "You are a code review assistant for phantom-ink Loop templates.\n"
-            "A Loop template is a YAML document that drives a phantom-ink "
-            "loop-engineering runtime. Convergence is a JMESPath predicate "
-            "evaluated against a HandoffEnvelope after each iteration. "
-            "Respond with a clear, brief natural-language explanation of "
-            "whatever the operator highlighted or asked about. No YAML, no "
-            "markdown fences, just the explanation."
+            "You are a documentation assistant for phantom-ink loop templates.\n"
+            "A loop template is a markdown file with YAML frontmatter plus "
+            "named prose sections. Each iteration, a separate judge agent "
+            "reads the 'When to stop' / 'When to escalate' sections against "
+            "the latest envelope. Respond with a clear, brief natural-language "
+            "explanation of whatever the operator highlighted or asked about. "
+            "No markdown fences, no template syntax — just the explanation."
         )
 
     return (
-        "You are an authoring assistant for phantom-ink Loop templates.\n"
-        "A Loop template is a YAML document that drives the loop-engineering "
-        "runtime. Convergence is a JMESPath predicate evaluated against a "
-        "HandoffEnvelope after each iteration.\n\n"
+        "You are an authoring assistant for phantom-ink loop templates.\n"
+        "A loop template is a markdown file with YAML frontmatter plus "
+        "named prose sections. Each iteration, a judge agent reads the "
+        "prose sections against the envelope to decide stop / escalate.\n\n"
         f"{_HARD_RULES}\n"
-        "LoopSpec schema (summarized):\n"
-        f"{schema_summary}\n\n"
-        "Canonical example — pr-review-loop:\n"
-        f"---\n{example}\n---\n\n"
-        "Output ONLY the YAML frontmatter for the requested template, no "
-        "wrapping fences, no commentary."
+        "Canonical example — the bundled pr-review-loop template:\n\n"
+        f"{example}\n\n"
+        "Output ONLY the full markdown template for the requested loop. "
+        "No wrapping fences, no commentary."
     )
-
-
-def _simplify_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """Strip the LoopSpec JSON Schema down to the fields a model needs."""
-    out: dict[str, Any] = {}
-    for key in ("type", "required"):
-        if key in schema:
-            out[key] = schema[key]
-    if "properties" in schema:
-        out["properties"] = {}
-        for name, prop in schema["properties"].items():
-            slim: dict[str, Any] = {}
-            for k in ("type", "description", "default", "enum"):
-                if k in prop:
-                    slim[k] = prop[k]
-            out["properties"][name] = slim
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -197,28 +184,19 @@ def _simplify_schema(schema: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _validate_yaml(raw: str) -> tuple[bool, list[AssistWarning]]:
-    """Check whether raw YAML parses as a LoopSpec."""
+def _validate_markdown(raw: str) -> tuple[bool, list[AssistWarning]]:
+    """Check whether the raw text parses as a valid LoopMarkdown."""
     warnings: list[AssistWarning] = []
     try:
-        data = yaml_module.safe_load(raw) or {}
-    except yaml_module.YAMLError as exc:
-        warnings.append(AssistWarning(field=None, message=f"YAML parse error: {exc}"))
-        return False, warnings
-    if not isinstance(data, dict):
-        warnings.append(AssistWarning(field=None, message="output must be a YAML mapping"))
-        return False, warnings
-    try:
-        LoopSpec.model_validate(data)
-    except ValidationError as exc:
-        for err in exc.errors():
-            field_path = ".".join(str(p) for p in err.get("loc", ()))
-            warnings.append(AssistWarning(field=field_path or None, message=err.get("msg", "validation error")))
-        return False, warnings
-    except ValueError as exc:
+        parse_loop_md(raw)
+    except LoopMarkdownError as exc:
         warnings.append(AssistWarning(field=None, message=str(exc)))
         return False, warnings
     return True, warnings
+
+
+# Kept as an alias for the existing test fixtures during the cutover.
+_validate_yaml = _validate_markdown
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +257,13 @@ async def _wait_for_session(client: httpx.AsyncClient, session_name: str, max_wa
     raise AssistError(f"assist session '{session_name}' did not become ready within {max_wait}s")
 
 
+# Inside the container the agent writes its markdown to this fixed
+# path; brainbox cats it back via exec after the query returns. Reading
+# a file is leagues more reliable than parsing tmux output (no prompt
+# artifacts, ANSI codes, soft-wrap, or fence cleanup needed).
+_ASSIST_OUTPUT_PATH = "/tmp/loop-assist-output.md"
+
+
 async def _call_session(
     client: httpx.AsyncClient,
     session_name: str,
@@ -286,12 +271,45 @@ async def _call_session(
     system: str,
     user: str,
 ) -> dict[str, Any]:
-    """Send one prompt to a ready brainbox session and return its
-    response. The session /query endpoint has no system-role concept,
-    so we concatenate system + user with a separator. Returns
-    {text, input_tokens, output_tokens} — token counts are 0 because
-    the session API doesn't surface them."""
-    full_prompt = f"{system}\n\n--- operator request ---\n\n{user}"
+    """Send one prompt to a ready brainbox session, then read the
+    agent's structured output from a known file inside the container.
+
+    Flow:
+      1. Truncate ``/tmp/loop-assist-output.md`` so we never read stale
+         content from a prior retry.
+      2. Send the prompt via /query with an explicit instruction telling
+         the agent to ``Write`` its final markdown to that path and emit
+         nothing else.
+      3. After the query call returns, read the file back via /exec.
+         If the file is non-empty, that's the result. If it's empty
+         (agent ignored the instruction), fall back to scraping the
+         /query response.
+
+    Returns {text, input_tokens, output_tokens} — token counts are
+    always 0 because the session API doesn't surface usage.
+    """
+    # Step 1: clear the output file. Best-effort — if /exec is unavailable
+    # the agent's write will still produce a fresh file at step 3.
+    try:
+        await client.post(
+            f"/api/sessions/{session_name}/exec",
+            json={"command": f": > {_ASSIST_OUTPUT_PATH}"},
+        )
+    except Exception:
+        pass
+
+    # Step 2: send the prompt with the structured-output instruction
+    # appended. Putting it AFTER the operator request keeps it the last
+    # thing the agent sees, which improves compliance.
+    full_prompt = (
+        f"{system}\n\n--- operator request ---\n\n{user}\n\n"
+        f"--- output contract ---\n"
+        f"Use the Write tool to save the FINAL markdown template to "
+        f"`{_ASSIST_OUTPUT_PATH}`. Write exactly the markdown — no "
+        f"prose explanation, no code fences. Once the file is written, "
+        f"reply with the single word DONE and stop. The caller reads "
+        f"the file directly; the chat reply is not parsed."
+    )
     try:
         resp = await client.post(
             f"/api/sessions/{session_name}/query",
@@ -301,6 +319,37 @@ async def _call_session(
     except httpx.HTTPError as exc:
         raise AssistError(f"upstream session call failed: {exc}") from exc
 
+    # Step 3: read the file back. Strip nothing; the file is the
+    # authoritative artifact.
+    file_text = ""
+    try:
+        exec_resp = await client.post(
+            f"/api/sessions/{session_name}/exec",
+            json={"command": f"cat {_ASSIST_OUTPUT_PATH}"},
+        )
+        if exec_resp.status_code == 200:
+            file_text = (exec_resp.json().get("output") or "").strip()
+    except Exception as exc:
+        log.warning(
+            "loop_assist.output_read_failed",
+            metadata={"session": session_name, "reason": str(exc)},
+        )
+
+    if file_text:
+        return {
+            "text": file_text,
+            "input_tokens": 0,
+            "output_tokens": 0,
+        }
+
+    # Fallback: the agent didn't write the file (maybe ignored the
+    # contract, maybe Write tool unavailable). Fall back to parsing the
+    # /query response — same as the pre-file flow. _strip_fences in
+    # the retry loop still cleans the result.
+    log.info(
+        "loop_assist.fallback_to_query_response",
+        metadata={"session": session_name},
+    )
     body = resp.json()
     text = body.get("response") or body.get("output") or ""
     return {
@@ -312,12 +361,26 @@ async def _call_session(
 
 async def _with_assist_session(
     fn: Callable[[httpx.AsyncClient, str], Awaitable[AssistResult]],
+    *,
+    operator_prompt: str,
 ) -> AssistResult:
-    """Create an ephemeral session, run fn(client, session_name), clean up.
+    """Create a worker-role brainbox session registered as a hub task,
+    run ``fn(client, session_name)``, mark the hub task completed with
+    the assist result, then clean up.
 
-    All LLM round-trips for a single assist request share this one session
-    — cheaper than re-provisioning per retry, and the session sees its own
-    earlier output when iterating on corrections."""
+    Worker-pattern shape (mirrors ratchet workers):
+      - role=worker, task=<short description> so the session appears in
+        the Tasks panel as a real task.
+      - When ``fn`` returns, the hub task is finalized via
+        ``complete_task(task_id, result.yaml or result.explanation)`` so
+        the output flows through the standard task-completion path. On
+        failure the task is marked FAILED with the exception message.
+      - All retries within one assist request share this one session;
+        the session sees its own earlier output when iterating on
+        corrections.
+    """
+    from . import router
+
     api_key = _load_api_key()
     if not api_key:
         raise AssistError("brainbox api_key not available — cannot dispatch assist session")
@@ -326,30 +389,115 @@ async def _with_assist_session(
     session_name = f"loop-assist-{secrets.token_hex(3)}"
     headers = {"X-API-Key": api_key}
 
+    # Truncate the operator prompt for the Tasks-panel description so the
+    # row reads at a glance.
+    short_desc = operator_prompt.strip().splitlines()[0] if operator_prompt.strip() else "loop AI Assist"
+    if len(short_desc) > 120:
+        short_desc = short_desc[:117] + "…"
+
     async with httpx.AsyncClient(base_url=base_url, timeout=600.0, headers=headers) as client:
         try:
-            resp = await client.post("/api/create", json={"name": session_name})
+            # Plain session — NO role + NO task. Earlier iterations tried
+            # role=worker and role=assistant with task=<desc> for
+            # Tasks-panel visibility, but both racey:
+            #
+            #   1. /api/create with task= triggers the container's
+            #      startup to run claude NON-INTERACTIVELY with that
+            #      task. Claude finishes fast, calls complete.sh, the
+            #      task transitions to COMPLETED and lifecycle.recycle
+            #      tears the container down.
+            #   2. Our follow-up /query (or /exec to read the output
+            #      file) then 500s with "No such container".
+            #   3. result.yaml ends up empty and persist skips. The
+            #      operator sees a worker session do real work but
+            #      no template lands on disk.
+            #
+            # Matches the playbook pattern (brainbox.playbooks._run_task)
+            # which has been working reliably for the same shape. The
+            # cost: assist sessions don't appear as hub tasks. Operator
+            # still sees the session in the Sessions panel during the
+            # ~30-60s the assist runs; for explicit hub-task tracking
+            # we'd need register_ci_ratchet_task-style manual hub
+            # registration AFTER session creation, which is a separate
+            # feature.
+            create_body = {"name": session_name}
+            resp = await client.post("/api/create", json=create_body)
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise AssistError(f"could not create assist session: {exc}") from exc
 
+        # No hub task is registered for plain sessions, so there's
+        # nothing to finalize. Keep the field for the finally block's
+        # branch; _find_hub_task_for_session returns None when no
+        # task row matches.
+        hub_task_id = _find_hub_task_for_session(session_name)
+
+        result: AssistResult | None = None
+        failure: BaseException | None = None
         try:
             await _wait_for_session(client, session_name)
-            return await fn(client, session_name)
+            result = await fn(client, session_name)
+            return result
+        except BaseException as exc:
+            failure = exc
+            raise
         finally:
-            try:
-                await client.post("/api/stop", json={"name": session_name})
-                await client.post("/api/delete", json={"name": session_name})
-            except Exception as cleanup_exc:
-                log.warning(
-                    "loop_assist.session_cleanup_failed",
-                    metadata={"session": session_name, "reason": str(cleanup_exc)},
-                )
+            # complete_task / fail_task call lifecycle.recycle internally,
+            # which already stops + removes the container and revokes
+            # tokens. If we ALSO call /api/stop + /api/delete afterwards,
+            # we race against a session that no longer exists — that
+            # second call has been observed to hang for the operator.
+            #
+            # So: when we have a hub task, finalize it and let recycle
+            # own the teardown. Only fall back to the raw stop+delete
+            # path when there's no hub task to finalize (e.g. /api/create
+            # registered the session but no task row got bound).
+            finalized = False
+            if hub_task_id is not None:
+                try:
+                    if result is not None and failure is None:
+                        payload = result.yaml or result.explanation or ""
+                        await router.complete_task(hub_task_id, payload)
+                    else:
+                        await router.fail_task(
+                            hub_task_id,
+                            error=str(failure) if failure else "assist failed",
+                        )
+                    finalized = True
+                except Exception as task_exc:
+                    log.warning(
+                        "loop_assist.task_finalize_failed",
+                        metadata={"task_id": hub_task_id, "reason": str(task_exc)},
+                    )
+
+            if not finalized:
+                try:
+                    await client.post("/api/stop", json={"name": session_name})
+                    await client.post("/api/delete", json={"name": session_name})
+                except Exception as cleanup_exc:
+                    log.warning(
+                        "loop_assist.session_cleanup_failed",
+                        metadata={"session": session_name, "reason": str(cleanup_exc)},
+                    )
+
+
+def _find_hub_task_for_session(session_name: str) -> str | None:
+    """Look up the hub task /api/create registered for our session. The
+    task is created with ``session_name=session_name`` so a single
+    linear scan over the in-memory task store finds it. Returns the
+    task_id or None if not found (e.g. caller did not pass a ``task``
+    in the create body)."""
+    from . import router
+
+    for tid, task in router._tasks.items():
+        if getattr(task, "session_name", None) == session_name:
+            return tid
+    return None
 
 
 def _strip_fences(text: str) -> str:
-    """Strip code fences that wrap the YAML. Models sometimes add them
-    despite the system prompt; cheaper to clean than to retry."""
+    """Strip code fences that wrap the markdown output. Models sometimes
+    pad despite the system prompt; cheaper to clean than to retry."""
     t = text.strip()
     if t.startswith("```"):
         lines = t.split("\n")
@@ -373,7 +521,8 @@ async def _generate(prompt: str, current_yaml: str | None) -> AssistResult:
     system = build_system_prompt("generate")
     user = _generate_user_prompt(prompt, current_yaml)
     return await _with_assist_session(
-        lambda client, name: _retry_loop(client, name, system=system, user=user)
+        lambda client, name: _retry_loop(client, name, system=system, user=user),
+        operator_prompt=f"generate — {prompt}",
     )
 
 
@@ -393,7 +542,8 @@ async def _refine(prompt: str, current_yaml: str, selection: dict[str, int]) -> 
         return "\n".join([*head_lines, replacement, *tail_lines])
 
     return await _with_assist_session(
-        lambda client, name: _retry_loop(client, name, system=system, user=user, assemble=_assemble)
+        lambda client, name: _retry_loop(client, name, system=system, user=user, assemble=_assemble),
+        operator_prompt=f"refine — {prompt}",
     )
 
 
@@ -417,7 +567,7 @@ async def _explain(prompt: str, current_yaml: str, selection: dict[str, int] | N
             cost_usd=0.0,
         )
 
-    return await _with_assist_session(_run)
+    return await _with_assist_session(_run, operator_prompt=f"explain — {prompt}")
 
 
 async def _retry_loop(
@@ -485,7 +635,7 @@ def _generate_user_prompt(prompt: str, current_yaml: str | None) -> str:
             "replacement informed by it but matching the new request:\n\n"
             f"{current_yaml}"
         )
-    return f"Operator request: {prompt}\n\nProduce a complete LoopSpec YAML."
+    return f"Operator request: {prompt}\n\nProduce a complete loop markdown template (YAML frontmatter + Role / When to stop / When to escalate sections)."
 
 
 def _refine_user_prompt(
@@ -518,7 +668,7 @@ def _refine_user_prompt(
 
 def _explain_user_prompt(prompt: str, excerpt: str) -> str:
     if excerpt:
-        return f"Operator question: {prompt}\n\nHighlighted YAML:\n```\n{excerpt}\n```"
+        return f"Operator question: {prompt}\n\nHighlighted markdown:\n```\n{excerpt}\n```"
     return f"Operator question: {prompt}"
 
 
@@ -533,17 +683,32 @@ async def assist(
     prompt: str,
     current_yaml: str | None = None,
     selection: dict[str, int] | None = None,
+    save_as: str | None = None,
 ) -> AssistResult:
     """Route a single AI Assist request to the right mode handler.
 
     Modes: 'generate' | 'refine' | 'explain'.
     Refine requires both ``current_yaml`` and ``selection``.
+
+    ``save_as`` (generate only): if set, the produced markdown is
+    persisted server-side via ``loop_template.write_user_template``
+    immediately on success. Operator can navigate away from the editor
+    while assist is in flight and the new template will still appear
+    in the list on next refresh. Ignored on refine/explain.
     """
     if not prompt or not prompt.strip():
         raise AssistError("prompt is required")
 
     if mode == "generate":
-        return await _generate(prompt, current_yaml)
+        result = await _generate(prompt, current_yaml)
+        # Persist whenever the model produced *any* markdown for a draft
+        # the operator named. Warnings are not a gate — the file lands
+        # as a draft and the operator can fix issues in-editor. The
+        # operator's work shouldn't be discarded because validation
+        # was imperfect.
+        if save_as and result.yaml:
+            _persist_generated_template(save_as, result.yaml, result)
+        return result
     if mode == "refine":
         if not current_yaml or not selection:
             raise AssistError("refine requires current_yaml and selection")
@@ -551,3 +716,77 @@ async def assist(
     if mode == "explain":
         return await _explain(prompt, current_yaml or "", selection)
     raise AssistError(f"unknown mode: {mode!r}")
+
+
+def _persist_generated_template(name: str, markdown: str, result: AssistResult) -> None:
+    """Write a freshly-generated template to the user templates dir.
+
+    Rewrites the frontmatter's ``name:`` field to match ``name`` before
+    writing so the filename and the parsed ``LoopMarkdown.name`` never
+    disagree. The AI tends to name templates after the operator's
+    prompt (``joke-generator-loop``) rather than the slug the operator
+    typed into the New modal (``wat``); without this rewrite, the
+    runner would default the agent / display name to the prompt-derived
+    string and the operator would see surprises at Start time.
+
+    ``validate=False`` so a draft that doesn't yet pass LoopMarkdown's
+    required-section rules still lands on disk — the operator can fix
+    it in-editor.
+    """
+    from .loop_template import TemplateError, write_user_template
+
+    aligned = _rewrite_frontmatter_name(markdown, name)
+
+    try:
+        write_user_template(
+            name,
+            aligned,
+            fork_from_builtin=True,
+            validate=False,
+        )
+        result.saved_to = name
+        # Surface the aligned markdown back in result.yaml so the editor
+        # shows what was actually persisted, not the original AI output
+        # with the mismatched name.
+        result.yaml = aligned
+        log.info("loop_assist.template_persisted", metadata={"name": name})
+    except TemplateError as exc:
+        result.save_error = str(exc)
+        log.warning(
+            "loop_assist.template_persist_failed",
+            metadata={"name": name, "reason": str(exc)},
+        )
+
+
+import re as _re_for_name  # noqa: E402
+
+_NAME_LINE_RE = _re_for_name.compile(r"^(name\s*:\s*)\S.*$", _re_for_name.MULTILINE)
+
+
+def _rewrite_frontmatter_name(markdown: str, target_name: str) -> str:
+    """Replace the first ``name:`` line inside the frontmatter fence
+    with ``name: <target_name>``. If the frontmatter has no ``name:``
+    line, prepend one immediately inside the opening fence. Markdown
+    outside the fence is left untouched.
+
+    Conservative: only touches the FIRST occurrence of ``name:`` and
+    only if it's before the closing ``---`` fence — so a body that
+    happens to mention ``name:`` in prose isn't rewritten.
+    """
+    if not markdown.startswith("---"):
+        return markdown
+
+    rest = markdown[3:].lstrip("\n")
+    end = rest.find("\n---")
+    if end == -1:
+        return markdown
+
+    fm = rest[:end]
+    after = rest[end:]   # starts with "\n---"
+
+    if _NAME_LINE_RE.search(fm):
+        new_fm = _NAME_LINE_RE.sub(rf"\1{target_name}", fm, count=1)
+    else:
+        new_fm = f"name: {target_name}\n{fm}"
+
+    return f"---\n{new_fm}{after}"

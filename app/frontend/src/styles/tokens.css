@@ -244,28 +244,9 @@ body {
   font-family: var(--font-sans); font-size: 13.5px; width: 100%; }
 .filter input::placeholder { color: var(--text-faint); }
 
-/* block editor */
-.blk { position: relative; border-radius: 8px; background: var(--bg-elev); border: 1px solid var(--border);
-  box-shadow: var(--shadow-sm); padding: 9px 12px; }
-.blk::before { content: ""; position: absolute; top: -5px; left: 18px; width: 16px; height: 6px;
-  background: var(--blk-c, var(--accent)); border-radius: 0 0 4px 4px; }
-.blk-cat { font-family: var(--font-mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
-  color: var(--blk-c, var(--accent)); font-weight: 700; }
-.blk-stack { display: flex; flex-direction: column; gap: 10px; position: relative; }
-.blk-stack::before { content: ""; position: absolute; left: 26px; top: 6px; bottom: 6px; width: 2px;
-  background: var(--border); z-index: 0; }
-.blk-children { margin-left: 22px; padding-left: 14px; border-left: 2px dashed var(--border); margin-top: 10px;
-  display: flex; flex-direction: column; gap: 10px; }
-.blk-sel { font-family: var(--font-mono); font-size: 12px; padding: 3px 7px; border-radius: 5px;
-  border: 1px solid var(--border); background: var(--bg); color: var(--text); outline: none; max-width: 100%; }
-.build-dot { width: 8px; height: 8px; border-radius: 99px; display: inline-block; }
-
 /* animations */
 @keyframes fadeUp { from { transform: translateY(8px); } to { transform: none; } }
 .fade-up { animation: fadeUp .35s var(--ease); }
-
-@keyframes edgeFlow { to { stroke-dashoffset: -22; } }
-.edge-anim { animation: edgeFlow .6s linear infinite; }
 
 @keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes slideIn { from { transform: translateX(100%); } to { transform: none; } }

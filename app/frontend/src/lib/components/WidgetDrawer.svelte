@@ -121,7 +121,6 @@
     { kind: 'sessions-mini',    label: 'Live Sessions',      desc: 'Mini list of active and stopped sessions.' },
     { kind: 'notes',            label: 'Scratchpad',         desc: 'Persistent freeform text notes.' },
     { kind: 'dispatch-form',    label: 'Dispatch Form',      desc: 'Submit a task to a hub agent.' },
-    { kind: 'loops-list',      label: 'Scheduled Sequences',   desc: 'Upcoming scheduled loop fires.' },
     { kind: 'action-items',     label: 'Action Items',       desc: 'System alerts and action items.' },
     { kind: 'resource-monitor', label: 'Resource Monitor',   desc: 'CPU, memory, and container stats.' },
     { kind: 'script-metric',    label: 'Script Metric',      desc: 'Run a shell command, display its output as a number or string.' },
@@ -160,7 +159,7 @@
     { val: 'muted',   label: 'Muted' },
   ];
 
-  const NAV_TARGETS = ['', 'sessions', 'stream', 'agents', 'sequences', 'conversations', 'playbooks'];
+  const NAV_TARGETS = ['', 'sessions', 'stream', 'agents', 'conversations', 'playbooks'];
 
   function handleAdd() {
     const id = crypto.randomUUID();
@@ -213,7 +212,6 @@
         'sessions-mini':     { w: 3, h: 4, minW: 2, minH: 3 },
         'notes':             { w: 3, h: 4, minW: 2, minH: 2 },
         'dispatch-form':     { w: 6, h: 4, minW: 4, minH: 3 },
-        'loops-list':       { w: 3, h: 4, minW: 2, minH: 2 },
         'action-items':      { w: 3, h: 4, minW: 2, minH: 2 },
         'resource-monitor':  { w: 12, h: 4, minW: 4, minH: 3 },
         'stream':            { w: 4, h: 5, minW: 3, minH: 3 },
@@ -288,7 +286,6 @@
     'sessions-mini':     'Live Sessions',
     'notes':             'Scratchpad',
     'dispatch-form':     'Dispatch Form',
-    'loops-list':       'Scheduled Sequences',
     'action-items':      'Action Items',
     'resource-monitor':  'Resource Monitor',
     'stream':            'Stream',

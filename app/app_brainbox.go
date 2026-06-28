@@ -89,7 +89,6 @@ func (a *App) GetHubState() (HubStateView, error) {
 		Agents: state.Agents,
 		Tasks:  normalizeHubTasks(state.Tasks),
 		Tokens: state.Tokens,
-		Repos:  state.Repos,
 	}, nil
 }
 
@@ -120,7 +119,6 @@ type HubStateView struct {
 	Agents []brainbox.Agent         `json:"agents"`
 	Tasks  []HubTask                `json:"tasks"`
 	Tokens []map[string]interface{} `json:"tokens"`
-	Repos  []brainbox.Repo          `json:"repos"`
 }
 
 func normalizeHubTask(t brainbox.Task) HubTask {

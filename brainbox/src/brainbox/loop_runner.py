@@ -1,63 +1,68 @@
-"""Loop runner core — Phase A3b.
+"""Loop runner — markdown-format edition.
 
-Drives a LoopSpec end-to-end:
-  start_loop(spec, envelope) → creates LoopInstance, parent task, first child
-  advance_loop(loop_id, envelope) → called when an iteration completes;
-    evaluates convergence/stop/max-iter/thrash and either enqueues the next
-    iteration or terminates the loop.
+Drives a parsed ``LoopMarkdown`` end-to-end:
 
-The parent task is RUNNING throughout the loop's life — it represents the
-loop itself in the existing Tasks panel and never gets dispatched (the
-scheduler only dispatches PENDING). The iteration *children* are normal
-tasks dispatched by the scheduler. When a child completes, the loop runner
-(via a router event listener wired up in A3c, or directly in tests) calls
-advance_loop with the child's emitted envelope.
+    start_loop(loop, envelope) → LoopInstance with iteration 1 enqueued
+    advance_loop(loop_id, envelope) → judge decides; either enqueue
+        iteration N+1, terminate CONVERGED, escalate (STOPPED_BY_CONDITION),
+        or MAX_ITER.
 
-A3b scope:
-  - Single-node iteration. Each iteration enqueues a child task that runs
-    the body's FIRST node. Multi-node flowchart traversal (edge predicates,
-    fan-out/fan-in, EdgeTransform) is a follow-up — the data model supports
-    it, the runner doesn't traverse it yet.
-  - In-memory instance store. Persistence to the brainbox store comes
-    with A3c, when iteration-metric rows also start being written.
-  - No router event-listener registration here. Tests call advance_loop
-    directly; the listener wiring lands in A3c so the dispatch path is
-    intact across PR boundaries.
+The parent task is RUNNING throughout the loop's life — it represents
+the loop in the existing Tasks panel and never gets dispatched
+(scheduler only dispatches PENDING). Each iteration is a child task.
 
-See ~/.claude/plans/okay-the-idea-of-replicated-popcorn.md.
+Termination decisions per iteration, in order:
+
+  1. Judge.evaluate_stop fires            → CONVERGED, parent COMPLETED
+  2. Judge.evaluate_escalation fires      → STOPPED_BY_CONDITION (judge says page),
+                                            parent FAILED
+  3. iteration >= max_iterations          → MAX_ITER, parent FAILED
+                                            (also covered by evaluate_escalation
+                                             objectively; redundant guard kept for
+                                             belt-and-braces)
+  4. budget_usd exceeded                  → STOPPED_BY_CONDITION, parent FAILED
+                                            (also surfaced via evaluate_escalation)
+  5. otherwise                            → enqueue iteration N+1
+
+Thrash detection is now a prose clause in the template's "# When to
+stop" section, evaluated by the judge — no more separate metric series.
+``cost_history`` replaces ``metric_history``.
+
+The runner does NOT call the Anthropic API directly anywhere. The judge
+itself dispatches its own brainbox sessions per CLAUDE.md.
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import uuid
 
 from .log import get_logger
-from .loop_predicate import eval_metric, eval_predicate
+from .loop_judge import evaluate_escalation, evaluate_stop
+from .loop_md import LoopMarkdown
+from .loop_mermaid import render as render_mermaid
+from .loop_template import content_hash
 from .loops import (
     HandoffEnvelope,
     LoopInstance,
-    LoopSpec,
     LoopStatus,
-    StopCondition,
-    TemplateSnapshot,
 )
 from .models import Task, TaskStatus
 from .utils import now_ms as _now_ms
 
 log = get_logger()
 
+
 # ---------------------------------------------------------------------------
-# State — in-memory until A3c adds persistence
+# State — in-memory cache backed by persistence in store.py
 # ---------------------------------------------------------------------------
 
 _instances: dict[str, LoopInstance] = {}
-
-# Reverse index: child_task_id → loop_id. Lets the router event listener
-# (A3c) find the loop a completing task belongs to in O(1).
 _child_to_loop: dict[str, str] = {}
+# Per-loop parsed template kept in memory so we don't re-parse the
+# frozen text on every advance call.
+_parsed: dict[str, LoopMarkdown] = {}
 
 
 def get_instance(loop_id: str) -> LoopInstance | None:
@@ -72,39 +77,42 @@ def loop_id_for_child(child_task_id: str) -> str | None:
     return _child_to_loop.get(child_task_id)
 
 
+def _parsed_for(inst: LoopInstance) -> LoopMarkdown:
+    """Return the parsed LoopMarkdown for an instance, caching the
+    parse. The frozen ``template_text`` is the source of truth."""
+    if inst.id in _parsed:
+        return _parsed[inst.id]
+    from .loop_md import parse
+
+    loop = parse(inst.template_text)
+    _parsed[inst.id] = loop
+    return loop
+
+
 # ---------------------------------------------------------------------------
 # start_loop
 # ---------------------------------------------------------------------------
 
 
 async def start_loop(
-    spec: LoopSpec,
+    loop: LoopMarkdown,
     initial_envelope: HandoffEnvelope,
     *,
     workspace_profile: str | None = None,
     workspace_home: str | None = None,
 ) -> LoopInstance:
-    """Create a Loop instance, its parent task, and enqueue iteration 1.
+    """Create a LoopInstance, its parent task, and enqueue iteration 1.
 
-    Returns the LoopInstance with ``status == RUNNING`` and
-    ``current_child_id`` set to the iteration-1 child task.
-
-    Raises ValueError if the LoopSpec body is empty (a loop with no nodes
-    cannot iterate).
+    Returns the instance with ``status == RUNNING`` and
+    ``current_child_id`` set to the iteration-1 child task. Raises
+    ValueError when a required artifact_ref is missing from the initial
+    envelope.
     """
     from . import router
 
-    if not spec.body.nodes:
-        raise ValueError("LoopSpec.body.nodes must contain at least one node")
-
-    # required_refs are presence-checked against initial_envelope.artifact_refs
-    # before we enqueue iteration 1. Day 1 doesn't enforce types; missing
-    # required ref names surface as a single ValueError with the full list,
-    # so the operator sees every gap at once rather than fixing them one by
-    # one.
     missing_refs = [
         ref.name
-        for ref in spec.required_refs
+        for ref in loop.required_refs
         if ref.required and ref.name not in (initial_envelope.artifact_refs or {})
     ]
     if missing_refs:
@@ -112,39 +120,37 @@ async def start_loop(
             f"missing required artifact_refs: {', '.join(missing_refs)}"
         )
 
+    if not loop.agent.strip():
+        raise ValueError(f"loop {loop.name!r}: agent not set and name is empty")
+
+    # Fail fast if the template names an agent that isn't registered.
+    # Without this guard we'd create the parent task + LoopInstance,
+    # then router.submit_task would 400 on the iteration child, leaving
+    # an orphan parent in RUNNING state.
+    from .registry import get_agent
+
+    if get_agent(loop.agent) is None:
+        from .registry import list_agents
+
+        known = ", ".join(sorted(a.name for a in list_agents())) or "(none registered)"
+        raise ValueError(
+            f"Agent {loop.agent!r} not registered. "
+            f"Edit the template's `agent:` frontmatter — known agents: {known}."
+        )
+
     loop_id = str(uuid.uuid4())
     now = _now_ms()
 
-    # Pin the template snapshot if the caller didn't already. The runner
-    # only reads from the snapshot for the duration of the loop — see plan
-    # for the pin-template / live-bind-roles rationale.
-    if spec.template_snapshot is None:
-        body_json = spec.model_dump_json(by_alias=True)
-        snapshot = TemplateSnapshot(
-            name=spec.name or "ad-hoc",
-            version="",
-            hash=hashlib.sha256(body_json.encode()).hexdigest()[:16],
-            body_json=body_json,
-        )
-        spec = spec.model_copy(update={"template_snapshot": snapshot})
-
-    # Stamp the loop_id onto the envelope so every downstream predicate has
-    # a stable handle to the loop it came from.
     initial_envelope = initial_envelope.model_copy(update={
         "loop_id": loop_id,
         "iteration": 0,
     })
 
-    # Create the parent task directly in router._tasks — register_ci_ratchet_task
-    # is the existing precedent for special-purpose tasks that bypass
-    # submit_task's policy / agent-registry check. The parent stays RUNNING
-    # throughout the loop's life and never gets dispatched (scheduler only
-    # picks up PENDING).
     parent_id = str(uuid.uuid4())
     parent = Task(
         id=parent_id,
-        description=f"loop: {spec.name or spec.id or 'ad-hoc'}",
-        agent_name=f"loop:{spec.name or 'ad-hoc'}",
+        description=f"loop: {loop.name}",
+        agent_name=f"loop:{loop.name}",
         status=TaskStatus.RUNNING,
         created_at=now,
         updated_at=now,
@@ -154,11 +160,12 @@ async def start_loop(
     )
     router._tasks[parent_id] = parent
 
-    # Create the instance BEFORE enqueueing the first child so the
-    # child_to_loop reverse index is consistent if anything fires immediately.
     inst = LoopInstance(
         id=loop_id,
-        spec_snapshot=spec,
+        template_name=loop.name,
+        template_text=loop.raw,
+        template_hash=content_hash(loop.raw),
+        mermaid=render_mermaid(loop),
         parent_task_id=parent_id,
         status=LoopStatus.RUNNING,
         iteration=0,
@@ -168,9 +175,8 @@ async def start_loop(
         updated_at=now,
     )
     _instances[loop_id] = inst
+    _parsed[loop_id] = loop
 
-    # Enqueue iteration 1 — see _enqueue_iteration for the single-node
-    # simplification A3b is taking.
     child_id = await _enqueue_iteration(
         inst,
         envelope=initial_envelope,
@@ -189,14 +195,14 @@ async def start_loop(
             "loop_id": loop_id,
             "parent_task_id": parent_id,
             "first_child_id": child_id,
-            "spec": spec.name,
+            "template": loop.name,
         },
     )
     return inst
 
 
 # ---------------------------------------------------------------------------
-# advance_loop — convergence / stop / thrash / max-iter / continue
+# advance_loop
 # ---------------------------------------------------------------------------
 
 
@@ -206,16 +212,16 @@ async def advance_loop(
 ) -> LoopInstance:
     """Called when an iteration child task completes.
 
-    Evaluates the loop's predicates in order:
-      1. convergence_predicate — true → CONVERGED, parent COMPLETED
-      2. stop_conditions       — any match → STOPPED_BY_CONDITION, parent FAILED
-      3. max_iterations cap    — reached → MAX_ITER, parent FAILED
-      4. thrash detection      — metric non-decreasing for 2 iterations → THRASHING, parent FAILED
-      5. otherwise             → enqueue next iteration, update current_child_id
+    Order:
+      1. Stamp envelope with loop_id + current iteration.
+      2. evaluate_stop — judge says done? → CONVERGED.
+      3. evaluate_escalation — judge says page (or hard cap hit)?
+         → STOPPED_BY_CONDITION.
+      4. Otherwise enqueue iteration N+1.
 
-    The completed_envelope is stamped with the loop_id and iteration before
-    the metric is read off it — so callers can pass either a freshly-built
-    envelope or the actual child task's result.
+    Judge errors are NOT terminal — the loop keeps iterating until
+    max_iterations is the backstop. See ``loop_judge.evaluate_stop``
+    for the rationale.
     """
     from . import router
 
@@ -223,11 +229,10 @@ async def advance_loop(
     if inst is None:
         raise ValueError(f"Loop '{loop_id}' not found")
     if inst.status not in (LoopStatus.RUNNING, LoopStatus.PENDING):
-        raise ValueError(
-            f"Loop '{loop_id}' is not active (status: {inst.status})"
-        )
+        raise ValueError(f"Loop '{loop_id}' is not active (status: {inst.status})")
 
-    spec = inst.spec_snapshot
+    loop = _parsed_for(inst)
+
     iteration = inst.iteration
     stamped = completed_envelope.model_copy(update={
         "loop_id": loop_id,
@@ -235,76 +240,68 @@ async def advance_loop(
     })
     inst.envelope = stamped
 
-    # Record the convergence metric for this iteration. Missing field is 0.0
-    # (matches the Go side coercion); we let that through so charts can
-    # render iteration N even when no findings populated.
-    #
-    # The metric row is PERSISTED after the status decision below so
-    # ``state_at_end`` carries the correct terminal status (CONVERGED,
-    # THRASHING, etc.) instead of stale RUNNING. ``metric_history`` is
-    # updated here because thrash detection reads it before the persist.
-    metric_value = (
-        eval_metric(stamped, spec.convergence_metric)
-        if spec.convergence_metric
-        else 0.0
-    )
-    inst.metric_history.append(metric_value)
+    # Cost per iteration. Session-based execution doesn't surface
+    # tokens; we keep the column populated with 0.0 for shape consistency
+    # and future swap to a real cost source.
+    iter_cost = 0.0
+    inst.cost_history.append(iter_cost)
+    inst.cost_usd += iter_cost
 
-    # 1. Convergence — the happy path
-    if eval_predicate(stamped, spec.convergence_predicate):
+    envelope_dict = stamped.model_dump()
+
+    # 1. Stop?
+    stop_verdict = await evaluate_stop(
+        envelope=envelope_dict,
+        objective=loop.objective,
+        stop_prose=loop.stop_prose,
+    )
+    if stop_verdict.fired:
+        inst.stop_reason = stop_verdict.reason
         _terminate(inst, LoopStatus.CONVERGED, parent_status=TaskStatus.COMPLETED)
-        await _persist_iteration_metric(inst, iteration, metric_value)
+        await _persist_iteration(inst, iteration, iter_cost)
         await _persist_instance(inst)
         log.info(
             "loop.converged",
-            metadata={"loop_id": loop_id, "iteration": iteration, "metric": metric_value},
+            metadata={
+                "loop_id": loop_id,
+                "iteration": iteration,
+                "via": stop_verdict.via,
+                "reason": stop_verdict.reason,
+            },
         )
         return inst
 
-    # 2. Stop conditions — explicit operator-authored caps (diff size, cost)
-    matched = _matched_stop_condition(spec.stop_conditions, stamped)
-    if matched is not None:
-        inst.stop_reason = matched.reason or matched.predicate
-        _terminate(inst, LoopStatus.STOPPED_BY_CONDITION, parent_status=TaskStatus.FAILED)
-        await _persist_iteration_metric(inst, iteration, metric_value)
+    # 2. Escalate? (hard caps included)
+    esc_verdict = await evaluate_escalation(
+        envelope=envelope_dict,
+        escalation_prose=loop.escalation_prose,
+        iteration=iteration,
+        max_iterations=loop.max_iterations,
+        cost_usd=inst.cost_usd,
+        budget_usd=loop.budget_usd,
+    )
+    if esc_verdict.fired:
+        inst.stop_reason = esc_verdict.reason
+        terminal = LoopStatus.MAX_ITER if "iteration cap" in esc_verdict.reason else LoopStatus.STOPPED_BY_CONDITION
+        _terminate(inst, terminal, parent_status=TaskStatus.FAILED)
+        await _persist_iteration(inst, iteration, iter_cost)
         await _persist_instance(inst)
         log.info(
-            "loop.stopped_by_condition",
-            metadata={"loop_id": loop_id, "iteration": iteration, "reason": inst.stop_reason},
+            "loop.escalated",
+            metadata={
+                "loop_id": loop_id,
+                "iteration": iteration,
+                "via": esc_verdict.via,
+                "reason": esc_verdict.reason,
+                "status": terminal.value,
+            },
         )
         return inst
 
-    # 3. Iteration cap — last line of defense against runaway
-    if iteration >= spec.max_iterations:
-        _terminate(inst, LoopStatus.MAX_ITER, parent_status=TaskStatus.FAILED)
-        await _persist_iteration_metric(inst, iteration, metric_value)
-        await _persist_instance(inst)
-        log.info(
-            "loop.max_iter",
-            metadata={"loop_id": loop_id, "iteration": iteration, "cap": spec.max_iterations},
-        )
-        return inst
+    # 3. Continue — enqueue iteration N+1
+    await _persist_iteration(inst, iteration, iter_cost)
 
-    # 4. Thrash — non-decreasing metric for two consecutive iterations.
-    # Needs at least 3 datapoints to make a non-decreasing claim (i-2, i-1, i).
-    # Cheap heuristic that catches 80% of "agent is editing without converging."
-    if _is_thrashing(inst.metric_history):
-        _terminate(inst, LoopStatus.THRASHING, parent_status=TaskStatus.FAILED)
-        await _persist_iteration_metric(inst, iteration, metric_value)
-        await _persist_instance(inst)
-        log.info(
-            "loop.thrashing",
-            metadata={"loop_id": loop_id, "iteration": iteration, "history": inst.metric_history},
-        )
-        return inst
-
-    # Non-terminal: write the iteration row with state RUNNING before
-    # enqueueing the next child.
-    await _persist_iteration_metric(inst, iteration, metric_value)
-
-    # 5. Continue — enqueue iteration N+1
     next_iter = iteration + 1
-    # Old child mapping no longer needed; child task already COMPLETED.
     if inst.current_child_id is not None:
         _child_to_loop.pop(inst.current_child_id, None)
     next_child_id = await _enqueue_iteration(
@@ -325,7 +322,7 @@ async def advance_loop(
             "loop_id": loop_id,
             "iteration": next_iter,
             "child_task_id": next_child_id,
-            "metric": metric_value,
+            "cost_usd": inst.cost_usd,
         },
     )
     return inst
@@ -343,66 +340,31 @@ async def _enqueue_iteration(
     iteration: int,
     workspace_home: str | None,
 ) -> str:
-    """Enqueue the child task for one iteration of the loop body.
+    """Enqueue the child task for one iteration.
 
-    A3b simplification: runs the FIRST node only. Flowchart traversal (edges,
-    fan-out/fan-in) is a follow-up. The prompt is the node's prompt with
-    {{iteration}} substituted; full envelope-driven templating lands when the
-    real review-driven loop template is authored.
+    Single-agent shape: every iteration dispatches the same agent (the
+    template's ``agent`` frontmatter field, defaulting to the template
+    name). The role prose lives in the template body and is read by
+    the agent at task start via the standard role-binding mechanism.
     """
     from . import router
 
-    spec = inst.spec_snapshot
-    first_node = spec.body.nodes[0]
-    # Prefer agent_id if set; fall back to role (which becomes the agent_name)
-    agent_name = first_node.agent_id or first_node.role
-    if not agent_name:
-        raise ValueError(
-            f"loop {inst.id}: first node {first_node.id!r} has no agent_id or role"
-        )
-
-    description = (
-        f"loop {inst.id[:8]} iter {iteration}: "
-        f"{first_node.id} ({first_node.kind.value})"
-    )
+    loop = _parsed_for(inst)
+    description = f"loop {inst.id[:8]} iter {iteration}: {loop.agent}"
 
     task = await router.submit_task(
         description=description,
-        agent_name=agent_name,
+        agent_name=loop.agent,
         workspace_profile=inst.workspace_profile,
         workspace_home=workspace_home,
         job_id=inst.parent_task_id,
         loop_id=inst.id,
         loop_iteration=iteration,
-        permission_tier=spec.permissions.value if spec.permissions else None,
-        node_requires=list(first_node.requires),
-        model_target=first_node.model_target,
+        permission_tier=loop.permissions.value,
+        node_requires=[],
     )
     _child_to_loop[task.id] = inst.id
     return task.id
-
-
-def _matched_stop_condition(
-    conditions: list[StopCondition],
-    envelope: HandoffEnvelope,
-) -> StopCondition | None:
-    for cond in conditions:
-        if eval_predicate(envelope, cond.predicate):
-            return cond
-    return None
-
-
-def _is_thrashing(history: list[float]) -> bool:
-    """Two consecutive non-decreasing metric values = thrashing.
-
-    Needs at least three datapoints: with history [a, b, c], we check whether
-    b >= a AND c >= b. A single flat or rising step is normal noise; two in a
-    row is the agent failing to converge.
-    """
-    if len(history) < 3:
-        return False
-    a, b, c = history[-3], history[-2], history[-1]
-    return b >= a and c >= b
 
 
 def _terminate(
@@ -413,13 +375,7 @@ def _terminate(
     error: str | None = None,
 ) -> None:
     """Move the LoopInstance to a terminal state and transition the parent
-    task accordingly. Cleans up the child→loop reverse mapping.
-
-    Direct task-state writes (bypassing complete_task / fail_task) are
-    intentional: complete_task requires status=RUNNING-with-session-name,
-    which the loop parent doesn't have. The parent is a marker task, not a
-    real dispatch.
-    """
+    task accordingly. Cleans up the child→loop reverse mapping."""
     from . import router
 
     now = _now_ms()
@@ -445,35 +401,16 @@ def _terminate(
             router._emit("task.failed", parent)
 
 
-# ---------------------------------------------------------------------------
-# Failure handling — child task FAILED → loop FAILED
-# ---------------------------------------------------------------------------
-
-
 async def cancel_loop(loop_id: str, reason: str = "operator cancelled") -> LoopInstance:
-    """Operator-initiated termination of an in-flight loop.
-
-    Transitions the LoopInstance to CANCELLED, marks the parent task
-    CANCELLED, and best-effort cancels the current iteration child task.
-    Idempotent: cancelling an already-terminal loop returns it unchanged.
-
-    Child cancellation is best-effort because a running brainbox session
-    may not respond synchronously to a queue-level cancel — recycling
-    happens via router._finalize_task, which is async and can fail if
-    the runner is gone. We accept partial cleanup here; the bridge's
-    failure path will catch any orphaned state when the child eventually
-    completes or fails.
-    """
+    """Operator-initiated termination of an in-flight loop."""
     from . import router
 
     inst = _instances.get(loop_id)
     if inst is None:
         raise ValueError(f"Loop '{loop_id}' not found")
     if inst.status not in (LoopStatus.RUNNING, LoopStatus.PENDING):
-        return inst  # already terminal — no-op
+        return inst
 
-    # Cancel the in-flight child first so it doesn't fire a stale
-    # task.completed event after the loop is marked cancelled.
     child_id = inst.current_child_id
     if child_id is not None:
         child = router._tasks.get(child_id)
@@ -494,12 +431,7 @@ async def cancel_loop(loop_id: str, reason: str = "operator cancelled") -> LoopI
 
 
 async def on_iteration_failed(child_task_id: str, error: str) -> LoopInstance | None:
-    """Called when an iteration child task transitions to FAILED.
-
-    The loop fails too — no automatic retry at the loop layer because the
-    router already retried per the task's max_attempts policy. If retry is
-    desired, the operator restarts the whole loop.
-    """
+    """Called when an iteration child task transitions to FAILED."""
     loop_id = _child_to_loop.get(child_task_id)
     if loop_id is None:
         return None
@@ -526,10 +458,6 @@ async def on_iteration_failed(child_task_id: str, error: str) -> LoopInstance | 
 
 
 async def _persist_instance(inst: LoopInstance) -> None:
-    """Persist on every state transition (start, advance, terminate).
-    Catches and logs errors so a transient DB problem doesn't lose the
-    in-memory loop. The in-memory state is the source of truth between ticks.
-    """
     from . import store
 
     try:
@@ -541,21 +469,22 @@ async def _persist_instance(inst: LoopInstance) -> None:
         )
 
 
-async def _persist_iteration_metric(
+async def _persist_iteration(
     inst: LoopInstance,
     iteration: int,
-    metric_value: float,
+    cost_value: float,
 ) -> None:
-    """Write one iteration row. UPSERT on (loop_id, iteration) so re-running
-    an iteration during restart-recovery overwrites rather than duplicates.
-    """
+    """Write one iteration row. The ``convergence_metric_value`` column
+    name is preserved for schema continuity; semantically it now carries
+    the iteration's USD cost. The frontend label will be updated in
+    Phase 3 to match."""
     from . import store
 
     try:
         await store.async_insert_loop_iteration_metric(
             loop_id=inst.id,
             iteration=iteration,
-            convergence_metric_value=metric_value,
+            convergence_metric_value=cost_value,
             timestamp_ms=_now_ms(),
             state_at_end=inst.status.value,
         )
@@ -568,11 +497,7 @@ async def _persist_iteration_metric(
 
 async def rehydrate_from_store() -> int:
     """Load every active LoopInstance from the DB into the in-memory map.
-
-    Called from hub.init on daemon startup. Rebuilds the child_to_loop reverse
-    index too so a newly-arriving task.completed event finds its loop.
-    Returns the number of instances rehydrated.
-    """
+    Called from hub.init on daemon startup."""
     from . import store
 
     actives = await store.async_load_active_loop_instances()
@@ -585,42 +510,18 @@ async def rehydrate_from_store() -> int:
 
 
 # ---------------------------------------------------------------------------
-# Router event bridge — task.completed / task.failed → advance / fail
+# Router event bridge
 # ---------------------------------------------------------------------------
 
 
 _listener_registered = False
-
-# Pending bridge tasks — populated by _on_router_event when it schedules
-# advance_loop/on_iteration_failed. Tests await wait_for_bridges() between
-# emitting a router event and asserting the loop state; production callers
-# never need to look at this list.
 _pending_bridges: list[asyncio.Task] = []
 
 
 def _envelope_from_task(task: Task) -> HandoffEnvelope:
-    """Extract the iteration envelope from the completed task's result.
-
-    Four shapes the task.result can carry, in order of preference:
-      - a HandoffEnvelope instance — direct typed return (rare today;
-        becomes common once dispatch grows native envelope support)
-      - a dict that validates as an envelope — direct hub message with a
-        structured ``result`` payload
-      - a string that parses as JSON to a dict that validates — the
-        canonical path while agents call the existing ``complete.sh``
-        with ``$(cat /tmp/loop-envelope.json)`` as the result arg
-      - anything else — empty envelope; the runner falls into the next
-        predicate evaluation, blockers count is 0, and convergence
-        either fires (zero-blocker template) or doesn't (review template
-        with CI gate). Either way, no exception bubbles up.
-
-    Malformed JSON strings, non-dict JSON values, and dicts that fail
-    HandoffEnvelope validation all silently fall through to the empty
-    envelope. The bridge runs inside a router event listener — raising
-    here would drop a loop, which is the failure mode we wrote
-    _on_router_event's done_callback to surface, but is worse than
-    silently treating "no findings" as "no progress."
-    """
+    """Extract an envelope from the completed task's result. See the
+    earlier docstring for the four shapes; behavior unchanged from the
+    pre-markdown runner."""
     result = task.result
     if isinstance(result, HandoffEnvelope):
         return result
@@ -644,16 +545,6 @@ def _envelope_from_task(task: Task) -> HandoffEnvelope:
 
 
 def _on_router_event(event: str, task: Task) -> None:
-    """Sync router-event listener; schedules async advance/fail on the loop.
-
-    Routes:
-      - ``task.completed`` for a known iteration child → ``advance_loop``
-      - ``task.failed``     for a known iteration child → ``on_iteration_failed``
-      - anything else                                    → no-op
-
-    Errors in the scheduled coroutine are caught + logged via the
-    done-callback so a failing advance doesn't quietly drop a loop.
-    """
     if event not in ("task.completed", "task.failed"):
         return
     loop_id = _child_to_loop.get(task.id)
@@ -669,13 +560,7 @@ def _on_router_event(event: str, task: Task) -> None:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        # Sync context (tests / non-daemon callers). Tests call advance_loop
-        # directly; production always has a running loop because the daemon
-        # wires this listener inside the FastAPI event loop.
-        log.debug(
-            "loop.bridge_no_running_loop",
-            metadata={"event": event, "task_id": task.id},
-        )
+        log.debug("loop.bridge_no_running_loop", metadata={"event": event, "task_id": task.id})
         return
 
     aio_task = loop.create_task(coro)
@@ -704,13 +589,7 @@ def _on_router_event(event: str, task: Task) -> None:
 
 
 async def wait_for_bridges() -> None:
-    """Await every in-flight bridge task. Test helper.
-
-    Use after emitting a router event so the scheduled advance_loop /
-    on_iteration_failed coroutines complete before the test asserts
-    against loop state. Production code never needs this — events flow
-    inside the daemon's event loop and the bridge is fire-and-forget.
-    """
+    """Test helper: await every in-flight bridge task."""
     tasks = list(_pending_bridges)
     if not tasks:
         return
@@ -718,11 +597,7 @@ async def wait_for_bridges() -> None:
 
 
 def start() -> None:
-    """Register the router event listener. Called from hub.init.
-
-    Idempotent — calling twice does not double-register because the router's
-    listener list is identity-based.
-    """
+    """Register the router event listener. Called from hub.init."""
     from . import router
 
     global _listener_registered
@@ -733,14 +608,10 @@ def start() -> None:
     log.info("loop.bridge_started")
 
 
-def reset_for_tests() -> None:  # type: ignore[no-redef]
-    """Override of the earlier reset — also clears the listener-registered flag.
-
-    The conftest fixture runs this between tests, so any test that explicitly
-    calls start() gets a fresh registration the next time.
-    """
+def reset_for_tests() -> None:
     global _listener_registered
     _instances.clear()
     _child_to_loop.clear()
+    _parsed.clear()
     _pending_bridges.clear()
     _listener_registered = False
