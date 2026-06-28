@@ -1,6 +1,6 @@
 <script lang="ts">
   import { panels } from '../panels';
-  import { currentPanel, sidebarCollapsed, debugState, attentionStore } from '../stores.svelte';
+  import { currentPanel, sidebarCollapsed, debugState, attentionStore, integrationState } from '../stores.svelte';
 
   let attentionCount = $derived(attentionStore.count);
   function badgeFor(id: string): number {
@@ -9,7 +9,15 @@
 
   let search = $state('');
 
-  let visiblePanels = $derived(panels.filter(p => !p.debug || debugState.showEventLog));
+  // Panel gating:
+  //   - debug-only panels need debugState.showEventLog
+  //   - integration-gated panels need the corresponding flag on
+  //     integrationState (Files requires minioEnabled today)
+  let visiblePanels = $derived(panels.filter(p => {
+    if (p.debug && !debugState.showEventLog) return false;
+    if (p.requires === 'minio' && !integrationState.minioEnabled) return false;
+    return true;
+  }));
 
   let searchActive = $derived(search.trim().length > 0);
 

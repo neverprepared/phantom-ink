@@ -2,8 +2,9 @@
   import TitleBar from './TitleBar.svelte';
   import Sidebar from './Sidebar.svelte';
   import StatusBar from './StatusBar.svelte';
-  import { currentPanel, attentionStore, profileState } from '../stores.svelte';
+  import { currentPanel, attentionStore, profileState, integrationState } from '../stores.svelte';
   import { onMount } from 'svelte';
+  import { getApi } from '../utils/api';
 
   // Panels (lazy imports)
   import SessionsPanel from '../panels/SessionsPanel.svelte';
@@ -19,6 +20,22 @@
   import DashboardPanel from '../panels/DashboardPanel.svelte';
   import StreamPanel from '../panels/StreamPanel.svelte';
   import RunnersPanel from '../panels/RunnersPanel.svelte';
+  import FilesPanel from '../panels/FilesPanel.svelte';
+
+  // Refresh integration flags so the sidebar can hide panels that
+  // require unconfigured integrations (e.g. Files hidden until MinIO
+  // is wired up). Cheap probe; 503 from /api/artifacts/health is the
+  // "off" signal, 200 + ok=true is "on".
+  async function refreshIntegrations() {
+    try {
+      const api = await getApi();
+      if (!api) return;
+      const h = await api.GetArtifactsHealth();
+      integrationState.minioEnabled = !!h?.ok;
+    } catch {
+      integrationState.minioEnabled = false;
+    }
+  }
 
   // Attention store powers the sidebar badge + Dashboard ActionItems fold-in.
   // Bootstrapping it here means the count is fresh on every panel, not only
@@ -26,6 +43,9 @@
   onMount(() => {
     attentionStore.setWorkspace(profileState.active?.name ?? '');
     attentionStore.start();
+    void refreshIntegrations();
+    const t = window.setInterval(refreshIntegrations, 30_000);
+    return () => window.clearInterval(t);
   });
 
   $effect(() => {
@@ -64,6 +84,8 @@
         <ProfilesPanel />
       {:else if currentPanel.value === 'settings'}
         <SettingsPanel />
+      {:else if currentPanel.value === 'files'}
+        <FilesPanel />
       {/if}
     </main>
   </div>
