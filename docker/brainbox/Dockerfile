@@ -6,9 +6,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANGUAGE=en_US:en \
     LC_ALL=en_US.UTF-8 \
     HOMEBREW_NO_AUTO_UPDATE=1 \
+    HOMEBREW_ALLOWED_TAPS="hashicorp/tap neverprepared/tap" \
     NVM_DIR=/home/developer/.nvm \
     GOENV_ROOT=/home/developer/.goenv \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    OLLAMA_BASE_URL=http://localhost:11434 \
+    OLLAMA_HOST=http://host.docker.internal:11434 \
     BASH_ENV=/home/developer/.env \
     DISABLE_AUTOUPDATER=1 \
     PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/home/developer/.local/bin:/home/developer/.nvm/default_bin:/home/developer/.goenv/bin:/home/developer/.goenv/shims:/home/developer/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -88,7 +91,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/home/developer/.rustup/downloads,uid=1001,gid=1001 \
     # ---- Homebrew ----------------------------------------------------------
     NONINTERACTIVE=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
-    && brew install fd fzf gh ripgrep tree yq kubectl hashicorp/tap/terraform \
+    && brew install fd fzf gh ripgrep tree yq kubectl hashicorp/tap/terraform neverprepared/tap/pbrainctl \
     # ---- Python (uv) -------------------------------------------------------
     && curl -LsSf https://astral.sh/uv/install.sh | sh \
     && uv python install 3.12 3.11 \
@@ -166,7 +169,19 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && uv tool install --python 3.12 /tmp/brainbox-mcp-dist/brainbox_mcp-*.whl \
     && rm -rf /tmp/brainbox-mcp-dist /tmp/hooks-requirements.txt \
     # ---- Pre-trust common working directories ------------------------------
-    && if [ -f ~/.claude.json ]; then \
+    # The canonical config file lives at ~/.claude/.claude.json — this mirrors
+    # the host CLAUDE_CONFIG_DIR layout ($WORKSPACE_HOME/.claude/.claude.json)
+    # and the ttyd-wrapper decrypt path, which writes profile config there.
+    # Claude Code inside the container reads ~/.claude.json (CLAUDE_CONFIG_DIR is
+    # not set in profile images — builder.go strips it as host-only), so we
+    # copy the canonical file to ~/.claude.json. It must be a real file — Claude
+    # Code does not reliably honor a symlinked ~/.claude.json. The runtime
+    # decrypt (ttyd-wrapper.sh) re-copies it with the profile's live config.
+    && mkdir -p ~/.claude \
+    && if [ -f ~/.claude.json ] && [ ! -L ~/.claude.json ]; then \
+         mv ~/.claude.json ~/.claude/.claude.json ; \
+       fi \
+    && if [ -f ~/.claude/.claude.json ]; then \
          jq '. + {hasCompletedOnboarding:true,bypassPermissionsModeAccepted:true} \
              | .projects["/home/developer/workspace"] = \
                  (.projects["/home/developer/workspace"] // {} | . + {hasTrustDialogAccepted:true}) \
@@ -174,16 +189,17 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
                  {allowedTools:[],mcpContextUris:[],hasTrustDialogAccepted:true,projectOnboardingSeenCount:0} \
              | .projects["/home/developer"] = \
                  {allowedTools:[],mcpContextUris:[],hasTrustDialogAccepted:true,projectOnboardingSeenCount:0}' \
-             ~/.claude.json > /tmp/.claude.json.tmp \
-         && mv /tmp/.claude.json.tmp ~/.claude.json ; \
+             ~/.claude/.claude.json > /tmp/.claude.json.tmp \
+         && mv /tmp/.claude.json.tmp ~/.claude/.claude.json ; \
        else \
          printf '%s' \
            '{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true,"projects":{' \
            '"/home/developer/workspace":{"allowedTools":[],"mcpContextUris":[],"hasTrustDialogAccepted":true,"projectOnboardingSeenCount":0},' \
            '"/home/developer/task-repo":{"allowedTools":[],"mcpContextUris":[],"hasTrustDialogAccepted":true,"projectOnboardingSeenCount":0},' \
            '"/home/developer":{"allowedTools":[],"mcpContextUris":[],"hasTrustDialogAccepted":true,"projectOnboardingSeenCount":0}}}' \
-           > ~/.claude.json ; \
-       fi
+           > ~/.claude/.claude.json ; \
+       fi \
+    && cp -f ~/.claude/.claude.json ~/.claude.json
 
 WORKDIR /home/developer/workspace
 
