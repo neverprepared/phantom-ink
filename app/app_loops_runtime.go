@@ -8,10 +8,9 @@ import (
 // Live loops — Wails surface for the brainbox runtime Loop API.
 //
 // "Live" loops are LoopInstance records driven by the loop runner in brainbox
-// (started via /api/loops/start or the GitHub webhook). They are conceptually
-// distinct from the legacy local-SQLite Loop definitions ListLoops() returns;
-// the latter are chain-style sequences that the desktop app authors and
-// stores locally. A1's Loop runner ships them as proper iteration loops.
+// (started via /api/loops/start or the GitHub webhook). The runner ships them
+// as proper convergence/iteration loops, distinct from any legacy local-SQLite
+// loop definitions that may still exist as queue/scheduler bookkeeping.
 // ---------------------------------------------------------------------------
 
 // ListLiveLoops returns the slim view of every loop the brainbox runtime
