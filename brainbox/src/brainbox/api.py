@@ -61,8 +61,10 @@ from .registry import (
     create_agent,
     delete_agent,
     get_agent,
+    issue_gateway_token,
     list_agents,
     list_tokens,
+    revoke_token,
     update_agent,
     validate_token,
 )
@@ -4351,6 +4353,35 @@ async def gateway_put_profile_env(profile: str, body: dict):
 @app.delete("/api/gateway/profiles/{profile}/env", dependencies=[Depends(require_api_key)])
 async def gateway_delete_profile_env(profile: str):
     return {"profile": profile, "deleted": gateway_secrets.delete_profile_env(profile)}
+
+
+# MCP gateway — Tier-0 token minting (ADR-002 phase 3)
+# ---------------------------------------------------------------------------
+# Operator-only. Mints a profile-bound gateway token so a local client
+# (opencode, codex, …) can reach /gateway/mcp scoped to a workspace profile
+# with an explicit tool scope, without spawning a task. The token IS the
+# secret — it is returned once here and never stored in plaintext elsewhere.
+@app.post("/api/gateway/tokens", dependencies=[Depends(require_api_key)])
+async def gateway_mint_token(body: dict):
+    profile = (body.get("profile") or "").strip()
+    if not profile:
+        raise HTTPException(status_code=400, detail="profile is required")
+    scope = body.get("scope") or []
+    if not isinstance(scope, list) or not all(isinstance(s, str) for s in scope):
+        raise HTTPException(status_code=400, detail="scope must be a list of tool patterns")
+    try:
+        ttl = int(body.get("ttl") or 3600)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="ttl must be an integer (seconds)")
+    if ttl <= 0:
+        raise HTTPException(status_code=400, detail="ttl must be positive")
+    tok = issue_gateway_token(profile, scope, ttl)
+    return {"token": tok.token_id, "profile": profile, "scope": tok.scope, "expiry": tok.expiry}
+
+
+@app.delete("/api/gateway/tokens/{token_id}", dependencies=[Depends(require_api_key)])
+async def gateway_revoke_token(token_id: str):
+    return {"token": token_id, "revoked": revoke_token(token_id)}
 
 
 if _dashboard_dist.is_dir():
