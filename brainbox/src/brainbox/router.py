@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from .config import settings
 from .log import get_logger
-from .models import SessionState, SuspensionKind, Task, TaskStatus
+from .models import ModelTarget, SessionState, SuspensionKind, Task, TaskStatus
 from .policy import evaluate_task_assignment
 from .registry import get_agent, issue_token, revoke_token
 from .utils import now_ms as _now_ms
@@ -62,6 +62,7 @@ async def submit_task(
     loop_iteration: int = 0,
     permission_tier: str | None = None,
     node_requires: list[str] | None = None,
+    model_target: ModelTarget | None = None,
 ) -> Task:
     """Enqueue a task for the given agent.
 
@@ -114,6 +115,7 @@ async def submit_task(
         loop_iteration=loop_iteration,
         permission_tier=permission_tier,
         node_requires=node_requires or [],
+        model_target=model_target,
     )
 
     # Register as child of parent task
