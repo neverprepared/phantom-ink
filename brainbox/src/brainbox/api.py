@@ -10,7 +10,7 @@ import secrets
 import threading
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -373,8 +373,16 @@ async def lifespan(app: FastAPI):
     # Start Ollama instance pool
     get_pool().start()
 
+    # MCP gateway (ADR-002): run the streamable-HTTP session manager for the
+    # app's lifetime. Entered + exited in this same lifespan task (the SDK's
+    # anyio cancel scopes require same-task enter/exit).
+    await _gateway_exit_stack.enter_async_context(_gateway_session_manager.run())
+
     log.info("api.started", metadata={"port": settings.api_port})
     yield
+
+    await _gateway_pool.aclose()
+    await _gateway_exit_stack.aclose()
 
     get_pool().stop()
 
@@ -415,6 +423,22 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 from . import a2a  # noqa: E402
 
 app.include_router(a2a.router)
+
+# MCP gateway (ADR-002): a streamable-HTTP MCP endpoint at /gateway/mcp,
+# scoped per profile + token. The session manager is driven by the lifespan.
+from . import gateway_http, gateway_server  # noqa: E402
+from .gateway_pool import GatewayPool, ServerSpec  # noqa: E402
+
+_gateway_pool = GatewayPool()
+# TODO(2d): resolve ServerSpecs from mcp-catalog.json. Empty for now → the
+# endpoint is live and authenticated but exposes no downstream tools yet.
+_gateway_specs: list[ServerSpec] = []
+_gateway_mcp_server = gateway_server.build_gateway_server(_gateway_pool, _gateway_specs)
+_gateway_subapp, _gateway_session_manager = gateway_http.build_gateway_subapp(
+    _gateway_mcp_server, gateway_server.BrainboxTokenVerifier()
+)
+_gateway_exit_stack = AsyncExitStack()
+app.mount("/gateway", _gateway_subapp)
 
 
 # ---------------------------------------------------------------------------

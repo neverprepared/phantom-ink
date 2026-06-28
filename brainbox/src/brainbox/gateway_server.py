@@ -77,8 +77,14 @@ async def list_gateway_tools(pool: GatewayPool, specs: list[ServerSpec], ident: 
 
 async def call_gateway_tool(
     pool: GatewayPool, specs: list[ServerSpec], ident: Identity, name: str, arguments: dict
-) -> list:
-    """Route a namespaced tool call to the identity's profile session."""
+) -> tuple[list, dict | None]:
+    """Route a namespaced tool call to the identity's profile session.
+
+    Returns ``(content, structured_content)`` — passing the downstream's
+    structured output through faithfully. This matters because we re-expose
+    each tool's ``outputSchema`` (via ``model_copy``), so the low-level
+    Server validates that structured output is present for those tools.
+    """
     server, sep, tool = name.partition(_SEP)
     if not sep:
         raise GatewayError(f"tool name must be '<server>{_SEP}<tool>': {name!r}")
@@ -88,7 +94,7 @@ async def call_gateway_tool(
     if spec is None:
         raise GatewayError(f"unknown server {server!r}")
     result = await pool.call_tool(ident.profile, spec, tool, arguments)
-    return result.content
+    return result.content, result.structuredContent
 
 
 def _identity_from_auth() -> Identity:
