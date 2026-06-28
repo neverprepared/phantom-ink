@@ -4285,6 +4285,49 @@ async def api_artifacts_presign(bucket: str, key: str, op: str = "get", ttl: int
     return {"url": url, "expires_in": ttl}
 
 
+# ---------------------------------------------------------------------------
+# MCP gateway — per-profile encrypted env store (ADR-002, phase 1)
+# ---------------------------------------------------------------------------
+# Operator-only (require_api_key, full trust). These expose plaintext creds
+# for editing; agents never reach them. The single operator key lives in the
+# gateway env (CL_GATEWAY__SECRET_KEY); the store holds only ciphertext.
+from . import gateway_secrets  # noqa: E402
+
+
+@app.get("/api/gateway/profiles", dependencies=[Depends(require_api_key)])
+async def gateway_list_profiles():
+    return {"profiles": gateway_secrets.list_profiles(), "unlocked": gateway_secrets.is_unlocked()}
+
+
+@app.get("/api/gateway/profiles/{profile}/env", dependencies=[Depends(require_api_key)])
+async def gateway_get_profile_env(profile: str):
+    try:
+        return {"profile": profile, "env": gateway_secrets.get_profile_env(profile)}
+    except gateway_secrets.LockedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except gateway_secrets.GatewaySecretsError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.put("/api/gateway/profiles/{profile}/env", dependencies=[Depends(require_api_key)])
+async def gateway_put_profile_env(profile: str, body: dict):
+    env = body.get("env")
+    if not isinstance(env, dict):
+        raise HTTPException(status_code=400, detail='body must be {"env": {KEY: VALUE, ...}}')
+    try:
+        gateway_secrets.set_profile_env(profile, env)
+    except gateway_secrets.LockedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except gateway_secrets.GatewaySecretsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"profile": profile, "saved": True, "count": len(env)}
+
+
+@app.delete("/api/gateway/profiles/{profile}/env", dependencies=[Depends(require_api_key)])
+async def gateway_delete_profile_env(profile: str):
+    return {"profile": profile, "deleted": gateway_secrets.delete_profile_env(profile)}
+
+
 if _dashboard_dist.is_dir():
     # Serve static assets (JS, CSS, etc.)
     app.mount("/assets", StaticFiles(directory=str(_dashboard_dist / "assets")), name="assets")
