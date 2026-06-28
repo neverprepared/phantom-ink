@@ -411,6 +411,12 @@ app.add_middleware(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
+# A2A (Agent-to-Agent) protocol façade. Registered here — well before the SPA
+# catch-all (`/{path:path}`) — so /a2a/* and the nested /.well-known/* resolve.
+from . import a2a  # noqa: E402
+
+app.include_router(a2a.router)
+
 
 # ---------------------------------------------------------------------------
 # Terminal proxy — /t/{session_name}/
