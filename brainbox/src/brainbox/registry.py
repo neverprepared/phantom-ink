@@ -301,6 +301,39 @@ def issue_token(agent_name: str, task_id: str, ttl: int = 3600) -> Token:
     return token
 
 
+def issue_gateway_token(profile: str, scope: list[str] | None = None, ttl: int = 3600) -> Token:
+    """Mint a profile-bound MCP gateway token (ADR-002 phase 3, Tier-0).
+
+    Unlike ``issue_token``, this requires neither a registered agent nor a
+    task: a local client (e.g. opencode) gets a token scoped directly to a
+    workspace profile with an explicit tool ``scope`` (empty = all tools).
+    The gateway's ``BrainboxTokenVerifier`` reads ``workspace_profile`` and
+    ``scope`` straight off the token.
+    """
+    now = int(time.time() * 1000)
+    token = Token(
+        token_id=str(uuid.uuid4()),
+        agent_name="gateway",
+        task_id="",
+        capabilities=[],
+        issued=now,
+        expiry=now + ttl * 1000,
+        workspace_profile=profile,
+        scope=list(scope or []),
+    )
+    _tokens[token.token_id] = token
+    log.info(
+        "registry.gateway_token_issued",
+        metadata={
+            "token_id": token.token_id,
+            "profile": profile,
+            "scope": token.scope,
+            "ttl": ttl,
+        },
+    )
+    return token
+
+
 def validate_token(token_id: str) -> Token | None:
     token = _tokens.get(token_id)
     if not token:

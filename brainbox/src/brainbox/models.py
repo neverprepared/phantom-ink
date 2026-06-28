@@ -46,6 +46,11 @@ class Token(BaseModel):
     capabilities: list[str] = Field(default_factory=list)
     issued: int  # epoch ms
     expiry: int  # epoch ms
+    # MCP gateway (ADR-002 phase 3): a token may be bound directly to a
+    # workspace profile (Tier-0 minting, no task) and carry an explicit tool
+    # scope. Empty scope = all tools (permissive default, back-compat).
+    workspace_profile: str = ""
+    scope: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

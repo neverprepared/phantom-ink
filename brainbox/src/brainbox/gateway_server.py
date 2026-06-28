@@ -15,9 +15,10 @@ Pieces:
   handlers read the per-request identity via ``get_access_token()``.
 
 Tool namespacing is ``<server>__<tool>``. Scope is a list of allowed tool
-patterns; empty or ``["*"]`` means "all" (permissive default for now —
-per-tool grants are phase 3). The HTTP transport mount (streamable-HTTP +
-auth middleware, into FastAPI) is phase 2c.
+patterns carried on the token (``Token.scope``); empty or ``["*"]`` means
+"all". Operators mint narrowly-scoped Tier-0 tokens via
+``registry.issue_gateway_token`` (ADR-002 phase 3). The HTTP transport mount
+(streamable-HTTP + auth middleware, into FastAPI) is phase 2c.
 """
 
 from __future__ import annotations
@@ -124,10 +125,14 @@ def build_gateway_server(
 class BrainboxTokenVerifier(TokenVerifier):
     """Validate an agent Bearer token (hub token) → MCP AccessToken.
 
-    Maps the hub token to ``(profile, scope)``: profile is derived from the
-    token's task (``workspace_profile``); scope is permissive for now
-    (per-tool grants are phase 3). Returns None for invalid/expired tokens
-    (→ 401 at the transport).
+    Maps the hub token to ``(profile, scope)``:
+    - **profile** — a Tier-0 token carries ``workspace_profile`` directly
+      (``issue_gateway_token``); a Tier-1 task token derives it from the
+      token's task (``workspace_profile``).
+    - **scope** — the token's ``scope`` (allowed tool patterns); empty falls
+      back to ``["*"]`` (all tools) for back-compat with task tokens.
+
+    Returns None for invalid/expired tokens (→ 401 at the transport).
     """
 
     async def verify_token(self, token: str) -> AccessToken | None:
@@ -137,10 +142,11 @@ class BrainboxTokenVerifier(TokenVerifier):
         hub = registry.validate_token(token)
         if hub is None:
             return None
-        profile = ""
-        if hub.task_id:
+        profile = hub.workspace_profile or ""
+        if not profile and hub.task_id:
             task = task_router.get_task(hub.task_id)
             if task is not None and task.workspace_profile:
                 profile = task.workspace_profile
+        scopes = list(hub.scope) or ["*"]
         expires_at = int(hub.expiry / 1000) if getattr(hub, "expiry", 0) else None
-        return AccessToken(token=token, client_id=profile, scopes=["*"], expires_at=expires_at)
+        return AccessToken(token=token, client_id=profile, scopes=scopes, expires_at=expires_at)
