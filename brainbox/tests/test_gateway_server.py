@@ -88,10 +88,10 @@ class TestToolCall:
         gw.set_profile_env("personal", {"MY_SECRET": "sekret"})
         pool = GatewayPool()
         try:
-            out = await call_gateway_tool(
+            content, _ = await call_gateway_tool(
                 pool, [_spec()], Identity("personal", ["*"]), "fixture__getenv", {"name": "MY_SECRET"}
             )
-            assert any("sekret" in t for t in _texts(out))
+            assert any("sekret" in t for t in _texts(content))
         finally:
             await pool.aclose()
 
