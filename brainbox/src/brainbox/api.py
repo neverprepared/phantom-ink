@@ -426,13 +426,14 @@ app.include_router(a2a.router)
 
 # MCP gateway (ADR-002): a streamable-HTTP MCP endpoint at /gateway/mcp,
 # scoped per profile + token. The session manager is driven by the lifespan.
-from . import gateway_http, gateway_server  # noqa: E402
-from .gateway_pool import GatewayPool, ServerSpec  # noqa: E402
+from . import gateway_catalog, gateway_http, gateway_server  # noqa: E402
+from .gateway_pool import GatewayPool  # noqa: E402
 
 _gateway_pool = GatewayPool()
-# TODO(2d): resolve ServerSpecs from mcp-catalog.json. Empty for now → the
-# endpoint is live and authenticated but exposes no downstream tools yet.
-_gateway_specs: list[ServerSpec] = []
+# Resolve downstream servers from the curated catalog, filtered to the operator
+# allowlist (CL_GATEWAY__SERVERS). Empty allowlist / unset catalog_path → none.
+# Per-profile enablement + DB-backed catalog is issue #152.
+_gateway_specs = gateway_catalog.load_catalog_specs(settings.gateway.servers)
 _gateway_mcp_server = gateway_server.build_gateway_server(_gateway_pool, _gateway_specs)
 _gateway_subapp, _gateway_session_manager = gateway_http.build_gateway_subapp(
     _gateway_mcp_server, gateway_server.BrainboxTokenVerifier()

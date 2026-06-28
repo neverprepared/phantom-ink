@@ -187,6 +187,13 @@ class GatewaySettings(BaseSettings):
 
     secret_key: SecretStr = SecretStr("")
     secrets_dir: str = ""
+    # Path to the curated MCP server catalog (reflex's mcp-catalog.json). Empty
+    # = no downstream servers. (DB-backed/app-editable registry is issue #152.)
+    catalog_path: str = ""
+    # Allowlist of catalog server names the gateway exposes. Empty = none;
+    # set CL_GATEWAY__SERVERS='["phantom-brain","slack"]'. Keeps tools/list from
+    # spawning every catalog server. Per-profile enablement is issue #152.
+    servers: list[str] = Field(default_factory=list)
 
 
 def _qdrant_url() -> str:
