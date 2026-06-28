@@ -69,6 +69,32 @@ def _spec(
 
 
 # ---------------------------------------------------------------------------
+# Node model_target → child task (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+class TestNodeModelTarget:
+    @pytest.mark.asyncio
+    async def test_node_model_target_reaches_child_task(self, reviewer_agent):
+        from brainbox.models import ModelTarget
+
+        spec = LoopSpec(
+            name="mt-loop",
+            intent=Intent(outcome="x", convergence="length(findings.blockers) == `0`"),
+            body=Body(nodes=[Node(
+                id="reviewer", role="reviewer", prompt="review",
+                model_target=ModelTarget(provider="ollama", model="qwen3:8b"),
+            )]),
+            convergence_metric="length(findings.blockers)",
+        )
+        inst = await start_loop(spec, HandoffEnvelope())
+        child = router_module._tasks[inst.current_child_id]
+        assert child.model_target is not None
+        assert child.model_target.provider == "ollama"
+        assert child.model_target.model == "qwen3:8b"
+
+
+# ---------------------------------------------------------------------------
 # start_loop
 # ---------------------------------------------------------------------------
 

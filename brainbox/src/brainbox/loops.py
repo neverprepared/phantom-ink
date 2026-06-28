@@ -18,6 +18,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from .models import ModelTarget
+
 # ---------------------------------------------------------------------------
 # Constants — kept aligned with app/loops.go
 # ---------------------------------------------------------------------------
@@ -135,6 +137,7 @@ class Node(BaseModel):
     prompt: str = ""
     requires: list[str] = Field(default_factory=list)
     timeout_ms: int = 0
+    model_target: ModelTarget | None = None  # per-node LLM selection (Phase 2)
 
 
 class Body(BaseModel):

@@ -376,6 +376,7 @@ async def _enqueue_iteration(
         loop_iteration=iteration,
         permission_tier=spec.permissions.value if spec.permissions else None,
         node_requires=list(first_node.requires),
+        model_target=first_node.model_target,
     )
     _child_to_loop[task.id] = inst.id
     return task.id
