@@ -23,9 +23,79 @@
   let minting = $state(false);
   let mintedToken = $state('');
 
+  // import state
+  let showPaste = $state(false);
+  let pasteText = $state('');
+
   async function toggle() {
     open = !open;
     if (open && !loaded) await load();
+  }
+
+  // Parse .env text → [key, value] pairs. Handles `export `, blank lines,
+  // `#` comments, and single/double-quoted values (with \n \t \" unescaped
+  // inside double quotes). Unquoted values are taken verbatim (trimmed).
+  function parseDotenv(text: string): Array<[string, string]> {
+    const out: Array<[string, string]> = [];
+    for (const raw of text.split(/\r?\n/)) {
+      let line = raw.trim();
+      if (!line || line.startsWith('#')) continue;
+      if (line.startsWith('export ')) line = line.slice(7).trim();
+      const eq = line.indexOf('=');
+      if (eq <= 0) continue;
+      const key = line.slice(0, eq).trim();
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+      let value = line.slice(eq + 1).trim();
+      if (value.length >= 2 && (value[0] === '"' || value[0] === "'") && value[value.length - 1] === value[0]) {
+        const q = value[0];
+        value = value.slice(1, -1);
+        if (q === '"') value = value.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"');
+      }
+      out.push([key, value]);
+    }
+    return out;
+  }
+
+  // Merge parsed pairs into rows: existing keys are updated in place, new
+  // keys appended. Returns {added, updated} for the toast.
+  function mergePairs(pairs: Array<[string, string]>): { added: number; updated: number } {
+    let added = 0, updated = 0;
+    const next = [...rows];
+    for (const [key, value] of pairs) {
+      const idx = next.findIndex((r) => r.key.trim() === key);
+      if (idx >= 0) { next[idx] = { ...next[idx], value }; updated++; }
+      else { next.push({ key, value, reveal: false }); added++; }
+    }
+    rows = next;
+    return { added, updated };
+  }
+
+  function applyImport(text: string) {
+    const pairs = parseDotenv(text);
+    if (pairs.length === 0) {
+      notifications.warning('No KEY=VALUE lines found to import');
+      return;
+    }
+    const { added, updated } = mergePairs(pairs);
+    notifications.success(`Imported ${added} new, updated ${updated} — review and save`);
+  }
+
+  async function importFromFile() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const text = await a.ImportEnvFile();
+      if (!text) return; // cancelled
+      applyImport(text);
+    } catch (err: any) {
+      notifications.error(`Import failed: ${err?.message ?? err}`);
+    }
+  }
+
+  function importFromPaste() {
+    applyImport(pasteText);
+    pasteText = '';
+    showPaste = false;
   }
 
   async function load() {
@@ -146,11 +216,30 @@
 
       <div class="gw-actions">
         <button class="gw-btn" onclick={addRow}>+ variable</button>
+        <button class="gw-btn" onclick={importFromFile} title="Import a .env file (merges into the list)">import .env</button>
+        <button class="gw-btn" class:active={showPaste} onclick={() => (showPaste = !showPaste)} title="Paste .env contents">paste</button>
         <button class="gw-btn primary" onclick={save} disabled={saving}>{saving ? 'saving…' : 'save'}</button>
         {#if rows.length > 0}
           <button class="gw-btn danger" onclick={clearAll} disabled={saving}>clear all</button>
         {/if}
       </div>
+
+      {#if showPaste}
+        <div class="gw-paste">
+          <textarea
+            class="gw-paste-area"
+            placeholder={"Paste .env lines:\nKEY=value\nexport OTHER=\"quoted value\""}
+            bind:value={pasteText}
+            spellcheck="false"
+            rows="4"
+          ></textarea>
+          <div class="gw-actions">
+            <button class="gw-btn primary" onclick={importFromPaste} disabled={!pasteText.trim()}>merge</button>
+            <button class="gw-btn" onclick={() => { showPaste = false; pasteText = ''; }}>cancel</button>
+          </div>
+          <p class="gw-hint">merges into the list above — existing keys are updated. Review, then <strong>save</strong>.</p>
+        </div>
+      {/if}
 
       <div class="gw-mint">
         <div class="gw-mint-label">mint Tier-0 token</div>
@@ -235,7 +324,21 @@
   .gw-btn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--border); }
   .gw-btn.primary { color: var(--accent, var(--text-primary)); }
   .gw-btn.danger:hover:not(:disabled) { color: var(--danger, #e55); }
+  .gw-btn.active { color: var(--text-primary); border-color: var(--border); }
   .gw-btn:disabled { opacity: 0.5; cursor: default; }
+  .gw-paste { display: flex; flex-direction: column; gap: 0.3rem; }
+  .gw-paste-area {
+    background: var(--bg-input, var(--bg-secondary));
+    border: 1px solid var(--border-subtle, var(--border));
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 0.7rem;
+    padding: 0.35rem;
+    font-family: var(--font-mono, monospace);
+    resize: vertical;
+    width: 100%;
+    box-sizing: border-box;
+  }
   .gw-mint {
     border-top: 1px solid var(--border-subtle, var(--border));
     padding-top: 0.4rem;
