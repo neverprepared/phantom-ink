@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from mcp import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.stdio import StdioServerParameters, get_default_environment, stdio_client
 
 from . import gateway_secrets
 from .log import get_logger
@@ -41,6 +41,20 @@ class ServerSpec:
     command: str
     args: list[str] = field(default_factory=list)
     base_env: dict[str, str] = field(default_factory=dict)
+
+
+def _unwrap_error(exc: BaseException, _depth: int = 0) -> str:
+    """Render an exception for logging, drilling into ExceptionGroups.
+
+    The owner-task pattern runs the MCP client inside an anyio task group, so a
+    spawn failure surfaces as an ExceptionGroup whose ``str`` is just
+    "unhandled errors in a TaskGroup" — useless for diagnosis. Recurse into the
+    first sub-exception so the real cause (e.g. FileNotFoundError: uvx) shows.
+    """
+    inner = getattr(exc, "exceptions", None)
+    if inner and _depth < 5:
+        return _unwrap_error(inner[0], _depth + 1)
+    return f"{type(exc).__name__}: {exc}"
 
 
 def _profile_env(profile: str) -> dict[str, str]:
@@ -141,14 +155,23 @@ class GatewayPool:
             conn = self._conns.get(key)
             if conn is not None:
                 return conn
-            env = {**spec.base_env, **_profile_env(profile)}
+            # Seed from the SDK's default environment (PATH, HOME, …) so the
+            # spawned command — usually a bare `uvx`/`npx`/`node` — is
+            # resolvable; then layer the catalog literals and per-profile
+            # creds on top. Without this the subprocess gets no PATH and every
+            # non-absolute command fails to spawn.
+            env = {**get_default_environment(), **spec.base_env, **_profile_env(profile)}
             conn = _Connection(spec, env)
             try:
                 await conn.start()
-            except BaseException:
+            except BaseException as exc:
                 log.warning(
                     "gateway_pool.connect_failed",
-                    metadata={"profile": profile, "server": spec.name},
+                    metadata={
+                        "profile": profile,
+                        "server": spec.name,
+                        "error": _unwrap_error(exc),
+                    },
                 )
                 raise
             self._conns[key] = conn
