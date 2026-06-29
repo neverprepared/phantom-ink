@@ -340,6 +340,8 @@ export function SubmitTaskAndWait(arg1:brainbox.WaitForTaskRequest):Promise<brai
 
 export function TailLogs(arg1:string,arg2:number):Promise<Array<opensearch.LogEntry>>;
 
+export function TestGatewayTools(arg1:string):Promise<brainbox.GatewayToolsResult>;
+
 export function TriggerRule(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promise<brainbox.AgentDefinition>;

@@ -674,6 +674,10 @@ export function TailLogs(arg1, arg2) {
   return window['go']['main']['App']['TailLogs'](arg1, arg2);
 }
 
+export function TestGatewayTools(arg1) {
+  return window['go']['main']['App']['TestGatewayTools'](arg1);
+}
+
 export function TriggerRule(arg1, arg2, arg3) {
   return window['go']['main']['App']['TriggerRule'](arg1, arg2, arg3);
 }

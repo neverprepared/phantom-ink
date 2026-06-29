@@ -27,6 +27,19 @@ type GatewayToken struct {
 	Expiry  int64    `json:"expiry"` // epoch ms
 }
 
+// GatewayTool is one namespaced tool a profile sees through the gateway.
+type GatewayTool struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// GatewayToolsResult is the response from GET /api/gateway/profiles/{p}/tools.
+type GatewayToolsResult struct {
+	Profile string        `json:"profile"`
+	Servers []string      `json:"servers"` // operator allowlist (CL_GATEWAY__SERVERS)
+	Tools   []GatewayTool `json:"tools"`
+}
+
 // ListGatewayProfiles returns which profiles have a stored env file and
 // whether the gateway is unlocked (operator key configured).
 func (c *Client) ListGatewayProfiles() (GatewayProfilesInfo, error) {
@@ -35,6 +48,19 @@ func (c *Client) ListGatewayProfiles() (GatewayProfilesInfo, error) {
 		return GatewayProfilesInfo{}, err
 	}
 	return info, nil
+}
+
+// ListGatewayProfileTools returns the namespaced tools a profile would receive
+// through the gateway right now (catalog ∩ allowlist, spawned with the
+// profile's creds). An empty Tools slice means nothing is allowlisted or the
+// downstream server(s) failed to spawn.
+func (c *Client) ListGatewayProfileTools(profile string) (GatewayToolsResult, error) {
+	var res GatewayToolsResult
+	path := fmt.Sprintf("/api/gateway/profiles/%s/tools", url.PathEscape(profile))
+	if err := c.get(path, &res); err != nil {
+		return GatewayToolsResult{}, err
+	}
+	return res, nil
 }
 
 // GetGatewayProfileEnv returns the decrypted env map for a profile. A profile
