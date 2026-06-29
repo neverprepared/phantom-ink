@@ -631,6 +631,22 @@ export namespace brainbox {
 	        this.unlocked = source["unlocked"];
 	    }
 	}
+	export class GatewayServer {
+	    name: string;
+	    command: string;
+	    enabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new GatewayServer(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.command = source["command"];
+	        this.enabled = source["enabled"];
+	    }
+	}
 	export class GatewayToken {
 	    token: string;
 	    profile: string;

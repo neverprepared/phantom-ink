@@ -430,6 +430,10 @@ export function ListCollectedEntries(arg1, arg2, arg3) {
   return window['go']['main']['App']['ListCollectedEntries'](arg1, arg2, arg3);
 }
 
+export function ListGatewayServers() {
+  return window['go']['main']['App']['ListGatewayServers']();
+}
+
 export function ListHubTasks(arg1, arg2) {
   return window['go']['main']['App']['ListHubTasks'](arg1, arg2);
 }
@@ -612,6 +616,10 @@ export function SetConfig(arg1, arg2, arg3) {
 
 export function SetGatewayEnv(arg1, arg2) {
   return window['go']['main']['App']['SetGatewayEnv'](arg1, arg2);
+}
+
+export function SetGatewayServerEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetGatewayServerEnabled'](arg1, arg2);
 }
 
 export function SetHiddenProfiles(arg1) {

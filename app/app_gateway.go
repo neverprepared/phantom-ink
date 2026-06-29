@@ -57,6 +57,18 @@ func (a *App) MintGatewayToken(profile string, scope []string, ttlSeconds int) (
 	return a.client.MintGatewayToken(profile, scope, ttlSeconds)
 }
 
+// ListGatewayServers returns every catalog server + its enable state, for the
+// Gateway panel's toggle list.
+func (a *App) ListGatewayServers() ([]brainbox.GatewayServer, error) {
+	return a.client.ListGatewayServers()
+}
+
+// SetGatewayServerEnabled toggles a server on/off. Takes effect live — the
+// gateway resolves enabled servers per request.
+func (a *App) SetGatewayServerEnabled(name string, enabled bool) error {
+	return a.client.SetGatewayServerEnabled(name, enabled)
+}
+
 // TestGatewayTools returns the tools a profile currently sees through the
 // gateway — the app "Test gateway" check. Exercises the full server-side path
 // (catalog → pooled spawn with the profile's creds → scope filter), so an

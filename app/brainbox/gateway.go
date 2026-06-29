@@ -27,6 +27,13 @@ type GatewayToken struct {
 	Expiry  int64    `json:"expiry"` // epoch ms
 }
 
+// GatewayServer is one catalog server + its enable state (DB registry, #152).
+type GatewayServer struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
+	Enabled bool   `json:"enabled"`
+}
+
 // GatewayTool is one namespaced tool a profile sees through the gateway.
 type GatewayTool struct {
 	Name        string `json:"name"`
@@ -48,6 +55,23 @@ func (c *Client) ListGatewayProfiles() (GatewayProfilesInfo, error) {
 		return GatewayProfilesInfo{}, err
 	}
 	return info, nil
+}
+
+// ListGatewayServers returns every catalog server with its enable state.
+func (c *Client) ListGatewayServers() ([]GatewayServer, error) {
+	var resp struct {
+		Servers []GatewayServer `json:"servers"`
+	}
+	if err := c.get("/api/gateway/servers", &resp); err != nil {
+		return nil, err
+	}
+	return resp.Servers, nil
+}
+
+// SetGatewayServerEnabled toggles a catalog server on/off (live, no restart).
+func (c *Client) SetGatewayServerEnabled(name string, enabled bool) error {
+	path := fmt.Sprintf("/api/gateway/servers/%s", url.PathEscape(name))
+	return c.patch(path, map[string]interface{}{"enabled": enabled}, nil)
 }
 
 // ListGatewayProfileTools returns the namespaced tools a profile would receive
