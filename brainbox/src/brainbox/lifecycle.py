@@ -176,46 +176,73 @@ def _compute_mount_context(
     }
 
 
+def _gateway_server_entry(workspace_profile: str) -> dict | None:
+    """Build the `phantom-gateway` HTTP MCP entry for a session, or None.
+
+    Returns an entry only when the MCP gateway is exposing servers and session
+    injection is enabled (ADR-002 phase 3). Mints a per-session Tier-0 token
+    bound to *workspace_profile* so the container reaches the gateway scoped to
+    its own profile — no agent/task needed. The token is in-memory in the hub
+    registry; a daemon restart invalidates it (sessions are re-provisioned).
+    """
+    from . import registry
+
+    gw = settings.gateway
+    if not workspace_profile or not gw.servers or not gw.inject_sessions:
+        return None
+    token = registry.issue_gateway_token(workspace_profile, scope=[], ttl=gw.session_token_ttl)
+    return {
+        "type": "http",
+        "url": gw.container_url,
+        "headers": {"Authorization": f"Bearer {token.token_id}"},
+    }
+
+
 def _generate_container_mcp_json(
     claude_config_dir: Path,
     dest_path: Path,
+    *,
+    workspace_profile: str = "",
 ) -> bool:
     """Generate a workspace .mcp.json with container-optimised MCP commands.
 
     Reads mcpServers from the profile's .claude.json, applies container binary
     overrides (replacing npx/uvx/uv-run commands with pre-installed binaries),
-    and writes the result to *dest_path* so it can be bind-mounted read-only
-    into ~/workspace/.mcp.json inside the container.
+    optionally injects the shared MCP gateway as `phantom-gateway`, and writes
+    the result to *dest_path* so it can be bind-mounted read-only into
+    ~/workspace/.mcp.json inside the container.
 
-    Returns True if the file was written, False if there was nothing to do.
+    Returns True if the file was written, False if there was nothing to do
+    (no profile servers AND no gateway entry).
     """
     from .backends.configure import _CONTAINER_MCP_OVERRIDES
 
-    claude_json_path = claude_config_dir / ".claude.json"
-    if not claude_json_path.exists():
-        return False
-
-    try:
-        data = json.loads(claude_json_path.read_text())
-    except Exception:
-        return False
-
-    user_servers: dict = data.get("mcpServers", {})
-    if not user_servers:
-        return False
-
     container_servers: dict = {}
-    for name, server in user_servers.items():
-        override = _CONTAINER_MCP_OVERRIDES.get(name)
-        if override:
-            patched = dict(server)
-            patched["command"] = override["command"]
-            patched["args"] = override["args"]
-            if "env" in override:
-                patched.setdefault("env", {}).update(override["env"])
-            container_servers[name] = patched
-        else:
-            container_servers[name] = server
+
+    claude_json_path = claude_config_dir / ".claude.json"
+    if claude_json_path.exists():
+        try:
+            data = json.loads(claude_json_path.read_text())
+        except Exception:
+            data = {}
+        for name, server in (data.get("mcpServers") or {}).items():
+            override = _CONTAINER_MCP_OVERRIDES.get(name)
+            if override:
+                patched = dict(server)
+                patched["command"] = override["command"]
+                patched["args"] = override["args"]
+                if "env" in override:
+                    patched.setdefault("env", {}).update(override["env"])
+                container_servers[name] = patched
+            else:
+                container_servers[name] = server
+
+    gateway_entry = _gateway_server_entry(workspace_profile)
+    if gateway_entry is not None:
+        container_servers["phantom-gateway"] = gateway_entry
+
+    if not container_servers:
+        return False
 
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     dest_path.write_text(json.dumps({"mcpServers": container_servers}, indent=2))
@@ -929,7 +956,9 @@ async def provision(
             os.environ.get("CLAUDE_CONFIG_DIR", str(Path(resolved_workspace_home) / ".claude"))
         )
         _mcp_json_path = session_data_dir / "workspace-mcp.json"
-        if _generate_container_mcp_json(_claude_config_dir, _mcp_json_path):
+        if _generate_container_mcp_json(
+            _claude_config_dir, _mcp_json_path, workspace_profile=resolved_workspace_profile
+        ):
             volumes[str(_mcp_json_path)] = {
                 "bind": "/home/developer/workspace/.mcp.json",
                 "mode": "ro",

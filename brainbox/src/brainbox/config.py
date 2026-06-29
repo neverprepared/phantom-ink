@@ -194,6 +194,15 @@ class GatewaySettings(BaseSettings):
     # set CL_GATEWAY__SERVERS='["phantom-brain","slack"]'. Keeps tools/list from
     # spawning every catalog server. Per-profile enablement is issue #152.
     servers: list[str] = Field(default_factory=list)
+    # Session wiring (ADR-002 phase 3): when servers are exposed, spawned
+    # sessions get a `phantom-gateway` HTTP MCP entry injected into their
+    # container .mcp.json, with a per-session Tier-0 token for the session's
+    # profile. ``inject_sessions`` is the kill-switch; ``container_url`` is how
+    # the container reaches the gateway (host.docker.internal on Docker
+    # Desktop); ``session_token_ttl`` bounds the minted token's lifetime.
+    inject_sessions: bool = True
+    container_url: str = "http://host.docker.internal:9999/gateway/mcp"
+    session_token_ttl: int = 86400  # seconds (24h)
 
 
 def _qdrant_url() -> str:
