@@ -118,3 +118,27 @@ async def test_connect_failure_raises():
                                                          args=["-c", "import sys; sys.exit(1)"]))
     finally:
         await pool.aclose()
+
+
+@pytest.mark.asyncio
+async def test_spawn_inherits_path():
+    # The spawned subprocess must receive PATH (from get_default_environment),
+    # else bare commands like `uvx`/`npx` can't be found. The fixture reports
+    # its own env, so assert it actually got a non-empty PATH.
+    pool = GatewayPool()
+    try:
+        res = await pool.call_tool("personal", _spec(), "getenv", {"name": "PATH"})
+        assert any(t.strip() for t in _texts(res)), "subprocess received no PATH"
+    finally:
+        await pool.aclose()
+
+
+def test_unwrap_error_drills_into_exception_group():
+    from brainbox.gateway_pool import _unwrap_error
+
+    leaf = FileNotFoundError("uvx not found")
+    grouped = ExceptionGroup("unhandled errors in a TaskGroup", [leaf])
+    msg = _unwrap_error(grouped)
+    assert "FileNotFoundError" in msg and "uvx not found" in msg
+    # plain exceptions pass through
+    assert _unwrap_error(ValueError("boom")) == "ValueError: boom"
