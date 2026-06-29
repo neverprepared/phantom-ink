@@ -4384,6 +4384,31 @@ async def gateway_revoke_token(token_id: str):
     return {"token": token_id, "revoked": revoke_token(token_id)}
 
 
+# MCP gateway — per-profile tool listing (ADR-002 phase 3, app "Test gateway")
+# ---------------------------------------------------------------------------
+# Operator-only connectivity/scoping check: returns the namespaced tools a
+# profile would actually receive through the gateway right now. This exercises
+# the full server-side path (catalog -> pooled spawn with the profile's creds
+# -> scope filter), so an empty list means "nothing allowlisted or a server
+# failed to spawn" — the exact failure modes worth surfacing in the UI.
+@app.get("/api/gateway/profiles/{profile}/tools", dependencies=[Depends(require_api_key)])
+async def gateway_list_profile_tools(profile: str):
+    from .gateway_server import Identity, list_gateway_tools
+
+    ident = Identity(profile=profile, scope=["*"])
+    try:
+        tools = await list_gateway_tools(_gateway_pool, _gateway_specs, ident)
+    except Exception as exc:  # pragma: no cover - defensive; per-server errors are already skipped
+        raise HTTPException(status_code=502, detail=f"gateway tool listing failed: {exc}")
+    return {
+        "profile": profile,
+        "servers": list(settings.gateway.servers),
+        "tools": [
+            {"name": t.name, "description": getattr(t, "description", "") or ""} for t in tools
+        ],
+    }
+
+
 if _dashboard_dist.is_dir():
     # Serve static assets (JS, CSS, etc.)
     app.mount("/assets", StaticFiles(directory=str(_dashboard_dist / "assets")), name="assets")
