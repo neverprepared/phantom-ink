@@ -203,6 +203,12 @@ class GatewaySettings(BaseSettings):
     inject_sessions: bool = True
     container_url: str = "http://host.docker.internal:9999/gateway/mcp"
     session_token_ttl: int = 86400  # seconds (24h)
+    # When True, a spawned container's .mcp.json contains ONLY the gateway entry
+    # — the profile's own mcpServers are dropped, so all container MCP traffic
+    # goes through the gateway (centralized creds + scoping). Falls back to the
+    # profile servers if the gateway isn't active (so a container is never left
+    # with no MCP at all). Off = merge profile servers + gateway (back-compat).
+    exclusive: bool = False
 
 
 def _qdrant_url() -> str:

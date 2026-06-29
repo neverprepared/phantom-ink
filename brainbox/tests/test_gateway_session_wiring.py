@@ -71,3 +71,29 @@ class TestContainerMcpJson:
         dest = tmp_path / "workspace-mcp.json"
         assert _generate_container_mcp_json(tmp_path / "cfg", dest, workspace_profile="personal") is False
         assert not dest.exists()
+
+    def test_exclusive_drops_profile_servers(self, gateway_on, monkeypatch, tmp_path):
+        monkeypatch.setattr(settings.gateway, "exclusive", True)
+        cfg = tmp_path / "cfg"
+        cfg.mkdir()
+        (cfg / ".claude.json").write_text(json.dumps({
+            "mcpServers": {"slack": {"command": "npx", "args": ["-y", "slack-mcp"]}}
+        }))
+        dest = tmp_path / "workspace-mcp.json"
+        assert _generate_container_mcp_json(cfg, dest, workspace_profile="personal") is True
+        servers = json.loads(dest.read_text())["mcpServers"]
+        assert set(servers) == {"phantom-gateway"}  # profile's slack dropped
+
+    def test_exclusive_falls_back_to_profile_when_gateway_inactive(self, monkeypatch, tmp_path):
+        # exclusive on, but gateway not active (no servers) → keep profile servers
+        monkeypatch.setattr(settings.gateway, "servers", [])
+        monkeypatch.setattr(settings.gateway, "exclusive", True)
+        cfg = tmp_path / "cfg"
+        cfg.mkdir()
+        (cfg / ".claude.json").write_text(json.dumps({
+            "mcpServers": {"slack": {"command": "npx", "args": ["-y", "slack-mcp"]}}
+        }))
+        dest = tmp_path / "workspace-mcp.json"
+        assert _generate_container_mcp_json(cfg, dest, workspace_profile="personal") is True
+        servers = json.loads(dest.read_text())["mcpServers"]
+        assert set(servers) == {"slack"}  # gateway inactive → not stranded
