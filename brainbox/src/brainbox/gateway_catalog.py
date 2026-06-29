@@ -77,3 +77,52 @@ def load_catalog_specs(
             continue
         out.append(spec)
     return out
+
+
+def list_catalog_servers(*, path: str | None = None) -> list[dict]:
+    """All launchable catalog servers as ``{name, command, args}`` (no env).
+
+    Used by the operator UI to show the full toggle list. Drops entries with no
+    command (same rule as ``load_catalog_specs``).
+    """
+    cat_path = path or settings.gateway.catalog_path
+    if not cat_path:
+        return []
+    p = Path(cat_path)
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text())
+    except (ValueError, OSError):
+        return []
+    servers = data.get("servers", {}) if isinstance(data, dict) else {}
+    out: list[dict] = []
+    for name, entry in servers.items():
+        defn = (entry or {}).get("definition") or {}
+        command = defn.get("command")
+        if not command:
+            continue
+        out.append({"name": name, "command": command, "args": list(defn.get("args") or [])})
+    return out
+
+
+def seed_gateway_servers(*, default_enabled: list[str] | None = None) -> None:
+    """Insert any new catalog servers into the DB registry (#152).
+
+    Existing rows (and their toggles) are never clobbered. On first run, the
+    ``default_enabled`` set (typically ``settings.gateway.servers``, the legacy
+    ``CL_GATEWAY__SERVERS`` allowlist) decides which servers start enabled, so
+    existing deployments carry their config forward.
+    """
+    from . import store
+
+    enabled_set = set(default_enabled or [])
+    for entry in list_catalog_servers():
+        store.seed_gateway_server(entry["name"], entry["name"] in enabled_set)
+
+
+def resolve_enabled_specs() -> list[ServerSpec]:
+    """ServerSpecs for the DB-enabled servers — the live gateway surface."""
+    from . import store
+
+    return load_catalog_specs(store.enabled_gateway_server_names())

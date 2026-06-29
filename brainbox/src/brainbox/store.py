@@ -203,6 +203,17 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_loop_iteration_metric_loop
                 ON loop_iteration_metric(loop_id, iteration);
+
+            -- MCP gateway server registry (ADR-002, #152). Definitions live in
+            -- the catalog file (mcp-catalog.json); this table holds only which
+            -- servers are enabled. Seeded from the catalog on startup without
+            -- clobbering existing toggles.
+            CREATE TABLE IF NOT EXISTS gateway_servers (
+                name       TEXT    PRIMARY KEY,
+                enabled    INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
         """)
 
 
@@ -331,8 +342,60 @@ def load_all_runners() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# MCP gateway server registry (#152)
+# ---------------------------------------------------------------------------
+
+
+def seed_gateway_server(name: str, enabled: bool) -> None:
+    """Insert a catalog server if absent; never clobber an existing toggle."""
+    now = int(__import__("time").time() * 1000)
+    with _lock:
+        _db().execute(
+            """
+            INSERT INTO gateway_servers (name, enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(name) DO NOTHING
+            """,
+            (name, 1 if enabled else 0, now, now),
+        )
+
+
+def set_gateway_server_enabled(name: str, enabled: bool) -> None:
+    """Enable/disable a server (upsert)."""
+    now = int(__import__("time").time() * 1000)
+    with _lock:
+        _db().execute(
+            """
+            INSERT INTO gateway_servers (name, enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                enabled    = excluded.enabled,
+                updated_at = excluded.updated_at
+            """,
+            (name, 1 if enabled else 0, now, now),
+        )
+
+
+def list_gateway_servers() -> dict[str, bool]:
+    """All known servers → enabled state."""
+    rows = _db().execute("SELECT name, enabled FROM gateway_servers").fetchall()
+    return {row["name"]: bool(row["enabled"]) for row in rows}
+
+
+def enabled_gateway_server_names() -> list[str]:
+    rows = _db().execute(
+        "SELECT name FROM gateway_servers WHERE enabled = 1 ORDER BY name"
+    ).fetchall()
+    return [row["name"] for row in rows]
+
+
+# ---------------------------------------------------------------------------
 # Async wrappers
 # ---------------------------------------------------------------------------
+
+async def async_set_gateway_server_enabled(name: str, enabled: bool) -> None:
+    await asyncio.to_thread(set_gateway_server_enabled, name, enabled)
+
 
 async def async_upsert_session(ctx: "SessionContext") -> None:  # type: ignore[name-defined]
     await asyncio.to_thread(upsert_session, ctx)

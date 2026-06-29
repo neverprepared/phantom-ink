@@ -302,6 +302,14 @@ async def lifespan(app: FastAPI):
     await hub_init()
     load_or_create_key()
 
+    # MCP gateway (#152): seed the server registry from the catalog. New servers
+    # are added; existing toggles are preserved. First run enables the legacy
+    # CL_GATEWAY__SERVERS set so existing deployments carry forward.
+    try:
+        gateway_catalog.seed_gateway_servers(default_enabled=settings.gateway.servers)
+    except Exception as exc:
+        log.warning("gateway.seed_failed", metadata={"reason": str(exc)})
+
     # Forward hub events to SSE
     on_event(
         lambda event, data: _broadcast_sse(
@@ -432,11 +440,13 @@ from . import gateway_catalog, gateway_http, gateway_server  # noqa: E402
 from .gateway_pool import GatewayPool  # noqa: E402
 
 _gateway_pool = GatewayPool()
-# Resolve downstream servers from the curated catalog, filtered to the operator
-# allowlist (CL_GATEWAY__SERVERS). Empty allowlist / unset catalog_path → none.
-# Per-profile enablement + DB-backed catalog is issue #152.
-_gateway_specs = gateway_catalog.load_catalog_specs(settings.gateway.servers)
-_gateway_mcp_server = gateway_server.build_gateway_server(_gateway_pool, _gateway_specs)
+# Downstream servers are resolved per-request from the DB-backed registry
+# (#152): the catalog file holds definitions, the gateway_servers table holds
+# which are enabled. Passing the resolver (not a static list) lets toggles take
+# effect live. The table is seeded from the catalog at startup (see lifespan).
+_gateway_mcp_server = gateway_server.build_gateway_server(
+    _gateway_pool, gateway_catalog.resolve_enabled_specs
+)
 _gateway_subapp, _gateway_session_manager = gateway_http.build_gateway_subapp(
     _gateway_mcp_server, gateway_server.BrainboxTokenVerifier()
 )
@@ -4396,17 +4406,53 @@ async def gateway_list_profile_tools(profile: str):
     from .gateway_server import Identity, list_gateway_tools
 
     ident = Identity(profile=profile, scope=["*"])
+    specs = gateway_catalog.resolve_enabled_specs()
     try:
-        tools = await list_gateway_tools(_gateway_pool, _gateway_specs, ident)
+        tools = await list_gateway_tools(_gateway_pool, specs, ident)
     except Exception as exc:  # pragma: no cover - defensive; per-server errors are already skipped
         raise HTTPException(status_code=502, detail=f"gateway tool listing failed: {exc}")
     return {
         "profile": profile,
-        "servers": list(settings.gateway.servers),
+        "servers": [s.name for s in specs],
         "tools": [
             {"name": t.name, "description": getattr(t, "description", "") or ""} for t in tools
         ],
     }
+
+
+# MCP gateway — server registry (enable/disable, ADR-002 #152)
+# ---------------------------------------------------------------------------
+# Operator-only. The catalog file holds definitions; the DB holds which servers
+# are enabled. Toggles take effect live (specs are resolved per request).
+@app.get("/api/gateway/servers", dependencies=[Depends(require_api_key)])
+async def gateway_list_servers():
+    from . import store
+
+    enabled = store.list_gateway_servers()
+    return {
+        "servers": [
+            {
+                "name": c["name"],
+                "command": c["command"],
+                "enabled": enabled.get(c["name"], False),
+            }
+            for c in gateway_catalog.list_catalog_servers()
+        ]
+    }
+
+
+@app.patch("/api/gateway/servers/{name}", dependencies=[Depends(require_api_key)])
+async def gateway_set_server_enabled(name: str, body: dict):
+    from . import store
+
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail='body must be {"enabled": true|false}')
+    valid = {c["name"] for c in gateway_catalog.list_catalog_servers()}
+    if name not in valid:
+        raise HTTPException(status_code=404, detail=f"unknown catalog server {name!r}")
+    await store.async_set_gateway_server_enabled(name, enabled)
+    return {"name": name, "enabled": enabled}
 
 
 if _dashboard_dist.is_dir():
