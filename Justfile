@@ -95,6 +95,13 @@ opensearch-logs:
 opensearch-status:
     cd docker/opensearch && docker compose ps
 
+# === Tier-0 (local ollama harness) ===
+
+# Launch opencode wired to local ollama + the MCP gateway, scoped to a profile.
+# Usage: just tier0-opencode [profile] [-- opencode args...]
+tier0-opencode profile="" *args="":
+    tier0/opencode-launch.sh {{ if profile != "" { "-p " + profile } else { "" } }} {{args}}
+
 # === Cross-cutting ===
 
 test-all: bb-test sp-test
