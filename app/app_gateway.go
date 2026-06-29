@@ -57,17 +57,18 @@ func (a *App) MintGatewayToken(profile string, scope []string, ttlSeconds int) (
 	return a.client.MintGatewayToken(profile, scope, ttlSeconds)
 }
 
-// ImportEnvFile opens a native file picker for a .env file and returns its raw
+// ImportEnvFile opens a native file picker and returns the chosen file's raw
 // contents. The frontend parses + merges it into the editor rows (parsing
 // lives in JS so file-import and paste-import share one parser). An empty
 // string with nil error means the operator cancelled the dialog.
+//
+// No file-type Filters: a `.env` file is an extensionless dotfile, so an
+// extension filter can never match it (and a malformed Pattern crashes the
+// macOS dialog). ShowHiddenFiles surfaces dotfiles like `.env` directly.
 func (a *App) ImportEnvFile() (string, error) {
 	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Import .env file",
-		Filters: []runtime.FileFilter{
-			{DisplayName: "Env files (*.env, .env*)", Pattern: "*.env;.env*"},
-			{DisplayName: "All files (*.*)", Pattern: "*.*"},
-		},
+		Title:           "Import .env file",
+		ShowHiddenFiles: true,
 	})
 	if err != nil || path == "" {
 		return "", err
