@@ -374,6 +374,10 @@ export function HeadArtifactObject(arg1, arg2) {
   return window['go']['main']['App']['HeadArtifactObject'](arg1, arg2);
 }
 
+export function ImportEnvFile() {
+  return window['go']['main']['App']['ImportEnvFile']();
+}
+
 export function LaunchTeam(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['LaunchTeam'](arg1, arg2, arg3, arg4, arg5, arg6);
 }

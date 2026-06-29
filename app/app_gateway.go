@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
 	"strings"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"phantom-ink/brainbox"
 )
@@ -52,4 +55,26 @@ func (a *App) MintGatewayToken(profile string, scope []string, ttlSeconds int) (
 		ttlSeconds = 3600
 	}
 	return a.client.MintGatewayToken(profile, scope, ttlSeconds)
+}
+
+// ImportEnvFile opens a native file picker for a .env file and returns its raw
+// contents. The frontend parses + merges it into the editor rows (parsing
+// lives in JS so file-import and paste-import share one parser). An empty
+// string with nil error means the operator cancelled the dialog.
+func (a *App) ImportEnvFile() (string, error) {
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Import .env file",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Env files (*.env, .env*)", Pattern: "*.env;.env*"},
+			{DisplayName: "All files (*.*)", Pattern: "*.*"},
+		},
+	})
+	if err != nil || path == "" {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
