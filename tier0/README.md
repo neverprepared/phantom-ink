@@ -55,3 +55,28 @@ written into the config file**.
   token scope (`PHANTOM_GW_SCOPE`).
 - To add ollama models beyond the two listed, edit `opencode.template.json`'s
   `provider.ollama.models` map (opencode needs custom-provider models declared).
+
+## `tools: true` is required
+
+Each ollama model in the template declares `"tools": true`. opencode's
+`@ai-sdk/openai-compatible` provider does **not** auto-detect tool-calling capability for
+ollama, so without this it omits the `tools` array from the request entirely and **no MCP
+tools reach the model** — even though `opencode mcp list` shows the gateway connected. If you
+add a model, give it `"tools": true`.
+
+## Tuning for small local models
+
+Verified end-to-end with `qwen3:8b` calling a gateway tool. Two things help small models:
+
+- **Avoid built-in/gateway tool collisions.** A small model may reach for a built-in
+  (e.g. `webfetch`) when a gateway tool overlaps in shape. If you hit this, restrict the
+  competing built-in for the run via opencode config, e.g. add to the model's config or a
+  project `opencode.json`:
+  ```json
+  { "permission": { "webfetch": "deny" } }
+  ```
+  (Not baked into the template — real gateway tools rarely collide with built-ins.)
+- **Context window.** ollama defaults to a small `num_ctx` (4096); opencode's system prompt +
+  tool list is large. If tool calls behave erratically, raise the model's context
+  (`OLLAMA_CONTEXT_LENGTH`, or bake `num_ctx` into a Modelfile variant).
+- A stronger local model (or a Tier-1 claude/codex session) will tool-call more reliably.
