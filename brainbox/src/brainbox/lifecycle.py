@@ -212,15 +212,22 @@ def _generate_container_mcp_json(
     the result to *dest_path* so it can be bind-mounted read-only into
     ~/workspace/.mcp.json inside the container.
 
+    When ``settings.gateway.exclusive`` is set and the gateway is active, the
+    profile's own servers are dropped so the container reaches MCP *only*
+    through the gateway. If the gateway isn't active, the profile servers are
+    used regardless (a container is never left with no MCP at all).
+
     Returns True if the file was written, False if there was nothing to do
     (no profile servers AND no gateway entry).
     """
     from .backends.configure import _CONTAINER_MCP_OVERRIDES
 
     container_servers: dict = {}
+    gateway_entry = _gateway_server_entry(workspace_profile)
+    gateway_only = settings.gateway.exclusive and gateway_entry is not None
 
     claude_json_path = claude_config_dir / ".claude.json"
-    if claude_json_path.exists():
+    if not gateway_only and claude_json_path.exists():
         try:
             data = json.loads(claude_json_path.read_text())
         except Exception:
@@ -237,7 +244,6 @@ def _generate_container_mcp_json(
             else:
                 container_servers[name] = server
 
-    gateway_entry = _gateway_server_entry(workspace_profile)
     if gateway_entry is not None:
         container_servers["phantom-gateway"] = gateway_entry
 

@@ -29,6 +29,27 @@ class TestGatewayTokenMinting:
         assert reg_module.revoke_token(tok.token_id) is True
         assert reg_module.validate_token(tok.token_id) is None
 
+    def test_survives_daemon_restart(self):
+        # A gateway token is persisted, so it still validates after the in-memory
+        # registry is cleared (simulating a daemon restart) and reloaded — the
+        # fix for containers 401-ing on their baked token after a restart.
+        tok = reg_module.issue_gateway_token("sandbox", ["markitdown__*"])
+        reg_module._tokens.clear()  # simulate restart: memory gone, DB intact
+        assert reg_module.validate_token(tok.token_id) is None  # not in memory yet
+        loaded = reg_module.load_persisted_gateway_tokens()
+        assert loaded >= 1
+        rehydrated = reg_module.validate_token(tok.token_id)
+        assert rehydrated is not None
+        assert rehydrated.workspace_profile == "sandbox"
+        assert rehydrated.scope == ["markitdown__*"]
+
+    def test_revoke_removes_from_persistence(self):
+        tok = reg_module.issue_gateway_token("sandbox")
+        reg_module.revoke_token(tok.token_id)
+        reg_module._tokens.clear()
+        reg_module.load_persisted_gateway_tokens()  # must NOT bring it back
+        assert reg_module.validate_token(tok.token_id) is None
+
 
 class TestVerifierReadsTokenFields:
     @pytest.mark.asyncio

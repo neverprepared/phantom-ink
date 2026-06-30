@@ -322,6 +322,14 @@ def issue_gateway_token(profile: str, scope: list[str] | None = None, ttl: int =
         scope=list(scope or []),
     )
     _tokens[token.token_id] = token
+    # Persist so the token survives a daemon restart — gateway tokens are baked
+    # into long-lived container .mcp.json files, which would 401 otherwise.
+    try:
+        from . import store
+
+        store.save_gateway_token(token.token_id, profile, token.scope, token.issued, token.expiry)
+    except Exception as exc:  # pragma: no cover - persistence is best-effort
+        log.warning("registry.gateway_token_persist_failed", metadata={"reason": str(exc)})
     log.info(
         "registry.gateway_token_issued",
         metadata={
@@ -332,6 +340,28 @@ def issue_gateway_token(profile: str, scope: list[str] | None = None, ttl: int =
         },
     )
     return token
+
+
+def load_persisted_gateway_tokens() -> int:
+    """Rehydrate non-expired gateway tokens from the DB into memory (startup)."""
+    from . import store
+
+    count = 0
+    for row in store.load_gateway_tokens():
+        _tokens[row["token_id"]] = Token(
+            token_id=row["token_id"],
+            agent_name="gateway",
+            task_id="",
+            capabilities=[],
+            issued=row["issued"],
+            expiry=row["expiry"],
+            workspace_profile=row["workspace_profile"],
+            scope=list(row["scope"]),
+        )
+        count += 1
+    if count:
+        log.info("registry.gateway_tokens_loaded", metadata={"count": count})
+    return count
 
 
 def validate_token(token_id: str) -> Token | None:
@@ -348,6 +378,12 @@ def validate_token(token_id: str) -> Token | None:
 def revoke_token(token_id: str) -> bool:
     existed = token_id in _tokens
     _tokens.pop(token_id, None)
+    try:
+        from . import store
+
+        store.delete_gateway_token(token_id)
+    except Exception:  # pragma: no cover - best-effort
+        pass
     if existed:
         log.info("registry.token_revoked", metadata={"token_id": token_id})
     return existed

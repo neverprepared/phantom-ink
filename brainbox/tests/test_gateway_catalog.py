@@ -6,8 +6,14 @@ import json
 
 import pytest
 
+from brainbox import store
 from brainbox.config import settings
-from brainbox.gateway_catalog import load_catalog_specs
+from brainbox.gateway_catalog import (
+    list_catalog_servers,
+    load_catalog_specs,
+    resolve_enabled_specs,
+    seed_gateway_servers,
+)
 
 _CATALOG = {
     "version": "1",
@@ -93,3 +99,38 @@ async def test_catalog_specs_drive_the_gateway(tmp_path):
         assert {t.name for t in tools} == {"fixture__echo", "fixture__getenv"}
     finally:
         await pool.aclose()
+
+
+# --- DB-backed server registry (#152) ---------------------------------------
+
+
+def test_list_catalog_servers_skips_no_command(catalog):
+    got = {s["name"]: s for s in list_catalog_servers(path=catalog)}
+    assert set(got) == {"atlassian", "diagrams"}  # 'broken' (no command) dropped
+    assert got["atlassian"]["command"] == "uvx"
+
+
+def test_seed_enables_default_set_only(catalog, monkeypatch):
+    monkeypatch.setattr(settings.gateway, "catalog_path", catalog)
+    seed_gateway_servers(default_enabled=["atlassian"])
+    state = store.list_gateway_servers()
+    assert state == {"atlassian": True, "diagrams": False}  # both seeded; only default enabled
+    assert store.enabled_gateway_server_names() == ["atlassian"]
+
+
+def test_seed_does_not_clobber_existing_toggle(catalog, monkeypatch):
+    monkeypatch.setattr(settings.gateway, "catalog_path", catalog)
+    seed_gateway_servers(default_enabled=["atlassian"])
+    store.set_gateway_server_enabled("diagrams", True)   # operator turns one on
+    store.set_gateway_server_enabled("atlassian", False)  # and another off
+    seed_gateway_servers(default_enabled=["atlassian"])  # re-seed must not reset
+    assert store.list_gateway_servers() == {"atlassian": False, "diagrams": True}
+
+
+def test_resolve_enabled_specs_tracks_toggles(catalog, monkeypatch):
+    monkeypatch.setattr(settings.gateway, "catalog_path", catalog)
+    seed_gateway_servers(default_enabled=[])
+    assert resolve_enabled_specs() == []          # nothing enabled → no specs
+    store.set_gateway_server_enabled("atlassian", True)
+    specs = resolve_enabled_specs()
+    assert [s.name for s in specs] == ["atlassian"]  # toggle reflected live

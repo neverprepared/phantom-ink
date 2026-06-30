@@ -52,6 +52,10 @@ async def init() -> None:
     """Initialize the hub: load agents, restore state, start background tasks."""
     init_db()
     load_agents()
+    # Rehydrate persisted gateway tokens so containers provisioned before this
+    # restart keep authenticating (their token is baked into .mcp.json).
+    from . import registry
+    registry.load_persisted_gateway_tokens()
     await _restore_state()
 
     # Re-register any Docker containers that were running before this restart.

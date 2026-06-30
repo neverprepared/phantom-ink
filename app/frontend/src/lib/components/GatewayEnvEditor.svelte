@@ -27,6 +27,34 @@
   let showPaste = $state(false);
   let pasteText = $state('');
 
+  // test-gateway state
+  let testing = $state(false);
+  let tested = $state(false);
+  let testTools = $state<Array<{ name: string; description: string }>>([]);
+  let testServers = $state<string[]>([]);
+
+  async function testGateway() {
+    testing = true;
+    tested = false;
+    const a = await getApi();
+    if (!a) { testing = false; return; }
+    try {
+      const res = await a.TestGatewayTools(profile);
+      testTools = res?.tools ?? [];
+      testServers = res?.servers ?? [];
+      tested = true;
+      if (testTools.length === 0) {
+        notifications.warning(`No tools for ${profile} — check the gateway allowlist (CL_GATEWAY__SERVERS) and that servers can spawn`);
+      } else {
+        notifications.success(`${profile}: ${testTools.length} gateway tool(s)`);
+      }
+    } catch (err: any) {
+      notifications.error(`Gateway test failed: ${err?.message ?? err}`);
+    } finally {
+      testing = false;
+    }
+  }
+
   async function toggle() {
     open = !open;
     if (open && !loaded) await load();
@@ -241,6 +269,27 @@
         </div>
       {/if}
 
+      <div class="gw-test">
+        <div class="gw-test-row">
+          <div class="gw-mint-label">gateway tools</div>
+          <button class="gw-btn" onclick={testGateway} disabled={testing} title="List the tools this profile sees through the gateway">
+            {testing ? 'testing…' : 'test gateway'}
+          </button>
+        </div>
+        {#if tested}
+          {#if testTools.length === 0}
+            <p class="gw-hint">no tools — check the operator allowlist (<code>CL_GATEWAY__SERVERS</code>) and that servers can spawn.</p>
+          {:else}
+            <ul class="gw-tools">
+              {#each testTools as t (t.name)}
+                <li class="gw-tool"><code>{t.name}</code>{#if t.description}<span class="gw-tool-desc"> — {t.description}</span>{/if}</li>
+              {/each}
+            </ul>
+            <p class="gw-hint">servers: {testServers.join(', ') || '—'}</p>
+          {/if}
+        {/if}
+      </div>
+
       <div class="gw-mint">
         <div class="gw-mint-label">mint Tier-0 token</div>
         <div class="gw-mint-row">
@@ -339,7 +388,7 @@
     width: 100%;
     box-sizing: border-box;
   }
-  .gw-mint {
+  .gw-mint, .gw-test {
     border-top: 1px solid var(--border-subtle, var(--border));
     padding-top: 0.4rem;
     display: flex;
@@ -347,6 +396,11 @@
     gap: 0.3rem;
   }
   .gw-mint-label { font-size: 0.66rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.03em; }
+  .gw-test-row { display: flex; gap: 0.5rem; align-items: center; justify-content: space-between; }
+  .gw-tools { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+  .gw-tool { font-size: 0.66rem; }
+  .gw-tool code { font-size: 0.66rem; color: var(--accent, var(--text-primary)); }
+  .gw-tool-desc { color: var(--text-secondary); }
   .gw-token-row { display: flex; gap: 0.25rem; align-items: center; }
   .gw-token {
     flex: 1;

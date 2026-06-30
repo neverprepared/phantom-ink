@@ -15,6 +15,7 @@
   import JobsPanel from '../panels/JobsPanel.svelte';
   import AutomationsPanel from '../panels/AutomationsPanel.svelte';
   import ProfilesPanel from '../panels/ProfilesPanel.svelte';
+  import GatewayPanel from '../panels/GatewayPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
   import DashboardPanel from '../panels/DashboardPanel.svelte';
   import StreamPanel from '../panels/StreamPanel.svelte';
@@ -80,6 +81,8 @@
         <JobsPanel />
       {:else if currentPanel.value === 'profiles'}
         <ProfilesPanel />
+      {:else if currentPanel.value === 'gateway'}
+        <GatewayPanel />
       {:else if currentPanel.value === 'settings'}
         <SettingsPanel />
       {:else if currentPanel.value === 'event-log'}

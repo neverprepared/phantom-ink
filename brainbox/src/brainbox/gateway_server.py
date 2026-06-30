@@ -23,6 +23,7 @@ patterns carried on the token (``Token.scope``); empty or ``["*"]`` means
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from mcp.server.auth.middleware.auth_context import get_access_token
@@ -106,18 +107,27 @@ def _identity_from_auth() -> Identity:
 
 
 def build_gateway_server(
-    pool: GatewayPool, specs: list[ServerSpec], *, name: str = "phantom-ink-gateway"
+    pool: GatewayPool,
+    specs: list[ServerSpec] | Callable[[], list[ServerSpec]],
+    *,
+    name: str = "phantom-ink-gateway",
 ) -> Server:
-    """A low-level MCP Server whose tool list/calls are scoped per connection."""
+    """A low-level MCP Server whose tool list/calls are scoped per connection.
+
+    ``specs`` may be a static list or a **provider callable** resolved on each
+    request — the latter lets enable/disable toggles (DB-backed registry, #152)
+    take effect live without rebuilding the server.
+    """
+    provider: Callable[[], list[ServerSpec]] = specs if callable(specs) else (lambda: specs)
     server: Server = Server(name)
 
     @server.list_tools()
     async def _list():  # pragma: no cover - thin auth wrapper over list_gateway_tools
-        return await list_gateway_tools(pool, specs, _identity_from_auth())
+        return await list_gateway_tools(pool, provider(), _identity_from_auth())
 
     @server.call_tool()
     async def _call(tool_name: str, arguments: dict | None):  # pragma: no cover - thin wrapper
-        return await call_gateway_tool(pool, specs, _identity_from_auth(), tool_name, arguments or {})
+        return await call_gateway_tool(pool, provider(), _identity_from_auth(), tool_name, arguments or {})
 
     return server
 

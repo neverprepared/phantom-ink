@@ -218,6 +218,8 @@ export function ListCollectJobs(arg1:string):Promise<Array<main.CollectJob>>;
 
 export function ListCollectedEntries(arg1:string,arg2:string,arg3:string):Promise<Array<main.CollectedEntry>>;
 
+export function ListGatewayServers():Promise<Array<brainbox.GatewayServer>>;
+
 export function ListHubTasks(arg1:string,arg2:string):Promise<Array<main.HubTask>>;
 
 export function ListLiveLoops(arg1:string):Promise<Array<brainbox.LiveLoopSummary>>;
@@ -310,6 +312,8 @@ export function SetConfig(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SetGatewayEnv(arg1:string,arg2:Record<string, string>):Promise<void>;
 
+export function SetGatewayServerEnabled(arg1:string,arg2:boolean):Promise<void>;
+
 export function SetHiddenProfiles(arg1:Array<string>):Promise<void>;
 
 export function SetOTLPHost(arg1:string):Promise<void>;
@@ -339,6 +343,8 @@ export function SubmitTask(arg1:brainbox.SubmitTaskRequest):Promise<main.HubTask
 export function SubmitTaskAndWait(arg1:brainbox.WaitForTaskRequest):Promise<brainbox.WaitForTaskResponse>;
 
 export function TailLogs(arg1:string,arg2:number):Promise<Array<opensearch.LogEntry>>;
+
+export function TestGatewayTools(arg1:string):Promise<brainbox.GatewayToolsResult>;
 
 export function TriggerRule(arg1:string,arg2:string,arg3:string):Promise<void>;
 

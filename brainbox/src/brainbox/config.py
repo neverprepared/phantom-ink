@@ -203,6 +203,18 @@ class GatewaySettings(BaseSettings):
     inject_sessions: bool = True
     container_url: str = "http://host.docker.internal:9999/gateway/mcp"
     session_token_ttl: int = 86400  # seconds (24h)
+    # Resilience: bound how long a downstream server may take to spawn+initialize
+    # before it's treated as failed (so one hanging server can't block tool
+    # listing for every client). A server that fails is negatively cached for
+    # ``failure_ttl`` seconds so it's skipped quickly instead of re-attempted.
+    connect_timeout: float = 30.0  # seconds (allows first-run uvx/npx/docker pulls)
+    failure_ttl: float = 60.0  # seconds to skip a recently-failed server
+    # When True, a spawned container's .mcp.json contains ONLY the gateway entry
+    # — the profile's own mcpServers are dropped, so all container MCP traffic
+    # goes through the gateway (centralized creds + scoping). Falls back to the
+    # profile servers if the gateway isn't active (so a container is never left
+    # with no MCP at all). Off = merge profile servers + gateway (back-compat).
+    exclusive: bool = False
 
 
 def _qdrant_url() -> str:
