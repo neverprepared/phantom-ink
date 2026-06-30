@@ -121,6 +121,29 @@ async def test_connect_failure_raises():
 
 
 @pytest.mark.asyncio
+async def test_hanging_server_times_out_and_is_negative_cached():
+    # A server that never speaks MCP (just sleeps) must NOT block forever — it
+    # times out, then is skipped fast on the next call (negative cache). This is
+    # the resilience fix: one bad server can't hold the whole gateway hostage.
+    import time as _time
+    pool = GatewayPool(connect_timeout=0.5, failure_ttl=30.0)
+    hang = ServerSpec(name="hang", command=sys.executable, args=["-c", "import time; time.sleep(60)"])
+    try:
+        t0 = _time.monotonic()
+        with pytest.raises(Exception):
+            await pool.list_tools("personal", hang)
+        assert _time.monotonic() - t0 < 5, "first attempt should time out quickly, not hang"
+
+        # second call returns near-instantly via the negative cache
+        t1 = _time.monotonic()
+        with pytest.raises(Exception):
+            await pool.list_tools("personal", hang)
+        assert _time.monotonic() - t1 < 0.3, "negative cache should skip without re-spawning"
+    finally:
+        await pool.aclose()
+
+
+@pytest.mark.asyncio
 async def test_spawn_inherits_path():
     # The spawned subprocess must receive PATH (from get_default_environment),
     # else bare commands like `uvx`/`npx` can't be found. The fixture reports

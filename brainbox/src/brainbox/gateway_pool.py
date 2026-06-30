@@ -21,6 +21,7 @@ env injection. Idle-reaping and catalog→spec resolution are phase 2b.
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -78,9 +79,19 @@ class _Connection:
         self._error: BaseException | None = None
         self._task: asyncio.Task | None = None
 
-    async def start(self) -> None:
+    async def start(self, timeout: float) -> None:
         self._task = asyncio.create_task(self._run(), name=f"mcp-conn:{self._spec.name}")
-        await self._ready.wait()
+        try:
+            await asyncio.wait_for(self._ready.wait(), timeout)
+        except (asyncio.TimeoutError, TimeoutError):
+            # A server that never initializes (e.g. one that speaks SSE, not
+            # stdio) would otherwise block forever. Cancel it and surface a
+            # bounded failure so the aggregate tool listing isn't held hostage.
+            self._error = TimeoutError(
+                f"{self._spec.name} did not initialize within {timeout}s"
+            )
+            if self._task is not None and not self._task.done():
+                self._task.cancel()
         if self._error is not None:
             raise self._error
 
@@ -142,15 +153,29 @@ class _Connection:
 class GatewayPool:
     """Lazy, cached pool of downstream MCP sessions keyed by (profile, server)."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, connect_timeout: float | None = None, failure_ttl: float | None = None) -> None:
+        from .config import settings
+
         self._conns: dict[tuple[str, str], _Connection] = {}
         self._lock = asyncio.Lock()
+        # Negative cache: (profile, server) → monotonic time of last failure.
+        # Skip a server that recently failed so it can't repeatedly block the
+        # aggregate tool listing while the failure_ttl window is open.
+        self._failed: dict[tuple[str, str], float] = {}
+        self._connect_timeout = (
+            connect_timeout if connect_timeout is not None else settings.gateway.connect_timeout
+        )
+        self._failure_ttl = failure_ttl if failure_ttl is not None else settings.gateway.failure_ttl
 
     async def _get(self, profile: str, spec: ServerSpec) -> _Connection:
         key = (profile, spec.name)
         conn = self._conns.get(key)
         if conn is not None:
             return conn
+        # Skip recently-failed servers fast (don't re-pay the connect timeout).
+        failed_at = self._failed.get(key)
+        if failed_at is not None and (time.monotonic() - failed_at) < self._failure_ttl:
+            raise RuntimeError(f"{spec.name} recently failed to connect; skipping (negative cache)")
         async with self._lock:
             conn = self._conns.get(key)
             if conn is not None:
@@ -163,8 +188,9 @@ class GatewayPool:
             env = {**get_default_environment(), **spec.base_env, **_profile_env(profile)}
             conn = _Connection(spec, env)
             try:
-                await conn.start()
+                await conn.start(self._connect_timeout)
             except BaseException as exc:
+                self._failed[key] = time.monotonic()
                 log.warning(
                     "gateway_pool.connect_failed",
                     metadata={
@@ -174,6 +200,7 @@ class GatewayPool:
                     },
                 )
                 raise
+            self._failed.pop(key, None)
             self._conns[key] = conn
             log.info("gateway_pool.connected", metadata={"profile": profile, "server": spec.name})
             return conn
