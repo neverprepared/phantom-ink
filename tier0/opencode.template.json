@@ -1,0 +1,23 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "__MODEL__",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama (local)",
+      "options": { "baseURL": "__OLLAMA_URL__" },
+      "models": {
+        "qwen3:8b": { "name": "Qwen3 8B", "tools": true },
+        "qwen3.5:4b": { "name": "Qwen3.5 4B", "tools": true }
+      }
+    }
+  },
+  "mcp": {
+    "phantom-gateway": {
+      "type": "remote",
+      "url": "__GW_URL__",
+      "enabled": true,
+      "headers": { "Authorization": "Bearer {env:PHANTOM_GW_TOKEN}" }
+    }
+  }
+}
