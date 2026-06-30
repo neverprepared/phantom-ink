@@ -474,7 +474,9 @@
           "GRAFANA_URL",
           "-e",
           "GRAFANA_API_KEY",
-          "grafana/mcp-grafana:latest"
+          "grafana/mcp-grafana:latest",
+          "-transport",
+          "stdio"
         ],
         "env": {
           "GRAFANA_URL": "${GRAFANA_URL:-http://localhost:3000}",
