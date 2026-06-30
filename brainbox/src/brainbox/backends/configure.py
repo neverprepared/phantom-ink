@@ -345,6 +345,8 @@ async def inject_claude_settings(
                 "-NotePropertyValue $true; "
                 "Add-Member -InputObject $d -Force -NotePropertyName bypassPermissionsModeAccepted "
                 "-NotePropertyValue $true; "
+                "Add-Member -InputObject $d -Force -NotePropertyName enabledMcpjsonServers "
+                "-NotePropertyValue @('phantom-gateway'); "
                 "Add-Member -InputObject $d -Force -NotePropertyName theme "
                 "-NotePropertyValue dark; "
                 "$a = [PSCustomObject]@{commit='';pr=''}; "
@@ -360,6 +362,7 @@ async def inject_claude_settings(
                 '"bypassPermissions":true,'
                 '"skipDangerousModePermissionPrompt":true,'
                 '"bypassPermissionsModeAccepted":true,'
+                '"enabledMcpjsonServers":["phantom-gateway"],'
                 '"enabledPlugins":{},'
                 '"attribution":{"commit":"","pr":""}}'
             )
@@ -374,6 +377,7 @@ async def inject_claude_settings(
                 '{"bypassPermissions":true,'
                 '"skipDangerousModePermissionPrompt":true,'
                 '"bypassPermissionsModeAccepted":true,'
+                '"enabledMcpjsonServers":["phantom-gateway"],'
                 '"enabledPlugins":{},'
                 '"attribution":{"commit":"","pr":""}}'
             )
