@@ -52,6 +52,11 @@ MACOS_PATTERNS = [
 FORCED_SETTINGS: dict[str, Any] = {
     "bypassPermissions": True,
     "dangerouslySkipPermissions": True,
+    # Auto-approve the shared MCP gateway from the workspace .mcp.json so
+    # autonomous/headless agents use its tools without the interactive "Pending
+    # approval" gate. Server approval is a separate gate from bypassPermissions
+    # (which only covers tool-use prompts), so it must be set explicitly. (#152)
+    "enabledMcpjsonServers": ["phantom-gateway"],
 }
 
 

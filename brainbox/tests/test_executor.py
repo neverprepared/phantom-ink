@@ -127,6 +127,9 @@ async def test_inject_claude_settings_linux():
     assert any("bypassPermissions" in cmd for cmd in commands)
     assert any("skipDangerousModePermissionPrompt" in cmd for cmd in commands)
     assert any("bypassPermissionsModeAccepted" in cmd for cmd in commands)
+    # gateway server is pre-approved so autonomous agents skip the .mcp.json
+    # "Pending approval" gate (#152)
+    assert any("enabledMcpjsonServers" in cmd and "phantom-gateway" in cmd for cmd in commands)
 
 
 @pytest.mark.asyncio
