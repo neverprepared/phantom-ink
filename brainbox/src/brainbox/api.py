@@ -1768,19 +1768,21 @@ async def api_create_session(
         }
     """
     try:
-        # Register as a hub task when a task description is provided
-        hub_token = None
+        # Always issue a session token so the agent has a real identity — it
+        # calls the hub/A2A API under its own token, not a stub. Capabilities
+        # come from the role's agent definition, so only roles with task_submit
+        # (supervisor, worker) can dispatch A2A. A hub Task is registered only
+        # when a task description is provided (so it shows in the dashboard and
+        # gets lifecycle management).
+        from .registry import issue_session_token
         task_id = None
+        tid = str(uuid.uuid4())
+        role = body.role or "assistant"
+        hub_token = issue_session_token(role, tid)  # None if role isn't a registered agent
         if body.task:
-            # Regular session with a task — register in hub so it shows in dashboard
             from .router import _tasks
             from .utils import now_ms as _now_ms
             from .models import Task as HubTask, TaskStatus
-            from .registry import issue_token
-            tid = str(uuid.uuid4())
-            role = body.role or "developer"
-            token = issue_token(role, tid, ttl=settings.hub.token_ttl)
-            hub_token = token
             task_id = tid
             _tasks[tid] = HubTask(
                 id=tid,
@@ -1789,7 +1791,7 @@ async def api_create_session(
                 status=TaskStatus.RUNNING,
                 created_at=_now_ms(),
                 updated_at=_now_ms(),
-                token_id=token.token_id,
+                token_id=hub_token.token_id if hub_token else None,
                 session_name=body.name,
                 repo_url=None,
             )

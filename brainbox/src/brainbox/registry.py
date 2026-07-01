@@ -301,6 +301,24 @@ def issue_token(agent_name: str, task_id: str, ttl: int = 3600) -> Token:
     return token
 
 
+def issue_session_token(role: str, session_id: str) -> Token | None:
+    """Issue a real token for an interactive session's agent identity.
+
+    Every spawned session gets one (not just hub tasks) so the agent calls the
+    hub/A2A API under its own token instead of a stub. Capabilities come from
+    the role's agent definition — only roles with ``task_submit`` (supervisor,
+    worker) can dispatch A2A. TTL is persistent-aware. Returns ``None`` if the
+    role isn't a registered agent (caller falls back to a stub token).
+    """
+    from .config import settings
+
+    agent = _agents.get(role)
+    if agent is None:
+        return None
+    ttl = settings.hub.persistent_token_ttl if agent.persistent else settings.hub.token_ttl
+    return issue_token(role, session_id, ttl=ttl)
+
+
 def issue_gateway_token(profile: str, scope: list[str] | None = None, ttl: int = 3600) -> Token:
     """Mint a profile-bound MCP gateway token (ADR-002 phase 3, Tier-0).
 
