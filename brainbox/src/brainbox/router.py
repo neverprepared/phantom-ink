@@ -405,6 +405,14 @@ async def check_running_tasks() -> None:
         if task.status != TaskStatus.RUNNING:
             continue
 
+        # Remote-runner tasks: the worker session lives on the runner, not in
+        # the daemon's local _sessions. Health is owned by the runner (via
+        # heartbeats), mirroring monitor.py. A local container check here would
+        # spuriously fail them with "Container no longer exists" — especially
+        # during the dispatch window before the runner has created the session.
+        if task.runner_name:
+            continue
+
         session = lifecycle.get_session(task.session_name)
         if not session:
             agent_def = get_agent(task.agent_name)
