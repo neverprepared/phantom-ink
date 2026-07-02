@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 from brainbox.runners import RunnerRegistry
 
@@ -125,7 +124,6 @@ class TestUpdateLoad:
         assert info.max_concurrent == 4  # unchanged (0 rejected)
 
     async def test_update_load_bumps_last_seen(self):
-        import time
         reg = RunnerRegistry()
         await reg.register(name="r1", capabilities={"docker": True})
         before = (await reg.get("r1")).last_seen
@@ -168,6 +166,21 @@ class TestSelectRunner:
         await reg.register(name="r1", capabilities={"docker": True})
         result = await reg.select_runner(backend="docker")
         assert result == "r1"
+
+    async def test_local_process_runner_not_auto_selected(self):
+        # Interactive local-process runners (the app's Mac runner) are opt-in:
+        # never auto-dispatched — task falls back to headless box execution.
+        reg = RunnerRegistry()
+        await reg.register(name="Local", capabilities={"docker": True}, host="local-process")
+        result = await reg.select_runner(backend="docker")
+        assert result is None
+
+    async def test_box_runner_preferred_over_local_process(self):
+        reg = RunnerRegistry()
+        await reg.register(name="Local", capabilities={"docker": True}, host="local-process")
+        await reg.register(name="box", capabilities={"docker": True}, host="10.0.0.5")
+        result = await reg.select_runner(backend="docker")
+        assert result == "box"  # the real remote runner wins; Local is excluded
 
     async def test_prefers_more_headroom(self):
         reg = RunnerRegistry()

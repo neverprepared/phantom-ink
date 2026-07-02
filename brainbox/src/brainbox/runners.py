@@ -52,6 +52,13 @@ class WorkItem:
     fut: asyncio.Future[dict[str, Any]] = field(repr=False)
 
 
+# Runners registering with this host are interactive local-process runners
+# (e.g. the desktop app's Mac runner). They are opt-in only — never
+# auto-selected by select_runner; work reaches them only when a task explicitly
+# names them. See select_runner._is_eligible.
+_LOCAL_PROCESS_HOST = "local-process"
+
+
 class RunnerRegistry:
     """Tracks live runners. Each runner has its own pending work list and a
     condition variable so long-poll wakes immediately when work arrives."""
@@ -162,6 +169,13 @@ class RunnerRegistry:
                 bool(r.capabilities.get(backend))
                 and (now_ms - r.last_seen) < 90_000
                 and r.in_flight < r.max_concurrent
+                # Interactive local-process runners (e.g. the desktop app's Mac
+                # runner, which runs agents visibly in iTerm2) are opt-in only:
+                # never auto-dispatched. Work reaches them only when a task
+                # explicitly targets them by name (that path bypasses
+                # select_runner). Auto-dispatched tasks fall back to headless
+                # in-process execution on the box (run_pipeline runner=None).
+                and r.host != _LOCAL_PROCESS_HOST
             )
 
         def _sort_key(r: RunnerInfo) -> tuple:
