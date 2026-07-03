@@ -651,6 +651,7 @@ export namespace brainbox {
 	    token: string;
 	    profile: string;
 	    scope: string[];
+	    ceiling: string;
 	    expiry: number;
 	
 	    static createFrom(source: any = {}) {
@@ -662,6 +663,7 @@ export namespace brainbox {
 	        this.token = source["token"];
 	        this.profile = source["profile"];
 	        this.scope = source["scope"];
+	        this.ceiling = source["ceiling"];
 	        this.expiry = source["expiry"];
 	    }
 	}
@@ -1016,6 +1018,70 @@ export namespace brainbox {
 	        this.digest = source["digest"];
 	    }
 	}
+	export class ToolZone {
+	    name: string;
+	    zone: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ToolZone(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.zone = source["zone"];
+	    }
+	}
+	export class ProviderZone {
+	    name: string;
+	    zone: string;
+	    capabilities: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ProviderZone(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.zone = source["zone"];
+	        this.capabilities = source["capabilities"];
+	    }
+	}
+	export class OrchestrationZones {
+	    profile: string;
+	    providers: ProviderZone[];
+	    tools: ToolZone[];
+	
+	    static createFrom(source: any = {}) {
+	        return new OrchestrationZones(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.providers = this.convertValues(source["providers"], ProviderZone);
+	        this.tools = this.convertValues(source["tools"], ToolZone);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class PairingTicket {
 	    token: string;
 	    expires_at: number;
@@ -1030,6 +1096,20 @@ export namespace brainbox {
 	        this.token = source["token"];
 	        this.expires_at = source["expires_at"];
 	        this.api_url = source["api_url"];
+	    }
+	}
+	export class PlannedProvider {
+	    name: string;
+	    zone: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PlannedProvider(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.zone = source["zone"];
 	    }
 	}
 	export class PlaybookTask {
@@ -1127,6 +1207,7 @@ export namespace brainbox {
 	        this.addressed_to = source["addressed_to"];
 	    }
 	}
+	
 	export class Runner {
 	    name: string;
 	    capabilities: Record<string, boolean>;
@@ -1245,6 +1326,48 @@ export namespace brainbox {
 	        this.reason = source["reason"];
 	    }
 	}
+	export class StepPlanResult {
+	    profile: string;
+	    ceiling: string;
+	    blocked: boolean;
+	    reason: string;
+	    provider?: PlannedProvider;
+	    eligible_tools: string[];
+	    excluded_tools: ToolZone[];
+	
+	    static createFrom(source: any = {}) {
+	        return new StepPlanResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.ceiling = source["ceiling"];
+	        this.blocked = source["blocked"];
+	        this.reason = source["reason"];
+	        this.provider = this.convertValues(source["provider"], PlannedProvider);
+	        this.eligible_tools = source["eligible_tools"];
+	        this.excluded_tools = this.convertValues(source["excluded_tools"], ToolZone);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class SubmitTaskRequest {
 	    description: string;
 	    agent_name: string;
@@ -1265,6 +1388,7 @@ export namespace brainbox {
 	        this.workspace_home = source["workspace_home"];
 	    }
 	}
+	
 	export class Trace {
 	    id: string;
 	    name: string;
@@ -1309,6 +1433,55 @@ export namespace brainbox {
 	        this.token_usage = source["token_usage"];
 	    }
 	}
+	export class TrustRule {
+	    pattern: string;
+	    zone: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TrustRule(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pattern = source["pattern"];
+	        this.zone = source["zone"];
+	    }
+	}
+	export class TrustConfig {
+	    profile: string;
+	    default_ceiling: string;
+	    rules: TrustRule[];
+	
+	    static createFrom(source: any = {}) {
+	        return new TrustConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.default_ceiling = source["default_ceiling"];
+	        this.rules = this.convertValues(source["rules"], TrustRule);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class UpdateAgentRequest {
 	    image?: string;
 	    description?: string;
