@@ -185,12 +185,20 @@ def _gateway_server_entry(workspace_profile: str) -> dict | None:
     its own profile — no agent/task needed. The token is in-memory in the hub
     registry; a daemon restart invalidates it (sessions are re-provisioned).
     """
-    from . import registry
+    from . import registry, trust
+    from .trust_zones import TrustZone
 
     gw = settings.gateway
     if not workspace_profile or not gw.servers or not gw.inject_sessions:
         return None
-    token = registry.issue_gateway_token(workspace_profile, scope=[], ttl=gw.session_token_ttl)
+    # Scope the container's gateway token to the profile's default residency
+    # ceiling, so a profile with a tighter default (e.g. INFRA) only exposes
+    # tools at/below it. PUBLIC (the permissive default) → "" = no restriction.
+    ceiling = trust.ceiling_for_profile(workspace_profile)
+    ceiling_name = "" if ceiling is TrustZone.PUBLIC else ceiling.name.lower()
+    token = registry.issue_gateway_token(
+        workspace_profile, scope=[], ttl=gw.session_token_ttl, residency_ceiling=ceiling_name
+    )
     return {
         "type": "http",
         "url": gw.container_url,

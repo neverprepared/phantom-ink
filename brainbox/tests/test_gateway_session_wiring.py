@@ -31,6 +31,20 @@ class TestGatewayServerEntry:
         tok = registry.validate_token(auth.removeprefix("Bearer "))
         assert tok is not None and tok.workspace_profile == "personal"
 
+    def test_token_carries_profile_default_ceiling(self, gateway_on):
+        from brainbox import registry, store
+        store.set_profile_default_ceiling("personal", "infra")
+        entry = _gateway_server_entry("personal")
+        tok = registry.validate_token(entry["headers"]["Authorization"].removeprefix("Bearer "))
+        assert tok.residency_ceiling == "infra"
+
+    def test_token_unrestricted_when_default_public(self, gateway_on, monkeypatch):
+        from brainbox import registry
+        monkeypatch.setattr(settings.orchestration, "default_ceiling", "public")
+        entry = _gateway_server_entry("personal")  # no per-profile default set
+        tok = registry.validate_token(entry["headers"]["Authorization"].removeprefix("Bearer "))
+        assert tok.residency_ceiling == ""  # public → no restriction
+
     def test_no_entry_without_profile(self, gateway_on):
         assert _gateway_server_entry("") is None
 
