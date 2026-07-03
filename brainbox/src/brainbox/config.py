@@ -223,9 +223,18 @@ class OrchestrationSettings(BaseSettings):
     ``default_ceiling`` is the global fallback residency ceiling used when a job
     step omits one AND the profile has no per-profile default configured. PUBLIC
     is the least-restrictive baseline (nothing blocked) — profiles tighten it.
+
+    ``*_url`` are the destinations used to **classify each provider's trust
+    zone** against a profile's trust map (not necessarily where inference is
+    invoked from). Defaults assume local ollama + the cloud APIs for claude/codex
+    — operators point ``ollama_url`` at their proxy if remote, and add a trust
+    rule for it.
     """
 
     default_ceiling: str = "public"
+    ollama_url: str = "http://localhost:11434"
+    claude_url: str = "https://api.anthropic.com"
+    codex_url: str = "https://api.openai.com"
 
 
 def _qdrant_url() -> str:
