@@ -224,7 +224,8 @@ def init_db() -> None:
                 workspace_profile TEXT    NOT NULL DEFAULT '',
                 scope_json        TEXT    NOT NULL DEFAULT '[]',
                 issued            INTEGER NOT NULL,
-                expiry            INTEGER NOT NULL
+                expiry            INTEGER NOT NULL,
+                residency_ceiling TEXT    NOT NULL DEFAULT ''
             );
 
             -- Declarative orchestration (tagged): per-profile trust map, a
@@ -246,6 +247,16 @@ def init_db() -> None:
                 updated_at      INTEGER NOT NULL
             );
         """)
+        # Additive column migrations for pre-existing DBs (CREATE IF NOT EXISTS
+        # won't alter an existing table). Idempotent: OperationalError == the
+        # column already exists.
+        for table, col, decl in [
+            ("gateway_tokens", "residency_ceiling", "TEXT NOT NULL DEFAULT ''"),
+        ]:
+            try:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+            except sqlite3.OperationalError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -421,17 +432,22 @@ def enabled_gateway_server_names() -> list[str]:
 
 
 def save_gateway_token(
-    token_id: str, workspace_profile: str, scope: list[str], issued: int, expiry: int
+    token_id: str,
+    workspace_profile: str,
+    scope: list[str],
+    issued: int,
+    expiry: int,
+    residency_ceiling: str = "",
 ) -> None:
     import json as _json
     with _lock:
         _db().execute(
             """
             INSERT OR REPLACE INTO gateway_tokens
-                (token_id, workspace_profile, scope_json, issued, expiry)
-            VALUES (?, ?, ?, ?, ?)
+                (token_id, workspace_profile, scope_json, issued, expiry, residency_ceiling)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (token_id, workspace_profile, _json.dumps(scope), issued, expiry),
+            (token_id, workspace_profile, _json.dumps(scope), issued, expiry, residency_ceiling),
         )
 
 
@@ -447,7 +463,8 @@ def load_gateway_tokens() -> list[dict]:
     with _lock:
         _db().execute("DELETE FROM gateway_tokens WHERE expiry <= ?", (now,))
     rows = _db().execute(
-        "SELECT token_id, workspace_profile, scope_json, issued, expiry FROM gateway_tokens"
+        "SELECT token_id, workspace_profile, scope_json, issued, expiry, residency_ceiling "
+        "FROM gateway_tokens"
     ).fetchall()
     return [
         {
@@ -456,6 +473,7 @@ def load_gateway_tokens() -> list[dict]:
             "scope": _json.loads(r["scope_json"]),
             "issued": r["issued"],
             "expiry": r["expiry"],
+            "residency_ceiling": r["residency_ceiling"],
         }
         for r in rows
     ]

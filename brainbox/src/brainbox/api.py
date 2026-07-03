@@ -4387,8 +4387,24 @@ async def gateway_mint_token(body: dict):
         raise HTTPException(status_code=400, detail="ttl must be an integer (seconds)")
     if ttl <= 0:
         raise HTTPException(status_code=400, detail="ttl must be positive")
-    tok = issue_gateway_token(profile, scope, ttl)
-    return {"token": tok.token_id, "profile": profile, "scope": tok.scope, "expiry": tok.expiry}
+    ceiling = (body.get("ceiling") or "").strip()
+    if ceiling:
+        from .trust_zones import TrustZone
+        try:
+            ceiling = TrustZone.parse(ceiling).name.lower()
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"ceiling must be one of {[z.name.lower() for z in TrustZone]}",
+            )
+    tok = issue_gateway_token(profile, scope, ttl, residency_ceiling=ceiling)
+    return {
+        "token": tok.token_id,
+        "profile": profile,
+        "scope": tok.scope,
+        "ceiling": tok.residency_ceiling,
+        "expiry": tok.expiry,
+    }
 
 
 @app.delete("/api/gateway/tokens/{token_id}", dependencies=[Depends(require_api_key)])
