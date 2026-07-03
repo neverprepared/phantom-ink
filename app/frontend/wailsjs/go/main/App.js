@@ -134,6 +134,10 @@ export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
 }
 
+export function DeleteTrustRule(arg1, arg2) {
+  return window['go']['main']['App']['DeleteTrustRule'](arg1, arg2);
+}
+
 export function DisableLocalRunner() {
   return window['go']['main']['App']['DisableLocalRunner']();
 }
@@ -298,6 +302,10 @@ export function GetObservabilityOverview(arg1) {
   return window['go']['main']['App']['GetObservabilityOverview'](arg1);
 }
 
+export function GetOrchestrationZones(arg1) {
+  return window['go']['main']['App']['GetOrchestrationZones'](arg1);
+}
+
 export function GetPlatform() {
   return window['go']['main']['App']['GetPlatform']();
 }
@@ -364,6 +372,10 @@ export function GetTaskStats(arg1) {
 
 export function GetTraceDetail(arg1) {
   return window['go']['main']['App']['GetTraceDetail'](arg1);
+}
+
+export function GetTrust(arg1) {
+  return window['go']['main']['App']['GetTrust'](arg1);
 }
 
 export function GetWidgetCount(arg1, arg2) {
@@ -490,8 +502,8 @@ export function ListUpcomingFires(arg1) {
   return window['go']['main']['App']['ListUpcomingFires'](arg1);
 }
 
-export function MintGatewayToken(arg1, arg2, arg3) {
-  return window['go']['main']['App']['MintGatewayToken'](arg1, arg2, arg3);
+export function MintGatewayToken(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['MintGatewayToken'](arg1, arg2, arg3, arg4);
 }
 
 export function OpenLocalSession(arg1) {
@@ -512,6 +524,10 @@ export function PresignArtifactURL(arg1, arg2, arg3, arg4) {
 
 export function PreviewDispatch(arg1) {
   return window['go']['main']['App']['PreviewDispatch'](arg1);
+}
+
+export function PreviewPlan(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['PreviewPlan'](arg1, arg2, arg3, arg4);
 }
 
 export function PullOllamaModel(arg1) {
@@ -614,6 +630,10 @@ export function SetConfig(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetConfig'](arg1, arg2, arg3);
 }
 
+export function SetDefaultCeiling(arg1, arg2) {
+  return window['go']['main']['App']['SetDefaultCeiling'](arg1, arg2);
+}
+
 export function SetGatewayEnv(arg1, arg2) {
   return window['go']['main']['App']['SetGatewayEnv'](arg1, arg2);
 }
@@ -644,6 +664,10 @@ export function SetServiceConfig(arg1, arg2, arg3, arg4, arg5) {
 
 export function SetTheme(arg1) {
   return window['go']['main']['App']['SetTheme'](arg1);
+}
+
+export function SetTrustRule(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetTrustRule'](arg1, arg2, arg3);
 }
 
 export function StartLiveLoop(arg1, arg2) {

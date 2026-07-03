@@ -7,6 +7,7 @@
   import PieChart from '../components/PieChart.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import GatewayEnvEditor from '../components/GatewayEnvEditor.svelte';
+  import TrustEditor from '../components/TrustEditor.svelte';
 
   // --- Profile image state ---
   type ImageStatus = { configured: boolean; exists: boolean; tag: string; digest: string; error?: string; built_at?: string };
@@ -471,6 +472,7 @@
           {/if}
 
           <GatewayEnvEditor profile={p.name} unlocked={gatewayUnlocked} />
+          <TrustEditor profile={p.name} />
 
           {#if logs.length > 0}
             <button class="logs-toggle" onclick={() => imageLogsOpen[p.name] = !logsOpen}>

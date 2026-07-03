@@ -50,11 +50,11 @@ func (a *App) DeleteGatewayEnv(profile string) error {
 
 // MintGatewayToken mints a Tier-0 token for a profile. `scope` is a list of
 // allowed `<server>__<tool>` patterns (empty = all tools). Returned once.
-func (a *App) MintGatewayToken(profile string, scope []string, ttlSeconds int) (brainbox.GatewayToken, error) {
+func (a *App) MintGatewayToken(profile string, scope []string, ttlSeconds int, ceiling string) (brainbox.GatewayToken, error) {
 	if ttlSeconds <= 0 {
 		ttlSeconds = 3600
 	}
-	return a.client.MintGatewayToken(profile, scope, ttlSeconds)
+	return a.client.MintGatewayToken(profile, scope, ttlSeconds, ceiling)
 }
 
 // ListGatewayServers returns every catalog server + its enable state, for the

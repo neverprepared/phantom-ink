@@ -24,7 +24,8 @@ type GatewayToken struct {
 	Token   string   `json:"token"`
 	Profile string   `json:"profile"`
 	Scope   []string `json:"scope"`
-	Expiry  int64    `json:"expiry"` // epoch ms
+	Ceiling string   `json:"ceiling"` // residency ceiling ("" = no restriction)
+	Expiry  int64    `json:"expiry"`  // epoch ms
 }
 
 // GatewayServer is one catalog server + its enable state (DB registry, #152).
@@ -122,11 +123,14 @@ func (c *Client) DeleteGatewayProfileEnv(profile string) error {
 // MintGatewayToken mints a Tier-0 gateway token bound to a profile with an
 // explicit tool scope (empty = all tools). The token is the secret — it is
 // returned once and not stored in plaintext anywhere.
-func (c *Client) MintGatewayToken(profile string, scope []string, ttlSeconds int) (GatewayToken, error) {
+func (c *Client) MintGatewayToken(profile string, scope []string, ttlSeconds int, ceiling string) (GatewayToken, error) {
 	if scope == nil {
 		scope = []string{}
 	}
 	body := map[string]interface{}{"profile": profile, "scope": scope, "ttl": ttlSeconds}
+	if ceiling != "" {
+		body["ceiling"] = ceiling
+	}
 	var tok GatewayToken
 	if err := c.post("/api/gateway/tokens", body, &tok); err != nil {
 		return GatewayToken{}, err

@@ -20,6 +20,7 @@
   // mint-token state
   let scopeInput = $state('');
   let ttlHours = $state(1);
+  let ceilingInput = $state(''); // residency ceiling; '' = profile default (no restriction)
   let minting = $state(false);
   let mintedToken = $state('');
 
@@ -191,7 +192,7 @@
     const a = await getApi();
     if (!a) { minting = false; return; }
     try {
-      const tok = await a.MintGatewayToken(profile, scope, Math.round(ttlHours * 3600));
+      const tok = await a.MintGatewayToken(profile, scope, Math.round(ttlHours * 3600), ceilingInput);
       mintedToken = tok.token;
       notifications.success(`Minted token for ${profile} (${scope.length ? scope.join(', ') : 'all tools'})`);
     } catch (err: any) {
@@ -294,6 +295,13 @@
         <div class="gw-mint-label">mint Tier-0 token</div>
         <div class="gw-mint-row">
           <input class="gw-scope" placeholder="scope (e.g. phantom-brain__*) — blank = all" bind:value={scopeInput} spellcheck="false" />
+          <select class="gw-ceiling" bind:value={ceilingInput} title="residency ceiling">
+            <option value="">ceiling: default</option>
+            <option value="local">local</option>
+            <option value="infra">infra</option>
+            <option value="vendor">vendor</option>
+            <option value="public">public</option>
+          </select>
           <input class="gw-ttl" type="number" min="0.25" step="0.25" bind:value={ttlHours} title="TTL (hours)" />
           <span class="gw-unit">h</span>
           <button class="gw-btn" onclick={mint} disabled={minting}>{minting ? 'minting…' : 'mint'}</button>

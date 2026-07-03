@@ -70,6 +70,8 @@ export function DeleteSequence(arg1:string):Promise<void>;
 
 export function DeleteSession(arg1:string):Promise<brainbox.SessionActionResponse>;
 
+export function DeleteTrustRule(arg1:string,arg2:string):Promise<void>;
+
 export function DisableLocalRunner():Promise<void>;
 
 export function DismissAttention(arg1:string):Promise<void>;
@@ -152,6 +154,8 @@ export function GetOTLPHost():Promise<string>;
 
 export function GetObservabilityOverview(arg1:string):Promise<opensearch.Overview>;
 
+export function GetOrchestrationZones(arg1:string):Promise<brainbox.OrchestrationZones>;
+
 export function GetPlatform():Promise<string>;
 
 export function GetPlaybook(arg1:string):Promise<brainbox.Playbook>;
@@ -185,6 +189,8 @@ export function GetTaskLineage(arg1:string):Promise<Array<main.HubTask>>;
 export function GetTaskStats(arg1:number):Promise<main.TaskStats>;
 
 export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;
+
+export function GetTrust(arg1:string):Promise<brainbox.TrustConfig>;
 
 export function GetWidgetCount(arg1:string,arg2:string):Promise<number>;
 
@@ -248,7 +254,7 @@ export function ListTasks(arg1:string,arg2:string,arg3:number):Promise<Array<mai
 
 export function ListUpcomingFires(arg1:number):Promise<Array<main.UpcomingFire>>;
 
-export function MintGatewayToken(arg1:string,arg2:Array<string>,arg3:number):Promise<brainbox.GatewayToken>;
+export function MintGatewayToken(arg1:string,arg2:Array<string>,arg3:number,arg4:string):Promise<brainbox.GatewayToken>;
 
 export function OpenLocalSession(arg1:string):Promise<void>;
 
@@ -259,6 +265,8 @@ export function PostChannelMessage(arg1:string,arg2:brainbox.PostChannelMessageR
 export function PresignArtifactURL(arg1:string,arg2:string,arg3:string,arg4:number):Promise<brainbox.ArtifactPresignedURL>;
 
 export function PreviewDispatch(arg1:brainbox.DispatchPreviewRequest):Promise<brainbox.DispatchPreview>;
+
+export function PreviewPlan(arg1:string,arg2:string,arg3:Array<string>,arg4:Array<string>):Promise<brainbox.StepPlanResult>;
 
 export function PullOllamaModel(arg1:string):Promise<string>;
 
@@ -310,6 +318,8 @@ export function SetAgentEnabled(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetConfig(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function SetDefaultCeiling(arg1:string,arg2:string):Promise<void>;
+
 export function SetGatewayEnv(arg1:string,arg2:Record<string, string>):Promise<void>;
 
 export function SetGatewayServerEnabled(arg1:string,arg2:boolean):Promise<void>;
@@ -325,6 +335,8 @@ export function SetRegistrySettings(arg1:string,arg2:string):Promise<void>;
 export function SetServiceConfig(arg1:string,arg2:boolean,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 
 export function SetTheme(arg1:string):Promise<void>;
+
+export function SetTrustRule(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function StartLiveLoop(arg1:string,arg2:Record<string, any>):Promise<brainbox.LiveLoop>;
 
