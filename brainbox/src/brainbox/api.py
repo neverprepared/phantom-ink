@@ -4457,6 +4457,99 @@ async def gateway_set_server_enabled(name: str, body: dict):
     return {"name": name, "enabled": enabled}
 
 
+# Declarative orchestration — trust map + residency planning (operator-only)
+# ---------------------------------------------------------------------------
+# Per-profile trust map (destination -> zone) + default residency ceiling, and
+# a plan-preview endpoint that resolves a step to a compliant provider + tools.
+from . import step_planner, trust  # noqa: E402
+from . import store  # noqa: E402
+from .residency_resolver import Requirement  # noqa: E402
+from .trust_zones import TrustZone  # noqa: E402
+
+
+def _parse_zone(value: str) -> TrustZone:
+    try:
+        return TrustZone.parse(value)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"zone must be one of {[z.name.lower() for z in TrustZone]}",
+        )
+
+
+@app.get("/api/orchestration/profiles/{profile}/trust", dependencies=[Depends(require_api_key)])
+async def orchestration_get_trust(profile: str):
+    return {
+        "profile": profile,
+        "default_ceiling": trust.ceiling_for_profile(profile).name.lower(),
+        "rules": store.list_trust_rules(profile),
+    }
+
+
+@app.put("/api/orchestration/profiles/{profile}/trust/rule", dependencies=[Depends(require_api_key)])
+async def orchestration_set_trust_rule(profile: str, body: dict):
+    pattern = (body.get("pattern") or "").strip()
+    if not pattern:
+        raise HTTPException(status_code=400, detail="pattern is required")
+    zone = _parse_zone(body.get("zone") or "")
+    await store.async_set_trust_rule(profile, pattern, zone.name.lower())
+    return {"profile": profile, "pattern": pattern, "zone": zone.name.lower()}
+
+
+@app.delete(
+    "/api/orchestration/profiles/{profile}/trust/rule", dependencies=[Depends(require_api_key)]
+)
+async def orchestration_delete_trust_rule(profile: str, pattern: str):
+    return {"profile": profile, "pattern": pattern, "deleted": store.delete_trust_rule(profile, pattern)}
+
+
+@app.put(
+    "/api/orchestration/profiles/{profile}/trust/ceiling", dependencies=[Depends(require_api_key)]
+)
+async def orchestration_set_ceiling(profile: str, body: dict):
+    zone = _parse_zone(body.get("zone") or "")
+    await store.async_set_profile_default_ceiling(profile, zone.name.lower())
+    return {"profile": profile, "default_ceiling": zone.name.lower()}
+
+
+@app.get("/api/orchestration/profiles/{profile}/zones", dependencies=[Depends(require_api_key)])
+async def orchestration_zones(profile: str):
+    from . import provider_catalog
+
+    providers = [
+        {"name": r.name, "zone": r.zone.name.lower(), "capabilities": sorted(r.capabilities)}
+        for r in provider_catalog.provider_resources(profile)
+    ]
+    tools = [
+        {"name": n, "zone": z.name.lower()}
+        for n, z in sorted(step_planner.mcp_zones_for_profile(profile).items())
+    ]
+    return {"profile": profile, "providers": providers, "tools": tools}
+
+
+@app.post("/api/orchestration/profiles/{profile}/plan", dependencies=[Depends(require_api_key)])
+async def orchestration_plan(profile: str, body: dict):
+    """Preview the resolved plan for a step. Body:
+    ``{ceiling?, requires?: [caps], prefers?: [caps]}`` — ceiling defaults to the
+    profile's configured default."""
+    ceiling = _parse_zone(body["ceiling"]) if body.get("ceiling") else trust.ceiling_for_profile(profile)
+    requires = frozenset(body.get("requires") or [])
+    prefers = tuple(body.get("prefers") or [])
+    plan = step_planner.plan_step(profile, Requirement(ceiling, requires=requires, prefers=prefers))
+    return {
+        "profile": profile,
+        "ceiling": plan.ceiling.name.lower(),
+        "blocked": plan.blocked,
+        "reason": plan.reason,
+        "provider": (
+            None if plan.provider is None
+            else {"name": plan.provider.name, "zone": plan.provider.zone.name.lower()}
+        ),
+        "eligible_tools": list(plan.eligible_tools),
+        "excluded_tools": [{"name": n, "zone": z.name.lower()} for n, z in plan.excluded_tools],
+    }
+
+
 if _dashboard_dist.is_dir():
     # Serve static assets (JS, CSS, etc.)
     app.mount("/assets", StaticFiles(directory=str(_dashboard_dist / "assets")), name="assets")
