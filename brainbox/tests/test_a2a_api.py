@@ -371,3 +371,68 @@ class TestToA2ATask:
     def test_completed_task_includes_artifact(self):
         obj = _to_a2a_task(_make_task(TaskStatus.COMPLETED, result="all done"))
         assert obj["artifacts"][0]["parts"][0]["text"] == "all done"
+
+
+# ---------------------------------------------------------------------------
+# Declarative routing: metadata residency/requires/prefers → provider
+# ---------------------------------------------------------------------------
+
+
+class TestDeclarativeRouting:
+    @pytest.fixture(autouse=True)
+    def _providers(self, monkeypatch):
+        from brainbox.config import settings
+        monkeypatch.setattr(settings.orchestration, "default_ceiling", "public")
+        monkeypatch.setattr(settings.orchestration, "ollama_url", "http://localhost:11434")
+        monkeypatch.setattr(settings.orchestration, "claude_url", "https://api.anthropic.com")
+        monkeypatch.setattr(settings.orchestration, "codex_url", "https://api.openai.com")
+
+    @pytest.mark.asyncio
+    async def test_declarative_tags_auto_select_provider(self, client, agents, api_key):
+        body = {
+            "jsonrpc": "2.0", "id": 1, "method": "message/send",
+            "params": {"message": {
+                "role": "user", "parts": [{"kind": "text", "text": "draft"}],
+                "metadata": {"workspace_profile": "work", "residency": "local",
+                             "requires": ["coding"]},
+            }},
+        }
+        async with client as c:
+            resp = await c.post("/a2a/worker", json=body, headers={"x-api-key": api_key})
+        task_id = resp.json()["result"]["id"]
+        task = router_module.get_task(task_id)
+        assert task.model_target is not None
+        assert task.model_target.provider == "ollama"  # only provider within a LOCAL ceiling
+
+    @pytest.mark.asyncio
+    async def test_unsatisfiable_step_is_invalid_params(self, client, agents, api_key):
+        # vision only claude (public) → LOCAL ceiling → no compliant provider
+        body = {
+            "jsonrpc": "2.0", "id": 2, "method": "message/send",
+            "params": {"message": {
+                "role": "user", "parts": [{"kind": "text", "text": "x"}],
+                "metadata": {"workspace_profile": "work", "residency": "local",
+                             "requires": ["vision"]},
+            }},
+        }
+        async with client as c:
+            resp = await c.post("/a2a/worker", json=body, headers={"x-api-key": api_key})
+        err = resp.json()["error"]
+        assert err["code"] == -32602
+        assert "cannot be satisfied" in err["message"]
+
+    @pytest.mark.asyncio
+    async def test_explicit_provider_still_respected(self, client, agents, api_key):
+        # a pinned provider is imperative — declarative resolution does not override it
+        body = {
+            "jsonrpc": "2.0", "id": 3, "method": "message/send",
+            "params": {"message": {
+                "role": "user", "parts": [{"kind": "text", "text": "x"}],
+                "metadata": {"workspace_profile": "work", "provider": "claude",
+                             "requires": ["coding"]},
+            }},
+        }
+        async with client as c:
+            resp = await c.post("/a2a/worker", json=body, headers={"x-api-key": api_key})
+        task = router_module.get_task(resp.json()["result"]["id"])
+        assert task.model_target.provider == "claude"
