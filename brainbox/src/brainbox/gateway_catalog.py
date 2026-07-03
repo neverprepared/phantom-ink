@@ -106,6 +106,29 @@ def list_catalog_servers(*, path: str | None = None) -> list[dict]:
     return out
 
 
+def server_env_def(name: str, *, path: str | None = None) -> dict[str, str]:
+    """Raw env definition for one catalog server, ``${VAR}`` placeholders intact.
+
+    Unlike ``load_catalog_specs`` (which keeps only literals), this returns every
+    declared env key/value so callers can scope a server to *its own*
+    destinations (e.g. resolve ``GITHUB_HOST=${GITHUB_HOST}`` from the profile
+    env). Returns ``{}`` if the server/catalog is missing.
+    """
+    cat_path = path or settings.gateway.catalog_path
+    if not cat_path:
+        return {}
+    p = Path(cat_path)
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text())
+    except (ValueError, OSError):
+        return {}
+    entry = (data.get("servers", {}) if isinstance(data, dict) else {}).get(name) or {}
+    env = (entry.get("definition") or {}).get("env") or {}
+    return {k: v for k, v in env.items() if isinstance(v, str)}
+
+
 def seed_gateway_servers(*, default_enabled: list[str] | None = None) -> None:
     """Insert any new catalog servers into the DB registry (#152).
 

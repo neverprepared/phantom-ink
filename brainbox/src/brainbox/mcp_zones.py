@@ -21,7 +21,30 @@ to infra). This module is pure — callers supply the resolved env + trust map.
 
 from __future__ import annotations
 
+import re
+
 from .trust_zones import TrustMap, TrustZone, host_of
+
+# ``${VAR}`` or ``${VAR:-default}`` placeholder (whole-value form, as in the catalog).
+_PLACEHOLDER = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-(.*))?\}$")
+
+
+def resolve_env_def(env_def: dict[str, str], profile_env: dict[str, str]) -> dict[str, str]:
+    """Resolve a server's catalog env definition against a profile's env.
+
+    ``${VAR}`` / ``${VAR:-default}`` placeholders are filled from ``profile_env``
+    (default used when absent); literals pass through. This scopes a server to
+    **its own** destinations — a server never sees another server's URL keys.
+    """
+    out: dict[str, str] = {}
+    for key, value in (env_def or {}).items():
+        m = _PLACEHOLDER.match(value.strip()) if isinstance(value, str) else None
+        if m:
+            var, default = m.group(1), m.group(2) or ""
+            out[key] = profile_env.get(var, default)
+        else:
+            out[key] = value
+    return out
 
 # Env keys whose value is a destination even without an http(s):// prefix.
 _URL_KEY_SUFFIXES = ("_URL", "_URI", "_HOST", "_ENDPOINT", "_BASE", "_BASE_URL", "_SERVER", "_ADDR")
