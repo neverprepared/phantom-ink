@@ -319,14 +319,19 @@ def issue_session_token(role: str, session_id: str) -> Token | None:
     return issue_token(role, session_id, ttl=ttl)
 
 
-def issue_gateway_token(profile: str, scope: list[str] | None = None, ttl: int = 3600) -> Token:
+def issue_gateway_token(
+    profile: str,
+    scope: list[str] | None = None,
+    ttl: int = 3600,
+    residency_ceiling: str = "",
+) -> Token:
     """Mint a profile-bound MCP gateway token (ADR-002 phase 3, Tier-0).
 
     Unlike ``issue_token``, this requires neither a registered agent nor a
     task: a local client (e.g. opencode) gets a token scoped directly to a
-    workspace profile with an explicit tool ``scope`` (empty = all tools).
-    The gateway's ``BrainboxTokenVerifier`` reads ``workspace_profile`` and
-    ``scope`` straight off the token.
+    workspace profile with an explicit tool ``scope`` (empty = all tools) and an
+    optional ``residency_ceiling`` (trust-zone name; empty = no restriction).
+    The gateway's ``BrainboxTokenVerifier`` reads these straight off the token.
     """
     now = int(time.time() * 1000)
     token = Token(
@@ -338,6 +343,7 @@ def issue_gateway_token(profile: str, scope: list[str] | None = None, ttl: int =
         expiry=now + ttl * 1000,
         workspace_profile=profile,
         scope=list(scope or []),
+        residency_ceiling=residency_ceiling or "",
     )
     _tokens[token.token_id] = token
     # Persist so the token survives a daemon restart — gateway tokens are baked
@@ -345,7 +351,10 @@ def issue_gateway_token(profile: str, scope: list[str] | None = None, ttl: int =
     try:
         from . import store
 
-        store.save_gateway_token(token.token_id, profile, token.scope, token.issued, token.expiry)
+        store.save_gateway_token(
+            token.token_id, profile, token.scope, token.issued, token.expiry,
+            token.residency_ceiling,
+        )
     except Exception as exc:  # pragma: no cover - persistence is best-effort
         log.warning("registry.gateway_token_persist_failed", metadata={"reason": str(exc)})
     log.info(
@@ -354,6 +363,7 @@ def issue_gateway_token(profile: str, scope: list[str] | None = None, ttl: int =
             "token_id": token.token_id,
             "profile": profile,
             "scope": token.scope,
+            "ceiling": token.residency_ceiling,
             "ttl": ttl,
         },
     )
@@ -375,6 +385,7 @@ def load_persisted_gateway_tokens() -> int:
             expiry=row["expiry"],
             workspace_profile=row["workspace_profile"],
             scope=list(row["scope"]),
+            residency_ceiling=row.get("residency_ceiling", ""),
         )
         count += 1
     if count:

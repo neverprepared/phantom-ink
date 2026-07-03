@@ -46,6 +46,7 @@ class GatewayError(Exception):
 class Identity:
     profile: str
     scope: list[str]  # allowed tool patterns; [] or ["*"] = all
+    ceiling: object | None = None  # TrustZone | None — residency ceiling (None = no restriction)
 
 
 def _allowed(qualified: str, server: str, scope: list[str]) -> bool:
@@ -54,14 +55,38 @@ def _allowed(qualified: str, server: str, scope: list[str]) -> bool:
     return qualified in scope or f"{server}{_SEP}*" in scope
 
 
+def _residency_zones(ident: Identity) -> dict | None:
+    """Per-server trust zones for the identity's profile, or None if the token
+    carries no residency ceiling (no filtering)."""
+    if ident.ceiling is None:
+        return None
+    from . import step_planner
+
+    return step_planner.mcp_zones_for_profile(ident.profile)
+
+
+def _within_residency(server: str, zones: dict | None, ident: Identity) -> bool:
+    """True if a server is at/below the identity's residency ceiling (or no
+    ceiling). Unknown server zone is treated PUBLIC (fail-safe)."""
+    if zones is None or ident.ceiling is None:
+        return True
+    from .trust_zones import TrustZone, within_ceiling
+
+    return within_ceiling(zones.get(server, TrustZone.PUBLIC), ident.ceiling)
+
+
 async def list_gateway_tools(pool: GatewayPool, specs: list[ServerSpec], ident: Identity) -> list:
     """Aggregate downstream tools for the identity's profile, namespaced + scoped.
 
-    A downstream server that fails to list does not break the whole catalog —
-    it is logged and skipped.
+    Servers above the token's residency ceiling are excluded (data-residency
+    enforcement). A downstream server that fails to list does not break the
+    whole catalog — it is logged and skipped.
     """
+    zones = _residency_zones(ident)
     out: list = []
     for spec in specs:
+        if not _within_residency(spec.name, zones, ident):
+            continue  # residency: server's zone exceeds the ceiling
         try:
             tools = await pool.list_tools(ident.profile, spec)
         except Exception as exc:
@@ -92,6 +117,8 @@ async def call_gateway_tool(
         raise GatewayError(f"tool name must be '<server>{_SEP}<tool>': {name!r}")
     if not _allowed(name, server, ident.scope):
         raise PermissionError(f"tool {name!r} is not in scope")
+    if not _within_residency(server, _residency_zones(ident), ident):
+        raise PermissionError(f"server {server!r} exceeds the token's residency ceiling")
     spec = next((s for s in specs if s.name == server), None)
     if spec is None:
         raise GatewayError(f"unknown server {server!r}")
@@ -103,7 +130,19 @@ def _identity_from_auth() -> Identity:
     token = get_access_token()
     if token is None:
         raise GatewayError("unauthenticated")
-    return Identity(profile=token.client_id or "", scope=list(token.scopes or []))
+    ceiling = None
+    from . import registry
+    from .trust_zones import TrustZone
+
+    hub = registry.validate_token(token.token)
+    if hub is not None and hub.residency_ceiling:
+        try:
+            ceiling = TrustZone.parse(hub.residency_ceiling)
+        except ValueError:
+            ceiling = None
+    return Identity(
+        profile=token.client_id or "", scope=list(token.scopes or []), ceiling=ceiling
+    )
 
 
 def build_gateway_server(

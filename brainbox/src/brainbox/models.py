@@ -51,6 +51,10 @@ class Token(BaseModel):
     # scope. Empty scope = all tools (permissive default, back-compat).
     workspace_profile: str = ""
     scope: list[str] = Field(default_factory=list)
+    # Declarative orchestration: a residency ceiling (trust-zone name) restricting
+    # which tools the gateway exposes to this token — only servers whose zone is
+    # at/below the ceiling. Empty = no residency restriction (back-compat).
+    residency_ceiling: str = ""
 
 
 # ---------------------------------------------------------------------------
