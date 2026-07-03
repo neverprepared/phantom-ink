@@ -217,6 +217,17 @@ class GatewaySettings(BaseSettings):
     exclusive: bool = False
 
 
+class OrchestrationSettings(BaseSettings):
+    """Declarative tag-based orchestration (trust zones + capabilities).
+
+    ``default_ceiling`` is the global fallback residency ceiling used when a job
+    step omits one AND the profile has no per-profile default configured. PUBLIC
+    is the least-restrictive baseline (nothing blocked) — profiles tighten it.
+    """
+
+    default_ceiling: str = "public"
+
+
 def _qdrant_url() -> str:
     import os
 
@@ -366,6 +377,7 @@ class Settings(BaseSettings):
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     minio: MinioSettings = Field(default_factory=MinioSettings)
     gateway: GatewaySettings = Field(default_factory=GatewaySettings)
+    orchestration: OrchestrationSettings = Field(default_factory=OrchestrationSettings)
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
     profile: ProfileSettings = Field(default_factory=ProfileSettings)
     hub: HubSettings = Field(default_factory=HubSettings)

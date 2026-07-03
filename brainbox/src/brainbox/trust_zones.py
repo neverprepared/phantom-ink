@@ -119,6 +119,11 @@ class TrustMap:
     def __init__(self, rules: list[TrustRule] | None = None) -> None:
         self._rules: list[TrustRule] = list(rules or [])
 
+    @property
+    def rules(self) -> list[TrustRule]:
+        """A copy of the rules, in definition order (for composition/inspection)."""
+        return list(self._rules)
+
     def zone_of(self, host: str) -> TrustZone:
         """Classify a hostname. Empty/unknown → PUBLIC."""
         host = (host or "").lower()

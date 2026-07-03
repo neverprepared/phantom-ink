@@ -226,6 +226,25 @@ def init_db() -> None:
                 issued            INTEGER NOT NULL,
                 expiry            INTEGER NOT NULL
             );
+
+            -- Declarative orchestration (tagged): per-profile trust map, a
+            -- destination-glob -> trust-zone rule set. Classifies where a
+            -- provider / MCP server / log sink sends data. See trust.py.
+            CREATE TABLE IF NOT EXISTS trust_rules (
+                profile    TEXT    NOT NULL,
+                pattern    TEXT    NOT NULL,
+                zone       TEXT    NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (profile, pattern)
+            );
+
+            -- Per-profile orchestration config: the default residency ceiling
+            -- applied when a job step omits one.
+            CREATE TABLE IF NOT EXISTS trust_profile_config (
+                profile         TEXT    PRIMARY KEY,
+                default_ceiling TEXT    NOT NULL,
+                updated_at      INTEGER NOT NULL
+            );
         """)
 
 
@@ -443,11 +462,77 @@ def load_gateway_tokens() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Declarative orchestration — per-profile trust map + default ceiling
+# ---------------------------------------------------------------------------
+
+
+def set_trust_rule(profile: str, pattern: str, zone: str) -> None:
+    """Upsert one ``pattern -> zone`` rule for a profile's trust map."""
+    now = int(__import__("time").time() * 1000)
+    with _lock:
+        _db().execute(
+            """
+            INSERT INTO trust_rules (profile, pattern, zone, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(profile, pattern) DO UPDATE SET zone = excluded.zone
+            """,
+            (profile, pattern, zone, now),
+        )
+
+
+def delete_trust_rule(profile: str, pattern: str) -> bool:
+    with _lock:
+        cur = _db().execute(
+            "DELETE FROM trust_rules WHERE profile = ? AND pattern = ?", (profile, pattern)
+        )
+        return cur.rowcount > 0
+
+
+def list_trust_rules(profile: str) -> list[dict]:
+    """A profile's trust rules as ``[{pattern, zone}, ...]``."""
+    rows = _db().execute(
+        "SELECT pattern, zone FROM trust_rules WHERE profile = ? ORDER BY pattern", (profile,)
+    ).fetchall()
+    return [{"pattern": r["pattern"], "zone": r["zone"]} for r in rows]
+
+
+def set_profile_default_ceiling(profile: str, zone: str) -> None:
+    now = int(__import__("time").time() * 1000)
+    with _lock:
+        _db().execute(
+            """
+            INSERT INTO trust_profile_config (profile, default_ceiling, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(profile) DO UPDATE SET
+                default_ceiling = excluded.default_ceiling,
+                updated_at      = excluded.updated_at
+            """,
+            (profile, zone, now),
+        )
+
+
+def get_profile_default_ceiling(profile: str) -> str | None:
+    """The profile's configured default ceiling zone name, or None if unset."""
+    row = _db().execute(
+        "SELECT default_ceiling FROM trust_profile_config WHERE profile = ?", (profile,)
+    ).fetchone()
+    return row["default_ceiling"] if row else None
+
+
+# ---------------------------------------------------------------------------
 # Async wrappers
 # ---------------------------------------------------------------------------
 
 async def async_set_gateway_server_enabled(name: str, enabled: bool) -> None:
     await asyncio.to_thread(set_gateway_server_enabled, name, enabled)
+
+
+async def async_set_trust_rule(profile: str, pattern: str, zone: str) -> None:
+    await asyncio.to_thread(set_trust_rule, profile, pattern, zone)
+
+
+async def async_set_profile_default_ceiling(profile: str, zone: str) -> None:
+    await asyncio.to_thread(set_profile_default_ceiling, profile, zone)
 
 
 async def async_upsert_session(ctx: "SessionContext") -> None:  # type: ignore[name-defined]
