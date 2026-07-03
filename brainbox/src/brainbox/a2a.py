@@ -259,6 +259,25 @@ async def _handle_message_send(req_id: Any, agent: str, params: dict) -> dict[st
     except ValidationError as exc:
         return _jsonrpc_err(req_id, _INVALID_PARAMS, f"invalid model target: {exc.errors()[0]['msg']}")
     md = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+
+    # Declarative routing: if the message carries orchestration tags
+    # (residency/requires/prefers) and no provider was pinned, resolve a
+    # compliant provider (fail-closed). A step that can't be satisfied is a
+    # client error, surfaced before the task is created.
+    from .step_spec import StepSpec, StepValidationError, compile_step
+
+    spec = StepSpec.from_dict(md)
+    if spec.is_declared() and (model_target is None or model_target.provider is None):
+        try:
+            resolved = compile_step(md.get("workspace_profile") or "", spec)
+        except StepValidationError as exc:
+            return _jsonrpc_err(req_id, _INVALID_PARAMS, f"step cannot be satisfied: {exc}")
+        model_target = (
+            ModelTarget(provider=resolved.provider)
+            if model_target is None
+            else model_target.model_copy(update={"provider": resolved.provider})
+        )
+
     task = await task_router.submit_task(
         text,
         agent,
