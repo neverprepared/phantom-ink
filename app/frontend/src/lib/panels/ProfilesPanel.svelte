@@ -33,6 +33,16 @@
 
   let profiles = $derived(profileState.profiles);
   let activeProfile = $derived(profileState.active);
+
+  // The Profiles panel shows one profile's detail card, selected via the top
+  // titlebar tabs (activeProfile). While on this panel there's no "all" state —
+  // if none is active, default to the first profile so a card always shows.
+  $effect(() => {
+    if (!activeProfile && profiles.length) {
+      void selectProfile(profiles[0].name);
+    }
+  });
+
   let scanning = $state(false);
   let diskOverview = $state<any | null>(null);
   let loadingDisk = $state(true);
@@ -369,10 +379,6 @@
     {#if profiles.length === 0}
       <EmptyState title="No profiles found" />
     {:else}
-      <button class="profile-item" class:active={!activeProfile} onclick={clearProfile}>
-        <span class="profile-name">all profiles</span>
-        <span class="profile-meta">no filter</span>
-      </button>
       {#each profiles as p}
         {@const pColor = getProfileColor(p.name, profileColorStore.getOverride(p.name))}
         {@const isActive = activeProfile?.name === p.name}
@@ -381,6 +387,7 @@
         {@const logs = imageLogs[p.name] ?? []}
         {@const logsOpen = imageLogsOpen[p.name] ?? false}
         {@const isHidden = profileState.isHidden(p.name)}
+        {#if activeProfile?.name === p.name}
         <div class="profile-card" class:active={isActive} class:hidden={isHidden}>
           <div class="profile-row">
             <span class="profile-dot" style="background: {pColor.text};"></span>
@@ -496,6 +503,7 @@
             </div>
           {/if}
         </div>
+        {/if}
       {/each}
     {/if}
   </div>
