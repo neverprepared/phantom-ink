@@ -176,14 +176,20 @@ def _compute_mount_context(
     }
 
 
-def _gateway_server_entry(workspace_profile: str) -> dict | None:
+def _gateway_server_entry(
+    workspace_profile: str, *, gateway_url: str | None = None
+) -> dict | None:
     """Build the `phantom-gateway` HTTP MCP entry for a session, or None.
 
     Returns an entry only when the MCP gateway is exposing servers and session
     injection is enabled (ADR-002 phase 3). Mints a per-session Tier-0 token
-    bound to *workspace_profile* so the container reaches the gateway scoped to
+    bound to *workspace_profile* so the guest reaches the gateway scoped to
     its own profile — no agent/task needed. The token is in-memory in the hub
     registry; a daemon restart invalidates it (sessions are re-provisioned).
+
+    *gateway_url* overrides the URL the guest uses to reach the gateway. Docker
+    containers use the default ``container_url`` (host.docker.internal); UTM/QEMU
+    VMs pass ``settings.gateway.vm_url`` since they can't resolve that alias.
     """
     from . import registry, trust
     from .trust_zones import TrustZone
@@ -201,7 +207,7 @@ def _gateway_server_entry(workspace_profile: str) -> dict | None:
     )
     return {
         "type": "http",
-        "url": gw.container_url,
+        "url": gateway_url or gw.container_url,
         "headers": {"Authorization": f"Bearer {token.token_id}"},
     }
 

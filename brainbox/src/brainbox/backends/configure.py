@@ -395,6 +395,66 @@ async def inject_claude_settings(
         slog.warning("configure.claude_settings_failed", metadata={"reason": str(exc)})
 
 
+async def inject_gateway_mcp(
+    executor: GuestExecutor,
+    workspace_profile: str,
+    *,
+    gateway_url: str,
+    slog: Any | None = None,
+) -> None:
+    """Write the `phantom-gateway` MCP entry into the guest's workspace .mcp.json.
+
+    Docker containers receive this entry via a bind-mounted .mcp.json generated
+    on the host. VMs (UTM SSH / QEMU) can't bind-mount host files, so we mint a
+    per-session Tier-0 gateway token and write the entry directly into the
+    guest's workspace .mcp.json via exec — the VM equivalent of the docker path.
+
+    *gateway_url* is how this guest reaches the gateway (VMs use vm_url, not the
+    docker host.docker.internal alias). No-op when the gateway isn't active or
+    the executor is Windows (VMs here are macOS/Linux). The pre-approval
+    (enabledMcpjsonServers) is already written by inject_claude_settings.
+    """
+    slog = slog or log
+    if not workspace_profile:
+        return
+    if getattr(executor, "guest_os", None) == "windows":
+        return
+
+    # Deferred import: lifecycle imports backends, so importing it at module
+    # load would be circular. Mints the per-session token + builds the entry.
+    from ..lifecycle import _gateway_server_entry
+
+    entry = _gateway_server_entry(workspace_profile, gateway_url=gateway_url)
+    if entry is None:
+        return  # gateway inactive / injection disabled
+
+    home = executor.home_dir
+    payload = json.dumps({"phantom-gateway": entry})
+    try:
+        for workspace in [
+            f"{home}/workspace",
+            f"{home}/task-repo",
+            home,
+        ]:
+            p_j = json.dumps(f"{workspace}/.mcp.json").replace('"', '\\"')
+            await executor.exec_shell(
+                f"mkdir -p {workspace} && echo {shlex.quote(payload)} | python3 -c \""
+                "import json, pathlib, sys; "
+                f"p = pathlib.Path({p_j}); "
+                "d = json.loads(p.read_text()) if p.exists() else {}; "
+                "d.setdefault('mcpServers', {}).update(json.load(sys.stdin)); "
+                "p.write_text(json.dumps(d, indent=2))"
+                '"',
+                timeout=15,
+            )
+        slog.info(
+            "configure.gateway_mcp_injected",
+            metadata={"profile": workspace_profile, "url": gateway_url},
+        )
+    except Exception as exc:
+        slog.warning("configure.gateway_mcp_failed", metadata={"reason": str(exc)})
+
+
 async def inject_profile_env(
     executor: GuestExecutor,
     profile_env: str,

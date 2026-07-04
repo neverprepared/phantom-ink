@@ -1072,11 +1072,13 @@ class UTMBackend:
         slog,
     ) -> None:
         """Configure an Apple VF (macOS) VM via SSH using shared functions."""
+        from ...config import settings
         from ..configure import (
             inject_claude_config,
             inject_claude_settings,
             inject_config_bundle,
             inject_env_file,
+            inject_gateway_mcp,
             inject_profile_env,
         )
         from ..executor import SSHExecutor
@@ -1110,6 +1112,12 @@ class UTMBackend:
 
         await inject_claude_config(executor, oauth_account, slog=slog)
         await inject_claude_settings(executor, slog=slog)
+        await inject_gateway_mcp(
+            executor,
+            ctx.workspace_profile,
+            gateway_url=settings.gateway.vm_url,
+            slog=slog,
+        )
         if profile_env:
             await inject_profile_env(executor, profile_env, slog=slog)
 
@@ -1154,11 +1162,13 @@ class UTMBackend:
         slog,
     ) -> None:
         """Configure a QEMU VM via shared functions using QEMUExecExecutor."""
+        from ...config import settings
         from ..configure import (
             inject_claude_config,
             inject_claude_settings,
             inject_config_bundle,
             inject_env_file,
+            inject_gateway_mcp,
             inject_profile_env,
         )
         from ..executor import QEMUExecExecutor
@@ -1187,6 +1197,12 @@ class UTMBackend:
 
         await inject_claude_config(executor, oauth_account, slog=slog)
         await inject_claude_settings(executor, slog=slog)
+        await inject_gateway_mcp(
+            executor,
+            ctx.workspace_profile,
+            gateway_url=settings.gateway.vm_url,
+            slog=slog,
+        )
 
         if profile_env:
             await inject_profile_env(executor, profile_env, slog=slog)
