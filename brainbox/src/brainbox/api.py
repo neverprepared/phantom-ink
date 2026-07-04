@@ -4543,6 +4543,45 @@ async def orchestration_zones(profile: str):
     return {"profile": profile, "providers": providers, "tools": tools}
 
 
+@app.get("/api/orchestration/profiles/{profile}/servers", dependencies=[Depends(require_api_key)])
+async def orchestration_servers(profile: str):
+    """Per-profile gateway server include/exclude: resolution default + the
+    user's manual toggle. This is the simplified per-profile control surface."""
+    return {
+        "profile": profile,
+        "servers": [
+            {
+                "name": s.name,
+                "zone": s.zone.name.lower(),
+                "default_enabled": s.default_enabled,
+                "override": s.override,          # true/false/null
+                "effective": s.effective,
+            }
+            for s in step_planner.profile_server_states(profile)
+        ],
+    }
+
+
+@app.put(
+    "/api/orchestration/profiles/{profile}/servers/{name}", dependencies=[Depends(require_api_key)]
+)
+async def orchestration_set_server(profile: str, name: str, body: dict):
+    """Manually include/exclude a server for a profile (overrides resolution)."""
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail='body must be {"enabled": true|false}')
+    await store.async_set_profile_server_override(profile, name, enabled)
+    return {"profile": profile, "server": name, "enabled": enabled}
+
+
+@app.delete(
+    "/api/orchestration/profiles/{profile}/servers/{name}", dependencies=[Depends(require_api_key)]
+)
+async def orchestration_clear_server(profile: str, name: str):
+    """Clear a manual override → the server reverts to the resolution default."""
+    return {"profile": profile, "server": name, "cleared": store.clear_profile_server_override(profile, name)}
+
+
 @app.post("/api/orchestration/profiles/{profile}/plan", dependencies=[Depends(require_api_key)])
 async def orchestration_plan(profile: str, body: dict):
     """Preview the resolved plan for a step. Body:

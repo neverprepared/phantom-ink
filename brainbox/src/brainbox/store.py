@@ -246,6 +246,17 @@ def init_db() -> None:
                 default_ceiling TEXT    NOT NULL,
                 updated_at      INTEGER NOT NULL
             );
+
+            -- Per-(profile, server) manual include/exclude override for the
+            -- gateway. The residency resolution seeds a default (server zone <=
+            -- profile ceiling); a row here overrides it (the user's on/off
+            -- judgement call). Absence = use the resolution default.
+            CREATE TABLE IF NOT EXISTS profile_server_override (
+                profile TEXT    NOT NULL,
+                server  TEXT    NOT NULL,
+                enabled INTEGER NOT NULL,
+                PRIMARY KEY (profile, server)
+            );
         """)
         # Additive column migrations for pre-existing DBs (CREATE IF NOT EXISTS
         # won't alter an existing table). Idempotent: OperationalError == the
@@ -537,6 +548,37 @@ def get_profile_default_ceiling(profile: str) -> str | None:
     return row["default_ceiling"] if row else None
 
 
+def set_profile_server_override(profile: str, server: str, enabled: bool) -> None:
+    """Manually include/exclude a server for a profile (overrides resolution)."""
+    with _lock:
+        _db().execute(
+            """
+            INSERT INTO profile_server_override (profile, server, enabled)
+            VALUES (?, ?, ?)
+            ON CONFLICT(profile, server) DO UPDATE SET enabled = excluded.enabled
+            """,
+            (profile, server, 1 if enabled else 0),
+        )
+
+
+def clear_profile_server_override(profile: str, server: str) -> bool:
+    """Remove a manual override → the server reverts to the resolution default."""
+    with _lock:
+        cur = _db().execute(
+            "DELETE FROM profile_server_override WHERE profile = ? AND server = ?",
+            (profile, server),
+        )
+        return cur.rowcount > 0
+
+
+def list_profile_server_overrides(profile: str) -> dict[str, bool]:
+    """A profile's manual overrides as ``{server: enabled}``."""
+    rows = _db().execute(
+        "SELECT server, enabled FROM profile_server_override WHERE profile = ?", (profile,)
+    ).fetchall()
+    return {r["server"]: bool(r["enabled"]) for r in rows}
+
+
 # ---------------------------------------------------------------------------
 # Async wrappers
 # ---------------------------------------------------------------------------
@@ -551,6 +593,10 @@ async def async_set_trust_rule(profile: str, pattern: str, zone: str) -> None:
 
 async def async_set_profile_default_ceiling(profile: str, zone: str) -> None:
     await asyncio.to_thread(set_profile_default_ceiling, profile, zone)
+
+
+async def async_set_profile_server_override(profile: str, server: str, enabled: bool) -> None:
+    await asyncio.to_thread(set_profile_server_override, profile, server, enabled)
 
 
 async def async_upsert_session(ctx: "SessionContext") -> None:  # type: ignore[name-defined]

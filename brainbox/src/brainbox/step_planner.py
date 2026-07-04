@@ -53,6 +53,44 @@ def mcp_zones_for_profile(profile: str, *, enabled_only: bool = True) -> dict[st
 
 
 @dataclass(frozen=True)
+class ProfileServerState:
+    """One gateway server's include/exclude state for a profile."""
+
+    name: str
+    zone: TrustZone
+    default_enabled: bool          # from the residency resolution (zone <= ceiling)
+    override: bool | None          # the user's manual on/off, or None if unset
+    effective: bool                # what actually applies (override else default)
+
+
+def profile_server_states(profile: str) -> list[ProfileServerState]:
+    """Per-server include/exclude for a profile: resolution default + user override.
+
+    The residency resolution seeds each server's default (its zone ≤ the
+    profile's ceiling). A manual override (the user's toggle) wins when present.
+    """
+    from .trust_zones import within_ceiling
+
+    zones = mcp_zones_for_profile(profile)
+    ceiling = trust.ceiling_for_profile(profile)
+    overrides = store.list_profile_server_overrides(profile)
+    out: list[ProfileServerState] = []
+    for name, zone in sorted(zones.items()):
+        default_enabled = within_ceiling(zone, ceiling)
+        ov = overrides.get(name)
+        out.append(ProfileServerState(
+            name=name, zone=zone, default_enabled=default_enabled,
+            override=ov, effective=(ov if ov is not None else default_enabled),
+        ))
+    return out
+
+
+def effective_enabled_servers(profile: str) -> set[str]:
+    """The set of gateway servers effectively available to a profile."""
+    return {s.name for s in profile_server_states(profile) if s.effective}
+
+
+@dataclass(frozen=True)
 class StepPlan:
     ceiling: TrustZone
     provider: Resource | None                             # None ⇒ blocked
