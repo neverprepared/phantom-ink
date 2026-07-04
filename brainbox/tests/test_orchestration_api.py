@@ -67,3 +67,16 @@ async def test_plan_preview(client):
     assert blocked["blocked"] is True
     assert blocked["provider"] is None
     assert "fail-closed" in blocked["reason"]
+
+
+async def test_profile_server_toggles(client, monkeypatch):
+    # GET servers (empty when nothing enabled), PUT override, DELETE clears.
+    async with client as c:
+        got = (await c.get("/api/orchestration/profiles/work/servers")).json()
+        assert got["profile"] == "work" and isinstance(got["servers"], list)
+        r = await c.put("/api/orchestration/profiles/work/servers/markitdown", json={"enabled": False})
+        assert r.status_code == 200 and r.json()["enabled"] is False
+        bad = await c.put("/api/orchestration/profiles/work/servers/markitdown", json={"enabled": "no"})
+        assert bad.status_code == 400
+        d = await c.delete("/api/orchestration/profiles/work/servers/markitdown")
+        assert d.json()["cleared"] is True

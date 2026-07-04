@@ -65,6 +65,17 @@ def _residency_zones(ident: Identity) -> dict | None:
     return step_planner.mcp_zones_for_profile(ident.profile)
 
 
+def _disabled_servers(ident: Identity) -> set:
+    """Servers the profile has effectively turned OFF (resolution default +
+    user override). Only these are excluded — a server the profile hasn't
+    classified passes (the residency ceiling is the separate fail-closed gate)."""
+    if not ident.profile:
+        return set()
+    from . import step_planner
+
+    return {s.name for s in step_planner.profile_server_states(ident.profile) if not s.effective}
+
+
 def _within_residency(server: str, zones: dict | None, ident: Identity) -> bool:
     """True if a server is at/below the identity's residency ceiling (or no
     ceiling). Unknown server zone is treated PUBLIC (fail-safe)."""
@@ -83,10 +94,13 @@ async def list_gateway_tools(pool: GatewayPool, specs: list[ServerSpec], ident: 
     whole catalog — it is logged and skipped.
     """
     zones = _residency_zones(ident)
+    disabled = _disabled_servers(ident)
     out: list = []
     for spec in specs:
+        if spec.name in disabled:
+            continue  # per-profile toggle: server turned off for this profile
         if not _within_residency(spec.name, zones, ident):
-            continue  # residency: server's zone exceeds the ceiling
+            continue  # residency: server's zone exceeds the token ceiling
         try:
             tools = await pool.list_tools(ident.profile, spec)
         except Exception as exc:
@@ -117,6 +131,8 @@ async def call_gateway_tool(
         raise GatewayError(f"tool name must be '<server>{_SEP}<tool>': {name!r}")
     if not _allowed(name, server, ident.scope):
         raise PermissionError(f"tool {name!r} is not in scope")
+    if server in _disabled_servers(ident):
+        raise PermissionError(f"server {server!r} is disabled for profile {ident.profile!r}")
     if not _within_residency(server, _residency_zones(ident), ident):
         raise PermissionError(f"server {server!r} exceeds the token's residency ceiling")
     spec = next((s for s in specs if s.name == server), None)
