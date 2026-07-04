@@ -202,6 +202,10 @@ class GatewaySettings(BaseSettings):
     # Desktop); ``session_token_ttl`` bounds the minted token's lifetime.
     inject_sessions: bool = True
     container_url: str = "http://host.docker.internal:9999/gateway/mcp"
+    # How a UTM/QEMU VM reaches the gateway (VMs can't use host.docker.internal).
+    # Default = the Apple Virtualization host gateway; override for other VM nets
+    # (QEMU user-mode is typically 10.0.2.2).
+    vm_url: str = "http://192.168.64.1:9999/gateway/mcp"
     session_token_ttl: int = 86400  # seconds (24h)
     # Resilience: bound how long a downstream server may take to spawn+initialize
     # before it's treated as failed (so one hanging server can't block tool
