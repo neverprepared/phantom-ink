@@ -1207,6 +1207,26 @@ export namespace brainbox {
 	        this.addressed_to = source["addressed_to"];
 	    }
 	}
+	export class ProfileServerState {
+	    name: string;
+	    zone: string;
+	    default_enabled: boolean;
+	    override?: boolean;
+	    effective: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProfileServerState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.zone = source["zone"];
+	        this.default_enabled = source["default_enabled"];
+	        this.override = source["override"];
+	        this.effective = source["effective"];
+	    }
+	}
 	
 	export class Runner {
 	    name: string;

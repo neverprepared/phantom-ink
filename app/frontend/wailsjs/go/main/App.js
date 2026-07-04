@@ -50,6 +50,10 @@ export function CancelTask(arg1) {
   return window['go']['main']['App']['CancelTask'](arg1);
 }
 
+export function ClearProfileServerOverride(arg1, arg2) {
+  return window['go']['main']['App']['ClearProfileServerOverride'](arg1, arg2);
+}
+
 export function CompleteChannel(arg1, arg2) {
   return window['go']['main']['App']['CompleteChannel'](arg1, arg2);
 }
@@ -328,6 +332,10 @@ export function GetProfileImageInfo(arg1) {
 
 export function GetProfileSecrets(arg1) {
   return window['go']['main']['App']['GetProfileSecrets'](arg1);
+}
+
+export function GetProfileServers(arg1) {
+  return window['go']['main']['App']['GetProfileServers'](arg1);
 }
 
 export function GetRegistrySettings() {
@@ -652,6 +660,10 @@ export function SetOTLPHost(arg1) {
 
 export function SetProfileColor(arg1, arg2) {
   return window['go']['main']['App']['SetProfileColor'](arg1, arg2);
+}
+
+export function SetProfileServerOverride(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetProfileServerOverride'](arg1, arg2, arg3);
 }
 
 export function SetRegistrySettings(arg1, arg2) {
