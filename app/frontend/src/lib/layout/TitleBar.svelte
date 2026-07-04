@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { connectionState, commandPalette, profileState, profileColorStore } from '../stores.svelte';
+  import { connectionState, commandPalette, profileState, profileColorStore, currentPanel } from '../stores.svelte';
   import { getProfileColor } from '../utils/profileColors';
   import { notifications } from '../notifications.svelte';
 
   let connected = $derived(connectionState.connected);
   let profiles = $derived(profileState.visible);
   let activeProfile = $derived(profileState.active);
+  // The Profiles panel edits one profile at a time — "all" doesn't apply there.
+  let allDisabled = $derived(currentPanel.value === 'profiles');
 
   // If the active profile gets hidden, drop back to "all".
   $effect(() => {
@@ -69,6 +71,8 @@
       <button
         class="tab"
         class:active={!activeProfile}
+        disabled={allDisabled}
+        title={allDisabled ? 'pick a profile to edit it' : 'show all profiles'}
         onclick={() => selectProfile(null)}
       >all</button>
       {#each profiles as p (p.name)}
@@ -172,6 +176,14 @@
   .tab:hover {
     color: var(--text-muted, var(--color-text-secondary));
     background: transparent;
+  }
+
+  .tab:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  .tab:disabled:hover {
+    color: var(--text-faint, var(--color-text-tertiary));
   }
 
   .tab.active {
