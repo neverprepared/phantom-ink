@@ -28,6 +28,8 @@ export function CancelPlaybook(arg1:string):Promise<void>;
 
 export function CancelTask(arg1:string):Promise<void>;
 
+export function ClearProfileServerOverride(arg1:string,arg2:string):Promise<void>;
+
 export function CompleteChannel(arg1:string,arg2:brainbox.CompleteChannelRequest):Promise<brainbox.Channel>;
 
 export function CreateAgent(arg1:brainbox.CreateAgentRequest):Promise<brainbox.AgentDefinition>;
@@ -167,6 +169,8 @@ export function GetProfileEnvKey(arg1:string):Promise<string>;
 export function GetProfileImageInfo(arg1:string):Promise<main.ProfileImageRow|boolean>;
 
 export function GetProfileSecrets(arg1:string):Promise<Array<main.SecretKeyStatus>>;
+
+export function GetProfileServers(arg1:string):Promise<Array<brainbox.ProfileServerState>>;
 
 export function GetRegistrySettings():Promise<Record<string, string>>;
 
@@ -329,6 +333,8 @@ export function SetHiddenProfiles(arg1:Array<string>):Promise<void>;
 export function SetOTLPHost(arg1:string):Promise<void>;
 
 export function SetProfileColor(arg1:string,arg2:string):Promise<void>;
+
+export function SetProfileServerOverride(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
 export function SetRegistrySettings(arg1:string,arg2:string):Promise<void>;
 

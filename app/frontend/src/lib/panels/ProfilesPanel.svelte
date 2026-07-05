@@ -1,13 +1,13 @@
 <script lang="ts">
   import { getApi } from '../utils/api';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { notifications } from '../notifications.svelte';
   import { profileState, profileColorStore, type Profile } from '../stores.svelte';
   import { getProfileColor, profileColorStyle, PROFILE_PALETTE } from '../utils/profileColors';
   import PieChart from '../components/PieChart.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import GatewayEnvEditor from '../components/GatewayEnvEditor.svelte';
-  import TrustEditor from '../components/TrustEditor.svelte';
+  import ProfileServersEditor from '../components/ProfileServersEditor.svelte';
 
   // --- Profile image state ---
   type ImageStatus = { configured: boolean; exists: boolean; tag: string; digest: string; error?: string; built_at?: string };
@@ -33,13 +33,25 @@
 
   let profiles = $derived(profileState.profiles);
   let activeProfile = $derived(profileState.active);
+  let selecting = $state(false);
+  // Hidden profiles have no titlebar tab and the panel only expands the active
+  // profile's card, so without this they'd be unreachable — no way to unhide.
+  let hiddenProfiles = $derived(profiles.filter((p) => profileState.isHidden(p.name)));
 
   // The Profiles panel shows one profile's detail card, selected via the top
   // titlebar tabs (activeProfile). While on this panel there's no "all" state —
-  // if none is active, default to the first profile so a card always shows.
+  // if none is active (e.g. arriving from "all"), default to the first VISIBLE
+  // profile so a card always shows.
+  //
+  // Must pick from `visible`, not the full list: the titlebar resets active to
+  // "all" whenever the active profile is hidden, so defaulting to a hidden
+  // profile would ping-pong forever (select → titlebar clears → select …). The
+  // `selecting` guard (read untracked so it isn't a dependency) prevents the
+  // effect from stacking concurrent selects while one is in flight.
   $effect(() => {
-    if (!activeProfile && profiles.length) {
-      void selectProfile(profiles[0].name);
+    const visible = profileState.visible;
+    if (!activeProfile && visible.length && !untrack(() => selecting)) {
+      void selectProfile(visible[0].name, { silent: true });
     }
   });
 
@@ -149,16 +161,21 @@
     return `${Math.floor(hrs / 24)}d ago`;
   }
 
-  async function selectProfile(name: string) {
-    const a = await getApi();
-    if (!a) return;
+  // `silent` suppresses the toast for the auto-default select on panel entry —
+  // the user didn't manually switch, so it shouldn't announce one.
+  async function selectProfile(name: string, opts: { silent?: boolean } = {}) {
+    selecting = true;
     try {
+      const a = await getApi();
+      if (!a) return;
       await a.SetActiveProfile(name);
       const ap = await a.GetActiveProfile();
       profileState.active = ap?.name ? ap : null;
-      notifications.success(`Switched to ${name}`);
+      if (!opts.silent) notifications.success(`Switched to ${name}`);
     } catch (err: any) {
       notifications.error(`Failed to switch profile: ${err}`);
+    } finally {
+      selecting = false;
     }
   }
 
@@ -479,7 +496,7 @@
           {/if}
 
           <GatewayEnvEditor profile={p.name} unlocked={gatewayUnlocked} />
-          <TrustEditor profile={p.name} />
+          <ProfileServersEditor profile={p.name} />
 
           {#if logs.length > 0}
             <button class="logs-toggle" onclick={() => imageLogsOpen[p.name] = !logsOpen}>
@@ -505,6 +522,25 @@
         </div>
         {/if}
       {/each}
+
+      {#if hiddenProfiles.length > 0}
+        <div class="hidden-profiles">
+          <span class="hidden-profiles-label">hidden</span>
+          {#each hiddenProfiles as p (p.name)}
+            {@const pc = getProfileColor(p.name, profileColorStore.getOverride(p.name))}
+            <button
+              class="hidden-chip"
+              onclick={() => toggleHidden(p.name)}
+              title={`Show ${p.name} in the picker`}
+              aria-label="Show profile {p.name}"
+            >
+              <span class="hidden-chip-dot" style="background: {pc.text};"></span>
+              {p.name}
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          {/each}
+        </div>
+      {/if}
     {/if}
   </div>
 
@@ -650,6 +686,49 @@
 
   /* Profile list */
   .profile-list { display: flex; flex-direction: column; gap: 4px; }
+
+  .hidden-profiles {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .hidden-profiles-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-faint);
+    margin-right: 2px;
+  }
+  .hidden-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px;
+    border: 1px solid var(--border);
+    border-radius: 99px;
+    background: var(--bg-sunken);
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .hidden-chip:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+    background: var(--bg-elev);
+  }
+  .hidden-chip-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    opacity: 0.6;
+  }
+  .hidden-chip:hover .hidden-chip-dot { opacity: 1; }
   .empty { font-size: 12px; color: var(--color-text-tertiary); padding: 12px 0; }
 
   .profile-card {

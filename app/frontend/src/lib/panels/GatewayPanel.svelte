@@ -100,29 +100,29 @@
   .gateway-panel { padding: 1.25rem 1.5rem; max-width: 760px; }
   .panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
   h1 { font-size: 1.1rem; margin: 0 0 0.2rem; }
-  .subtitle { font-size: 0.75rem; color: var(--text-secondary); margin: 0; max-width: 48ch; }
+  .subtitle { font-size: 0.75rem; color: var(--text-muted); margin: 0; max-width: 48ch; }
   .header-actions { display: flex; align-items: center; gap: 0.6rem; white-space: nowrap; }
-  .count { font-size: 0.72rem; color: var(--text-secondary); }
+  .count { font-size: 0.72rem; color: var(--text-muted); }
   .btn {
-    background: var(--bg-secondary); border: 1px solid var(--border-subtle, var(--border));
-    border-radius: 5px; color: var(--text-secondary); cursor: pointer; font-size: 0.72rem; padding: 0.25rem 0.6rem;
+    background: var(--bg-sunken); border: 1px solid var(--border);
+    border-radius: 5px; color: var(--text-muted); cursor: pointer; font-size: 0.72rem; padding: 0.25rem 0.6rem;
   }
-  .btn:hover:not(:disabled) { color: var(--text-primary); }
-  .hint { font-size: 0.7rem; color: var(--text-secondary); margin-top: 0.8rem; }
+  .btn:hover:not(:disabled) { color: var(--text); }
+  .hint { font-size: 0.7rem; color: var(--text-muted); margin-top: 0.8rem; }
   .server-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
   .server-row {
     display: flex; align-items: center; gap: 0.75rem;
-    padding: 0.55rem 0.7rem; border: 1px solid var(--border-subtle, var(--border));
-    border-radius: 7px; background: var(--bg-secondary);
+    padding: 0.55rem 0.7rem; border: 1px solid var(--border);
+    border-radius: 7px; background: var(--bg-sunken);
   }
   .server-row.enabled { border-color: var(--accent, var(--border)); }
   .server-meta { display: flex; flex-direction: column; gap: 0.1rem; flex: 1; min-width: 0; }
   .server-name { font-size: 0.82rem; font-weight: 500; }
-  .server-cmd { font-size: 0.68rem; color: var(--text-secondary); font-family: var(--font-mono, monospace); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .state { font-size: 0.68rem; color: var(--text-secondary); width: 2rem; text-align: right; }
+  .server-cmd { font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono, monospace); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .state { font-size: 0.68rem; color: var(--text-muted); width: 2rem; text-align: right; }
   .toggle {
     flex: none; width: 36px; height: 20px; border-radius: 999px;
-    border: 1px solid var(--border); background: var(--bg-input, var(--bg-primary));
+    border: 1px solid var(--border); background: var(--bg-elev);
     position: relative; cursor: pointer; padding: 0; transition: background 0.15s, border-color 0.15s;
   }
   .toggle.on { background: var(--accent, #4a9); border-color: var(--accent, #4a9); }

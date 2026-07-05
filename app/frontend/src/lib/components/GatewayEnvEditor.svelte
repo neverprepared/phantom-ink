@@ -322,14 +322,14 @@
   .gw-toggle {
     background: none;
     border: none;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     font-size: 0.7rem;
     cursor: pointer;
     padding: 0.2rem 0;
     text-align: left;
     width: 100%;
   }
-  .gw-toggle:hover { color: var(--text-primary); }
+  .gw-toggle:hover { color: var(--text); }
   .gw-body {
     display: flex;
     flex-direction: column;
@@ -338,17 +338,17 @@
   }
   .gw-hint {
     font-size: 0.68rem;
-    color: var(--text-tertiary, var(--text-secondary));
+    color: var(--text-faint, var(--text-muted));
     margin: 0;
   }
   .gw-hint code { font-size: 0.66rem; }
   .gw-rows { display: flex; flex-direction: column; gap: 0.25rem; }
   .gw-row { display: flex; gap: 0.25rem; align-items: center; }
-  .gw-key, .gw-val, .gw-scope, .gw-ttl {
-    background: var(--bg-input, var(--bg-secondary));
-    border: 1px solid var(--border-subtle, var(--border));
+  .gw-key, .gw-val, .gw-scope, .gw-ttl, .gw-ceiling {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
     border-radius: 4px;
-    color: var(--text-primary);
+    color: var(--text);
     font-size: 0.7rem;
     padding: 0.2rem 0.35rem;
     font-family: var(--font-mono, monospace);
@@ -357,38 +357,38 @@
   .gw-val { flex: 1; }
   .gw-scope { flex: 1; }
   .gw-ttl { width: 3.5rem; }
-  .gw-unit { font-size: 0.68rem; color: var(--text-secondary); }
+  .gw-unit { font-size: 0.68rem; color: var(--text-muted); }
   .gw-icon {
     background: none;
     border: none;
     cursor: pointer;
     font-size: 0.7rem;
     padding: 0.1rem 0.2rem;
-    color: var(--text-secondary);
+    color: var(--text-muted);
   }
-  .gw-icon:hover { color: var(--text-primary); }
+  .gw-icon:hover { color: var(--text); }
   .gw-icon.danger:hover { color: var(--danger, #e55); }
   .gw-actions, .gw-mint-row { display: flex; gap: 0.3rem; align-items: center; flex-wrap: wrap; }
   .gw-btn {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-subtle, var(--border));
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
     border-radius: 4px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     cursor: pointer;
     font-size: 0.68rem;
     padding: 0.2rem 0.5rem;
   }
-  .gw-btn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--border); }
-  .gw-btn.primary { color: var(--accent, var(--text-primary)); }
+  .gw-btn:hover:not(:disabled) { color: var(--text); border-color: var(--border); }
+  .gw-btn.primary { color: var(--accent, var(--text)); }
   .gw-btn.danger:hover:not(:disabled) { color: var(--danger, #e55); }
-  .gw-btn.active { color: var(--text-primary); border-color: var(--border); }
+  .gw-btn.active { color: var(--text); border-color: var(--border); }
   .gw-btn:disabled { opacity: 0.5; cursor: default; }
   .gw-paste { display: flex; flex-direction: column; gap: 0.3rem; }
   .gw-paste-area {
-    background: var(--bg-input, var(--bg-secondary));
-    border: 1px solid var(--border-subtle, var(--border));
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
     border-radius: 4px;
-    color: var(--text-primary);
+    color: var(--text);
     font-size: 0.7rem;
     padding: 0.35rem;
     font-family: var(--font-mono, monospace);
@@ -397,24 +397,24 @@
     box-sizing: border-box;
   }
   .gw-mint, .gw-test {
-    border-top: 1px solid var(--border-subtle, var(--border));
+    border-top: 1px solid var(--border);
     padding-top: 0.4rem;
     display: flex;
     flex-direction: column;
     gap: 0.3rem;
   }
-  .gw-mint-label { font-size: 0.66rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.03em; }
+  .gw-mint-label { font-size: 0.66rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
   .gw-test-row { display: flex; gap: 0.5rem; align-items: center; justify-content: space-between; }
   .gw-tools { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.15rem; }
   .gw-tool { font-size: 0.66rem; }
-  .gw-tool code { font-size: 0.66rem; color: var(--accent, var(--text-primary)); }
-  .gw-tool-desc { color: var(--text-secondary); }
+  .gw-tool code { font-size: 0.66rem; color: var(--accent, var(--text)); }
+  .gw-tool-desc { color: var(--text-muted); }
   .gw-token-row { display: flex; gap: 0.25rem; align-items: center; }
   .gw-token {
     flex: 1;
     font-size: 0.64rem;
     word-break: break-all;
-    background: var(--bg-secondary);
+    background: var(--bg-sunken);
     padding: 0.2rem 0.35rem;
     border-radius: 4px;
   }

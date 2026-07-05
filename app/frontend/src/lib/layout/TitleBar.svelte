@@ -8,6 +8,8 @@
   let activeProfile = $derived(profileState.active);
   // The Profiles panel edits one profile at a time — "all" doesn't apply there.
   let allDisabled = $derived(currentPanel.value === 'profiles');
+  // The Gateway panel is global (remote MCP servers) — profile selection N/A.
+  let profilesDisabled = $derived(currentPanel.value === 'gateway');
 
   // If the active profile gets hidden, drop back to "all".
   $effect(() => {
@@ -71,8 +73,8 @@
       <button
         class="tab"
         class:active={!activeProfile}
-        disabled={allDisabled}
-        title={allDisabled ? 'pick a profile to edit it' : 'show all profiles'}
+        disabled={allDisabled || profilesDisabled}
+        title={profilesDisabled ? 'gateway is global — not per profile' : allDisabled ? 'pick a profile to edit it' : 'show all profiles'}
         onclick={() => selectProfile(null)}
       >all</button>
       {#each profiles as p (p.name)}
@@ -81,8 +83,9 @@
           class="tab"
           class:active={activeProfile?.name === p.name}
           class:no-secrets={p.secrets_mode === 'none'}
+          disabled={profilesDisabled}
           onclick={() => selectProfile(p.name)}
-          title={p.secrets_mode === 'none' ? `${p.path} (no secrets configured)` : `${p.path} (${p.secrets_mode})`}
+          title={profilesDisabled ? 'gateway is global — not per profile' : p.secrets_mode === 'none' ? `${p.path} (no secrets configured)` : `${p.path} (${p.secrets_mode})`}
         ><span class="tab-dot" style="background: {pc.text}"></span>{p.name}</button>
       {/each}
       <button class="tab-refresh" onclick={refreshProfiles} title="Refresh profiles" aria-label="Refresh profiles">

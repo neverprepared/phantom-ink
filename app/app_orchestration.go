@@ -10,6 +10,21 @@ func (a *App) GetTrust(profile string) (brainbox.TrustConfig, error) {
 	return a.client.GetTrust(profile)
 }
 
+// GetProfileServers lists a profile's gateway servers with effective on/off.
+func (a *App) GetProfileServers(profile string) ([]brainbox.ProfileServerState, error) {
+	return a.client.GetProfileServers(profile)
+}
+
+// SetProfileServerOverride manually includes/excludes a server for a profile.
+func (a *App) SetProfileServerOverride(profile, server string, enabled bool) error {
+	return a.client.SetProfileServerOverride(profile, server, enabled)
+}
+
+// ClearProfileServerOverride reverts a server to the resolution default.
+func (a *App) ClearProfileServerOverride(profile, server string) error {
+	return a.client.ClearProfileServerOverride(profile, server)
+}
+
 // SetTrustRule upserts a destination → zone rule for a profile.
 func (a *App) SetTrustRule(profile, pattern, zone string) error {
 	return a.client.SetTrustRule(profile, pattern, zone)

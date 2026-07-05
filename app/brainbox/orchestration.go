@@ -60,6 +60,42 @@ type StepPlanResult struct {
 	ExcludedTools []ToolZone       `json:"excluded_tools"`
 }
 
+// ProfileServerState is one gateway server's include/exclude for a profile:
+// the resolution default (zone ≤ ceiling) + the user's manual override.
+type ProfileServerState struct {
+	Name           string `json:"name"`
+	Zone           string `json:"zone"`
+	DefaultEnabled bool   `json:"default_enabled"`
+	Override       *bool  `json:"override"` // nil = no manual override
+	Effective      bool   `json:"effective"`
+}
+
+// GetProfileServers lists a profile's gateway servers with their effective on/off.
+func (c *Client) GetProfileServers(profile string) ([]ProfileServerState, error) {
+	var resp struct {
+		Servers []ProfileServerState `json:"servers"`
+	}
+	path := fmt.Sprintf("/api/orchestration/profiles/%s/servers", url.PathEscape(profile))
+	if err := c.get(path, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Servers, nil
+}
+
+// SetProfileServerOverride manually includes/excludes a server for a profile.
+func (c *Client) SetProfileServerOverride(profile, server string, enabled bool) error {
+	path := fmt.Sprintf("/api/orchestration/profiles/%s/servers/%s",
+		url.PathEscape(profile), url.PathEscape(server))
+	return c.put(path, map[string]interface{}{"enabled": enabled}, nil)
+}
+
+// ClearProfileServerOverride removes an override → reverts to the resolution default.
+func (c *Client) ClearProfileServerOverride(profile, server string) error {
+	path := fmt.Sprintf("/api/orchestration/profiles/%s/servers/%s",
+		url.PathEscape(profile), url.PathEscape(server))
+	return c.delete(path, nil)
+}
+
 // GetTrust returns a profile's trust rules + default ceiling.
 func (c *Client) GetTrust(profile string) (TrustConfig, error) {
 	var out TrustConfig
