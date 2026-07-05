@@ -504,9 +504,23 @@ func injectClaudeCredentials(container string, opts BuildOptions, key string) er
 
 	bundle := make(map[string]string)
 
-	// .credentials.json — auth tokens, copy verbatim.
+	// .credentials.json — auth tokens, copy verbatim. On macOS the Claude Code
+	// OAuth token lives in the login Keychain, not this file, so fall back to
+	// the Keychain when the file is absent. The Keychain password for the
+	// "Claude Code-credentials" item is the same JSON blob .credentials.json
+	// holds on Linux, so it drops straight into the bundle.
 	if data, err := os.ReadFile(filepath.Join(claudeConfigDir, ".credentials.json")); err == nil {
 		bundle["credentials_json"] = string(data)
+	} else if out, kerr := exec.Command(
+		"security", "find-generic-password", "-s", "Claude Code-credentials", "-w",
+	).Output(); kerr == nil {
+		if tok := strings.TrimSpace(string(out)); tok != "" {
+			bundle["credentials_json"] = tok
+		}
+	}
+	if _, ok := bundle["credentials_json"]; !ok {
+		opts.progress("warning: no Claude credentials found (no .credentials.json file and " +
+			"Keychain lookup failed) — the built image will be UNAUTHENTICATED")
 	}
 
 	// .claude.json — translate MCP server commands and paths for Linux.
