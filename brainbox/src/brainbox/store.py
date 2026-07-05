@@ -1,273 +1,320 @@
-"""SQLite persistence layer for brainbox.
+"""Postgres persistence layer for brainbox.
 
-Write-through cache: _sessions in lifecycle.py remains the hot path.
-The DB is written on mutation and read once at startup.
+Runs on Postgres via psycopg3 and a connection pool. Production connections are
+**autocommit** — every write is immediately durable, matching the behavior of
+the prior single long-lived SQLite connection (read-your-writes, persisted
+across restarts) without a global write lock, so multiple threads/nodes can
+write concurrently.
 
-All SQL functions are synchronous and called via asyncio.to_thread from
-async contexts, matching the existing hub.py pattern.
+Tests pin a single connection (``reset_store_for_tests``) and TRUNCATE between
+tests for isolation; the conftest autouse fixture calls it before and after
+each test. Requires ``CL_DATABASE_URL`` — there is no SQLite fallback.
+
+All SQL functions are synchronous and called via ``asyncio.to_thread`` from
+async contexts (the pool is thread-safe). ``async_*`` wrappers preserve the
+existing call sites.
 """
 
+from __future__ import annotations
+
+import atexit
 import asyncio
 import json
-import sqlite3
 import threading
-from typing import TYPE_CHECKING, Any
+import time
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any, Iterator
+
+import psycopg
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 if TYPE_CHECKING:
     from .loops import LoopInstance
     from .models import SessionContext
     from .runners import RunnerInfo
 
-_conn: sqlite3.Connection | None = None
-_lock = threading.Lock()
+_pool: ConnectionPool | None = None
+# When set (tests), every store call uses this single connection, serialized by
+# _test_lock, instead of the pool.
+_test_conn: "psycopg.Connection | None" = None
+_test_lock = threading.Lock()
 
 
-def _db() -> sqlite3.Connection:
-    global _conn
-    if _conn is None:
+def _get_pool() -> ConnectionPool:
+    global _pool
+    if _pool is None:
         from .config import settings
-        db_path = settings.db_file
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        _conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        _conn.execute("PRAGMA journal_mode=WAL")
-        _conn.execute("PRAGMA foreign_keys=ON")
-        _conn.row_factory = sqlite3.Row
-    return _conn
+
+        dsn = settings.database_url
+        if not dsn:
+            raise RuntimeError(
+                "CL_DATABASE_URL (a Postgres DSN) is required — the brainbox store "
+                "runs on Postgres, there is no SQLite fallback."
+            )
+        pool = ConnectionPool(
+            dsn,
+            min_size=1,
+            max_size=10,
+            open=True,
+            kwargs={"autocommit": True, "row_factory": dict_row},
+        )
+        _pool = pool  # set before init_db() so the nested _conn() sees the pool
+        # Close the pool at normal exit so its worker thread joins before
+        # interpreter finalization (Python 3.14 raises in __del__ otherwise).
+        atexit.register(close_pool)
+        init_db()
+    return _pool
+
+
+def close_pool() -> None:
+    """Close the connection pool. Called at exit and available for shutdown hooks."""
+    global _pool
+    if _pool is not None:
+        try:
+            _pool.close()
+        except Exception:
+            pass
+        _pool = None
+
+
+@contextmanager
+def _conn() -> "Iterator[psycopg.Connection]":
+    """Yield a connection: the pinned test connection (serialized) in test mode,
+    otherwise one borrowed from the pool (returned automatically)."""
+    if _test_conn is not None:
+        with _test_lock:
+            yield _test_conn
+    else:
+        with _get_pool().connection() as c:
+            yield c
 
 
 def reset_store_for_tests() -> None:
-    """Replace the DB connection with a fresh in-memory DB and create all tables.
+    """Pin a Postgres test connection, ensure schema, and truncate all tables.
 
-    Call this from test fixtures so tests never touch the real on-disk DB.
+    Called before AND after each test (see tests/conftest.py). Requires
+    ``CL_DATABASE_URL`` to point at a throwaway test database.
     """
-    global _conn
-    with _lock:
-        if _conn is not None:
-            try:
-                _conn.close()
-            except Exception:
-                pass
-        _conn = sqlite3.connect(":memory:", check_same_thread=False)
-        _conn.execute("PRAGMA foreign_keys=ON")
-        _conn.row_factory = sqlite3.Row
+    global _test_conn
+    if _test_conn is None:
+        from .config import settings
+
+        dsn = settings.database_url
+        if not dsn:
+            raise RuntimeError(
+                "tests require CL_DATABASE_URL pointing at a test Postgres database"
+            )
+        _test_conn = psycopg.connect(dsn, autocommit=True, row_factory=dict_row)
     init_db()
+    _truncate_all()
+
+
+def _truncate_all() -> None:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"
+        ).fetchall()
+        tables = [r["tablename"] for r in rows]
+        if tables:
+            joined = ", ".join(f'"{t}"' for t in tables)
+            c.execute(f"TRUNCATE {joined} RESTART IDENTITY CASCADE")
+
+
+# ---------------------------------------------------------------------------
+# Schema — Postgres DDL. INTEGER columns become BIGINT (epoch-ms values exceed
+# int4); the 4 auto-increment PKs use GENERATED AS IDENTITY. Booleans stay as
+# 0/1 BIGINT and JSON blobs stay TEXT for byte-for-byte parity with the code.
+# ---------------------------------------------------------------------------
+
+_SCHEMA: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS sessions (
+        session_name  TEXT   PRIMARY KEY,
+        runner_name   TEXT   NOT NULL,
+        active        BIGINT NOT NULL DEFAULT 1,
+        stopped_at    BIGINT,
+        blob          TEXT   NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(active)",
+    "CREATE INDEX IF NOT EXISTS idx_sessions_runner ON sessions(runner_name, active)",
+    """
+    CREATE TABLE IF NOT EXISTS runners (
+        name           TEXT   PRIMARY KEY,
+        capabilities   TEXT   NOT NULL,
+        tags           TEXT   NOT NULL,
+        version        TEXT   NOT NULL DEFAULT '',
+        host           TEXT,
+        machine_id     TEXT,
+        max_concurrent BIGINT NOT NULL DEFAULT 4,
+        last_seal_at   BIGINT,
+        registered_at  BIGINT NOT NULL,
+        updated_at     BIGINT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_runners_machine_id ON runners(machine_id)",
+    """
+    CREATE TABLE IF NOT EXISTS session_history (
+        id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        session_name TEXT   NOT NULL,
+        runner_name  TEXT,
+        backend      TEXT   NOT NULL DEFAULT 'docker',
+        role         TEXT,
+        state_final  TEXT   NOT NULL,
+        created_at   BIGINT NOT NULL,
+        stopped_at   BIGINT NOT NULL,
+        task_id      TEXT,
+        job_id       TEXT,
+        repo_url     TEXT,
+        reason       TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_history_stopped_at ON session_history(stopped_at)",
+    "CREATE INDEX IF NOT EXISTS idx_history_runner ON session_history(runner_name)",
+    """
+    CREATE TABLE IF NOT EXISTS audit_log (
+        id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        ts           BIGINT NOT NULL,
+        event        TEXT   NOT NULL,
+        session_name TEXT,
+        actor        TEXT,
+        success      BIGINT NOT NULL DEFAULT 1,
+        detail       TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_event ON audit_log(event)",
+    """
+    CREATE TABLE IF NOT EXISTS agent_state (
+        id            TEXT PRIMARY KEY,
+        kind          TEXT NOT NULL,
+        source        TEXT,
+        type          TEXT,
+        status        TEXT,
+        title         TEXT NOT NULL,
+        subtitle      TEXT,
+        workspace     TEXT,
+        parent_id     TEXT,
+        url           TEXT,
+        start_at      BIGINT,
+        end_at        BIGINT,
+        tags_json     TEXT NOT NULL DEFAULT '[]',
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        actions_json  TEXT NOT NULL DEFAULT '[]',
+        outcome_json  TEXT,
+        created_at    BIGINT NOT NULL,
+        updated_at    BIGINT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_agent_state_status "
+    "ON agent_state(status, workspace, updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_state_parent ON agent_state(parent_id)",
+    """
+    CREATE TABLE IF NOT EXISTS agent_events (
+        seq       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        id        TEXT NOT NULL,
+        source    TEXT,
+        type      TEXT,
+        status    TEXT,
+        parent_id TEXT,
+        ts        BIGINT NOT NULL,
+        envelope  TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_agent_events_id ON agent_events(id, seq)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_events_parent ON agent_events(parent_id, seq)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_events_ts ON agent_events(ts)",
+    """
+    CREATE TABLE IF NOT EXISTS loop_instances (
+        id                TEXT   PRIMARY KEY,
+        parent_task_id    TEXT   NOT NULL,
+        status            TEXT   NOT NULL,
+        iteration         BIGINT NOT NULL,
+        workspace_profile TEXT,
+        current_child_id  TEXT,
+        created_at        BIGINT NOT NULL,
+        updated_at        BIGINT NOT NULL,
+        blob              TEXT   NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_loop_instances_status "
+    "ON loop_instances(status, updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_loop_instances_current_child "
+    "ON loop_instances(current_child_id)",
+    """
+    CREATE TABLE IF NOT EXISTS loop_iteration_metric (
+        id                       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        loop_id                  TEXT   NOT NULL,
+        iteration                BIGINT NOT NULL,
+        convergence_metric_value DOUBLE PRECISION,
+        duration_ms              BIGINT,
+        cost_usd                 DOUBLE PRECISION,
+        tokens                   BIGINT,
+        model                    TEXT,
+        state_at_end             TEXT,
+        timestamp                BIGINT NOT NULL,
+        UNIQUE(loop_id, iteration)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_loop_iteration_metric_loop "
+    "ON loop_iteration_metric(loop_id, iteration)",
+    """
+    CREATE TABLE IF NOT EXISTS gateway_servers (
+        name       TEXT   PRIMARY KEY,
+        enabled    BIGINT NOT NULL DEFAULT 0,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS gateway_tokens (
+        token_id          TEXT   PRIMARY KEY,
+        workspace_profile TEXT   NOT NULL DEFAULT '',
+        scope_json        TEXT   NOT NULL DEFAULT '[]',
+        issued            BIGINT NOT NULL,
+        expiry            BIGINT NOT NULL,
+        residency_ceiling TEXT   NOT NULL DEFAULT ''
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS trust_rules (
+        profile    TEXT   NOT NULL,
+        pattern    TEXT   NOT NULL,
+        zone       TEXT   NOT NULL,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (profile, pattern)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS trust_profile_config (
+        profile         TEXT   PRIMARY KEY,
+        default_ceiling TEXT   NOT NULL,
+        updated_at      BIGINT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS profile_server_override (
+        profile TEXT   NOT NULL,
+        server  TEXT   NOT NULL,
+        enabled BIGINT NOT NULL,
+        PRIMARY KEY (profile, server)
+    )
+    """,
+)
 
 
 def init_db() -> None:
-    """Create tables if they don't exist. Safe to call on every startup."""
-    db = _db()
-    with _lock:
-        db.executescript("""
-            CREATE TABLE IF NOT EXISTS sessions (
-                session_name  TEXT    PRIMARY KEY,
-                runner_name   TEXT    NOT NULL,
-                active        INTEGER NOT NULL DEFAULT 1,
-                stopped_at    INTEGER,
-                blob          TEXT    NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_sessions_active
-                ON sessions(active);
-            CREATE INDEX IF NOT EXISTS idx_sessions_runner
-                ON sessions(runner_name, active);
-
-            CREATE TABLE IF NOT EXISTS runners (
-                name           TEXT    PRIMARY KEY,
-                capabilities   TEXT    NOT NULL,
-                tags           TEXT    NOT NULL,
-                version        TEXT    NOT NULL DEFAULT '',
-                host           TEXT,
-                machine_id     TEXT,
-                max_concurrent INTEGER NOT NULL DEFAULT 4,
-                last_seal_at   INTEGER,
-                registered_at  INTEGER NOT NULL,
-                updated_at     INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_runners_machine_id
-                ON runners(machine_id);
-
-            CREATE TABLE IF NOT EXISTS session_history (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_name TEXT    NOT NULL,
-                runner_name  TEXT,
-                backend      TEXT    NOT NULL DEFAULT 'docker',
-                role         TEXT,
-                state_final  TEXT    NOT NULL,
-                created_at   INTEGER NOT NULL,
-                stopped_at   INTEGER NOT NULL,
-                task_id      TEXT,
-                job_id       TEXT,
-                repo_url     TEXT,
-                reason       TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_history_stopped_at
-                ON session_history(stopped_at);
-            CREATE INDEX IF NOT EXISTS idx_history_runner
-                ON session_history(runner_name);
-
-            CREATE TABLE IF NOT EXISTS audit_log (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                ts           INTEGER NOT NULL,
-                event        TEXT    NOT NULL,
-                session_name TEXT,
-                actor        TEXT,
-                success      INTEGER NOT NULL DEFAULT 1,
-                detail       TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_audit_ts
-                ON audit_log(ts);
-            CREATE INDEX IF NOT EXISTS idx_audit_event
-                ON audit_log(event);
-
-            -- Cross-machine agent event bus: current state (upsert by envelope id).
-            -- One row per logical thing (a task, a chain run, a collected entry).
-            -- Status mutates in place as events arrive.
-            CREATE TABLE IF NOT EXISTS agent_state (
-                id          TEXT PRIMARY KEY,
-                kind        TEXT NOT NULL,            -- 'metric' | 'event'
-                source      TEXT,                     -- '<producer>@<machine>'
-                type        TEXT,                     -- last-seen dotted event type
-                status      TEXT,                     -- upcoming|active|done|failed|blocked|needs_action
-                title       TEXT NOT NULL,
-                subtitle    TEXT,
-                workspace   TEXT,
-                parent_id   TEXT,
-                url         TEXT,
-                start_at    INTEGER,
-                end_at      INTEGER,
-                tags_json     TEXT NOT NULL DEFAULT '[]',
-                metadata_json TEXT NOT NULL DEFAULT '{}',
-                actions_json  TEXT NOT NULL DEFAULT '[]',
-                outcome_json  TEXT,
-                created_at  INTEGER NOT NULL,
-                updated_at  INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_agent_state_status
-                ON agent_state(status, workspace, updated_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_agent_state_parent
-                ON agent_state(parent_id);
-
-            -- Append-only audit log of every envelope received. Same envelope id
-            -- can appear many times (one per state transition).
-            CREATE TABLE IF NOT EXISTS agent_events (
-                seq         INTEGER PRIMARY KEY AUTOINCREMENT,
-                id          TEXT NOT NULL,
-                source      TEXT,
-                type        TEXT,
-                status      TEXT,
-                parent_id   TEXT,
-                ts          INTEGER NOT NULL,
-                envelope    TEXT NOT NULL              -- full JSON envelope as received
-            );
-            CREATE INDEX IF NOT EXISTS idx_agent_events_id
-                ON agent_events(id, seq);
-            CREATE INDEX IF NOT EXISTS idx_agent_events_parent
-                ON agent_events(parent_id, seq);
-            CREATE INDEX IF NOT EXISTS idx_agent_events_ts
-                ON agent_events(ts);
-
-            -- One row per Loop instance. The full LoopInstance JSON lives in
-            -- ``blob``; the typed columns are projected for index queries
-            -- (load-active-on-startup, list-by-status, find-by-child).
-            CREATE TABLE IF NOT EXISTS loop_instances (
-                id                TEXT    PRIMARY KEY,
-                parent_task_id    TEXT    NOT NULL,
-                status            TEXT    NOT NULL,
-                iteration         INTEGER NOT NULL,
-                workspace_profile TEXT,
-                current_child_id  TEXT,
-                created_at        INTEGER NOT NULL,
-                updated_at        INTEGER NOT NULL,
-                blob              TEXT    NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_loop_instances_status
-                ON loop_instances(status, updated_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_loop_instances_current_child
-                ON loop_instances(current_child_id);
-
-            -- One row per iteration completion. Feeds the convergence-trend
-            -- chart and the fleet-level analytics in the future Loops panel.
-            -- (loop_id, iteration) is unique so re-running an iteration during
-            -- restart recovery overwrites rather than duplicates.
-            CREATE TABLE IF NOT EXISTS loop_iteration_metric (
-                id                       INTEGER PRIMARY KEY AUTOINCREMENT,
-                loop_id                  TEXT    NOT NULL,
-                iteration                INTEGER NOT NULL,
-                convergence_metric_value REAL,
-                duration_ms              INTEGER,
-                cost_usd                 REAL,
-                tokens                   INTEGER,
-                model                    TEXT,
-                state_at_end             TEXT,
-                timestamp                INTEGER NOT NULL,
-                UNIQUE(loop_id, iteration)
-            );
-            CREATE INDEX IF NOT EXISTS idx_loop_iteration_metric_loop
-                ON loop_iteration_metric(loop_id, iteration);
-
-            -- MCP gateway server registry (ADR-002, #152). Definitions live in
-            -- the catalog file (mcp-catalog.json); this table holds only which
-            -- servers are enabled. Seeded from the catalog on startup without
-            -- clobbering existing toggles.
-            CREATE TABLE IF NOT EXISTS gateway_servers (
-                name       TEXT    PRIMARY KEY,
-                enabled    INTEGER NOT NULL DEFAULT 0,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            );
-
-            -- MCP gateway Tier-0 tokens (ADR-002). Persisted so a token baked
-            -- into a long-lived container's .mcp.json survives a daemon restart
-            -- (in-memory _tokens alone would orphan it -> 401). Loaded into the
-            -- registry at startup; expired rows are pruned on load.
-            CREATE TABLE IF NOT EXISTS gateway_tokens (
-                token_id          TEXT    PRIMARY KEY,
-                workspace_profile TEXT    NOT NULL DEFAULT '',
-                scope_json        TEXT    NOT NULL DEFAULT '[]',
-                issued            INTEGER NOT NULL,
-                expiry            INTEGER NOT NULL,
-                residency_ceiling TEXT    NOT NULL DEFAULT ''
-            );
-
-            -- Declarative orchestration (tagged): per-profile trust map, a
-            -- destination-glob -> trust-zone rule set. Classifies where a
-            -- provider / MCP server / log sink sends data. See trust.py.
-            CREATE TABLE IF NOT EXISTS trust_rules (
-                profile    TEXT    NOT NULL,
-                pattern    TEXT    NOT NULL,
-                zone       TEXT    NOT NULL,
-                created_at INTEGER NOT NULL,
-                PRIMARY KEY (profile, pattern)
-            );
-
-            -- Per-profile orchestration config: the default residency ceiling
-            -- applied when a job step omits one.
-            CREATE TABLE IF NOT EXISTS trust_profile_config (
-                profile         TEXT    PRIMARY KEY,
-                default_ceiling TEXT    NOT NULL,
-                updated_at      INTEGER NOT NULL
-            );
-
-            -- Per-(profile, server) manual include/exclude override for the
-            -- gateway. The residency resolution seeds a default (server zone <=
-            -- profile ceiling); a row here overrides it (the user's on/off
-            -- judgement call). Absence = use the resolution default.
-            CREATE TABLE IF NOT EXISTS profile_server_override (
-                profile TEXT    NOT NULL,
-                server  TEXT    NOT NULL,
-                enabled INTEGER NOT NULL,
-                PRIMARY KEY (profile, server)
-            );
-        """)
-        # Additive column migrations for pre-existing DBs (CREATE IF NOT EXISTS
-        # won't alter an existing table). Idempotent: OperationalError == the
-        # column already exists.
-        for table, col, decl in [
-            ("gateway_tokens", "residency_ceiling", "TEXT NOT NULL DEFAULT ''"),
-        ]:
-            try:
-                db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
-            except sqlite3.OperationalError:
-                pass
+    """Create tables/indexes if they don't exist. Safe to call on every startup."""
+    with _conn() as c:
+        for stmt in _SCHEMA:
+            c.execute(stmt)
+        # Additive column migration for pre-existing DBs (Postgres supports
+        # ADD COLUMN IF NOT EXISTS, so this is idempotent without a try/except).
+        c.execute(
+            "ALTER TABLE gateway_tokens "
+            "ADD COLUMN IF NOT EXISTS residency_ceiling TEXT NOT NULL DEFAULT ''"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -285,37 +332,34 @@ _STRIP_FIELDS: dict[str, Any] = {
 def upsert_session(ctx: "SessionContext") -> None:  # type: ignore[name-defined]
     clean = ctx.model_copy(update=_STRIP_FIELDS)
     blob = clean.model_dump_json()
-    with _lock:
-        _db().execute(
+    with _conn() as c:
+        c.execute(
             """
             INSERT INTO sessions (session_name, runner_name, active, blob)
-            VALUES (?, ?, 1, ?)
-            ON CONFLICT(session_name) DO UPDATE SET
-                runner_name = excluded.runner_name,
+            VALUES (%s, %s, 1, %s)
+            ON CONFLICT (session_name) DO UPDATE SET
+                runner_name = EXCLUDED.runner_name,
                 active      = 1,
                 stopped_at  = NULL,
-                blob        = excluded.blob
+                blob        = EXCLUDED.blob
             """,
             (ctx.session_name, ctx.runner_name or "", blob),
         )
 
 
 def mark_session_inactive(session_name: str, stopped_at_ms: int) -> None:
-    with _lock:
-        _db().execute(
-            """
-            UPDATE sessions
-            SET active = 0, stopped_at = ?
-            WHERE session_name = ?
-            """,
+    with _conn() as c:
+        c.execute(
+            "UPDATE sessions SET active = 0, stopped_at = %s WHERE session_name = %s",
             (stopped_at_ms, session_name),
         )
 
 
 def load_active_runner_sessions() -> list[dict]:
-    rows = _db().execute(
-        "SELECT blob FROM sessions WHERE active = 1 AND runner_name != ''"
-    ).fetchall()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT blob FROM sessions WHERE active = 1 AND runner_name != ''"
+        ).fetchall()
     result = []
     for row in rows:
         try:
@@ -331,29 +375,28 @@ def load_active_runner_sessions() -> list[dict]:
 
 
 def upsert_runner(info: "RunnerInfo") -> None:  # type: ignore[name-defined]
-    import json as _json
-    now = int(__import__("time").time() * 1000)
-    with _lock:
-        _db().execute(
+    now = int(time.time() * 1000)
+    with _conn() as c:
+        c.execute(
             """
             INSERT INTO runners
                 (name, capabilities, tags, version, host, machine_id,
                  max_concurrent, registered_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(name) DO UPDATE SET
-                capabilities   = excluded.capabilities,
-                tags           = excluded.tags,
-                version        = excluded.version,
-                host           = excluded.host,
-                machine_id     = excluded.machine_id,
-                max_concurrent = excluded.max_concurrent,
-                registered_at  = excluded.registered_at,
-                updated_at     = excluded.updated_at
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (name) DO UPDATE SET
+                capabilities   = EXCLUDED.capabilities,
+                tags           = EXCLUDED.tags,
+                version        = EXCLUDED.version,
+                host           = EXCLUDED.host,
+                machine_id     = EXCLUDED.machine_id,
+                max_concurrent = EXCLUDED.max_concurrent,
+                registered_at  = EXCLUDED.registered_at,
+                updated_at     = EXCLUDED.updated_at
             """,
             (
                 info.name,
-                _json.dumps(info.capabilities),
-                _json.dumps(info.tags),
+                json.dumps(info.capabilities),
+                json.dumps(info.tags),
                 info.version or "",
                 info.host,
                 info.machine_id,
@@ -365,30 +408,32 @@ def upsert_runner(info: "RunnerInfo") -> None:  # type: ignore[name-defined]
 
 
 def delete_runner(name: str) -> None:
-    with _lock:
-        _db().execute("DELETE FROM runners WHERE name = ?", (name,))
+    with _conn() as c:
+        c.execute("DELETE FROM runners WHERE name = %s", (name,))
 
 
 def load_all_runners() -> list[dict]:
-    import json as _json
-    rows = _db().execute(
-        "SELECT name, capabilities, tags, version, host, machine_id, "
-        "max_concurrent, registered_at FROM runners"
-    ).fetchall()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT name, capabilities, tags, version, host, machine_id, "
+            "max_concurrent, registered_at FROM runners"
+        ).fetchall()
     result = []
     for row in rows:
         try:
-            result.append({
-                "name": row["name"],
-                "capabilities": _json.loads(row["capabilities"]),
-                "tags": _json.loads(row["tags"]),
-                "version": row["version"],
-                "host": row["host"],
-                "machine_id": row["machine_id"],
-                "max_concurrent": row["max_concurrent"],
-                "registered_at": row["registered_at"],
-                "last_seen": 0,  # force offline; runner must heartbeat to go live
-            })
+            result.append(
+                {
+                    "name": row["name"],
+                    "capabilities": json.loads(row["capabilities"]),
+                    "tags": json.loads(row["tags"]),
+                    "version": row["version"],
+                    "host": row["host"],
+                    "machine_id": row["machine_id"],
+                    "max_concurrent": row["max_concurrent"],
+                    "registered_at": row["registered_at"],
+                    "last_seen": 0,  # force offline; runner must heartbeat to go live
+                }
+            )
         except Exception:
             pass
     return result
@@ -401,13 +446,13 @@ def load_all_runners() -> list[dict]:
 
 def seed_gateway_server(name: str, enabled: bool) -> None:
     """Insert a catalog server if absent; never clobber an existing toggle."""
-    now = int(__import__("time").time() * 1000)
-    with _lock:
-        _db().execute(
+    now = int(time.time() * 1000)
+    with _conn() as c:
+        c.execute(
             """
             INSERT INTO gateway_servers (name, enabled, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(name) DO NOTHING
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (name) DO NOTHING
             """,
             (name, 1 if enabled else 0, now, now),
         )
@@ -415,15 +460,15 @@ def seed_gateway_server(name: str, enabled: bool) -> None:
 
 def set_gateway_server_enabled(name: str, enabled: bool) -> None:
     """Enable/disable a server (upsert)."""
-    now = int(__import__("time").time() * 1000)
-    with _lock:
-        _db().execute(
+    now = int(time.time() * 1000)
+    with _conn() as c:
+        c.execute(
             """
             INSERT INTO gateway_servers (name, enabled, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(name) DO UPDATE SET
-                enabled    = excluded.enabled,
-                updated_at = excluded.updated_at
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (name) DO UPDATE SET
+                enabled    = EXCLUDED.enabled,
+                updated_at = EXCLUDED.updated_at
             """,
             (name, 1 if enabled else 0, now, now),
         )
@@ -431,14 +476,16 @@ def set_gateway_server_enabled(name: str, enabled: bool) -> None:
 
 def list_gateway_servers() -> dict[str, bool]:
     """All known servers → enabled state."""
-    rows = _db().execute("SELECT name, enabled FROM gateway_servers").fetchall()
+    with _conn() as c:
+        rows = c.execute("SELECT name, enabled FROM gateway_servers").fetchall()
     return {row["name"]: bool(row["enabled"]) for row in rows}
 
 
 def enabled_gateway_server_names() -> list[str]:
-    rows = _db().execute(
-        "SELECT name FROM gateway_servers WHERE enabled = 1 ORDER BY name"
-    ).fetchall()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT name FROM gateway_servers WHERE enabled = 1 ORDER BY name"
+        ).fetchall()
     return [row["name"] for row in rows]
 
 
@@ -450,38 +497,42 @@ def save_gateway_token(
     expiry: int,
     residency_ceiling: str = "",
 ) -> None:
-    import json as _json
-    with _lock:
-        _db().execute(
+    with _conn() as c:
+        c.execute(
             """
-            INSERT OR REPLACE INTO gateway_tokens
+            INSERT INTO gateway_tokens
                 (token_id, workspace_profile, scope_json, issued, expiry, residency_ceiling)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (token_id) DO UPDATE SET
+                workspace_profile = EXCLUDED.workspace_profile,
+                scope_json        = EXCLUDED.scope_json,
+                issued            = EXCLUDED.issued,
+                expiry            = EXCLUDED.expiry,
+                residency_ceiling = EXCLUDED.residency_ceiling
             """,
-            (token_id, workspace_profile, _json.dumps(scope), issued, expiry, residency_ceiling),
+            (token_id, workspace_profile, json.dumps(scope), issued, expiry, residency_ceiling),
         )
 
 
 def delete_gateway_token(token_id: str) -> None:
-    with _lock:
-        _db().execute("DELETE FROM gateway_tokens WHERE token_id = ?", (token_id,))
+    with _conn() as c:
+        c.execute("DELETE FROM gateway_tokens WHERE token_id = %s", (token_id,))
 
 
 def load_gateway_tokens() -> list[dict]:
     """Non-expired persisted gateway tokens (also prunes expired rows)."""
-    import json as _json
-    now = int(__import__("time").time() * 1000)
-    with _lock:
-        _db().execute("DELETE FROM gateway_tokens WHERE expiry <= ?", (now,))
-    rows = _db().execute(
-        "SELECT token_id, workspace_profile, scope_json, issued, expiry, residency_ceiling "
-        "FROM gateway_tokens"
-    ).fetchall()
+    now = int(time.time() * 1000)
+    with _conn() as c:
+        c.execute("DELETE FROM gateway_tokens WHERE expiry <= %s", (now,))
+        rows = c.execute(
+            "SELECT token_id, workspace_profile, scope_json, issued, expiry, residency_ceiling "
+            "FROM gateway_tokens"
+        ).fetchall()
     return [
         {
             "token_id": r["token_id"],
             "workspace_profile": r["workspace_profile"],
-            "scope": _json.loads(r["scope_json"]),
+            "scope": json.loads(r["scope_json"]),
             "issued": r["issued"],
             "expiry": r["expiry"],
             "residency_ceiling": r["residency_ceiling"],
@@ -497,44 +548,46 @@ def load_gateway_tokens() -> list[dict]:
 
 def set_trust_rule(profile: str, pattern: str, zone: str) -> None:
     """Upsert one ``pattern -> zone`` rule for a profile's trust map."""
-    now = int(__import__("time").time() * 1000)
-    with _lock:
-        _db().execute(
+    now = int(time.time() * 1000)
+    with _conn() as c:
+        c.execute(
             """
             INSERT INTO trust_rules (profile, pattern, zone, created_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(profile, pattern) DO UPDATE SET zone = excluded.zone
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (profile, pattern) DO UPDATE SET zone = EXCLUDED.zone
             """,
             (profile, pattern, zone, now),
         )
 
 
 def delete_trust_rule(profile: str, pattern: str) -> bool:
-    with _lock:
-        cur = _db().execute(
-            "DELETE FROM trust_rules WHERE profile = ? AND pattern = ?", (profile, pattern)
+    with _conn() as c:
+        cur = c.execute(
+            "DELETE FROM trust_rules WHERE profile = %s AND pattern = %s", (profile, pattern)
         )
         return cur.rowcount > 0
 
 
 def list_trust_rules(profile: str) -> list[dict]:
     """A profile's trust rules as ``[{pattern, zone}, ...]``."""
-    rows = _db().execute(
-        "SELECT pattern, zone FROM trust_rules WHERE profile = ? ORDER BY pattern", (profile,)
-    ).fetchall()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT pattern, zone FROM trust_rules WHERE profile = %s ORDER BY pattern",
+            (profile,),
+        ).fetchall()
     return [{"pattern": r["pattern"], "zone": r["zone"]} for r in rows]
 
 
 def set_profile_default_ceiling(profile: str, zone: str) -> None:
-    now = int(__import__("time").time() * 1000)
-    with _lock:
-        _db().execute(
+    now = int(time.time() * 1000)
+    with _conn() as c:
+        c.execute(
             """
             INSERT INTO trust_profile_config (profile, default_ceiling, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(profile) DO UPDATE SET
-                default_ceiling = excluded.default_ceiling,
-                updated_at      = excluded.updated_at
+            VALUES (%s, %s, %s)
+            ON CONFLICT (profile) DO UPDATE SET
+                default_ceiling = EXCLUDED.default_ceiling,
+                updated_at      = EXCLUDED.updated_at
             """,
             (profile, zone, now),
         )
@@ -542,20 +595,21 @@ def set_profile_default_ceiling(profile: str, zone: str) -> None:
 
 def get_profile_default_ceiling(profile: str) -> str | None:
     """The profile's configured default ceiling zone name, or None if unset."""
-    row = _db().execute(
-        "SELECT default_ceiling FROM trust_profile_config WHERE profile = ?", (profile,)
-    ).fetchone()
+    with _conn() as c:
+        row = c.execute(
+            "SELECT default_ceiling FROM trust_profile_config WHERE profile = %s", (profile,)
+        ).fetchone()
     return row["default_ceiling"] if row else None
 
 
 def set_profile_server_override(profile: str, server: str, enabled: bool) -> None:
     """Manually include/exclude a server for a profile (overrides resolution)."""
-    with _lock:
-        _db().execute(
+    with _conn() as c:
+        c.execute(
             """
             INSERT INTO profile_server_override (profile, server, enabled)
-            VALUES (?, ?, ?)
-            ON CONFLICT(profile, server) DO UPDATE SET enabled = excluded.enabled
+            VALUES (%s, %s, %s)
+            ON CONFLICT (profile, server) DO UPDATE SET enabled = EXCLUDED.enabled
             """,
             (profile, server, 1 if enabled else 0),
         )
@@ -563,9 +617,9 @@ def set_profile_server_override(profile: str, server: str, enabled: bool) -> Non
 
 def clear_profile_server_override(profile: str, server: str) -> bool:
     """Remove a manual override → the server reverts to the resolution default."""
-    with _lock:
-        cur = _db().execute(
-            "DELETE FROM profile_server_override WHERE profile = ? AND server = ?",
+    with _conn() as c:
+        cur = c.execute(
+            "DELETE FROM profile_server_override WHERE profile = %s AND server = %s",
             (profile, server),
         )
         return cur.rowcount > 0
@@ -573,15 +627,17 @@ def clear_profile_server_override(profile: str, server: str) -> bool:
 
 def list_profile_server_overrides(profile: str) -> dict[str, bool]:
     """A profile's manual overrides as ``{server: enabled}``."""
-    rows = _db().execute(
-        "SELECT server, enabled FROM profile_server_override WHERE profile = ?", (profile,)
-    ).fetchall()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT server, enabled FROM profile_server_override WHERE profile = %s", (profile,)
+        ).fetchall()
     return {r["server"]: bool(r["enabled"]) for r in rows}
 
 
 # ---------------------------------------------------------------------------
 # Async wrappers
 # ---------------------------------------------------------------------------
+
 
 async def async_set_gateway_server_enabled(name: str, enabled: bool) -> None:
     await asyncio.to_thread(set_gateway_server_enabled, name, enabled)
@@ -621,15 +677,14 @@ async def async_delete_runner(name: str) -> None:
 
 
 def insert_session_history(ctx: "SessionContext", reason: str) -> None:  # type: ignore[name-defined]
-    import time as _time
-    stopped_at = int(_time.time() * 1000)
-    with _lock:
-        _db().execute(
+    stopped_at = int(time.time() * 1000)
+    with _conn() as c:
+        c.execute(
             """
             INSERT INTO session_history
                 (session_name, runner_name, backend, role, state_final,
                  created_at, stopped_at, task_id, job_id, repo_url, reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 ctx.session_name,
@@ -652,17 +707,18 @@ def query_session_history(
     offset: int = 0,
     runner_name: str | None = None,
 ) -> list[dict]:
-    if runner_name:
-        rows = _db().execute(
-            "SELECT * FROM session_history WHERE runner_name = ? "
-            "ORDER BY stopped_at DESC LIMIT ? OFFSET ?",
-            (runner_name, limit, offset),
-        ).fetchall()
-    else:
-        rows = _db().execute(
-            "SELECT * FROM session_history ORDER BY stopped_at DESC LIMIT ? OFFSET ?",
-            (limit, offset),
-        ).fetchall()
+    with _conn() as c:
+        if runner_name:
+            rows = c.execute(
+                "SELECT * FROM session_history WHERE runner_name = %s "
+                "ORDER BY stopped_at DESC LIMIT %s OFFSET %s",
+                (runner_name, limit, offset),
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT * FROM session_history ORDER BY stopped_at DESC LIMIT %s OFFSET %s",
+                (limit, offset),
+            ).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -683,14 +739,12 @@ def insert_audit(
     success: bool = True,
     detail: dict | None = None,
 ) -> None:
-    import json as _json
-    import time as _time
-    ts = int(_time.time() * 1000)
-    with _lock:
-        _db().execute(
+    ts = int(time.time() * 1000)
+    with _conn() as c:
+        c.execute(
             """
             INSERT INTO audit_log (ts, event, session_name, actor, success, detail)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
             """,
             (
                 ts,
@@ -698,7 +752,7 @@ def insert_audit(
                 session_name,
                 actor,
                 1 if success else 0,
-                _json.dumps(detail) if detail else None,
+                json.dumps(detail) if detail else None,
             ),
         )
 
@@ -709,26 +763,26 @@ def query_audit_log(
     event: str | None = None,
     session_name: str | None = None,
 ) -> list[dict]:
-    import json as _json
     clauses: list[str] = []
     params: list = []
     if event:
-        clauses.append("event = ?")
+        clauses.append("event = %s")
         params.append(event)
     if session_name:
-        clauses.append("session_name = ?")
+        clauses.append("session_name = %s")
         params.append(session_name)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-    rows = _db().execute(
-        f"SELECT * FROM audit_log {where} ORDER BY ts DESC LIMIT ? OFFSET ?",
-        (*params, limit, offset),
-    ).fetchall()
+    with _conn() as c:
+        rows = c.execute(
+            f"SELECT * FROM audit_log {where} ORDER BY ts DESC LIMIT %s OFFSET %s",
+            (*params, limit, offset),
+        ).fetchall()
     result = []
     for row in rows:
         d = dict(row)
         if d.get("detail"):
             try:
-                d["detail"] = _json.loads(d["detail"])
+                d["detail"] = json.loads(d["detail"])
             except Exception:
                 pass
         result.append(d)
@@ -748,21 +802,21 @@ def upsert_loop_instance(inst: "LoopInstance") -> None:  # type: ignore[name-def
     rehydration round-trips perfectly.
     """
     blob = inst.model_dump_json()
-    with _lock:
-        _db().execute(
+    with _conn() as c:
+        c.execute(
             """
             INSERT INTO loop_instances
                 (id, parent_task_id, status, iteration, workspace_profile,
                  current_child_id, created_at, updated_at, blob)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                parent_task_id    = excluded.parent_task_id,
-                status            = excluded.status,
-                iteration         = excluded.iteration,
-                workspace_profile = excluded.workspace_profile,
-                current_child_id  = excluded.current_child_id,
-                updated_at        = excluded.updated_at,
-                blob              = excluded.blob
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                parent_task_id    = EXCLUDED.parent_task_id,
+                status            = EXCLUDED.status,
+                iteration         = EXCLUDED.iteration,
+                workspace_profile = EXCLUDED.workspace_profile,
+                current_child_id  = EXCLUDED.current_child_id,
+                updated_at        = EXCLUDED.updated_at,
+                blob              = EXCLUDED.blob
             """,
             (
                 inst.id,
@@ -786,12 +840,13 @@ def load_active_loop_instances() -> list["LoopInstance"]:  # type: ignore[name-d
     """
     from .loops import LoopInstance, LoopStatus
 
-    rows = _db().execute(
-        "SELECT blob FROM loop_instances "
-        "WHERE status IN (?, ?) "
-        "ORDER BY updated_at DESC",
-        (LoopStatus.PENDING.value, LoopStatus.RUNNING.value),
-    ).fetchall()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT blob FROM loop_instances "
+            "WHERE status IN (%s, %s) "
+            "ORDER BY updated_at DESC",
+            (LoopStatus.PENDING.value, LoopStatus.RUNNING.value),
+        ).fetchall()
     result: list[LoopInstance] = []
     for row in rows:
         try:
@@ -808,9 +863,10 @@ def load_active_loop_instances() -> list["LoopInstance"]:  # type: ignore[name-d
 def get_loop_instance(loop_id: str) -> "LoopInstance | None":  # type: ignore[name-defined]
     from .loops import LoopInstance
 
-    row = _db().execute(
-        "SELECT blob FROM loop_instances WHERE id = ?", (loop_id,)
-    ).fetchone()
+    with _conn() as c:
+        row = c.execute(
+            "SELECT blob FROM loop_instances WHERE id = %s", (loop_id,)
+        ).fetchone()
     if row is None:
         return None
     try:
@@ -834,21 +890,21 @@ def insert_loop_iteration_metric(
     """Write one iteration row. UPSERT semantics on (loop_id, iteration)
     so restart-recovery rewrites instead of duplicating.
     """
-    with _lock:
-        _db().execute(
+    with _conn() as c:
+        c.execute(
             """
             INSERT INTO loop_iteration_metric
                 (loop_id, iteration, convergence_metric_value, duration_ms,
                  cost_usd, tokens, model, state_at_end, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(loop_id, iteration) DO UPDATE SET
-                convergence_metric_value = excluded.convergence_metric_value,
-                duration_ms              = excluded.duration_ms,
-                cost_usd                 = excluded.cost_usd,
-                tokens                   = excluded.tokens,
-                model                    = excluded.model,
-                state_at_end             = excluded.state_at_end,
-                timestamp                = excluded.timestamp
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (loop_id, iteration) DO UPDATE SET
+                convergence_metric_value = EXCLUDED.convergence_metric_value,
+                duration_ms              = EXCLUDED.duration_ms,
+                cost_usd                 = EXCLUDED.cost_usd,
+                tokens                   = EXCLUDED.tokens,
+                model                    = EXCLUDED.model,
+                state_at_end             = EXCLUDED.state_at_end,
+                timestamp                = EXCLUDED.timestamp
             """,
             (
                 loop_id,
@@ -868,12 +924,13 @@ def query_loop_iteration_metrics(loop_id: str) -> list[dict]:
     """Return iteration rows for a loop in iteration order. Feeds the
     convergence-trend chart in the future Loops panel.
     """
-    rows = _db().execute(
-        "SELECT loop_id, iteration, convergence_metric_value, duration_ms, "
-        "cost_usd, tokens, model, state_at_end, timestamp "
-        "FROM loop_iteration_metric WHERE loop_id = ? ORDER BY iteration ASC",
-        (loop_id,),
-    ).fetchall()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT loop_id, iteration, convergence_metric_value, duration_ms, "
+            "cost_usd, tokens, model, state_at_end, timestamp "
+            "FROM loop_iteration_metric WHERE loop_id = %s ORDER BY iteration ASC",
+            (loop_id,),
+        ).fetchall()
     return [dict(row) for row in rows]
 
 
