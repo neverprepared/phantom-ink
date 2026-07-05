@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getApi } from '../utils/api';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { notifications } from '../notifications.svelte';
   import { profileState, profileColorStore, type Profile } from '../stores.svelte';
   import { getProfileColor, profileColorStyle, PROFILE_PALETTE } from '../utils/profileColors';
@@ -33,13 +33,22 @@
 
   let profiles = $derived(profileState.profiles);
   let activeProfile = $derived(profileState.active);
+  let selecting = $state(false);
 
   // The Profiles panel shows one profile's detail card, selected via the top
   // titlebar tabs (activeProfile). While on this panel there's no "all" state —
-  // if none is active, default to the first profile so a card always shows.
+  // if none is active (e.g. arriving from "all"), default to the first VISIBLE
+  // profile so a card always shows.
+  //
+  // Must pick from `visible`, not the full list: the titlebar resets active to
+  // "all" whenever the active profile is hidden, so defaulting to a hidden
+  // profile would ping-pong forever (select → titlebar clears → select …). The
+  // `selecting` guard (read untracked so it isn't a dependency) prevents the
+  // effect from stacking concurrent selects while one is in flight.
   $effect(() => {
-    if (!activeProfile && profiles.length) {
-      void selectProfile(profiles[0].name);
+    const visible = profileState.visible;
+    if (!activeProfile && visible.length && !untrack(() => selecting)) {
+      void selectProfile(visible[0].name, { silent: true });
     }
   });
 
@@ -149,16 +158,21 @@
     return `${Math.floor(hrs / 24)}d ago`;
   }
 
-  async function selectProfile(name: string) {
-    const a = await getApi();
-    if (!a) return;
+  // `silent` suppresses the toast for the auto-default select on panel entry —
+  // the user didn't manually switch, so it shouldn't announce one.
+  async function selectProfile(name: string, opts: { silent?: boolean } = {}) {
+    selecting = true;
     try {
+      const a = await getApi();
+      if (!a) return;
       await a.SetActiveProfile(name);
       const ap = await a.GetActiveProfile();
       profileState.active = ap?.name ? ap : null;
-      notifications.success(`Switched to ${name}`);
+      if (!opts.silent) notifications.success(`Switched to ${name}`);
     } catch (err: any) {
       notifications.error(`Failed to switch profile: ${err}`);
+    } finally {
+      selecting = false;
     }
   }
 
