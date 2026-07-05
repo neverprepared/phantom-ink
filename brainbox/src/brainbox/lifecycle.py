@@ -1231,33 +1231,57 @@ async def monitor(ctx_or_name: SessionContext | str) -> SessionContext:
 # ---------------------------------------------------------------------------
 
 
-async def recycle(ctx_or_name: SessionContext | str, reason: str = "manual") -> SessionContext:
+async def recycle(
+    ctx_or_name: SessionContext | str, reason: str = "manual"
+) -> SessionContext | None:
+    """Tear down a session and GUARANTEE the store/memory bookkeeping.
+
+    The container stop/remove is best-effort (the backend already swallows a
+    missing container). Crucially, the session row is marked inactive and the
+    in-memory entry is popped **even when the ctx can't be resolved or the
+    backend errors** — otherwise a cancelled/failed task whose session isn't
+    cleanly in ``_sessions`` (e.g. a local-process runner session, #164's flip
+    side) leaks an ``active=1`` row that ``load_runner_sessions_from_db`` then
+    resurrects as a phantom "running" session forever.
+    """
     from .backends import create_backend
     from .monitor import stop_monitoring
-
-    ctx = _resolve(ctx_or_name)
-    ctx.state = SessionState.RECYCLING
-    slog = get_logger(session_name=ctx.session_name, container_name=ctx.container_name)
-
-    stop_monitoring(ctx.session_name)
-
-    # Delegate to backend
-    backend_impl = create_backend(ctx.backend)
-    await backend_impl.stop(ctx)
-    await backend_impl.remove(ctx)
-
-    ctx.state = SessionState.RECYCLED
-    _sessions.pop(ctx.session_name, None)
-    slog.info("container.recycled", metadata={"reason": reason, "backend": ctx.backend})
-    from .store import async_mark_session_inactive, async_insert_session_history
+    from .store import async_insert_session_history, async_mark_session_inactive
     from .utils import now_ms
-    stopped = now_ms()
-    await async_mark_session_inactive(ctx.session_name, stopped)
-    await async_insert_session_history(ctx, reason)
 
-    # Clean up host worktree if one was created for this session
-    if ctx.worktree_path:
-        await _remove_host_worktree(ctx.worktree_path)
+    name = ctx_or_name if isinstance(ctx_or_name, str) else ctx_or_name.session_name
+    try:
+        ctx: SessionContext | None = _resolve(ctx_or_name)
+    except Exception:
+        ctx = None
+
+    slog = get_logger(
+        session_name=name, container_name=getattr(ctx, "container_name", "") or ""
+    )
+    stop_monitoring(name)
+
+    if ctx is not None:
+        ctx.state = SessionState.RECYCLING
+        try:
+            backend_impl = create_backend(ctx.backend)
+            await backend_impl.stop(ctx)
+            await backend_impl.remove(ctx)
+        except Exception as exc:
+            slog.warning("container.recycle_backend_failed", metadata={"reason": str(exc)})
+        ctx.state = SessionState.RECYCLED
+
+    # Bookkeeping below runs regardless of resolve/backend outcome.
+    _sessions.pop(name, None)
+    slog.info(
+        "container.recycled",
+        metadata={"reason": reason, "backend": getattr(ctx, "backend", "?"), "resolved": ctx is not None},
+    )
+    await async_mark_session_inactive(name, now_ms())
+    if ctx is not None:
+        await async_insert_session_history(ctx, reason)
+        # Clean up host worktree if one was created for this session
+        if ctx.worktree_path:
+            await _remove_host_worktree(ctx.worktree_path)
 
     return ctx
 
@@ -1492,21 +1516,61 @@ def register_runner_session(ctx: SessionContext) -> None:
         _sessions[ctx.session_name] = ctx
 
 
+def _local_container_missing(ctx: SessionContext) -> bool:
+    """True only when a LOCAL docker container is *confirmed* gone (NotFound).
+
+    Returns False on any ambiguity (daemon unreachable, non-docker backend,
+    remote docker host) so we never deactivate a session we can't positively
+    prove is dead — a transient docker error must not evict a live session.
+    """
+    if ctx.backend != "docker" or not _docker_is_local(ctx.docker_host):
+        return False
+    try:
+        import docker as _dockerlib
+
+        from .backends.docker import _docker
+    except Exception:
+        return False
+    try:
+        _docker(ctx.docker_host).containers.get(ctx.container_name)
+        return False  # exists
+    except _dockerlib.errors.NotFound:
+        return True  # confirmed gone
+    except Exception:
+        return False  # unknown → keep
+
+
 def load_runner_sessions_from_db() -> int:
     """Restore runner sessions from DB into _sessions on startup.
-    Skips sessions already present (e.g. recovered via Docker labels).
-    Returns the number of sessions loaded."""
-    from .store import load_active_runner_sessions
+
+    Skips sessions already present (e.g. recovered via Docker labels) and
+    self-heals stale rows: a LOCAL docker session whose container is confirmed
+    gone is a leaked orphan (its task ended without the session being reaped).
+    Rather than resurrect a phantom "running" session, mark the row inactive.
+    Remote-runner sessions live on another daemon and can't be checked here, so
+    they're restored untouched. Returns the number of sessions loaded.
+    """
+    from .store import load_active_runner_sessions, mark_session_inactive
+    from .utils import now_ms
+
     rows = load_active_runner_sessions()
     loaded = 0
+    reaped = 0
     for data in rows:
         try:
             ctx = SessionContext.model_validate(data)
-            if ctx.session_name not in _sessions:
-                _sessions[ctx.session_name] = ctx
-                loaded += 1
         except Exception:
-            pass
+            continue
+        if ctx.session_name in _sessions:
+            continue
+        if _local_container_missing(ctx):
+            mark_session_inactive(ctx.session_name, now_ms())
+            reaped += 1
+            continue
+        _sessions[ctx.session_name] = ctx
+        loaded += 1
+    if reaped:
+        log.info("lifecycle.reaped_orphan_sessions", metadata={"count": reaped})
     return loaded
 
 
