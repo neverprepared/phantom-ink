@@ -407,6 +407,10 @@ async def lifespan(app: FastAPI):
 
     await hub_shutdown()
 
+    from . import store
+
+    store.close_pool()
+
 
 app = FastAPI(title="Brainbox", version="0.2.0", lifespan=lifespan)
 

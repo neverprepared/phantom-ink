@@ -338,6 +338,9 @@ class Settings(BaseSettings):
     health_check_retries: int = 3
 
     api_port: int = Field(default=9999, ge=1, le=65535)
+    # Postgres DSN for the persistence layer (store.py). Required — there is no
+    # SQLite fallback. e.g. postgresql://user:pass@host:5432/brainbox
+    database_url: str = ""
     public_host: str = "localhost"  # Advertised hostname/IP for the API; set CL_PUBLIC_HOST on remote hosts
     public_url: str = ""      # Full HTTPS base URL for the API (e.g. https://phantom-api.neverprepared.com)
     sessions_url: str = ""    # Base URL for terminal sessions (e.g. https://sessions.neverprepared.com)

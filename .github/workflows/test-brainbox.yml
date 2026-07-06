@@ -10,6 +10,22 @@ jobs:
     defaults:
       run:
         working-directory: brainbox
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: brainbox_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # brainbox's store runs on Postgres — the suite needs a live DB.
+      CL_DATABASE_URL: postgresql://postgres:test@localhost:5432/brainbox_test
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4

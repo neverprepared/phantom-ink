@@ -23,7 +23,7 @@ from typing import Any, Callable, Iterable
 
 from pydantic import BaseModel, Field
 
-from .store import _db, _lock
+from .store import _conn
 
 # Statuses that the attention aggregator surfaces. Producers can use any status
 # in the schema; only these three pull a card into the user's face.
@@ -96,8 +96,9 @@ def ingest(envelope: AgentEnvelope | dict[str, Any]) -> AgentEnvelope:
     now = int(time.time() * 1000)
     raw_json = env.model_dump_json(exclude_none=False)
 
-    with _lock:
-        db = _db()
+    # State upsert + event append must land together — an explicit transaction
+    # keeps them atomic even on the autocommit pool connection.
+    with _conn() as db, db.transaction():
         db.execute(
             """
             INSERT INTO agent_state (
@@ -105,24 +106,24 @@ def ingest(envelope: AgentEnvelope | dict[str, Any]) -> AgentEnvelope:
                 parent_id, url, start_at, end_at,
                 tags_json, metadata_json, actions_json, outcome_json,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                kind          = excluded.kind,
-                source        = excluded.source,
-                type          = excluded.type,
-                status        = COALESCE(excluded.status, agent_state.status),
-                title         = excluded.title,
-                subtitle      = excluded.subtitle,
-                workspace     = COALESCE(excluded.workspace, agent_state.workspace),
-                parent_id     = COALESCE(excluded.parent_id, agent_state.parent_id),
-                url           = excluded.url,
-                start_at      = COALESCE(excluded.start_at, agent_state.start_at),
-                end_at        = excluded.end_at,
-                tags_json     = excluded.tags_json,
-                metadata_json = excluded.metadata_json,
-                actions_json  = excluded.actions_json,
-                outcome_json  = excluded.outcome_json,
-                updated_at    = excluded.updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                kind          = EXCLUDED.kind,
+                source        = EXCLUDED.source,
+                type          = EXCLUDED.type,
+                status        = COALESCE(EXCLUDED.status, agent_state.status),
+                title         = EXCLUDED.title,
+                subtitle      = EXCLUDED.subtitle,
+                workspace     = COALESCE(EXCLUDED.workspace, agent_state.workspace),
+                parent_id     = COALESCE(EXCLUDED.parent_id, agent_state.parent_id),
+                url           = EXCLUDED.url,
+                start_at      = COALESCE(EXCLUDED.start_at, agent_state.start_at),
+                end_at        = EXCLUDED.end_at,
+                tags_json     = EXCLUDED.tags_json,
+                metadata_json = EXCLUDED.metadata_json,
+                actions_json  = EXCLUDED.actions_json,
+                outcome_json  = EXCLUDED.outcome_json,
+                updated_at    = EXCLUDED.updated_at
             """,
             (
                 env.id,
@@ -148,11 +149,10 @@ def ingest(envelope: AgentEnvelope | dict[str, Any]) -> AgentEnvelope:
         db.execute(
             """
             INSERT INTO agent_events (id, source, type, status, parent_id, ts, envelope)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
             (env.id, env.source, env.type, env.status, env.parent_id, now, raw_json),
         )
-        db.commit()
 
     _fanout(env)
     return env
@@ -189,30 +189,32 @@ def list_state(
     params: list[Any] = []
     if status:
         statuses = [status] if isinstance(status, str) else list(status)
-        placeholders = ",".join("?" * len(statuses))
+        placeholders = ",".join(["%s"] * len(statuses))
         clauses.append(f"status IN ({placeholders})")
         params.extend(statuses)
     if workspace is not None:
-        clauses.append("workspace = ?")
+        clauses.append("workspace = %s")
         params.append(workspace)
     if source:
-        clauses.append("source = ?")
+        clauses.append("source = %s")
         params.append(source)
     if parent_id:
-        clauses.append("parent_id = ?")
+        clauses.append("parent_id = %s")
         params.append(parent_id)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-    rows = _db().execute(
-        f"SELECT * FROM agent_state {where} ORDER BY updated_at DESC LIMIT ?",
-        (*params, limit),
-    ).fetchall()
+    with _conn() as c:
+        rows = c.execute(
+            f"SELECT * FROM agent_state {where} ORDER BY updated_at DESC LIMIT %s",
+            (*params, limit),
+        ).fetchall()
     return [_row_to_state(r) for r in rows]
 
 
 def get_state(envelope_id: str) -> dict[str, Any] | None:
-    row = _db().execute(
-        "SELECT * FROM agent_state WHERE id = ?", (envelope_id,)
-    ).fetchone()
+    with _conn() as c:
+        row = c.execute(
+            "SELECT * FROM agent_state WHERE id = %s", (envelope_id,)
+        ).fetchone()
     return _row_to_state(row) if row else None
 
 
@@ -225,17 +227,18 @@ def list_events(
     clauses: list[str] = []
     params: list[Any] = []
     if envelope_id:
-        clauses.append("id = ?")
+        clauses.append("id = %s")
         params.append(envelope_id)
     if parent_id:
-        clauses.append("parent_id = ?")
+        clauses.append("parent_id = %s")
         params.append(parent_id)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-    rows = _db().execute(
-        f"SELECT seq, id, source, type, status, parent_id, ts, envelope "
-        f"FROM agent_events {where} ORDER BY seq ASC LIMIT ?",
-        (*params, limit),
-    ).fetchall()
+    with _conn() as c:
+        rows = c.execute(
+            f"SELECT seq, id, source, type, status, parent_id, ts, envelope "
+            f"FROM agent_events {where} ORDER BY seq ASC LIMIT %s",
+            (*params, limit),
+        ).fetchall()
     out: list[dict[str, Any]] = []
     for r in rows:
         d = dict(r)
