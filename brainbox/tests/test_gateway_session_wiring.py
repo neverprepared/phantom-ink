@@ -12,7 +12,9 @@ from brainbox.lifecycle import _gateway_server_entry, _generate_container_mcp_js
 
 @pytest.fixture
 def gateway_on(monkeypatch):
-    monkeypatch.setattr(settings.gateway, "servers", ["brainbox"])
+    # Injection gates on the DB-backed registry, not the CL_GATEWAY__SERVERS seed.
+    from brainbox import store
+    store.set_gateway_server_enabled("brainbox", True)
     monkeypatch.setattr(settings.gateway, "inject_sessions", True)
     monkeypatch.setattr(settings.gateway, "container_url", "http://host.docker.internal:9999/gateway/mcp")
     monkeypatch.setattr(settings.gateway, "session_token_ttl", 3600)
@@ -48,13 +50,22 @@ class TestGatewayServerEntry:
     def test_no_entry_without_profile(self, gateway_on):
         assert _gateway_server_entry("") is None
 
-    def test_no_entry_when_no_servers(self, monkeypatch):
-        monkeypatch.setattr(settings.gateway, "servers", [])
+    def test_no_entry_when_registry_empty(self, monkeypatch):
+        # The legacy env allowlist is only a first-boot seed — an empty DB
+        # registry means no injection even when the env var is populated.
+        monkeypatch.setattr(settings.gateway, "servers", ["brainbox"])
         monkeypatch.setattr(settings.gateway, "inject_sessions", True)
         assert _gateway_server_entry("personal") is None
 
+    def test_entry_when_env_allowlist_empty(self, gateway_on, monkeypatch):
+        # Regression: post-#161 deployments manage servers via the DB registry
+        # and may drop CL_GATEWAY__SERVERS entirely; injection must still fire.
+        monkeypatch.setattr(settings.gateway, "servers", [])
+        assert _gateway_server_entry("personal") is not None
+
     def test_no_entry_when_injection_disabled(self, monkeypatch):
-        monkeypatch.setattr(settings.gateway, "servers", ["brainbox"])
+        from brainbox import store
+        store.set_gateway_server_enabled("brainbox", True)
         monkeypatch.setattr(settings.gateway, "inject_sessions", False)
         assert _gateway_server_entry("personal") is None
 
@@ -80,8 +91,8 @@ class TestContainerMcpJson:
         servers = json.loads(dest.read_text())["mcpServers"]
         assert set(servers) == {"slack", "phantom-gateway"}
 
-    def test_nothing_written_when_no_servers_and_gateway_off(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(settings.gateway, "servers", [])
+    def test_nothing_written_when_no_servers_and_gateway_off(self, tmp_path):
+        # DB registry is empty (truncated per test) → gateway inactive
         dest = tmp_path / "workspace-mcp.json"
         assert _generate_container_mcp_json(tmp_path / "cfg", dest, workspace_profile="personal") is False
         assert not dest.exists()
@@ -99,8 +110,7 @@ class TestContainerMcpJson:
         assert set(servers) == {"phantom-gateway"}  # profile's slack dropped
 
     def test_exclusive_falls_back_to_profile_when_gateway_inactive(self, monkeypatch, tmp_path):
-        # exclusive on, but gateway not active (no servers) → keep profile servers
-        monkeypatch.setattr(settings.gateway, "servers", [])
+        # exclusive on, but gateway not active (empty DB registry) → keep profile servers
         monkeypatch.setattr(settings.gateway, "exclusive", True)
         cfg = tmp_path / "cfg"
         cfg.mkdir()
