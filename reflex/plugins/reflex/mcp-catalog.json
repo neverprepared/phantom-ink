@@ -425,37 +425,6 @@
         "args": []
       }
     },
-    "markdown-to-confluence": {
-      "description": "Publish Markdown documents to Confluence — converts to ADF, renders Mermaid diagrams as attachments",
-      "category": "docs",
-      "url": "https://github.com/neverprepared/mcp-markdown-to-confluence",
-      "requires": [
-        "CONFLUENCE_BASE_URL",
-        "CONFLUENCE_EMAIL",
-        "CONFLUENCE_API_TOKEN"
-      ],
-      "definition": {
-        "command": "npx",
-        "args": [
-          "-y",
-          "@neverprepared/mcp-markdown-to-confluence@1.4.2"
-        ],
-        "env": {
-          "CONFLUENCE_BASE_URL": "${CONFLUENCE_BASE_URL}",
-          "CONFLUENCE_EMAIL": "${CONFLUENCE_EMAIL}",
-          "CONFLUENCE_API_TOKEN": "${CONFLUENCE_API_TOKEN}"
-        }
-      },
-      "container_definition": {
-        "command": "mcp-markdown-to-confluence",
-        "args": [],
-        "env": {
-          "CONFLUENCE_BASE_URL": "${CONFLUENCE_BASE_URL}",
-          "CONFLUENCE_EMAIL": "${CONFLUENCE_EMAIL}",
-          "CONFLUENCE_API_TOKEN": "${CONFLUENCE_API_TOKEN}"
-        }
-      }
-    },
     "grafana": {
       "description": "Grafana dashboards, datasources, alerts, and Loki/Prometheus queries",
       "category": "observability",
@@ -497,21 +466,26 @@
         "env": {}
       }
     },
-    "mcp-brain": {
-      "description": "mcp-brain — unified memory, reasoning, and validation server (replaces obsidian-second-brain)",
+    "phantom-brain": {
+      "description": "phantom-brain — shared long-term memory (recall/learn/perceive + working-memory tasks) via the pbrain daemon",
       "category": "knowledge",
-      "url": "https://github.com/mindmorass/mcp-brain",
+      "url": "https://github.com/neverprepared/phantom-brain",
       "requires": [
-        "BRAIN_VAULT_PATH"
+        "CL_BRAIN_API",
+        "CL_BRAIN_API_TOKEN"
       ],
       "definition": {
-        "command": "node",
+        "command": "pbrainctl",
         "args": [
-          "/Users/cdowning/workspaces/profiles/personal/code/mcp/mcp-brain/dist/index.js"
+          "client",
+          "mcp"
         ],
         "env": {
-          "BRAIN_VAULT_PATH": "${BRAIN_VAULT_PATH:-${OBSIDIAN_VAULT_PATH}}",
-          "MCP_BRAIN_LOG_LEVEL": "${MCP_BRAIN_LOG_LEVEL:-info}"
+          "CL_BRAIN_API": "${CL_BRAIN_API}",
+          "CL_BRAIN_API_TOKEN": "${CL_BRAIN_API_TOKEN}",
+          "CL_BRAIN_ONLINE_RECALL": "true",
+          "CL_WORKSPACE_PROFILE": "${WORKSPACE_PROFILE}",
+          "CL_BRAIN_VAULT": "${CL_BRAIN_VAULT}"
         }
       }
     }
