@@ -154,3 +154,43 @@ class TestLocalContainerMissing:
         client.containers.get.side_effect = RuntimeError("daemon down")
         with patch("brainbox.backends.docker._docker", return_value=client):
             assert _local_container_missing(_ctx()) is False
+
+
+# ---------------------------------------------------------------------------
+# Runner-path stop/delete must be durable (mark the store row inactive)
+# ---------------------------------------------------------------------------
+
+
+class TestRunnerPathDurability:
+    """Popping _sessions without marking the row inactive resurrected stopped/
+    deleted runner sessions on every daemon restart."""
+
+    async def _call(self, endpoint: str, op: str):
+        from httpx import ASGITransport, AsyncClient
+
+        from brainbox import lifecycle, store
+        from brainbox.api import app
+
+        ctx = _ctx("r-durable", runner_name="control")
+        lifecycle._sessions["r-durable"] = ctx
+        store.upsert_session(ctx)
+        assert any(
+            s["session_name"] == "r-durable" for s in store.load_active_runner_sessions()
+        )
+
+        with patch("brainbox.lifecycle._dispatch_runner_op", AsyncMock(return_value={})):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+                r = await c.post(endpoint, json={"name": "r-durable"})
+        assert r.status_code == 200
+
+        # memory popped AND store row inactive → survives a restart as gone
+        assert "r-durable" not in lifecycle._sessions
+        assert not any(
+            s["session_name"] == "r-durable" for s in store.load_active_runner_sessions()
+        )
+
+    async def test_runner_delete_marks_inactive(self):
+        await self._call("/api/delete", "session.delete")
+
+    async def test_runner_stop_marks_inactive(self):
+        await self._call("/api/stop", "session.stop")

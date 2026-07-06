@@ -1577,6 +1577,14 @@ async def api_stop_session(
         try:
             await _dispatch_runner_op(session_name, "session.stop", timeout=10.0)
             _sessions.pop(session_name, None)
+            # Durably mark inactive — popping _sessions alone left the active=1
+            # row behind, so stopped runner sessions resurrected on every daemon
+            # restart (load_runner_sessions_from_db). Mirrors recycle()'s
+            # bookkeeping on the local path.
+            from .store import async_insert_session_history, async_mark_session_inactive
+            from .utils import now_ms as _nowms
+            await async_mark_session_inactive(session_name, _nowms())
+            await async_insert_session_history(ctx, "dashboard_stop")
             _audit_log(request, "session.stop", session_name=session_name, success=True)
             _broadcast_sse(json.dumps({"action": "session.stop", "session": session_name}))
             return {"success": True}
@@ -1654,6 +1662,12 @@ async def api_delete_session(
         try:
             await _dispatch_runner_op(session_name, "session.delete", timeout=10.0)
             _sessions.pop(session_name, None)
+            # Durably mark inactive — same contract as the stop path above;
+            # without this, deleted runner sessions returned on every restart.
+            from .store import async_insert_session_history, async_mark_session_inactive
+            from .utils import now_ms as _nowms
+            await async_mark_session_inactive(session_name, _nowms())
+            await async_insert_session_history(ctx, "dashboard_delete")
             _audit_log(request, "session.delete", session_name=session_name, success=True)
             _broadcast_sse(json.dumps({"action": "session.delete", "session": session_name}))
             return {"success": True}
