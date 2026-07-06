@@ -11,12 +11,11 @@
   // The Gateway panel is global (remote MCP servers) — profile selection N/A.
   let profilesDisabled = $derived(currentPanel.value === 'gateway');
 
-  // If the active profile gets hidden, drop back to "all".
-  $effect(() => {
-    if (activeProfile && profileState.hidden.has(activeProfile.name)) {
-      void selectProfile(null);
-    }
-  });
+  // A hidden profile can still be the active one — you select it from the
+  // Profiles panel's lower tab bar to edit it or un-hide it. The upper tabs
+  // just don't render a tab for it (they show enabled profiles only), so no
+  // tab highlights while a hidden profile is active. (No reset-to-"all" here:
+  // that would bounce you off a hidden profile the moment you selected it.)
   let restarting = $state(false);
 
   async function restartAPI() {
