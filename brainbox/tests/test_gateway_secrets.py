@@ -98,3 +98,34 @@ class TestApi:
         async with client as c:
             r = await c.put("/api/gateway/profiles/personal/env", json={"not_env": {}})
             assert r.status_code == 400
+
+
+class TestEnvUpdateLiveReload:
+    """Credential writes must take effect without a daemon restart."""
+
+    async def test_put_env_evicts_profile_pool(self, unlocked, client):
+        from unittest.mock import AsyncMock, patch
+
+        evict = AsyncMock()
+        with patch("brainbox.api._gateway_pool") as pool:
+            pool.close = evict
+            async with client as c:
+                r = await c.put(
+                    "/api/gateway/profiles/personal/env",
+                    json={"env": {"JIRA_API_TOKEN": "new-secret"}},
+                )
+        assert r.status_code == 200
+        evict.assert_awaited_once_with("personal")
+
+    async def test_delete_env_evicts_profile_pool(self, unlocked, client):
+        from unittest.mock import AsyncMock, patch
+
+        import brainbox.gateway_secrets as gws
+        gws.set_profile_env("personal", {"K": "v"})
+        evict = AsyncMock()
+        with patch("brainbox.api._gateway_pool") as pool:
+            pool.close = evict
+            async with client as c:
+                r = await c.delete("/api/gateway/profiles/personal/env")
+        assert r.status_code == 200
+        evict.assert_awaited_once_with("personal")

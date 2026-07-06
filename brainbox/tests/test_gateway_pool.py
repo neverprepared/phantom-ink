@@ -165,3 +165,48 @@ def test_unwrap_error_drills_into_exception_group():
     assert "FileNotFoundError" in msg and "uvx not found" in msg
     # plain exceptions pass through
     assert _unwrap_error(ValueError("boom")) == "ValueError: boom"
+
+
+@pytest.mark.asyncio
+async def test_close_clears_negative_cache_for_profile():
+    # Credential updates call pool.close(profile) — that must clear the
+    # negative cache too, so a server that failed BECAUSE creds were missing
+    # is retried immediately with the new env instead of waiting failure_ttl.
+    pool = GatewayPool(connect_timeout=0.5, failure_ttl=300.0)
+    hang = ServerSpec(name="hang", command=sys.executable, args=["-c", "import time; time.sleep(60)"])
+    try:
+        with pytest.raises(Exception):
+            await pool.list_tools("personal", hang)
+        assert ("personal", "hang") in pool._failed
+
+        await pool.close("personal")
+        assert ("personal", "hang") not in pool._failed
+
+        # other profiles' failure marks survive a scoped close
+        with pytest.raises(Exception):
+            await pool.list_tools("work", hang)
+        await pool.close("personal")
+        assert ("work", "hang") in pool._failed
+    finally:
+        await pool.aclose()
+
+
+@pytest.mark.asyncio
+async def test_close_evicts_live_connection_for_profile():
+    # After close(profile), the next call re-spawns a FRESH subprocess (new
+    # env) rather than reusing the pooled one.
+    pool = GatewayPool()
+    spec = _spec()
+    try:
+        await pool.list_tools("personal", spec)
+        first = pool._conns.get(("personal", "fixture"))
+        assert first is not None
+
+        await pool.close("personal")
+        assert ("personal", "fixture") not in pool._conns
+
+        await pool.list_tools("personal", spec)
+        second = pool._conns.get(("personal", "fixture"))
+        assert second is not None and second is not first
+    finally:
+        await pool.aclose()
