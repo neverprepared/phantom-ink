@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
+  import CardExpander from './CardExpander.svelte';
 
   // Per-profile MCP gateway server toggles. Each gateway-enabled server has a
   // default (seeded by the residency resolution: its trust zone ≤ the profile
@@ -17,18 +18,12 @@
     effective: boolean;
   };
 
-  let open = $state(false);
   let loaded = $state(false);
   let loading = $state(false);
   let rows = $state<Row[]>([]);
   let busy = $state<Record<string, boolean>>({});
 
   let onCount = $derived(rows.filter((r) => r.effective).length);
-
-  async function toggle() {
-    open = !open;
-    if (open && !loaded) await load();
-  }
 
   async function load() {
     loading = true;
@@ -82,11 +77,11 @@
   }
 </script>
 
-<button class="pse-toggle" onclick={toggle}>
-  {open ? '▾' : '▸'} gateway servers{loaded && rows.length ? ` (${onCount}/${rows.length})` : ''}
-</button>
-
-{#if open}
+<CardExpander
+  label="gateway servers"
+  count={loaded && rows.length ? `(${onCount}/${rows.length})` : ''}
+  onOpen={() => { if (!loaded) void load(); }}
+>
   <div class="pse-body">
     {#if loading}
       <p class="pse-hint">loading…</p>
@@ -116,14 +111,9 @@
       <p class="pse-hint">default from residency zone; toggle to override.</p>
     {/if}
   </div>
-{/if}
+</CardExpander>
 
 <style>
-  .pse-toggle {
-    background: none; border: none; color: var(--text-muted); font-size: 0.7rem;
-    cursor: pointer; padding: 0.2rem 0; text-align: left; width: 100%;
-  }
-  .pse-toggle:hover { color: var(--text); }
   .pse-body { display: flex; flex-direction: column; gap: 0.4rem; padding: 0.3rem 0; }
   .pse-hint { font-size: 0.66rem; color: var(--text-muted); margin: 0; }
   .pse-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }

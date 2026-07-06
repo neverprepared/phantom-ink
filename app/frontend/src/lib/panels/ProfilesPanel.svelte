@@ -8,6 +8,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import GatewayEnvEditor from '../components/GatewayEnvEditor.svelte';
   import ProfileServersEditor from '../components/ProfileServersEditor.svelte';
+  import CardExpander from '../components/CardExpander.svelte';
 
   // --- Profile image state ---
   type ImageStatus = { configured: boolean; exists: boolean; tag: string; digest: string; error?: string; built_at?: string };
@@ -434,62 +435,25 @@
     {:else}
       {#each profiles as p}
         {@const pColor = getProfileColor(p.name, profileColorStore.getOverride(p.name))}
-        {@const isActive = activeProfile?.name === p.name}
         {@const status = imageStatuses[p.name]}
         {@const building = imageBuilding[p.name] ?? false}
         {@const logs = imageLogs[p.name] ?? []}
-        {@const logsOpen = imageLogsOpen[p.name] ?? false}
         {@const isHidden = profileState.isHidden(p.name)}
         {#if activeProfile?.name === p.name}
-        <div class="profile-card" class:active={isActive} class:hidden={isHidden}>
-          <div class="profile-row">
+        <div class="profile-card" class:hidden={isHidden} style="--card-accent: {pColor.text};">
+          <div class="card-header">
             <span class="profile-dot" style="background: {pColor.text};"></span>
-            <button
-              class="profile-item"
-              class:active={isActive}
-              style={isActive ? `background: ${pColor.bg}; border-color: ${pColor.border};` : ''}
-              onclick={() => selectProfile(p.name)}
-            >
-              <span class="profile-name" style={isActive ? `color: ${pColor.text};` : ''}>{p.name}</span>
-              <span class="profile-meta">
-                {#if isHidden}
-                  <span class="secrets-badge plain">hidden</span>
-                {/if}
-                {#if profileDiskMap.has(p.name)}
-                  <span class="disk-badge">{profileDiskMap.get(p.name)}</span>
-                {/if}
-                {#if p.has_backup}
-                  <span class="secrets-badge plain">backup</span>
-                {/if}
-              </span>
-            </button>
-            <button class="btn-hide-profile" onclick={() => toggleHidden(p.name)} title={isHidden ? `Show ${p.name} in the picker` : `Hide ${p.name} from the picker`} aria-label="{isHidden ? 'Show' : 'Hide'} profile {p.name}">
+            <span class="profile-name" style="color: {pColor.text};">{p.name}</span>
+            <span class="profile-badges">
               {#if isHidden}
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-              {:else}
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                <span class="secrets-badge plain">hidden</span>
               {/if}
-            </button>
-            <button class="btn-delete-profile" onclick={() => confirmDelete = confirmDelete === p.name ? null : p.name} title="Delete profile" aria-label="Delete profile {p.name}">
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            </button>
-          </div>
-
-          <div class="card-footer">
-            <div class="color-swatches">
-              {#each PROFILE_PALETTE as swatch (swatch.index)}
-                <button
-                  class="swatch"
-                  class:selected={pColor.index === swatch.index}
-                  style="background: {swatch.text};"
-                  onclick={() => setColor(p.name, swatch.index)}
-                  title="Color {swatch.index}"
-                  aria-label="Set color {swatch.index} for {p.name}"
-                ></button>
-              {/each}
-            </div>
-
-            <div class="card-image-actions">
+              {#if profileDiskMap.has(p.name)}
+                <span class="disk-badge">{profileDiskMap.get(p.name)}</span>
+              {/if}
+              {#if p.has_backup}
+                <span class="secrets-badge plain">backup</span>
+              {/if}
               {#if !status}
                 <span class="image-badge checking">checking…</span>
               {:else if !status.configured}
@@ -502,50 +466,76 @@
               {:else}
                 <span class="image-badge missing" title={status?.error ?? ''}>no image{status?.error ? ' ⚠' : ''}</span>
               {/if}
+            </span>
+          </div>
 
-              {#if status?.configured}
+          <div class="card-meta">
+            <span class="meta-label">color</span>
+            <div class="color-swatches">
+              {#each PROFILE_PALETTE as swatch (swatch.index)}
                 <button
-                  class="btn-build"
-                  class:building
-                  onclick={() => buildImage(p.name)}
-                  disabled={building}
-                  title={building ? 'Building…' : status?.exists ? 'Rebuild image' : 'Build image'}
-                >
-                  {#if building}
-                    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
-                    building…
-                  {:else if status?.exists}
-                    rebuild
-                  {:else}
-                    build
-                  {/if}
-                </button>
-                <button class="btn-icon-sm" onclick={() => checkImageStatus(p.name)} title="Refresh status" aria-label="Refresh image status for {p.name}">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
-                </button>
-              {/if}
+                  class="swatch"
+                  class:selected={pColor.index === swatch.index}
+                  style="background: {swatch.text};"
+                  onclick={() => setColor(p.name, swatch.index)}
+                  title="Color {swatch.index}"
+                  aria-label="Set color {swatch.index} for {p.name}"
+                ></button>
+              {/each}
             </div>
           </div>
 
           {#if status?.exists && status.digest}
-            <div class="image-digest" title={status.digest}>{status.digest.replace(/^sha256:/, '').slice(0, 12)}</div>
+            <div class="card-meta">
+              <span class="meta-label">digest</span>
+              <span class="image-digest" title={status.digest}>{status.digest.replace(/^sha256:/, '').slice(0, 12)}</span>
+            </div>
           {/if}
 
           <GatewayEnvEditor profile={p.name} unlocked={gatewayUnlocked} />
           <ProfileServersEditor profile={p.name} />
 
           {#if logs.length > 0}
-            <button class="logs-toggle" onclick={() => imageLogsOpen[p.name] = !logsOpen}>
-              {logsOpen ? '▾' : '▸'} build log ({logs.length})
-            </button>
-            {#if logsOpen}
+            <CardExpander label="build log" count="({logs.length})" bind:open={imageLogsOpen[p.name]}>
               <div class="build-log">
                 {#each logs as line}
                   <div class="log-line">{line}</div>
                 {/each}
               </div>
-            {/if}
+            </CardExpander>
           {/if}
+
+          <div class="card-actions">
+            {#if status?.configured}
+              <button
+                class="btn-build"
+                class:building
+                onclick={() => buildImage(p.name)}
+                disabled={building}
+                title={building ? 'Building…' : status?.exists ? 'Rebuild image' : 'Build image'}
+              >
+                {#if building}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+                  building…
+                {:else if status?.exists}
+                  rebuild
+                {:else}
+                  build
+                {/if}
+              </button>
+              <button class="btn-icon-sm" onclick={() => checkImageStatus(p.name)} title="Refresh status" aria-label="Refresh image status for {p.name}">
+                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+              </button>
+            {/if}
+            <span class="actions-right">
+              <button class="btn-card" onclick={() => toggleHidden(p.name)} title={isHidden ? `Show ${p.name} in the picker` : `Hide ${p.name} from the picker`}>
+                {isHidden ? 'show' : 'hide'}
+              </button>
+              <button class="btn-card danger" onclick={() => confirmDelete = confirmDelete === p.name ? null : p.name}>
+                delete
+              </button>
+            </span>
+          </div>
 
           {#if confirmDelete === p.name}
             <div class="confirm-delete">
@@ -757,39 +747,49 @@
   }
   .subtab-eye:hover { color: var(--text); }
   .subtab-eye.off { color: var(--warn, #d2a24a); }
-  .empty { font-size: 12px; color: var(--color-text-tertiary); padding: 12px 0; }
 
   .profile-card {
-    border: 1px solid transparent;
-    border-radius: var(--radius-md);
-    padding: 2px 0;
-    transition: border-color 0.15s;
-  }
-  .profile-card:hover { border-color: var(--color-border-primary); }
-
-  .profile-item {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-primary);
+    border-left: 3px solid var(--card-accent, var(--color-border-primary));
+    border-radius: var(--radius-xl);
+    padding: 12px 16px;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--radius-md);
-    padding: 8px 12px;
-    text-align: left;
-    transition: all 0.15s;
-    width: 100%;
+    flex-direction: column;
+    gap: 8px;
   }
-  .profile-item:hover { background: var(--color-bg-secondary); border-color: var(--color-border-primary); }
 
-  .profile-name { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
-
-  .profile-meta {
-    font-size: 11px;
-    color: var(--color-text-tertiary);
-    font-family: var(--font-mono);
+  .card-header {
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+
+  .profile-name { font-size: 13px; font-weight: 600; color: var(--color-text-primary); }
+
+  .profile-badges {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .card-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .meta-label {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-tertiary);
+    width: 44px;
+    flex-shrink: 0;
   }
 
   .disk-badge {
@@ -805,9 +805,6 @@
   .secrets-badge { font-size: 10px; padding: 1px 6px; border-radius: var(--radius-sm); }
   .secrets-badge.plain { background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--color-accent); }
 
-  .profile-row { display: flex; align-items: center; gap: 4px; }
-  .profile-row .profile-item { flex: 1; }
-
   .profile-dot {
     width: 8px;
     height: 8px;
@@ -815,25 +812,45 @@
     flex-shrink: 0;
   }
 
-  .card-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 2px 6px 6px 16px;
-    gap: 8px;
-  }
-
   .color-swatches {
     display: flex;
     gap: 4px;
   }
 
-  .card-image-actions {
+  .card-actions {
     display: flex;
     align-items: center;
-    gap: 5px;
-    flex-shrink: 0;
+    gap: 8px;
+    margin-top: 4px;
+    padding-top: 10px;
+    border-top: 1px solid var(--color-border-primary);
   }
+
+  .actions-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-card {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 10px;
+    border-radius: var(--radius-md);
+    white-space: nowrap;
+    background: transparent;
+    border: 1px solid var(--color-border-secondary);
+    color: var(--color-text-tertiary);
+    transition: all 0.15s;
+  }
+  .btn-card:hover { color: var(--color-text-secondary); background: rgba(255, 255, 255, 0.04); }
+  .btn-card.danger {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.25);
+    color: var(--color-error);
+  }
+  .btn-card.danger:hover { background: rgba(239, 68, 68, 0.2); }
 
   .swatch {
     width: 14px;
@@ -852,29 +869,8 @@
     transform: scale(1.15);
   }
 
-  .btn-delete-profile {
-    background: transparent; border: none; color: var(--color-text-tertiary);
-    padding: 6px; border-radius: var(--radius-sm); display: flex;
-    opacity: 0; transition: all 0.15s;
-  }
-  .profile-row:hover .btn-delete-profile { opacity: 1; }
-  .btn-delete-profile:hover { color: var(--color-error); background: rgba(239, 68, 68, 0.1); }
-
-  .btn-hide-profile {
-    background: transparent; border: none; color: var(--color-text-tertiary);
-    padding: 6px; border-radius: var(--radius-sm); display: flex;
-    opacity: 0; transition: all 0.15s;
-  }
-  .profile-row:hover .btn-hide-profile { opacity: 1; }
-  .btn-hide-profile:hover {
-    color: var(--accent, var(--color-accent));
-    background: var(--accent-soft, color-mix(in srgb, var(--accent, var(--color-accent)) 10%, transparent));
-  }
-  .profile-card.hidden .btn-hide-profile { opacity: 0.6; }
-
   /* Hidden profiles get dimmed but stay manageable. */
-  .profile-card.hidden .profile-item { opacity: 0.55; }
-  .profile-card.hidden .profile-name { font-style: italic; }
+  .profile-card.hidden .profile-name { font-style: italic; opacity: 0.7; }
 
   .confirm-delete {
     display: flex; align-items: center; gap: 6px; padding: 6px 12px; margin-bottom: 4px;
@@ -972,22 +968,9 @@
     font-size: 10px;
     font-family: var(--font-mono);
     color: var(--color-text-muted);
-    padding: 0 6px 4px 16px;
   }
-
-  .logs-toggle {
-    background: none;
-    border: none;
-    font-size: 11px;
-    color: var(--color-text-tertiary);
-    padding: 4px 2px 2px;
-    cursor: pointer;
-    transition: color 0.15s;
-  }
-  .logs-toggle:hover { color: var(--color-text-secondary); }
 
   .build-log {
-    margin-top: 4px;
     padding: 8px 10px;
     background: #1a1a1a;
     border: 1px solid rgba(255, 255, 255, 0.08);
