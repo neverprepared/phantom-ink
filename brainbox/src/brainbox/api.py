@@ -4462,12 +4462,22 @@ async def gateway_put_profile_env(profile: str, body: dict):
         raise HTTPException(status_code=409, detail=str(exc))
     except gateway_secrets.GatewaySecretsError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    # Credentials changed → evict this profile's pooled downstream connections
+    # (they were spawned with the OLD env) and clear its negative cache so the
+    # next tool call re-spawns with the new creds immediately. Without this,
+    # updated secrets only took effect after a daemon restart.
+    await _gateway_pool.close(profile)
+    log.info("gateway.profile_env_updated", metadata={"profile": profile, "keys": len(env)})
     return {"profile": profile, "saved": True, "count": len(env)}
 
 
 @app.delete("/api/gateway/profiles/{profile}/env", dependencies=[Depends(require_api_key)])
 async def gateway_delete_profile_env(profile: str):
-    return {"profile": profile, "deleted": gateway_secrets.delete_profile_env(profile)}
+    deleted = gateway_secrets.delete_profile_env(profile)
+    # Same live-reload contract as PUT: connections spawned with the removed
+    # creds must not outlive them.
+    await _gateway_pool.close(profile)
+    return {"profile": profile, "deleted": deleted}
 
 
 # MCP gateway — Tier-0 token minting (ADR-002 phase 3)

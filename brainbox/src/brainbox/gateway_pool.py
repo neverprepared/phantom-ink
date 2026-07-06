@@ -214,15 +214,23 @@ class GatewayPool:
         return await conn.request("call_tool", {"tool": tool, "args": args})
 
     async def close(self, profile: str | None = None, server: str | None = None) -> None:
-        keys = [
-            k
-            for k in list(self._conns)
-            if (profile is None or k[0] == profile) and (server is None or k[1] == server)
-        ]
-        for k in keys:
+        """Evict matching pooled connections AND their negative-cache entries.
+
+        An explicit eviction is a full reset: callers close a profile's pool
+        because its credentials just changed, so both the live subprocesses
+        (spawned with the old env) and any recent-failure marks (a server that
+        failed *because* creds were missing) must go — the next call re-spawns
+        immediately with the fresh env instead of waiting out failure_ttl.
+        """
+        def _matches(k: tuple[str, str]) -> bool:
+            return (profile is None or k[0] == profile) and (server is None or k[1] == server)
+
+        for k in [k for k in list(self._conns) if _matches(k)]:
             conn = self._conns.pop(k, None)
             if conn is not None:
                 await conn.close()
+        for k in [k for k in list(self._failed) if _matches(k)]:
+            self._failed.pop(k, None)
 
     async def aclose(self) -> None:
         await self.close()
