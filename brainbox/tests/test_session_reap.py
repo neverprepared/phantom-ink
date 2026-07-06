@@ -23,7 +23,7 @@ from brainbox.lifecycle import (
 from brainbox.models import SessionContext
 
 
-def _ctx(name="task-x", *, backend="docker", docker_host="", container=None):
+def _ctx(name="task-x", *, backend="docker", docker_host="", container=None, runner_name=None):
     return SessionContext(
         session_name=name,
         container_name=container or name,
@@ -32,6 +32,7 @@ def _ctx(name="task-x", *, backend="docker", docker_host="", container=None):
         ttl=0,
         backend=backend,
         docker_host=docker_host,
+        runner_name=runner_name,
     )
 
 
@@ -125,6 +126,15 @@ class TestLocalContainerMissing:
     def test_false_for_remote_docker_host(self):
         # a remote runner's docker daemon can't be checked here → never reap
         assert _local_container_missing(_ctx(docker_host="tcp://10.0.0.5:2375")) is False
+
+    def test_false_for_runner_session(self):
+        # Runner sessions have backend='docker' + empty docker_host but their
+        # container lives on the RUNNER's Docker — local NotFound proves
+        # nothing. Regression: startup reconcile evicted live runner sessions.
+        client = MagicMock()
+        client.containers.get.side_effect = NotFound("not in local docker")
+        with patch("brainbox.backends.docker._docker", return_value=client):
+            assert _local_container_missing(_ctx(runner_name="control")) is False
 
     def test_true_on_confirmed_notfound(self):
         client = MagicMock()

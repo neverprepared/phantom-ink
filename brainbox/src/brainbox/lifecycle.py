@@ -1522,7 +1522,14 @@ def _local_container_missing(ctx: SessionContext) -> bool:
     Returns False on any ambiguity (daemon unreachable, non-docker backend,
     remote docker host) so we never deactivate a session we can't positively
     prove is dead — a transient docker error must not evict a live session.
+
+    Runner-hosted sessions are NEVER reaped here: their container lives in the
+    runner's Docker, not ours (backend='docker' with an empty docker_host makes
+    them look local — #164's gotcha). Checking the local daemon would always
+    say NotFound and evict a perfectly live remote session.
     """
+    if ctx.runner_name:
+        return False
     if ctx.backend != "docker" or not _docker_is_local(ctx.docker_host):
         return False
     try:
