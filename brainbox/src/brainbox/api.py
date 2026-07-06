@@ -541,27 +541,72 @@ async def terminal_proxy_redirect(session_name: str, request: Request):
     return RedirectResponse(url=f"{base}/t/{session_name}/", status_code=301)
 
 
-def _stdlib_http_request(
-    method: str, host: str, port: int, path: str, headers: dict, body: bytes
+async def _curl_http_request(
+    method: str, host: str, port: int, path: str, headers: dict, body: bytes,
+    *, timeout: float = 10.0,
 ) -> tuple[int, list[tuple[str, str]], bytes]:
-    """One HTTP request via stdlib http.client. Blocking — call via to_thread.
+    """One HTTP request via a curl subprocess (headers + raw body preserved).
 
-    Deliberately NOT httpx: the long-running daemon on macOS/Python 3.14 hits
-    spurious OSError 65 ('No route to host') on httpx/httpcore connections to
-    LAN destinations (see the httpx known issue in CLAUDE.md — same regression
-    that forced ollama.py onto curl subprocesses). Runner-hosted sessions live
-    at LAN IPs, so every proxied asset/token request was intermittently 502ing
-    → ttyd's page loaded blank. Stdlib sockets don't reproduce the bug.
+    Deliberately a curl subprocess — NOT httpx and NOT stdlib http.client: the
+    long-running daemon on macOS/Python 3.14 hits spurious OSError 65
+    ('No route to host') on Python-created sockets to LAN destinations.
+    Live-verified against a runner at 192.168.87.101: stdlib http.client got
+    errno 65 from inside the daemon while curl from the same host succeeded.
+    Runner-hosted sessions live at LAN IPs, so proxied asset/token requests
+    were intermittently 502ing → ttyd's page loaded blank. curl subprocesses
+    are the one proven-reliable path (ollama.py has run them for weeks). See
+    the httpx/macOS known issue in CLAUDE.md.
     """
-    import http.client
+    import tempfile
 
-    conn = http.client.HTTPConnection(host, port, timeout=30)
-    try:
-        conn.request(method, path, body=body or None, headers=headers)
-        resp = conn.getresponse()
-        return (resp.status, resp.getheaders(), resp.read())
-    finally:
-        conn.close()
+    with tempfile.NamedTemporaryFile(prefix="bb-term-hdr-", suffix=".txt") as hdr_file:
+        args = ["curl", "-sS", "--max-time", str(timeout), "-D", hdr_file.name, "-o", "-"]
+        if method == "HEAD":
+            args.append("--head")
+        elif method != "GET":
+            args += ["-X", method]
+        for k, v in headers.items():
+            args += ["-H", f"{k}: {v}"]
+        if body:
+            args += ["--data-binary", "@-"]
+        args.append(f"http://{host}:{port}{path}")
+
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdin=asyncio.subprocess.PIPE if body else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=body or None), timeout=timeout + 5
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise OSError(f"curl timed out after {timeout + 5}s")
+        if proc.returncode != 0:
+            raise OSError(
+                f"curl failed (rc={proc.returncode}): "
+                f"{stderr.decode(errors='replace').strip()[:200]}"
+            )
+        raw_headers = hdr_file.read().decode("utf-8", errors="replace")
+
+    # -D can hold several header blocks (e.g. '100 Continue'); use the last.
+    blocks = [b for b in raw_headers.strip().split("\r\n\r\n") if b.strip()]
+    lines = blocks[-1].split("\r\n") if blocks else []
+    status = 502
+    resp_headers: list[tuple[str, str]] = []
+    if lines and lines[0].startswith("HTTP/"):
+        try:
+            status = int(lines[0].split()[1])
+        except (IndexError, ValueError):
+            pass
+    for line in lines[1:]:
+        name, sep, value = line.partition(":")
+        if sep:
+            resp_headers.append((name.strip(), value.strip()))
+    return (status, resp_headers, stdout)
 
 
 @app.api_route(
@@ -592,14 +637,16 @@ async def terminal_proxy_http(session_name: str, path: str, request: Request):
 
     import asyncio
     body = await request.body()
-    # On the initial page load (empty path) retry for up to ~10 s so that
+    # On the initial page load (empty path) retry for up to ~30 s so that
     # runner-hosted sessions have time for ttyd to bind inside the container.
-    max_attempts = 15 if not path else 1
+    # Asset/token paths get 3 fast attempts — errno-65 blips are transient, but
+    # a single failed /token is what blanks the terminal, so one retry matters.
+    max_attempts = 15 if not path else 3
     last_err: Exception | None = None
     for attempt in range(max_attempts):
         try:
-            status, resp_headers, content = await asyncio.to_thread(
-                _stdlib_http_request, request.method, host, port, target_path, fwd_headers, body
+            status, resp_headers, content = await _curl_http_request(
+                request.method, host, port, target_path, fwd_headers, body
             )
             skip_resp = {"transfer-encoding", "connection", "content-encoding", "content-length"}
             return Response(
@@ -671,11 +718,35 @@ async def terminal_proxy_ws(session_name: str, websocket: WebSocket):
             f"ws://{host}:{port}/t/{session_name}/ws",
         ]
 
+    import socket as _socket
+
+    async def _lan_socket() -> "_socket.socket":
+        """Pre-connect a raw TCP socket in a thread, retrying errno-65 blips.
+
+        The daemon's event-loop-created sockets to LAN destinations hit the
+        spurious macOS 'No route to host' regression (see _curl_http_request);
+        a blocking socket.create_connection in a thread with retries is the
+        most reliable in-process path, and websockets accepts it via sock=.
+        """
+        last: Exception | None = None
+        for i in range(3):
+            try:
+                return await asyncio.to_thread(
+                    _socket.create_connection, (host, port), 5
+                )
+            except OSError as exc:
+                last = exc
+                await asyncio.sleep(0.5 * (i + 1))
+        raise last  # type: ignore[misc]
+
     backend = None
     ws_errors: dict[str, str] = {}
     for url in candidate_urls:
         try:
-            backend = await ws_lib.connect(url, subprotocols=subprotocols, open_timeout=3)
+            sock = await _lan_socket()
+            backend = await ws_lib.connect(
+                url, sock=sock, subprotocols=subprotocols, open_timeout=5
+            )
             break
         except Exception as exc:
             ws_errors[url] = str(exc) or type(exc).__name__
