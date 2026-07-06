@@ -541,6 +541,29 @@ async def terminal_proxy_redirect(session_name: str, request: Request):
     return RedirectResponse(url=f"{base}/t/{session_name}/", status_code=301)
 
 
+def _stdlib_http_request(
+    method: str, host: str, port: int, path: str, headers: dict, body: bytes
+) -> tuple[int, list[tuple[str, str]], bytes]:
+    """One HTTP request via stdlib http.client. Blocking — call via to_thread.
+
+    Deliberately NOT httpx: the long-running daemon on macOS/Python 3.14 hits
+    spurious OSError 65 ('No route to host') on httpx/httpcore connections to
+    LAN destinations (see the httpx known issue in CLAUDE.md — same regression
+    that forced ollama.py onto curl subprocesses). Runner-hosted sessions live
+    at LAN IPs, so every proxied asset/token request was intermittently 502ing
+    → ttyd's page loaded blank. Stdlib sockets don't reproduce the bug.
+    """
+    import http.client
+
+    conn = http.client.HTTPConnection(host, port, timeout=30)
+    try:
+        conn.request(method, path, body=body or None, headers=headers)
+        resp = conn.getresponse()
+        return (resp.status, resp.getheaders(), resp.read())
+    finally:
+        conn.close()
+
+
 @app.api_route(
     "/t/{session_name}/{path:path}",
     methods=["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
@@ -548,8 +571,6 @@ async def terminal_proxy_redirect(session_name: str, request: Request):
 )
 async def terminal_proxy_http(session_name: str, path: str, request: Request):
     """Reverse-proxy HTTP requests (ttyd assets) to the session's container port."""
-    import httpx
-
     log.info("terminal.proxy_request", metadata={"session": session_name, "path": path, "method": request.method})
     endpoint = _session_endpoint(session_name)
     if endpoint is None:
@@ -557,42 +578,55 @@ async def terminal_proxy_http(session_name: str, path: str, request: Request):
     host, port, has_base_path = endpoint
 
     if has_base_path:
-        target_url = f"http://{host}:{port}/t/{session_name}/{path}"
+        target_path = f"/t/{session_name}/{path}"
     else:
-        target_url = f"http://{host}:{port}/{path}"
+        target_path = f"/{path}"
     if request.url.query:
-        target_url += f"?{request.url.query}"
+        target_path += f"?{request.url.query}"
 
     # Drop hop-by-hop headers before forwarding; force identity encoding so
-    # httpx doesn't decompress the body while we forward the original headers.
+    # the upstream body passes through without decompression surprises.
     skip = {"host", "connection", "te", "trailers", "transfer-encoding", "upgrade"}
     fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in skip}
     fwd_headers["accept-encoding"] = "identity"
 
     import asyncio
+    body = await request.body()
     # On the initial page load (empty path) retry for up to ~10 s so that
     # runner-hosted sessions have time for ttyd to bind inside the container.
     max_attempts = 15 if not path else 1
+    last_err: Exception | None = None
     for attempt in range(max_attempts):
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                rp = await client.request(
-                    method=request.method,
-                    url=target_url,
-                    headers=fwd_headers,
-                    content=await request.body(),
-                )
+            status, resp_headers, content = await asyncio.to_thread(
+                _stdlib_http_request, request.method, host, port, target_path, fwd_headers, body
+            )
             skip_resp = {"transfer-encoding", "connection", "content-encoding", "content-length"}
             return Response(
-                content=rp.content,
-                status_code=rp.status_code,
-                headers={k: v for k, v in rp.headers.items() if k.lower() not in skip_resp},
+                content=content,
+                status_code=status,
+                headers={k: v for k, v in resp_headers if k.lower() not in skip_resp},
             )
-        except httpx.ConnectError:
+        except OSError as exc:
+            last_err = exc
             if attempt + 1 < max_attempts:
                 await asyncio.sleep(2)
                 continue
-            raise HTTPException(502, "Terminal not reachable — container may still be starting")
+    log.warning(
+        "terminal.proxy_unreachable",
+        metadata={"session": session_name, "host": host, "port": port, "error": str(last_err)},
+    )
+    # An HTML body so the failure is visible in the terminal iframe (a JSON 502
+    # renders as a blank white page) and retries itself while ttyd comes up.
+    return Response(
+        content=(
+            "<!doctype html><meta http-equiv='refresh' content='3'>"
+            "<body style='background:#111;color:#ccc;font:14px monospace;padding:2em'>"
+            f"terminal for <b>{session_name}</b> not reachable at {host}:{port} — retrying…</body>"
+        ),
+        status_code=502,
+        media_type="text/html",
+    )
 
 
 @app.websocket("/t/{session_name}/ws")
@@ -638,14 +672,22 @@ async def terminal_proxy_ws(session_name: str, websocket: WebSocket):
         ]
 
     backend = None
+    ws_errors: dict[str, str] = {}
     for url in candidate_urls:
         try:
             backend = await ws_lib.connect(url, subprotocols=subprotocols, open_timeout=3)
             break
-        except Exception:
+        except Exception as exc:
+            ws_errors[url] = str(exc) or type(exc).__name__
             continue
 
     if backend is None:
+        # Log why — a silently-rejected WS is indistinguishable from a blank
+        # terminal page in the field (this masked the runner white-page bug).
+        log.warning(
+            "terminal.ws_connect_failed",
+            metadata={"session": session_name, "errors": ws_errors},
+        )
         await _reject(1011)
         return
 
