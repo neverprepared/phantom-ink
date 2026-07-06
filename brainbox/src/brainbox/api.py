@@ -680,12 +680,21 @@ async def terminal_proxy_http(session_name: str, path: str, request: Request):
 async def terminal_proxy_ws(session_name: str, websocket: WebSocket):
     """Bidirectional WebSocket relay between client and session's ttyd.
 
-    Forwards the 'tty' subprotocol and handles both text and binary frames.
-    Tries the base-path URL first (sessions started after --base-path was added),
-    then falls back to the root /ws path (legacy sessions).
+    The upstream leg is a WebSocket-over-nc relay (terminal_relay.NcWebSocket),
+    NOT a Python-socket client: on macOS 26 the daemon's Python process is
+    denied Local Network access (TCC), so every in-process socket to a LAN
+    runner gets OSError 65. Apple-signed subprocesses (curl for HTTP, nc here)
+    are exempt — the same pattern as _curl_http_request and ollama.py.
+
+    Forwards the 'tty' subprotocol and both text and binary frames. Tries the
+    base-path URL first (sessions started after --base-path was added), then
+    falls back to the root /ws path (legacy sessions).
     """
-    import websockets as ws_lib
+    import shutil
+
     from fastapi.websockets import WebSocketState
+
+    from .terminal_relay import OP_TEXT, NcWebSocket
 
     async def _reject(code: int = 1011) -> None:
         """Accept then immediately close — avoids sending an HTTP error response."""
@@ -708,48 +717,21 @@ async def terminal_proxy_ws(session_name: str, websocket: WebSocket):
     # Use base-path URL for Python-lifecycle sessions; root /ws for Swift runner sessions.
     # Always try both so old and new sessions work without reconfiguration.
     if has_base_path:
-        candidate_urls = [
-            f"ws://{host}:{port}/t/{session_name}/ws",
-            f"ws://{host}:{port}/ws",
-        ]
+        candidate_paths = [f"/t/{session_name}/ws", "/ws"]
     else:
-        candidate_urls = [
-            f"ws://{host}:{port}/ws",
-            f"ws://{host}:{port}/t/{session_name}/ws",
-        ]
+        candidate_paths = ["/ws", f"/t/{session_name}/ws"]
 
-    import socket as _socket
-
-    async def _lan_socket() -> "_socket.socket":
-        """Pre-connect a raw TCP socket in a thread, retrying errno-65 blips.
-
-        The daemon's event-loop-created sockets to LAN destinations hit the
-        spurious macOS 'No route to host' regression (see _curl_http_request);
-        a blocking socket.create_connection in a thread with retries is the
-        most reliable in-process path, and websockets accepts it via sock=.
-        """
-        last: Exception | None = None
-        for i in range(3):
-            try:
-                return await asyncio.to_thread(
-                    _socket.create_connection, (host, port), 5
-                )
-            except OSError as exc:
-                last = exc
-                await asyncio.sleep(0.5 * (i + 1))
-        raise last  # type: ignore[misc]
-
-    backend = None
+    nc = "/usr/bin/nc" if os.path.exists("/usr/bin/nc") else (shutil.which("nc") or "nc")
+    backend: NcWebSocket | None = None
     ws_errors: dict[str, str] = {}
-    for url in candidate_urls:
+    for ws_path in candidate_paths:
         try:
-            sock = await _lan_socket()
-            backend = await ws_lib.connect(
-                url, sock=sock, subprotocols=subprotocols, open_timeout=5
+            backend = await NcWebSocket.connect(
+                host, port, ws_path, subprotocols=subprotocols, nc_path=nc
             )
             break
         except Exception as exc:
-            ws_errors[url] = str(exc) or type(exc).__name__
+            ws_errors[ws_path] = str(exc) or type(exc).__name__
             continue
 
     if backend is None:
@@ -757,13 +739,13 @@ async def terminal_proxy_ws(session_name: str, websocket: WebSocket):
         # terminal page in the field (this masked the runner white-page bug).
         log.warning(
             "terminal.ws_connect_failed",
-            metadata={"session": session_name, "errors": ws_errors},
+            metadata={"session": session_name, "host": host, "port": port, "errors": ws_errors},
         )
         await _reject(1011)
         return
 
     try:
-        negotiated = getattr(backend, "subprotocol", None) or subprotocols[0]
+        negotiated = backend.subprotocol or subprotocols[0]
         await websocket.accept(subprotocol=negotiated)
 
         async def to_backend():
@@ -773,19 +755,23 @@ async def terminal_proxy_ws(session_name: str, websocket: WebSocket):
                     if msg.get("type") == "websocket.disconnect":
                         break
                     if msg.get("bytes"):
-                        await backend.send(msg["bytes"])
+                        await backend.send_bytes(msg["bytes"])
                     elif msg.get("text"):
-                        await backend.send(msg["text"])
+                        await backend.send_text(msg["text"])
             except Exception:
                 pass
 
         async def to_client():
             try:
-                async for msg in backend:
-                    if isinstance(msg, bytes):
-                        await websocket.send_bytes(msg)
+                while True:
+                    frame = await backend.recv()
+                    if frame is None:
+                        break
+                    opcode, payload = frame
+                    if opcode == OP_TEXT:
+                        await websocket.send_text(payload.decode("utf-8", errors="replace"))
                     else:
-                        await websocket.send_text(msg)
+                        await websocket.send_bytes(payload)
             except Exception:
                 pass
 
