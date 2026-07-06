@@ -34,9 +34,6 @@
   let profiles = $derived(profileState.profiles);
   let activeProfile = $derived(profileState.active);
   let selecting = $state(false);
-  // Hidden profiles have no titlebar tab and the panel only expands the active
-  // profile's card, so without this they'd be unreachable — no way to unhide.
-  let hiddenProfiles = $derived(profiles.filter((p) => profileState.isHidden(p.name)));
 
   // The Profiles panel shows one profile's detail card, selected via the top
   // titlebar tabs (activeProfile). While on this panel there's no "all" state —
@@ -392,6 +389,45 @@
     </div>
   {/if}
 
+  {#if profiles.length > 0}
+    <!-- Lower tab bar: ALL profiles (enabled + hidden). Selecting one shows its
+         card below. The eye toggle controls whether it appears in the top
+         selector (the upper tabs, which show enabled profiles only). -->
+    <div class="profile-subtabs" role="tablist" aria-label="All profiles">
+      {#each profiles as p (p.name)}
+        {@const pc = getProfileColor(p.name, profileColorStore.getOverride(p.name))}
+        {@const tabActive = activeProfile?.name === p.name}
+        {@const tabHidden = profileState.isHidden(p.name)}
+        <div class="subtab" class:active={tabActive} class:is-hidden={tabHidden}>
+          <button
+            class="subtab-select"
+            role="tab"
+            aria-selected={tabActive}
+            onclick={() => selectProfile(p.name)}
+            title={p.path}
+          >
+            <span class="subtab-dot" style="background: {pc.text};"></span>
+            <span class="subtab-name">{p.name}</span>
+          </button>
+          <button
+            class="subtab-eye"
+            class:off={tabHidden}
+            onclick={() => toggleHidden(p.name)}
+            aria-pressed={!tabHidden}
+            title={tabHidden ? `Show ${p.name} in the top selector` : `Hide ${p.name} from the top selector`}
+            aria-label="{tabHidden ? 'Show' : 'Hide'} {p.name} in the top selector"
+          >
+            {#if tabHidden}
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+            {:else}
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            {/if}
+          </button>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   <div class="profile-list">
     {#if profiles.length === 0}
       <EmptyState title="No profiles found" />
@@ -522,25 +558,6 @@
         </div>
         {/if}
       {/each}
-
-      {#if hiddenProfiles.length > 0}
-        <div class="hidden-profiles">
-          <span class="hidden-profiles-label">hidden</span>
-          {#each hiddenProfiles as p (p.name)}
-            {@const pc = getProfileColor(p.name, profileColorStore.getOverride(p.name))}
-            <button
-              class="hidden-chip"
-              onclick={() => toggleHidden(p.name)}
-              title={`Show ${p.name} in the picker`}
-              aria-label="Show profile {p.name}"
-            >
-              <span class="hidden-chip-dot" style="background: {pc.text};"></span>
-              {p.name}
-              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-            </button>
-          {/each}
-        </div>
-      {/if}
     {/if}
   </div>
 
@@ -687,48 +704,59 @@
   /* Profile list */
   .profile-list { display: flex; flex-direction: column; gap: 4px; }
 
-  .hidden-profiles {
+  /* Lower tab bar — all profiles, with a per-profile show/hide toggle. */
+  .profile-subtabs {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 6px;
-    margin-top: 10px;
-    padding-top: 10px;
-    border-top: 1px solid var(--border);
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
   }
-  .hidden-profiles-label {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-faint);
-    margin-right: 2px;
-  }
-  .hidden-chip {
+  .subtab {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 3px 9px;
     border: 1px solid var(--border);
     border-radius: 99px;
     background: var(--bg-sunken);
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+  .subtab:hover { border-color: var(--border-strong); }
+  .subtab.active { border-color: var(--accent); background: var(--accent-soft); }
+  .subtab.is-hidden { opacity: 0.55; }
+  .subtab.is-hidden.active { opacity: 0.85; }
+  .subtab-select {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 4px 5px 11px;
+    background: transparent;
+    border: none;
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: 12.5px;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: color 0.15s;
   }
-  .hidden-chip:hover {
-    color: var(--text);
-    border-color: var(--border-strong);
-    background: var(--bg-elev);
+  .subtab-select:hover { color: var(--text); }
+  .subtab.active .subtab-select { color: var(--accent); }
+  .subtab-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .subtab-name { white-space: nowrap; }
+  .subtab-eye {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 5px 9px 5px 6px;
+    background: transparent;
+    border: none;
+    color: var(--text-faint);
+    cursor: pointer;
+    transition: color 0.15s;
   }
-  .hidden-chip-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    opacity: 0.6;
-  }
-  .hidden-chip:hover .hidden-chip-dot { opacity: 1; }
+  .subtab-eye:hover { color: var(--text); }
+  .subtab-eye.off { color: var(--warn, #d2a24a); }
   .empty { font-size: 12px; color: var(--color-text-tertiary); padding: 12px 0; }
 
   .profile-card {
