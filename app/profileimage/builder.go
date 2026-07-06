@@ -355,29 +355,40 @@ func translateClaudeJSON(raw []byte, workspaceHome string, catalog map[string]in
 
 	pathReplacer := strings.NewReplacer(workspaceHome, "/home/developer")
 
-	servers, ok := doc["mcpServers"].(map[string]interface{})
-	if ok && len(servers) > 0 {
-		out := make(map[string]interface{}, len(servers))
-		for name, val := range servers {
-			// Catalog definition takes priority — it's already cross-platform.
-			if catDef, found := catalog[name]; found {
-				out[name] = catDef
-				continue
-			}
-
-			// No catalog entry: keep only if the command isn't Mac-specific.
-			srv, ok := val.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			cmd, _ := srv["command"].(string)
-			if isMacAbsolutePath(cmd) {
-				continue
-			}
-			out[name] = translateMapPaths(srv, pathReplacer)
+	servers, _ := doc["mcpServers"].(map[string]interface{})
+	out := make(map[string]interface{}, len(servers)+1)
+	for name, val := range servers {
+		// Catalog definition takes priority — it's already cross-platform.
+		if catDef, found := catalog[name]; found {
+			out[name] = catDef
+			continue
 		}
-		doc["mcpServers"] = out
+
+		// No catalog entry: keep only if the command isn't Mac-specific.
+		srv, ok := val.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		cmd, _ := srv["command"].(string)
+		if isMacAbsolutePath(cmd) {
+			continue
+		}
+		out[name] = translateMapPaths(srv, pathReplacer)
 	}
+
+	// The MCP gateway declaration is static; only the secret is dynamic. The
+	// daemon delivers PHANTOM_GATEWAY_URL/TOKEN via container env at session
+	// create and Claude Code expands the references at connect time, so
+	// runner-hosted sessions need no runtime .mcp.json write. Simple ${VAR}
+	// refs only — Claude Code corrupts nested ${A:-${B}} fallbacks.
+	out["phantom-gateway"] = map[string]interface{}{
+		"type": "http",
+		"url":  "${PHANTOM_GATEWAY_URL}",
+		"headers": map[string]interface{}{
+			"Authorization": "Bearer ${PHANTOM_GATEWAY_TOKEN}",
+		},
+	}
+	doc["mcpServers"] = out
 
 	// Translate any remaining Mac paths elsewhere in the document.
 	result, err := json.MarshalIndent(doc, "", "  ")
@@ -523,10 +534,14 @@ func injectClaudeCredentials(container string, opts BuildOptions, key string) er
 			"Keychain lookup failed) — the built image will be UNAUTHENTICATED")
 	}
 
-	// .claude.json — translate MCP server commands and paths for Linux.
+	// .claude.json — translate MCP server commands and paths for Linux. A
+	// missing host file still produces a config: the baked phantom-gateway
+	// entry is the container's only MCP wiring in gateway-exclusive setups.
+	claudeJSONData := []byte("{}")
 	if data, err := os.ReadFile(filepath.Join(claudeConfigDir, ".claude.json")); err == nil {
-		bundle["claude_json"] = string(translateClaudeJSON(data, opts.WorkspaceHome, catalog))
+		claudeJSONData = data
 	}
+	bundle["claude_json"] = string(translateClaudeJSON(claudeJSONData, opts.WorkspaceHome, catalog))
 
 	// settings.json — strip Mac plugins/statusLine, force container settings,
 	// and inject OTLP endpoints when configured.
