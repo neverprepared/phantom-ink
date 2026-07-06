@@ -54,7 +54,6 @@ _URL_KEY_SUFFIXES = ("_URL", "_URI", "_HOST", "_ENDPOINT", "_BASE", "_BASE_URL",
 # (conditional egress) — conservatively PUBLIC until per-call classification.
 CURATED_SERVER_ZONE_HINTS: dict[str, TrustZone] = {
     "phantom-brain": TrustZone.LOCAL,
-    "mcp-brain": TrustZone.LOCAL,
     "brain": TrustZone.LOCAL,
     "git": TrustZone.LOCAL,
     "filesystem": TrustZone.LOCAL,
