@@ -32,7 +32,9 @@ class RecordingExecutor:
 
 @pytest.fixture
 def gateway_on(monkeypatch):
-    monkeypatch.setattr(settings.gateway, "servers", ["brainbox"])
+    # Injection gates on the DB-backed registry, not the CL_GATEWAY__SERVERS seed.
+    from brainbox import store
+    store.set_gateway_server_enabled("brainbox", True)
     monkeypatch.setattr(settings.gateway, "inject_sessions", True)
     monkeypatch.setattr(settings.gateway, "vm_url", "http://192.168.64.1:9999/gateway/mcp")
     monkeypatch.setattr(settings.gateway, "session_token_ttl", 3600)
@@ -84,7 +86,9 @@ class TestInjectGatewayMcp:
         assert ex.commands == []
 
     async def test_noop_when_gateway_inactive(self, monkeypatch):
-        monkeypatch.setattr(settings.gateway, "servers", [])
+        # DB registry empty (truncated per test) → inactive, even with the
+        # legacy env allowlist populated
+        monkeypatch.setattr(settings.gateway, "servers", ["brainbox"])
         monkeypatch.setattr(settings.gateway, "inject_sessions", True)
         ex = RecordingExecutor()
         await inject_gateway_mcp(ex, "personal", gateway_url="http://192.168.64.1:9999/gateway/mcp")

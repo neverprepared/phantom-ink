@@ -181,8 +181,9 @@ def _gateway_server_entry(
 ) -> dict | None:
     """Build the `phantom-gateway` HTTP MCP entry for a session, or None.
 
-    Returns an entry only when the MCP gateway is exposing servers and session
-    injection is enabled (ADR-002 phase 3). Mints a per-session Tier-0 token
+    Returns an entry only when the DB-backed server registry has at least one
+    enabled server and session injection is enabled (ADR-002 phase 3). Mints a
+    per-session Tier-0 token
     bound to *workspace_profile* so the guest reaches the gateway scoped to
     its own profile — no agent/task needed. The token is in-memory in the hub
     registry; a daemon restart invalidates it (sessions are re-provisioned).
@@ -191,11 +192,15 @@ def _gateway_server_entry(
     containers use the default ``container_url`` (host.docker.internal); UTM/QEMU
     VMs pass ``settings.gateway.vm_url`` since they can't resolve that alias.
     """
-    from . import registry, trust
+    from . import registry, store, trust
     from .trust_zones import TrustZone
 
     gw = settings.gateway
-    if not workspace_profile or not gw.servers or not gw.inject_sessions:
+    if not workspace_profile or not gw.inject_sessions:
+        return None
+    # The enabled-server set lives in the DB registry (#161); CL_GATEWAY__SERVERS
+    # is only its first-boot seed and must not gate injection.
+    if not store.enabled_gateway_server_names():
         return None
     # Scope the container's gateway token to the profile's default residency
     # ceiling, so a profile with a tighter default (e.g. INFRA) only exposes
