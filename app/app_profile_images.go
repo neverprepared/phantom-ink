@@ -108,7 +108,6 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 		RegistryURL:      registryURL,
 		RegistryUsername: registryUsername,
 		RegistryPassword: registryPassword,
-		MCPCatalogPath:   prof.WorkspaceHome + "/code/phantom-ink/reflex/plugins/reflex/mcp-catalog.json",
 		OTLPHost:         a.db.GetSetting(settingOTLPHost, ""),
 		NoCache:          req.NoCache,
 		Progress: func(msg string) {

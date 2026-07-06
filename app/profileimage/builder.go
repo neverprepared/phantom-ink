@@ -42,12 +42,6 @@ type BuildOptions struct {
 	// RegistryUsername and RegistryPassword are used for docker login.
 	RegistryUsername string
 	RegistryPassword string
-	// MCPCatalogPath is the path to mcp-catalog.json from the reflex plugin.
-	// When set, MCP server definitions are sourced from the catalog rather than
-	// translated from the host .claude.json — the catalog is already
-	// platform-agnostic (npx/uvx commands work on both macOS and Linux).
-	// Optional: if absent, falls back to .claude.json translation only.
-	MCPCatalogPath string
 	// OTLPHost is the hostname (or host:port base) of the Data Prepper /
 	// OpenTelemetry ingest endpoint, e.g. "storage.example.com".
 	// When set, the container's settings.json gets OTLP exporter env vars
@@ -308,46 +302,15 @@ var macOSOnlyPlugins = map[string]bool{
 	"rust-lsp@claude-plugins-official":  true,
 }
 
-// loadCatalog parses mcp-catalog.json and returns a map of server name →
-// definition object. Returns nil if the file is absent or unreadable.
-func loadCatalog(catalogPath string) map[string]interface{} {
-	if catalogPath == "" {
-		return nil
-	}
-	data, err := os.ReadFile(catalogPath)
-	if err != nil {
-		return nil
-	}
-	var cat struct {
-		Servers map[string]struct {
-			Definition interface{} `json:"definition"`
-			Platform   string      `json:"platform"`
-		} `json:"servers"`
-	}
-	if err := json.Unmarshal(data, &cat); err != nil {
-		return nil
-	}
-	defs := make(map[string]interface{}, len(cat.Servers))
-	for name, s := range cat.Servers {
-		if s.Platform == "macos" {
-			continue // skip macOS-only entries
-		}
-		if s.Definition != nil {
-			defs[name] = s.Definition
-		}
-	}
-	return defs
-}
-
-// translateClaudeJSON produces a container-safe mcpServers config:
-//
-//  1. For each enabled server, prefer the catalog definition (already
-//     platform-agnostic npx/uvx commands) over whatever is in .claude.json.
-//  2. For servers not in the catalog, keep the .claude.json definition only
-//     if the command is not a Mac-specific absolute path.
-//  3. Servers whose catalog entry is absent AND whose command is a Mac absolute
-//     path are stripped silently.
-func translateClaudeJSON(raw []byte, workspaceHome string, catalog map[string]interface{}) []byte {
+// translateClaudeJSON produces the container's .claude.json. It strips the
+// host's MCP server definitions entirely and bakes ONLY the phantom-gateway
+// entry, so every container reaches MCP through the gateway rather than
+// spawning direct servers. The profile's own servers are intentionally
+// dropped: their credentials live daemon-side and are injected by the gateway
+// per profile, so baking direct in-container servers would run them without
+// creds and bypass the gateway's residency scoping. Remaining Mac paths
+// elsewhere in the document (projects, settings) are still translated.
+func translateClaudeJSON(raw []byte, workspaceHome string) []byte {
 	var doc map[string]interface{}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return raw
@@ -355,42 +318,20 @@ func translateClaudeJSON(raw []byte, workspaceHome string, catalog map[string]in
 
 	pathReplacer := strings.NewReplacer(workspaceHome, "/home/developer")
 
-	servers, _ := doc["mcpServers"].(map[string]interface{})
-	out := make(map[string]interface{}, len(servers)+1)
-	for name, val := range servers {
-		// Catalog definition takes priority — it's already cross-platform.
-		if catDef, found := catalog[name]; found {
-			out[name] = catDef
-			continue
-		}
-
-		// No catalog entry: keep only if the command isn't Mac-specific.
-		srv, ok := val.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		cmd, _ := srv["command"].(string)
-		if isMacAbsolutePath(cmd) {
-			continue
-		}
-		out[name] = translateMapPaths(srv, pathReplacer)
-	}
-
 	// The MCP gateway declaration is static; only the secret is dynamic. The
 	// daemon delivers PHANTOM_GATEWAY_URL/TOKEN via container env at session
-	// create and Claude Code expands the references at connect time, so
-	// runner-hosted sessions need no runtime .mcp.json write. Simple ${VAR}
-	// refs only — Claude Code corrupts nested ${A:-${B}} fallbacks.
-	out["phantom-gateway"] = map[string]interface{}{
-		"type": "http",
-		"url":  "${PHANTOM_GATEWAY_URL}",
-		"headers": map[string]interface{}{
-			"Authorization": "Bearer ${PHANTOM_GATEWAY_TOKEN}",
+	// create and Claude Code expands the references at connect time. Simple
+	// ${VAR} refs only — Claude Code corrupts nested ${A:-${B}} fallbacks.
+	doc["mcpServers"] = map[string]interface{}{
+		"phantom-gateway": map[string]interface{}{
+			"type": "http",
+			"url":  "${PHANTOM_GATEWAY_URL}",
+			"headers": map[string]interface{}{
+				"Authorization": "Bearer ${PHANTOM_GATEWAY_TOKEN}",
+			},
 		},
 	}
-	doc["mcpServers"] = out
 
-	// Translate any remaining Mac paths elsewhere in the document.
 	result, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return raw
@@ -480,38 +421,16 @@ func cloneMap(m map[string]interface{}) map[string]interface{} {
 	return c
 }
 
-// translateMapPaths recursively replaces Mac paths in string values.
-func translateMapPaths(v interface{}, r *strings.Replacer) interface{} {
-	switch t := v.(type) {
-	case string:
-		return r.Replace(t)
-	case map[string]interface{}:
-		out := make(map[string]interface{}, len(t))
-		for k, val := range t {
-			out[k] = translateMapPaths(val, r)
-		}
-		return out
-	case []interface{}:
-		out := make([]interface{}, len(t))
-		for i, val := range t {
-			out[i] = translateMapPaths(val, r)
-		}
-		return out
-	}
-	return v
-}
-
 // injectClaudeCredentials packs Claude auth + config into a JSON bundle, encrypts
 // with the provided key, and writes the ciphertext to /home/developer/.claude.enc.
 // ttyd-wrapper.sh decrypts at container startup using the same PROFILE_ENV_KEY.
 //
 // Before packing, .claude.json and settings.json are sanitised for Linux containers:
-// Mac-specific MCP server commands are translated to container binaries, macOS-only
-// servers and plugins are stripped, and Mac absolute paths are replaced.
+// the host's MCP servers are dropped in favour of the baked phantom-gateway entry,
+// macOS-only plugins are stripped, and Mac absolute paths are replaced.
 // CLAUDE.md is included when present.
 func injectClaudeCredentials(container string, opts BuildOptions, key string) error {
 	claudeConfigDir := filepath.Join(opts.WorkspaceHome, ".claude")
-	catalog := loadCatalog(opts.MCPCatalogPath)
 
 	bundle := make(map[string]string)
 
@@ -534,14 +453,14 @@ func injectClaudeCredentials(container string, opts BuildOptions, key string) er
 			"Keychain lookup failed) — the built image will be UNAUTHENTICATED")
 	}
 
-	// .claude.json — translate MCP server commands and paths for Linux. A
-	// missing host file still produces a config: the baked phantom-gateway
-	// entry is the container's only MCP wiring in gateway-exclusive setups.
+	// .claude.json — strip the host's MCP servers and bake only phantom-gateway.
+	// A missing host file still produces a config: the gateway entry is the
+	// container's only MCP wiring.
 	claudeJSONData := []byte("{}")
 	if data, err := os.ReadFile(filepath.Join(claudeConfigDir, ".claude.json")); err == nil {
 		claudeJSONData = data
 	}
-	bundle["claude_json"] = string(translateClaudeJSON(claudeJSONData, opts.WorkspaceHome, catalog))
+	bundle["claude_json"] = string(translateClaudeJSON(claudeJSONData, opts.WorkspaceHome))
 
 	// settings.json — strip Mac plugins/statusLine, force container settings,
 	// and inject OTLP endpoints when configured.
