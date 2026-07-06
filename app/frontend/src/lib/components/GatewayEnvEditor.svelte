@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
+  import CardExpander from './CardExpander.svelte';
 
   // Per-profile MCP gateway secrets editor (ADR-002 phase 3). Edits the
   // age-encrypted env store the gateway injects into a profile's MCP server
@@ -10,7 +11,6 @@
 
   let { profile, unlocked }: { profile: string; unlocked: boolean } = $props();
 
-  let open = $state(false);
   let loading = $state(false);
   let saving = $state(false);
   let loaded = $state(false);
@@ -54,11 +54,6 @@
     } finally {
       testing = false;
     }
-  }
-
-  async function toggle() {
-    open = !open;
-    if (open && !loaded) await load();
   }
 
   // Parse .env text → [key, value] pairs. Handles `export `, blank lines,
@@ -208,11 +203,11 @@
   }
 </script>
 
-<button class="gw-toggle" onclick={toggle}>
-  {open ? '▾' : '▸'} gateway secrets{loaded && rows.length ? ` (${rows.length})` : ''}
-</button>
-
-{#if open}
+<CardExpander
+  label="gateway secrets"
+  count={loaded && rows.length ? `(${rows.length})` : ''}
+  onOpen={() => { if (!loaded) void load(); }}
+>
   <div class="gw-body">
     {#if !unlocked}
       <p class="gw-hint">
@@ -316,20 +311,9 @@
       </div>
     {/if}
   </div>
-{/if}
+</CardExpander>
 
 <style>
-  .gw-toggle {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    font-size: 0.7rem;
-    cursor: pointer;
-    padding: 0.2rem 0;
-    text-align: left;
-    width: 100%;
-  }
-  .gw-toggle:hover { color: var(--text); }
   .gw-body {
     display: flex;
     flex-direction: column;
