@@ -7,7 +7,11 @@ import json
 import pytest
 
 from brainbox.config import settings
-from brainbox.lifecycle import _gateway_server_entry, _generate_container_mcp_json
+from brainbox.lifecycle import (
+    _gateway_server_entry,
+    _gateway_session_env,
+    _generate_container_mcp_json,
+)
 
 
 @pytest.fixture
@@ -68,6 +72,31 @@ class TestGatewayServerEntry:
         store.set_gateway_server_enabled("brainbox", True)
         monkeypatch.setattr(settings.gateway, "inject_sessions", False)
         assert _gateway_server_entry("personal") is None
+
+
+class TestGatewaySessionEnv:
+    """Env-pair delivery for runner-hosted sessions (baked-declaration design)."""
+
+    def test_env_pair_uses_public_url(self, gateway_on, monkeypatch):
+        from brainbox import registry
+        monkeypatch.setattr(settings, "public_url", "https://phantom-api.example.com")
+        env = _gateway_session_env("personal")
+        assert env["PHANTOM_GATEWAY_URL"] == "https://phantom-api.example.com/gateway/mcp"
+        tok = registry.validate_token(env["PHANTOM_GATEWAY_TOKEN"])
+        assert tok is not None and tok.workspace_profile == "personal"
+
+    def test_falls_back_to_container_url_without_public_url(self, gateway_on, monkeypatch):
+        monkeypatch.setattr(settings, "public_url", "")
+        env = _gateway_session_env("personal")
+        assert env["PHANTOM_GATEWAY_URL"] == settings.gateway.container_url
+
+    def test_empty_when_gateway_inactive(self, monkeypatch):
+        # DB registry empty → no token minted, no env delivered
+        monkeypatch.setattr(settings, "public_url", "https://phantom-api.example.com")
+        assert _gateway_session_env("personal") == {}
+
+    def test_empty_without_profile(self, gateway_on):
+        assert _gateway_session_env("") == {}
 
 
 class TestContainerMcpJson:

@@ -217,6 +217,28 @@ def _gateway_server_entry(
     }
 
 
+def _gateway_session_env(workspace_profile: str) -> dict[str, str]:
+    """PHANTOM_GATEWAY_URL/TOKEN env pair for a runner-hosted session, or {}.
+
+    Profile images bake a ``phantom-gateway`` entry whose url and bearer are
+    ``${PHANTOM_GATEWAY_URL}`` / ``${PHANTOM_GATEWAY_TOKEN}``; Claude Code
+    expands them from the container env at connect time, so the runner only
+    has to merge these two variables — no runtime .mcp.json write.
+
+    Runner containers reach the gateway over the network, so the URL is the
+    daemon's public base (CL_PUBLIC_URL) rather than the Docker Desktop
+    host.docker.internal alias; falls back to ``container_url`` for
+    single-host setups where no public URL is configured.
+    """
+    base = settings.public_url.rstrip("/") if settings.public_url else ""
+    url = f"{base}/gateway/mcp" if base else settings.gateway.container_url
+    entry = _gateway_server_entry(workspace_profile, gateway_url=url)
+    if entry is None:
+        return {}
+    token = entry["headers"]["Authorization"].removeprefix("Bearer ")
+    return {"PHANTOM_GATEWAY_URL": entry["url"], "PHANTOM_GATEWAY_TOKEN": token}
+
+
 def _generate_container_mcp_json(
     claude_config_dir: Path,
     dest_path: Path,
@@ -763,6 +785,13 @@ async def _provision_via_runner(*, runner: str, **payload: Any) -> SessionContex
     # replicate the registry lookup logic. The runner uses this image directly.
     resolved_image, _ = _resolve_image_for_session(payload.get("workspace_profile"))
     payload["image"] = resolved_image
+
+    # Gateway wiring: token minting and policy live daemon-side; the runner
+    # just merges these env vars into the container, where the image's baked
+    # phantom-gateway entry expands them at connect time.
+    gateway_env = _gateway_session_env(payload.get("workspace_profile") or "")
+    if gateway_env:
+        payload["extra_env"] = {**(payload.get("extra_env") or {}), **gateway_env}
 
     serializable = {
         k: (v.model_dump() if hasattr(v, "model_dump") else v)
