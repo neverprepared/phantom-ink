@@ -15,6 +15,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -434,23 +435,38 @@ func injectClaudeCredentials(container string, opts BuildOptions, key string) er
 
 	bundle := make(map[string]string)
 
-	// .credentials.json — auth tokens, copy verbatim. On macOS the Claude Code
-	// OAuth token lives in the login Keychain, not this file, so fall back to
-	// the Keychain when the file is absent. The Keychain password for the
-	// "Claude Code-credentials" item is the same JSON blob .credentials.json
-	// holds on Linux, so it drops straight into the bundle.
-	if data, err := os.ReadFile(filepath.Join(claudeConfigDir, ".credentials.json")); err == nil {
-		bundle["credentials_json"] = string(data)
-	} else if out, kerr := exec.Command(
-		"security", "find-generic-password", "-s", "Claude Code-credentials", "-w",
-	).Output(); kerr == nil {
-		if tok := strings.TrimSpace(string(out)); tok != "" {
-			bundle["credentials_json"] = tok
+	// .credentials.json — Claude Code OAuth tokens. On macOS the LIVE token is
+	// in the login Keychain, and Claude Code namespaces it PER CONFIG DIR as
+	// "Claude Code-credentials-<sha256(configDir)[:8]>" — one item per profile,
+	// each with its own live access + refresh token that Claude Code rotates in
+	// place. We must read the item for THIS profile's config dir; the legacy
+	// unhashed "Claude Code-credentials" item is a stale husk (empty/rotated
+	// refresh token) and any on-disk .credentials.json is an even older leftover
+	// — baking either forces a container re-login. Fall through in order:
+	// hashed Keychain item → legacy Keychain item → on-disk file.
+	sum := sha256.Sum256([]byte(claudeConfigDir))
+	credServices := []string{
+		"Claude Code-credentials-" + hex.EncodeToString(sum[:])[:8],
+		"Claude Code-credentials",
+	}
+	for _, svc := range credServices {
+		if out, kerr := exec.Command(
+			"security", "find-generic-password", "-s", svc, "-w",
+		).Output(); kerr == nil {
+			if tok := strings.TrimSpace(string(out)); tok != "" {
+				bundle["credentials_json"] = tok
+				break
+			}
 		}
 	}
 	if _, ok := bundle["credentials_json"]; !ok {
-		opts.progress("warning: no Claude credentials found (no .credentials.json file and " +
-			"Keychain lookup failed) — the built image will be UNAUTHENTICATED")
+		if data, err := os.ReadFile(filepath.Join(claudeConfigDir, ".credentials.json")); err == nil {
+			bundle["credentials_json"] = string(data)
+		}
+	}
+	if _, ok := bundle["credentials_json"]; !ok {
+		opts.progress("warning: no Claude credentials found (Keychain lookup failed and " +
+			"no .credentials.json file) — the built image will be UNAUTHENTICATED")
 	}
 
 	// .claude.json — strip the host's MCP servers and bake only phantom-gateway.
