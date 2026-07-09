@@ -4349,13 +4349,20 @@ async def api_artifacts_health():
 
 
 @app.get("/api/artifacts/buckets", dependencies=[Depends(require_api_key)])
-async def api_artifacts_list_buckets():
-    """Two-bucket catalog the file browser uses as its root entries."""
+async def api_artifacts_list_buckets(profile: str = ""):
+    """Live bucket catalog. ``profile`` scopes the view to the app's
+    active profile: <profile>-* buckets show whole, profile-structured
+    buckets get a <profile>/ scope_prefix, unrelated buckets are omitted.
+    Empty profile ("all") = every bucket, unscoped."""
     from . import artifacts
 
     if not artifacts.is_enabled():
         raise HTTPException(status_code=503, detail="minio integration is disabled")
-    return {"buckets": artifacts.known_buckets()}
+    try:
+        buckets = await asyncio.to_thread(artifacts.known_buckets, profile)
+    except artifacts.ArtifactError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"buckets": buckets}
 
 
 @app.get("/api/artifacts/{bucket}/list", dependencies=[Depends(require_api_key)])
@@ -4393,9 +4400,9 @@ async def api_artifacts_list_folder(bucket: str, prefix: str = ""):
 
 
 @app.get("/api/artifacts/{bucket}/search", dependencies=[Depends(require_api_key)])
-async def api_artifacts_search(bucket: str, q: str = "", limit: int = 200):
-    """Substring search over object keys in the profile namespace.
-    Whole-bucket (profile-scoped) — the file browser's find box."""
+async def api_artifacts_search(bucket: str, q: str = "", limit: int = 200, prefix: str = ""):
+    """Substring search over object keys under ``prefix`` (the bucket's
+    scope_prefix from /buckets; "" = whole bucket) — the find box."""
     from . import artifacts
 
     if not artifacts.is_enabled():
@@ -4405,7 +4412,9 @@ async def api_artifacts_search(bucket: str, q: str = "", limit: int = 200):
         raise HTTPException(status_code=400, detail="q must be non-empty")
     limit = max(1, min(limit, 500))
     try:
-        res = await asyncio.to_thread(artifacts.search_objects, bucket, q, limit=limit)
+        res = await asyncio.to_thread(
+            artifacts.search_objects, bucket, q, limit=limit, prefix=prefix
+        )
     except artifacts.ArtifactError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {
@@ -4456,9 +4465,15 @@ async def api_artifacts_delete(bucket: str, key: str):
 
 
 @app.get("/api/artifacts/{bucket}/presign", dependencies=[Depends(require_api_key)])
-async def api_artifacts_presign(bucket: str, key: str, op: str = "get", ttl: int = 3600):
+async def api_artifacts_presign(
+    bucket: str, key: str, op: str = "get", ttl: int = 3600, host: str = ""
+):
     """Mint a presigned URL. ``op=get`` is for the operator opening a
-    file; ``op=put`` is reserved for the Phase 4 assist worker writes."""
+    file; ``op=put`` is reserved for the Phase 4 assist worker writes.
+    ``host`` (optional) is the base URL the CLIENT will fetch from —
+    SigV4 signs the Host header, so the app passes its MinIO integration
+    address (local or remote) to get a URL that works from where it sits.
+    Empty falls back to CL_MINIO__PUBLIC_ENDPOINT, then the daemon endpoint."""
     from . import artifacts
 
     if not artifacts.is_enabled():
@@ -4467,9 +4482,9 @@ async def api_artifacts_presign(bucket: str, key: str, op: str = "get", ttl: int
         raise HTTPException(status_code=400, detail="op must be 'get' or 'put'")
     try:
         if op == "get":
-            url = artifacts.presigned_get_url(bucket, key, expires_seconds=ttl)
+            url = artifacts.presigned_get_url(bucket, key, expires_seconds=ttl, public_base=host)
         else:
-            url = artifacts.presigned_put_url(bucket, key, expires_seconds=ttl)
+            url = artifacts.presigned_put_url(bucket, key, expires_seconds=ttl, public_base=host)
     except artifacts.ArtifactError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"url": url, "expires_in": ttl}

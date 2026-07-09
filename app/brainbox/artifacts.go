@@ -16,11 +16,12 @@ type ArtifactsHealth struct {
 	ProfilePrefix string            `json:"profile_prefix,omitempty"`
 }
 
-// ArtifactBucket is one entry in the two-bucket catalog.
+// ArtifactBucket is one entry in the live bucket catalog.
 type ArtifactBucket struct {
-	Key   string `json:"key"`   // "vault" | "artifacts" — what the API expects
-	Name  string `json:"name"`  // real MinIO bucket name
-	Label string `json:"label"` // human-facing label in the sidebar
+	Key         string `json:"key"`          // bucket identifier the API expects
+	Name        string `json:"name"`         // real MinIO bucket name
+	Label       string `json:"label"`        // human-facing label in the sidebar
+	ScopePrefix string `json:"scope_prefix"` // browser root for the active profile ("" = bucket root)
 }
 
 // ArtifactFolder is a directory entry (S3 CommonPrefix).
@@ -77,13 +78,17 @@ func (c *Client) GetArtifactsHealth() (ArtifactsHealth, error) {
 	return h, nil
 }
 
-// ListArtifactsBuckets returns the two-bucket catalog. The Files panel
-// renders these as the root sidebar entries.
-func (c *Client) ListArtifactsBuckets() ([]ArtifactBucket, error) {
+// ListArtifactsBuckets returns the live bucket catalog, scoped to the
+// app's active profile ("" = all buckets, unscoped).
+func (c *Client) ListArtifactsBuckets(profile string) ([]ArtifactBucket, error) {
+	path := "/api/artifacts/buckets"
+	if profile != "" {
+		path += "?profile=" + url.QueryEscape(profile)
+	}
 	var resp struct {
 		Buckets []ArtifactBucket `json:"buckets"`
 	}
-	if err := c.get("/api/artifacts/buckets", &resp); err != nil {
+	if err := c.get(path, &resp); err != nil {
 		return nil, err
 	}
 	return resp.Buckets, nil
@@ -138,13 +143,14 @@ type ArtifactSearchResult struct {
 	Files     []ArtifactFile `json:"files"`
 }
 
-// SearchArtifacts runs a whole-bucket (profile-scoped) substring search
-// over object keys.
-func (c *Client) SearchArtifacts(bucketKey, query string) (ArtifactSearchResult, error) {
+// SearchArtifacts runs a substring search over object keys under
+// ``prefix`` (the bucket's scope_prefix; "" = whole bucket).
+func (c *Client) SearchArtifacts(bucketKey, query, prefix string) (ArtifactSearchResult, error) {
 	path := fmt.Sprintf(
-		"/api/artifacts/%s/search?q=%s",
+		"/api/artifacts/%s/search?q=%s&prefix=%s",
 		url.PathEscape(bucketKey),
 		url.QueryEscape(query),
+		url.QueryEscape(prefix),
 	)
 	var res ArtifactSearchResult
 	if err := c.get(path, &res); err != nil {
@@ -155,8 +161,10 @@ func (c *Client) SearchArtifacts(bucketKey, query string) (ArtifactSearchResult,
 
 // PresignArtifactURL mints a presigned URL. ``op`` is "get" (for
 // operator file opens) or "put" (reserved for the Phase 4 assist
-// worker writes).
-func (c *Client) PresignArtifactURL(bucketKey, key, op string, ttlSeconds int) (ArtifactPresignedURL, error) {
+// worker writes). ``host`` is the base URL the caller will fetch from —
+// SigV4 signs the Host, so it must be supplied at signing time; empty
+// defers to the daemon's configured public endpoint.
+func (c *Client) PresignArtifactURL(bucketKey, key, op string, ttlSeconds int, host string) (ArtifactPresignedURL, error) {
 	path := fmt.Sprintf(
 		"/api/artifacts/%s/presign?key=%s&op=%s&ttl=%d",
 		url.PathEscape(bucketKey),
@@ -164,6 +172,9 @@ func (c *Client) PresignArtifactURL(bucketKey, key, op string, ttlSeconds int) (
 		url.QueryEscape(op),
 		ttlSeconds,
 	)
+	if host != "" {
+		path += "&host=" + url.QueryEscape(host)
+	}
 	var resp ArtifactPresignedURL
 	if err := c.get(path, &resp); err != nil {
 		return ArtifactPresignedURL{}, err

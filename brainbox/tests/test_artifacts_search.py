@@ -28,40 +28,79 @@ class FakePaginator:
 
 
 class FakeClient:
-    def __init__(self, keys):
-        self._keys = keys
+    """Per-bucket in-memory key store."""
+
+    def __init__(self, buckets: dict[str, list[str]]):
+        self._buckets = buckets
 
     def get_paginator(self, name):
         assert name == "list_objects_v2"
-        return FakePaginator(self._keys)
+        store = self._buckets
+
+        class _P:
+            def paginate(self, *, Bucket, Prefix=""):
+                return FakePaginator(store.get(Bucket, [])).paginate(
+                    Bucket=Bucket, Prefix=Prefix
+                )
+
+        return _P()
+
+    def list_buckets(self):
+        return {"Buckets": [{"Name": b} for b in self._buckets]}
+
+    def list_objects_v2(self, *, Bucket, Prefix="", MaxKeys=1000, Delimiter=None):
+        matching = [k for k in self._buckets.get(Bucket, []) if k.startswith(Prefix)]
+        return {"KeyCount": len(matching[:MaxKeys])}
 
 
 @pytest.fixture
 def fake_minio(monkeypatch):
-    keys = [
-        "personal/loop-templates/Readme.md",
-        "personal/recordings/session-alpha.cast",
-        "personal/notes/readme-draft.MD",
-        "personal/notes/",  # directory marker — must be skipped
-        "work/loop-templates/readme.md",  # other profile — outside prefix
-    ]
+    buckets = {
+        "phantom-artifacts": [
+            "personal/loop-templates/Readme.md",
+            "personal/recordings/session-alpha.cast",
+            "personal/notes/readme-draft.MD",
+            "personal/notes/",  # directory marker — must be skipped
+            "work/loop-templates/readme.md",  # other profile's slice
+        ],
+        "gsa-archives": ["2026/dump.tar"],
+        "pb-default": ["vaults/memory/x.md"],
+    }
     monkeypatch.setattr(settings.minio, "enabled", True)
-    monkeypatch.setattr(settings.minio, "profile_prefix", "personal")
-    monkeypatch.setattr(artifacts, "_client", lambda: FakeClient(keys))
-    return keys
+    monkeypatch.setattr(artifacts, "_client", lambda: FakeClient(buckets))
+    return buckets
 
 
 def test_search_matches_case_insensitive(fake_minio):
     res = artifacts.search_objects("artifacts", "README")
     names = sorted(f.name for f in res["files"])
-    assert names == ["Readme.md", "readme-draft.MD"]
+    # Unscoped search spans the whole bucket — both profiles' readmes.
+    assert names == ["Readme.md", "readme-draft.MD", "readme.md"]
     assert res["truncated"] is False
 
 
-def test_search_is_profile_scoped(fake_minio):
-    res = artifacts.search_objects("artifacts", "readme")
+def test_search_scoped_by_prefix(fake_minio):
+    res = artifacts.search_objects("artifacts", "readme", prefix="personal/")
     assert all(f.key.startswith("personal/") for f in res["files"])
     assert not any("work/" in f.key for f in res["files"])
+    assert len(res["files"]) == 2
+
+
+def test_known_buckets_unscoped_lists_all(fake_minio):
+    buckets = artifacts.known_buckets("")
+    assert [b["name"] for b in buckets] == ["gsa-archives", "pb-default", "phantom-artifacts"]
+    assert all(b["scope_prefix"] == "" for b in buckets)
+
+
+def test_known_buckets_profile_scoping(fake_minio):
+    buckets = artifacts.known_buckets("personal")
+    by_name = {b["name"]: b for b in buckets}
+    # profile-structured buckets get a scope_prefix…
+    assert by_name["phantom-artifacts"]["scope_prefix"] == "personal/"
+    # …and <profile>-* named buckets belong wholly to the profile.
+    assert "gsa-archives" not in by_name  # other profile's bucket omitted
+    gsa = {b["name"]: b for b in artifacts.known_buckets("gsa")}
+    assert gsa["gsa-archives"]["scope_prefix"] == ""
 
 
 def test_search_limit_truncates(fake_minio):
@@ -85,10 +124,17 @@ class TestSearchEndpoint:
             return await c.get(path)
 
     async def test_search_endpoint(self, fake_minio):
-        r = await self._get("/api/artifacts/artifacts/search?q=readme")
+        r = await self._get("/api/artifacts/artifacts/search?q=readme&prefix=personal/")
         assert r.status_code == 200
         body = r.json()
         assert {f["name"] for f in body["files"]} == {"Readme.md", "readme-draft.MD"}
+
+    async def test_buckets_endpoint_profile_param(self, fake_minio):
+        r = await self._get("/api/artifacts/buckets?profile=personal")
+        assert r.status_code == 200
+        names = {b["name"]: b["scope_prefix"] for b in r.json()["buckets"]}
+        assert names.get("phantom-artifacts") == "personal/"
+        assert "gsa-archives" not in names
 
     async def test_empty_q_is_400(self, fake_minio):
         r = await self._get("/api/artifacts/artifacts/search?q=%20")
@@ -131,3 +177,27 @@ class TestPresignPublicEndpoint:
         monkeypatch.setattr(settings.minio, "public_endpoint", "https://minio.example.com")
         url = artifacts.presigned_put_url("artifacts", "a/b.txt")
         assert url.startswith("https://minio.example.com/"), url
+
+    def test_presign_explicit_host_wins(self, monkeypatch):
+        monkeypatch.setattr(settings.minio, "public_endpoint", "https://minio.example.com")
+        url = artifacts.presigned_get_url(
+            "artifacts", "a/b.txt", public_base="http://192.168.87.200:9000"
+        )
+        assert url.startswith("http://192.168.87.200:9000/"), url
+
+    def test_presign_rejects_non_http_host(self):
+        with pytest.raises(artifacts.ArtifactError, match="http"):
+            artifacts.presigned_get_url("artifacts", "a/b.txt", public_base="ftp://nope")
+
+    async def test_presign_endpoint_host_param(self):
+        from httpx import ASGITransport, AsyncClient
+
+        from brainbox.api import app
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+            r = await c.get(
+                "/api/artifacts/artifacts/presign",
+                params={"key": "x.txt", "op": "get", "host": "https://minio.example.com"},
+            )
+        assert r.status_code == 200, r.text
+        assert r.json()["url"].startswith("https://minio.example.com/")

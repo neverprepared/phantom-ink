@@ -14,9 +14,10 @@ func (a *App) GetArtifactsHealth() (brainbox.ArtifactsHealth, error) {
 	return a.client.GetArtifactsHealth()
 }
 
-// ListArtifactsBuckets returns the two-bucket catalog (vault, artifacts).
-func (a *App) ListArtifactsBuckets() ([]brainbox.ArtifactBucket, error) {
-	return a.client.ListArtifactsBuckets()
+// ListArtifactsBuckets returns the live bucket catalog scoped to the
+// given profile ("" = all buckets).
+func (a *App) ListArtifactsBuckets(profile string) ([]brainbox.ArtifactBucket, error) {
+	return a.client.ListArtifactsBuckets(profile)
 }
 
 // ListArtifactsFolder lists one prefix level — folders + files.
@@ -34,8 +35,38 @@ func (a *App) DeleteArtifactObject(bucketKey, key string) error {
 	return a.client.DeleteArtifactObject(bucketKey, key)
 }
 
+// resolveMinioAddress returns the MinIO base URL this app instance should
+// fetch presigned URLs from, per the app's MinIO integration config:
+// remote toggle on → remote_url, off → local_url. Empty = defer to the
+// daemon's CL_MINIO__PUBLIC_ENDPOINT. SigV4 signs the Host header, so
+// this address must be handed to the daemon at SIGNING time — it cannot
+// be swapped into the URL afterwards.
+func (a *App) resolveMinioAddress() string {
+	if a.db == nil {
+		return ""
+	}
+	row, ok := a.db.GetIntegration("minio")
+	if !ok || !row.Enabled {
+		return ""
+	}
+	if row.Remote && row.RemoteURL != "" {
+		return row.RemoteURL
+	}
+	if !row.Remote && row.LocalURL != "" {
+		return row.LocalURL
+	}
+	return ""
+}
+
+// GetMinioBrowserAddress exposes the resolved address for the Files
+// panel's endpoint display ("" = daemon default).
+func (a *App) GetMinioBrowserAddress() string {
+	return a.resolveMinioAddress()
+}
+
 // PresignArtifactURL mints a presigned GET (operator opens) or PUT
-// (Phase 4 worker writes) URL.
+// (Phase 4 worker writes) URL, signed against this app's resolved
+// MinIO address so the URL is fetchable from where the app runs.
 func (a *App) PresignArtifactURL(bucketKey, key, op string, ttlSeconds int) (brainbox.ArtifactPresignedURL, error) {
-	return a.client.PresignArtifactURL(bucketKey, key, op, ttlSeconds)
+	return a.client.PresignArtifactURL(bucketKey, key, op, ttlSeconds, a.resolveMinioAddress())
 }

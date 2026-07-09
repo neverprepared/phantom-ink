@@ -124,29 +124,41 @@ def _client():
     return _s3_client_cached
 
 
-def _presign_client():
+_presign_clients_by_host: dict[str, Any] = {}
+
+
+def _presign_client(public_base: str | None = None):
     """Client used ONLY to sign presigned URLs. SigV4 covers the Host
     header, so URLs must be signed against the address the *browser/app*
-    will fetch them from (``public_endpoint``), not the daemon-local one.
-    Falls back to the regular endpoint when no public address is set."""
-    global _s3_presign_client_cached
-    public = settings.minio.public_endpoint.strip()
-    if not public or public == settings.minio.endpoint:
-        return _client()
+    will fetch them from, not the daemon-local one.
+
+    Resolution: an explicit ``public_base`` (the app passes its MinIO
+    integration address — local or remote depending on its toggle) wins;
+    then ``settings.minio.public_endpoint``; then the daemon endpoint
+    (single-machine setups). Clients are cached per host — signing is
+    offline, so these are cheap, but boto client construction isn't.
+    """
     if not settings.minio.enabled:
         raise ArtifactError(
             "client", "", "minio integration is disabled (CL_MINIO__ENABLED=false)"
         )
-    if _s3_presign_client_cached is None:
-        _s3_presign_client_cached = _make_client(public)
-    return _s3_presign_client_cached
+    base = (public_base or "").strip() or settings.minio.public_endpoint.strip()
+    if not base or base == settings.minio.endpoint:
+        return _client()
+    if not base.startswith(("http://", "https://")):
+        raise ArtifactError("presign", base, "presign host must be an http(s) URL")
+    client = _presign_clients_by_host.get(base)
+    if client is None:
+        client = _make_client(base)
+        _presign_clients_by_host[base] = client
+    return client
 
 
 def reset_client_for_tests() -> None:
     """Drop the cached clients; used by tests that override settings."""
-    global _s3_client_cached, _s3_presign_client_cached
+    global _s3_client_cached
     _s3_client_cached = None
-    _s3_presign_client_cached = None
+    _presign_clients_by_host.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -160,10 +172,7 @@ def is_enabled() -> bool:
 
 
 def health() -> dict[str, Any]:
-    """Cheap profile-scoped reachability probe. Uses list_objects_v2
-    against the artifacts bucket bounded by the profile prefix —
-    matches the exact permission grant in the per-profile IAM policy
-    (admin-level ``list_buckets`` would 403 here).
+    """Cheap reachability probe (one bounded list on the artifacts bucket).
 
     The panel calls this on mount to render a "MinIO unreachable" empty
     state instead of letting the operator click into folders that 502.
@@ -171,12 +180,8 @@ def health() -> dict[str, Any]:
     if not is_enabled():
         return {"ok": False, "reason": "disabled"}
     try:
-        client = _client()
-        prefix = settings.minio.profile_prefix.strip("/")
-        scoped = (prefix + "/") if prefix else ""
-        client.list_objects_v2(
+        _client().list_objects_v2(
             Bucket=settings.minio.bucket_artifacts,
-            Prefix=scoped,
             MaxKeys=1,
         )
         return {
@@ -193,13 +198,45 @@ def health() -> dict[str, Any]:
         return {"ok": False, "reason": str(exc)}
 
 
-def known_buckets() -> list[dict[str, str]]:
-    """Static bucket catalog the frontend renders as the two root entries
-    in the file browser."""
-    return [
-        {"key": "vault", "name": settings.minio.bucket_vault, "label": "Vault"},
-        {"key": "artifacts", "name": settings.minio.bucket_artifacts, "label": "Artifacts"},
-    ]
+def known_buckets(profile: str = "") -> list[dict[str, str]]:
+    """Live bucket catalog for the file browser (requires a credential
+    that can ``list_buckets`` — the brainbox service account).
+
+    ``profile`` scoping ("follow the app's active profile"):
+      - ``""``      — every bucket, unscoped.
+      - otherwise   — a bucket named ``<profile>-*`` belongs wholly to the
+        profile (scope_prefix ""); a bucket with a top-level ``<profile>/``
+        folder is profile-structured (scope_prefix ``<profile>/``); buckets
+        matching neither are omitted.
+
+    ``scope_prefix`` is the root the browser should treat as "/" for
+    this bucket under the requested profile.
+    """
+    client = _client()
+    try:
+        names = [b["Name"] for b in client.list_buckets().get("Buckets", [])]
+    except ClientError as exc:
+        raise ArtifactError("list_buckets", "", str(exc)) from exc
+
+    out: list[dict[str, str]] = []
+    for name in sorted(names):
+        if not profile:
+            out.append({"key": name, "name": name, "label": name, "scope_prefix": ""})
+            continue
+        if name.startswith(profile + "-"):
+            out.append({"key": name, "name": name, "label": name, "scope_prefix": ""})
+            continue
+        try:
+            resp = client.list_objects_v2(
+                Bucket=name, Prefix=profile + "/", MaxKeys=1
+            )
+        except ClientError:
+            continue
+        if resp.get("KeyCount", 0) > 0:
+            out.append(
+                {"key": name, "name": name, "label": name, "scope_prefix": profile + "/"}
+            )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -207,14 +244,13 @@ def known_buckets() -> list[dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 
-def _full_key(relative: str) -> str:
-    """Prepend the profile prefix. Strip leading slash so callers can
-    pass either ``"loop-templates/foo"`` or ``"/loop-templates/foo"``."""
-    rel = relative.lstrip("/")
-    prefix = settings.minio.profile_prefix.strip("/")
-    if not prefix:
-        return rel
-    return f"{prefix}/{rel}" if rel else prefix
+def _norm_key(key: str) -> str:
+    """Keys are RAW bucket keys (exactly as listings return them) — the
+    old implicit profile-prefixing double-prefixed everything the browser
+    passed back. Namespacing is now the writer's job (e.g. gateway_bundle
+    keys under ``<profile>/gateway-bundles/``) and the browser's scoping
+    is applied by the API layer via ``known_buckets``' scope_prefix."""
+    return key.lstrip("/")
 
 
 def _resolve_bucket(name: str) -> str:
@@ -224,9 +260,9 @@ def _resolve_bucket(name: str) -> str:
         return settings.minio.bucket_vault
     if name == "artifacts":
         return settings.minio.bucket_artifacts
-    if name in (settings.minio.bucket_vault, settings.minio.bucket_artifacts):
-        return name
-    raise ArtifactError("resolve_bucket", name, "unknown bucket")
+    if not name or "/" in name:
+        raise ArtifactError("resolve_bucket", name, "invalid bucket name")
+    return name  # dynamic catalog: any real bucket the credential can reach
 
 
 # ---------------------------------------------------------------------------
@@ -242,10 +278,10 @@ def put_object(
     content_type: str | None = None,
     metadata: dict[str, str] | None = None,
 ) -> ArtifactResult:
-    """Upload bytes to ``bucket/profile_prefix/key``. Metadata goes onto
+    """Upload bytes to ``bucket/key`` (raw key). Metadata goes onto
     the object as user-defined ``x-amz-meta-*`` headers."""
     real_bucket = _resolve_bucket(bucket)
-    real_key = _full_key(key)
+    real_key = _norm_key(key)
     try:
         kwargs: dict[str, Any] = {
             "Bucket": real_bucket,
@@ -272,7 +308,7 @@ def get_object(bucket: str, key: str) -> bytes:
     """Read the full object body. Caller absorbs the cost — the API
     handler decides whether to stream or buffer."""
     real_bucket = _resolve_bucket(bucket)
-    real_key = _full_key(key)
+    real_key = _norm_key(key)
     try:
         resp = _client().get_object(Bucket=real_bucket, Key=real_key)
         return resp["Body"].read()
@@ -287,7 +323,7 @@ def head_object(bucket: str, key: str) -> dict[str, Any]:
     browser to render sizes / timestamps when the operator clicks an
     entry."""
     real_bucket = _resolve_bucket(bucket)
-    real_key = _full_key(key)
+    real_key = _norm_key(key)
     try:
         resp = _client().head_object(Bucket=real_bucket, Key=real_key)
         return {
@@ -307,7 +343,7 @@ def head_object(bucket: str, key: str) -> dict[str, Any]:
 
 def delete_object(bucket: str, key: str) -> None:
     real_bucket = _resolve_bucket(bucket)
-    real_key = _full_key(key)
+    real_key = _norm_key(key)
     try:
         _client().delete_object(Bucket=real_bucket, Key=real_key)
     except ClientError as exc:
@@ -324,14 +360,12 @@ def list_folder(bucket: str, prefix: str = "", max_keys: int = 500) -> FolderLis
     folders via ``Delimiter='/'`` + ``CommonPrefixes``; we expose that
     to the frontend as two arrays.
 
-    The returned ``key`` values include the profile prefix — the
-    frontend can pass them back unchanged to get_object / delete.
+    ``prefix`` is a RAW bucket prefix (the browser starts from the
+    bucket's scope_prefix); returned ``key`` values are raw and can be
+    passed back unchanged to head / presign / delete.
     """
     real_bucket = _resolve_bucket(bucket)
-    # Browser-facing prefix: append the profile prefix to whatever the
-    # operator typed. An empty prefix yields the top of the profile's
-    # own namespace.
-    real_prefix = _full_key(prefix.lstrip("/"))
+    real_prefix = _norm_key(prefix)
     if real_prefix and not real_prefix.endswith("/"):
         real_prefix = real_prefix + "/"
     try:
@@ -377,15 +411,16 @@ def list_folder(bucket: str, prefix: str = "", max_keys: int = 500) -> FolderLis
     )
 
 
-def search_objects(bucket: str, query: str, *, limit: int = 200) -> dict:
-    """Case-insensitive substring search over object keys in the profile's
-    namespace. Paginates ``list_objects_v2`` under the profile prefix
-    (bounded — MAX_SCAN keys) and matches against the profile-relative
-    portion of each key. Returns the same file shape as ``list_folder``.
+def search_objects(bucket: str, query: str, *, limit: int = 200, prefix: str = "") -> dict:
+    """Case-insensitive substring search over object keys under ``prefix``
+    (the browser passes the bucket's scope_prefix — "" = whole bucket).
+    Paginates ``list_objects_v2`` (bounded — MAX_SCAN keys) and matches
+    against the prefix-relative portion of each key. Returns the same
+    file shape as ``list_folder``.
     """
     MAX_SCAN = 10_000
     real_bucket = _resolve_bucket(bucket)
-    scoped = _full_key("")
+    scoped = _norm_key(prefix)
     if scoped and not scoped.endswith("/"):
         scoped += "/"
     needle = query.lower()
@@ -436,15 +471,17 @@ def search_objects(bucket: str, query: str, *, limit: int = 200) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def presigned_put_url(bucket: str, key: str, *, expires_seconds: int = 3600) -> str:
+def presigned_put_url(
+    bucket: str, key: str, *, expires_seconds: int = 3600, public_base: str | None = None
+) -> str:
     """Generate a presigned PUT URL the worker container can write to
     directly. The Phase 4 assist race fix uses this — agent writes to
     the URL, brainbox reads from the bucket after the container is gone.
     """
     real_bucket = _resolve_bucket(bucket)
-    real_key = _full_key(key)
+    real_key = _norm_key(key)
     try:
-        return _presign_client().generate_presigned_url(
+        return _presign_client(public_base).generate_presigned_url(
             "put_object",
             Params={"Bucket": real_bucket, "Key": real_key},
             ExpiresIn=expires_seconds,
@@ -453,11 +490,13 @@ def presigned_put_url(bucket: str, key: str, *, expires_seconds: int = 3600) -> 
         raise ArtifactError("presign_put", real_key, str(exc)) from exc
 
 
-def presigned_get_url(bucket: str, key: str, *, expires_seconds: int = 3600) -> str:
+def presigned_get_url(
+    bucket: str, key: str, *, expires_seconds: int = 3600, public_base: str | None = None
+) -> str:
     real_bucket = _resolve_bucket(bucket)
-    real_key = _full_key(key)
+    real_key = _norm_key(key)
     try:
-        return _presign_client().generate_presigned_url(
+        return _presign_client(public_base).generate_presigned_url(
             "get_object",
             Params={"Bucket": real_bucket, "Key": real_key},
             ExpiresIn=expires_seconds,

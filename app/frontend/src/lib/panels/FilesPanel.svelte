@@ -13,6 +13,7 @@
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
+  import { profileState } from '../stores.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Spinner from '../components/Spinner.svelte';
 
@@ -20,6 +21,7 @@
     key: string;
     name: string;
     label: string;
+    scope_prefix: string;
   }
 
   interface Folder {
@@ -35,7 +37,11 @@
     last_modified_ms: number;
   }
 
-  let health = $state<{ ok: boolean; reason?: string; endpoint?: string; profile_prefix?: string } | null>(null);
+  let health = $state<{ ok: boolean; reason?: string; endpoint?: string; public_endpoint?: string; profile_prefix?: string } | null>(null);
+  // The MinIO address this app fetches presigned URLs from: the app's
+  // MinIO integration entry (local/remote per its toggle), falling back
+  // to the daemon's public endpoint.
+  let browserAddress = $state('');
   let buckets = $state<Bucket[]>([]);
   let selectedBucket = $state<Bucket | null>(null);
   let currentPrefix = $state<string>('');
@@ -66,15 +72,28 @@
   let previewLoading = $state(false);
   let downloading = $state(false);
 
+  // The Files view follows the app's active profile: null ("all") shows
+  // every bucket unscoped; a specific profile shows only its buckets/
+  // slices, rooted at each bucket's scope_prefix. profileState.active is
+  // a Profile object — the API wants the NAME string.
+  let activeProfile = $derived(profileState.active?.name ?? '');
+
   async function bootstrap() {
     const api = await getApi();
     if (!api) return;
     try {
       health = await api.GetArtifactsHealth();
+      browserAddress = (await api.GetMinioBrowserAddress()) || health?.public_endpoint || health?.endpoint || '';
       if (health?.ok) {
-        buckets = (await api.ListArtifactsBuckets()) ?? [];
+        buckets = (await api.ListArtifactsBuckets(activeProfile)) ?? [];
+        closePreview();
+        clearSearch();
         if (buckets.length > 0) {
           await openBucket(buckets[0]);
+        } else {
+          selectedBucket = null;
+          folders = [];
+          files = [];
         }
       }
     } catch (err) {
@@ -82,17 +101,30 @@
     }
   }
 
+  // Re-scope when the operator switches profile tabs.
+  let lastProfile = $state<string | null>(null);
+  $effect(() => {
+    const p = activeProfile;
+    if (lastProfile !== null && p !== lastProfile) {
+      void bootstrap();
+    }
+    lastProfile = p;
+  });
+
   async function openBucket(bucket: Bucket) {
     selectedBucket = bucket;
-    currentPrefix = '';
+    currentPrefix = bucket.scope_prefix ?? '';
     clearSearch();
     closePreview();
     await refreshListing();
   }
 
+  // Root of the current view — the bucket's scope_prefix for the active
+  // profile. Navigation never goes above it; displays are relative to it.
+  const scopeRoot = $derived(selectedBucket?.scope_prefix ?? '');
+
   function relPath(key: string): string {
-    const root = (health?.profile_prefix ?? '').replace(/\/$/, '');
-    return root && key.startsWith(root + '/') ? key.slice(root.length + 1) : key;
+    return scopeRoot && key.startsWith(scopeRoot) ? key.slice(scopeRoot.length) : key;
   }
 
   function clearSearch() {
@@ -119,7 +151,7 @@
     try {
       const api = await getApi();
       if (!api) return;
-      const res = await api.SearchArtifactsFiles(selectedBucket.key, q);
+      const res = await api.SearchArtifactsFiles(selectedBucket.key, q, scopeRoot);
       // Ignore stale responses — only apply if the box still holds this query.
       if (query.trim() === q) {
         searchResults = (res?.files ?? []) as File[];
@@ -174,22 +206,17 @@
 
   async function enterFolder(folder: Folder) {
     clearSearch();
-    // The API's `prefix` is namespace-relative — strip the server-side
-    // profile prefix the listing returned (it's already in `folder.prefix`).
-    const profileRoot = (health?.profile_prefix ?? '').replace(/\/$/, '');
-    let rel = folder.prefix;
-    if (profileRoot && rel.startsWith(profileRoot + '/')) {
-      rel = rel.slice(profileRoot.length + 1);
-    }
-    currentPrefix = rel;
+    // Prefixes are raw bucket keys end-to-end since the browser refactor.
+    currentPrefix = folder.prefix;
     await refreshListing();
   }
 
   async function goUp() {
-    if (!currentPrefix) return;
+    if (!currentPrefix || currentPrefix === scopeRoot) return;
     const trimmed = currentPrefix.replace(/\/$/, '');
     const idx = trimmed.lastIndexOf('/');
-    currentPrefix = idx === -1 ? '' : trimmed.slice(0, idx + 1);
+    const up = idx === -1 ? '' : trimmed.slice(0, idx + 1);
+    currentPrefix = up.length < scopeRoot.length ? scopeRoot : up;
     await refreshListing();
   }
 
@@ -240,11 +267,11 @@
     }
   }
 
-  // Derived breadcrumb segments. The profile prefix is hidden — operators
-  // never need to see "personal/" in front of every path.
+  // Derived breadcrumb segments, relative to the scope root — the active
+  // profile's prefix is the floor, not a visible path component.
   const segments = $derived(
-    currentPrefix
-      ? currentPrefix.replace(/\/$/, '').split('/').filter(Boolean)
+    relPath(currentPrefix)
+      ? relPath(currentPrefix).replace(/\/$/, '').split('/').filter(Boolean)
       : []
   );
 
@@ -311,11 +338,9 @@
         {/each}
         <div class="endpoint-info">
           <div class="dim">endpoint</div>
-          <div class="mono small">{health.endpoint}</div>
-          {#if health.profile_prefix}
-            <div class="dim" style="margin-top: 6px;">profile</div>
-            <div class="mono small">{health.profile_prefix}</div>
-          {/if}
+          <div class="mono small">{browserAddress}</div>
+          <div class="dim" style="margin-top: 6px;">profile</div>
+          <div class="mono small">{activeProfile || 'all'}</div>
         </div>
       </aside>
 
@@ -344,7 +369,7 @@
           </div>
         {:else}
         <div class="breadcrumb">
-          <button class="crumb" disabled={!currentPrefix} onclick={() => { currentPrefix = ''; void refreshListing(); }}>
+          <button class="crumb" disabled={currentPrefix === scopeRoot} onclick={() => { currentPrefix = scopeRoot; void refreshListing(); }}>
             {selectedBucket?.label ?? ''}
           </button>
           {#each segments as seg, i (i + seg)}
@@ -352,12 +377,12 @@
             <button
               class="crumb"
               onclick={() => {
-                currentPrefix = segments.slice(0, i + 1).join('/') + '/';
+                currentPrefix = scopeRoot + segments.slice(0, i + 1).join('/') + '/';
                 void refreshListing();
               }}
             >{seg}</button>
           {/each}
-          {#if currentPrefix}
+          {#if currentPrefix !== scopeRoot}
             <button class="btn-up" onclick={goUp} title="Up one level">↑</button>
           {/if}
         </div>

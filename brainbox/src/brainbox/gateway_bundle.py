@@ -74,7 +74,10 @@ def _require_minio() -> None:
 
 
 def _bundle_key(profile: str) -> str:
-    return f"gateway-bundles/{_validate_profile(profile)}/{_BUNDLE_OBJECT}"
+    # Profile-first layout so the bundle shows up under the profile's
+    # slice in the (profile-scoped) file browser. artifacts keys are raw
+    # since the browser refactor — writers own their namespacing.
+    return f"{_validate_profile(profile)}/gateway-bundles/{_BUNDLE_OBJECT}"
 
 
 def _cache_root() -> Path:

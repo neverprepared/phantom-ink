@@ -314,6 +314,10 @@ export function GetMetricsHistory() {
   return window['go']['main']['App']['GetMetricsHistory']();
 }
 
+export function GetMinioBrowserAddress() {
+  return window['go']['main']['App']['GetMinioBrowserAddress']();
+}
+
 export function GetOTLPHost() {
   return window['go']['main']['App']['GetOTLPHost']();
 }
@@ -438,8 +442,8 @@ export function ListAgents() {
   return window['go']['main']['App']['ListAgents']();
 }
 
-export function ListArtifactsBuckets() {
-  return window['go']['main']['App']['ListArtifactsBuckets']();
+export function ListArtifactsBuckets(arg1) {
+  return window['go']['main']['App']['ListArtifactsBuckets'](arg1);
 }
 
 export function ListArtifactsFolder(arg1, arg2) {
@@ -654,8 +658,8 @@ export function ScanProfiles() {
   return window['go']['main']['App']['ScanProfiles']();
 }
 
-export function SearchArtifactsFiles(arg1, arg2) {
-  return window['go']['main']['App']['SearchArtifactsFiles'](arg1, arg2);
+export function SearchArtifactsFiles(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SearchArtifactsFiles'](arg1, arg2, arg3);
 }
 
 export function SetActiveProfile(arg1) {

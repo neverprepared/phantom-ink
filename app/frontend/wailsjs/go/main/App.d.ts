@@ -160,6 +160,8 @@ export function GetMessageLog():Promise<Array<brainbox.Message>>;
 
 export function GetMetricsHistory():Promise<Array<brainbox.MetricsSample>>;
 
+export function GetMinioBrowserAddress():Promise<string>;
+
 export function GetOTLPHost():Promise<string>;
 
 export function GetObservabilityOverview(arg1:string):Promise<opensearch.Overview>;
@@ -222,7 +224,7 @@ export function ListAgentState(arg1:main.AgentStateFilter):Promise<Array<brainbo
 
 export function ListAgents():Promise<Array<main.DetectedAgent>>;
 
-export function ListArtifactsBuckets():Promise<Array<brainbox.ArtifactBucket>>;
+export function ListArtifactsBuckets(arg1:string):Promise<Array<brainbox.ArtifactBucket>>;
 
 export function ListArtifactsFolder(arg1:string,arg2:string):Promise<brainbox.ArtifactListing>;
 
@@ -330,7 +332,7 @@ export function ScanDiskUsage():Promise<main.DiskOverview>;
 
 export function ScanProfiles():Promise<Array<main.Profile>>;
 
-export function SearchArtifactsFiles(arg1:string,arg2:string):Promise<any>;
+export function SearchArtifactsFiles(arg1:string,arg2:string,arg3:string):Promise<any>;
 
 export function SetActiveProfile(arg1:string):Promise<void>;
 
