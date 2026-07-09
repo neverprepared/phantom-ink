@@ -2154,19 +2154,45 @@ async def api_create_session(
         # (supervisor, worker) can dispatch A2A. A hub Task is registered only
         # when a task description is provided (so it shows in the dashboard and
         # gets lifecycle management).
-        from .registry import issue_session_token
+        from .registry import issue_bare_session_token, issue_session_token
+        from . import session_store
         task_id = None
         tid = str(uuid.uuid4())
         role = body.role or "assistant"
         hub_token = issue_session_token(role, tid)  # None if role isn't a registered agent
-        if body.task:
+
+        # Compose the task text, prepending a predecessor's handoff when
+        # continue_from is set (cross-machine session handoff).
+        task_text = body.task
+        if body.continue_from:
+            handoff_row = await session_store.async_get(
+                body.continue_from, session_store.KEY_HANDOFF
+            )
+            if handoff_row is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"no handoff stored for session '{body.continue_from}'",
+                )
+            handoff_text = handoff_row[0].decode("utf-8", errors="replace")
+            task_text = (
+                f"Context from previous session {body.continue_from}:\n\n"
+                f"{handoff_text}\n\n---\n\n"
+                f"{body.task or 'Continue the work described above.'}"
+            )
+
+        if task_text and hub_token is None:
+            # Task-bearing sessions need a bearer identity to fetch their
+            # task from the session store, even for unregistered roles.
+            hub_token = issue_bare_session_token(role, tid)
+
+        if task_text:
             from .router import _tasks
             from .utils import now_ms as _now_ms
             from .models import Task as HubTask, TaskStatus
             task_id = tid
             _tasks[tid] = HubTask(
                 id=tid,
-                description=body.task,
+                description=task_text,
                 agent_name=role,
                 status=TaskStatus.RUNNING,
                 created_at=_now_ms(),
@@ -2175,7 +2201,68 @@ async def api_create_session(
                 session_name=body.name,
                 repo_url=None,
             )
+            # Durable task object — written BEFORE the container exists so the
+            # startup fetch can never race it. PG failure fails the create:
+            # task delivery is the point of a task-bearing session.
+            task_doc = {
+                "task": task_text,
+                "task_id": tid,
+                "session_name": body.name,
+                "profile": body.workspace_profile or "",
+                "role": role,
+                "created_at": _now_ms(),
+                "continue_from": body.continue_from,
+                "footer": (
+                    "When your task is fully complete (PR opened or final output "
+                    'delivered), run: brainbox-complete "<brief result summary>"'
+                ),
+            }
+            await session_store.async_put(
+                body.name,
+                session_store.KEY_TASK,
+                json.dumps(task_doc).encode(),
+                profile=body.workspace_profile or "",
+                task_id=tid,
+                token_id=hub_token.token_id if hub_token else None,
+            )
             _broadcast_sse(json.dumps({"action": "task.submit", "agent": role, "task_id": tid}))
+
+        # Session-store env contract: ships everything the container needs to
+        # fetch its task from the hub (and, when the operator has seeded
+        # BRAINBOX_S3_* in the profile env store, to write artifacts directly
+        # to MinIO with profile-scoped credentials). The contract wins over
+        # caller-supplied env — the daemon is authoritative on identity/URLs.
+        # BRAINBOX_HUB_URL is clobbered later by configure() with a
+        # host-docker-internal address, hence the distinct _PUBLIC name.
+        contract_env: dict[str, str] = {
+            "BRAINBOX_SESSION_NAME": body.name,
+            "BRAINBOX_HUB_URL_PUBLIC": settings.public_url
+            or f"http://host.docker.internal:{settings.api_port}",
+            "BRAINBOX_PROFILE": body.workspace_profile or "",
+        }
+        if hub_token:
+            contract_env["BRAINBOX_TOKEN"] = hub_token.token_id
+        if task_id:
+            contract_env["BRAINBOX_TASK_ID"] = task_id
+        if body.workspace_profile:
+            try:
+                from . import gateway_secrets
+
+                profile_env = gateway_secrets.get_profile_env(body.workspace_profile)
+                s3_keys = (
+                    "BRAINBOX_S3_ENDPOINT", "BRAINBOX_S3_ACCESS_KEY",
+                    "BRAINBOX_S3_SECRET_KEY", "BRAINBOX_S3_BUCKET",
+                    "BRAINBOX_S3_REGION",
+                )
+                s3_env = {k: profile_env[k] for k in s3_keys if profile_env.get(k)}
+                if s3_env:
+                    s3_env["BRAINBOX_S3_PREFIX"] = (
+                        f"{body.workspace_profile}/sessions/{body.name}/"
+                    )
+                contract_env.update(s3_env)
+            except Exception:
+                pass  # no profile env store / undecryptable — direct S3 is optional
+        session_env = {**(body.env or {}), **contract_env}
 
         ctx = await run_pipeline(
             session_name=body.name,
@@ -2195,11 +2282,11 @@ async def api_create_session(
             ports=body.ports,
             docker_host=body.docker_host,
             token=hub_token,
-            task_description=body.task,
+            task_description=task_text,
             task_id=task_id,
             delivery=body.delivery,
             runner=body.runner,
-            extra_env=body.env or {},
+            extra_env=session_env,
         )
         _audit_log(request, "session.create", session_name=body.name, success=True)
         _broadcast_sse(json.dumps({"action": "session.create", "session": body.name, "profile": body.workspace_profile or ""}))
@@ -2220,6 +2307,10 @@ async def api_create_session(
                 "backend": "docker",
                 "url": f"{settings.session_base_url}/t/{ctx.session_name}",
             }
+    except HTTPException:
+        # Deliberate 4xx (e.g. missing continue_from handoff) — don't let the
+        # generic handler collapse it into a 500.
+        raise
     except RuntimeError as exc:
         _audit_log(request, "session.create", session_name=body.name, success=False, error=str(exc))
         msg = str(exc)
@@ -3028,6 +3119,177 @@ async def hub_cancel_task(task_id: str, request: Request):
         return task.model_dump()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+# --- Session store (task / result / handoff) ---
+
+
+async def _resolve_session_store_writer(request: Request) -> dict:
+    """Lenient auth for session-originated store writes. Resolution order:
+
+    1. Valid bearer token → task row by token.task_id.
+    2. Expired/unknown bearer → task row matched by the PRESENTED token_id
+       string against the token_id column stamped at create. Possession of
+       the minted credential proves session identity even after TTL expiry
+       (assistant tokens live 1h; sessions can run far longer) or a deep
+       daemon restart. validate_token pops expired tokens, so this reads
+       the raw header value against Postgres instead.
+    3. X-API-Key + explicit task_id/session_name in the body (operator path,
+       parity with today's complete.sh fallback).
+
+    Returns the task.json row dict (plus 'via' describing the auth path).
+    """
+    from . import session_store
+
+    auth = request.headers.get("authorization", "")
+    if auth.startswith("Bearer "):
+        presented = auth[7:].strip()
+        token = validate_token(presented)
+        if token and token.task_id:
+            row = await session_store.async_get_by_task_id(token.task_id)
+            if row:
+                return {**row, "via": "token"}
+        if presented:
+            row = await session_store.async_get_by_token_id(presented)
+            if row:
+                return {**row, "via": "token-expired"}
+
+    api_key = request.headers.get("x-api-key", "")
+    if api_key and secrets.compare_digest(api_key, get_api_key()):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        row = None
+        if isinstance(body, dict) and body.get("task_id"):
+            row = await session_store.async_get_by_task_id(str(body["task_id"]))
+        if row is None and isinstance(body, dict) and body.get("session_name"):
+            from . import session_store as _ss
+            got = await _ss.async_get(str(body["session_name"]), _ss.KEY_TASK)
+            if got:
+                row = _ss.get_by_task_id(json.loads(got[0]).get("task_id", ""))
+        if row:
+            return {**row, "via": "api-key"}
+
+    raise HTTPException(status_code=401, detail="No valid session credential for the store")
+
+
+@app.get("/api/session-store/task")
+async def session_store_get_task(request: Request, token: Token = Depends(require_token)):
+    """The container's startup fetch. Token-relative — the bearer token IS
+    the session identity, so cross-session reads are impossible by
+    construction. Returns text/plain (task + footer) by default so the
+    ttyd wrapper needs no JSON parsing; Accept: application/json returns
+    the full task document."""
+    from . import session_store
+
+    row = await session_store.async_get_by_task_id(token.task_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="No task stored for this session")
+    doc = json.loads(row["content"])
+    if "application/json" in request.headers.get("accept", ""):
+        return doc
+    text = doc.get("task", "")
+    footer = doc.get("footer", "")
+    from fastapi.responses import PlainTextResponse
+
+    return PlainTextResponse(text + ("\n\n" + footer if footer else ""))
+
+
+@app.put("/api/session-store/result")
+async def session_store_put_result(request: Request):
+    """Store the session's result summary AND complete its hub task — the
+    one call brainbox-complete makes. /api/hub/messages stays untouched as
+    the legacy sink for old images."""
+    from . import session_store
+
+    row = await _resolve_session_store_writer(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    result_text = body.get("result") if isinstance(body, dict) else None
+    if not isinstance(result_text, str) or not result_text.strip():
+        raise HTTPException(status_code=400, detail="body.result (string) is required")
+    if len(result_text.encode()) > session_store.MAX_OBJECT_BYTES:
+        raise HTTPException(status_code=413, detail="result exceeds 1 MB")
+
+    from .utils import now_ms as _now_ms
+
+    result_doc = {
+        "result": result_text,
+        "task_id": row.get("task_id"),
+        "session_name": row["session_name"],
+        "completed_at": _now_ms(),
+        "via": row["via"],
+    }
+    await session_store.async_put(
+        row["session_name"],
+        session_store.KEY_RESULT,
+        json.dumps(result_doc).encode(),
+        profile=row.get("profile") or "",
+        task_id=row.get("task_id"),
+    )
+
+    completed = False
+    if row.get("task_id"):
+        try:
+            await complete_task(row["task_id"], result_text)
+            completed = True
+        except ValueError:
+            pass  # already completed / task gone — result is still stored
+    return {"stored": True, "completed": completed}
+
+
+@app.put("/api/session-store/handoff")
+async def session_store_put_handoff(request: Request):
+    """Store a handoff document for this session — the seed for a later
+    create with continue_from."""
+    from . import session_store
+
+    row = await _resolve_session_store_writer(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    handoff_text = body.get("handoff") if isinstance(body, dict) else None
+    if not isinstance(handoff_text, str) or not handoff_text.strip():
+        raise HTTPException(status_code=400, detail="body.handoff (string) is required")
+    if len(handoff_text.encode()) > session_store.MAX_OBJECT_BYTES:
+        raise HTTPException(status_code=413, detail="handoff exceeds 1 MB")
+
+    await session_store.async_put(
+        row["session_name"],
+        session_store.KEY_HANDOFF,
+        handoff_text.encode(),
+        profile=row.get("profile") or "",
+        content_type="text/markdown",
+        task_id=row.get("task_id"),
+    )
+    return {"stored": True}
+
+
+@app.get("/api/session-store/{session_name}/{key}")
+async def session_store_get_object(
+    session_name: str, key: str, _key=Depends(require_api_key)
+):
+    """Operator/app read path (handoff preview, debugging, PG-only mode)."""
+    from . import session_store
+    from .validation import validate_session_name as _validate_session_name
+
+    if key not in session_store.KNOWN_KEYS:
+        raise HTTPException(status_code=400, detail=f"key must be one of {session_store.KNOWN_KEYS}")
+    try:
+        session_name = _validate_session_name(session_name)
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    got = await session_store.async_get(session_name, key)
+    if got is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    content, content_type = got
+    from fastapi.responses import Response
+
+    return Response(content=content, media_type=content_type)
 
 
 # --- Messages ---

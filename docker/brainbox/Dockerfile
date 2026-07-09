@@ -67,6 +67,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 COPY --chown=developer:developer docker/brainbox/setup/.bashrc         /tmp/.bashrc.extra
 COPY --chown=developer:developer docker/brainbox/setup/ttyd-wrapper.sh /home/developer/ttyd-wrapper.sh
 COPY --chown=developer:developer reflex/plugins/reflex                  /opt/reflex/share/reflex
+# brainbox-complete: records the session result via the hub session store
+COPY docker/brainbox/setup/complete.sh /usr/local/bin/brainbox-complete
+RUN chmod 755 /usr/local/bin/brainbox-complete
 
 # =============================================================================
 # Developer: all language runtimes, tools, MCP servers, Claude Code

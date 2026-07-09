@@ -30,6 +30,7 @@ class CreateSessionRequest(BaseModel):
     vm_template: str | None = None  # UTM only: template VM name
     guest_os: str = "linux"  # UTM only: guest OS — "linux", "macos", or "windows"
     task: str | None = None  # Initial task to send to Claude on first launch
+    continue_from: str | None = None  # Prior session whose handoff.md seeds this task
     ports: dict[str, int] | None = None  # Additional port mappings (container_port: host_port)
     docker_host: str | None = None  # Docker daemon host (None = local socket)
     delivery: str | None = None  # passed through to runner
@@ -42,6 +43,17 @@ class CreateSessionRequest(BaseModel):
         """Validate session name using existing validation function."""
         if v is None:
             return "default"
+        try:
+            return validate_session_name(v)
+        except ValidationError as e:
+            raise ValueError(str(e)) from e
+
+    @field_validator("continue_from")
+    @classmethod
+    def validate_continue_from_field(cls, v: str | None) -> str | None:
+        """continue_from names a prior session — same charset rules as name."""
+        if v is None or v == "":
+            return None
         try:
             return validate_session_name(v)
         except ValidationError as e:

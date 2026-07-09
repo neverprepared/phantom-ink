@@ -101,12 +101,38 @@ else
             ;;
     esac
 
-    # If a task file exists, pass its content as the initial prompt so the
-    # agent starts working immediately without any manual Enter press.
-    # After the agent exits, run complete.sh and exit the container.
-    if [ -f "${HOME}/.brainbox/task.txt" ]; then
-        TASK_CMD="$AGENT_CMD \"\$(cat ${HOME}/.brainbox/task.txt)\""
-        TASK_CMD="$TASK_CMD; ${HOME}/.brainbox/complete.sh \"\$(cat /tmp/.claude-task-result 2>/dev/null || echo done)\"; exit"
+    # --- Session-store task fetch (pull model) ---------------------------
+    # The task is stored durably on the hub BEFORE this container existed;
+    # fetch it with the session's bearer token. Works identically for local
+    # and runner-dispatched sessions — no exec-injection race. On local
+    # sessions the env contract arrives via ~/.env; on runner sessions it
+    # is already in the container env.
+    [ -f "${HOME}/.env" ] && . "${HOME}/.env" 2>/dev/null
+    TOKEN=$(cat "${HOME}/.agent-token" 2>/dev/null || echo "${BRAINBOX_TOKEN:-}")
+    HUB="${BRAINBOX_HUB_URL_PUBLIC:-${BRAINBOX_HUB_URL:-}}"
+    TASK_FILE=""
+    if [ -n "$TOKEN" ] && [ -n "$HUB" ]; then
+        for _try in 1 2 3; do   # runner networks can be slow right after create
+            if curl -sf --max-time 10 -H "Authorization: Bearer $TOKEN" \
+                 "$HUB/api/session-store/task" -o /tmp/brainbox-task.txt 2>/dev/null \
+               && [ -s /tmp/brainbox-task.txt ]; then
+                TASK_FILE=/tmp/brainbox-task.txt
+                break
+            fi
+            sleep 2
+        done
+    fi
+    # Legacy fallback: exec-injected file (old daemon, or hub unreachable).
+    [ -z "$TASK_FILE" ] && [ -f "${HOME}/.brainbox/task.txt" ] && TASK_FILE="${HOME}/.brainbox/task.txt"
+
+    # If a task was found, pass it as the initial prompt so the agent starts
+    # working immediately without any manual Enter press. After the agent
+    # exits, record the result and exit the container.
+    if [ -n "$TASK_FILE" ]; then
+        COMPLETE=brainbox-complete
+        command -v brainbox-complete >/dev/null 2>&1 || COMPLETE="${HOME}/.brainbox/complete.sh"
+        TASK_CMD="$AGENT_CMD \"\$(cat $TASK_FILE)\""
+        TASK_CMD="$TASK_CMD; $COMPLETE \"\$(cat /tmp/.claude-task-result 2>/dev/null || echo done)\"; exit"
         tmux send-keys -t main "$TASK_CMD" Enter
     else
         tmux send-keys -t main "$AGENT_CMD" Enter

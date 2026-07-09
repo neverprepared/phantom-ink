@@ -761,6 +761,13 @@ async def inject_task(
     """Write task description + completion helper script.
 
     Creates ~/.brainbox/task.txt, hub-url.txt, and complete.sh.
+
+    DEPRECATED: the session store (session_store.py + the ttyd-wrapper hub
+    fetch) is the primary task-delivery path — new-image wrappers fetch the
+    task from /api/session-store/task and never read task.txt. This exec
+    injection is kept ONLY so old images keep working against the new
+    daemon; delete it (and its call site in backends/docker/__init__.py)
+    once the fleet's images are rebuilt.
     """
     slog = slog or log
     home = executor.home_dir
