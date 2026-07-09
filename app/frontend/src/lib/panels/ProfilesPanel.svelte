@@ -2,12 +2,13 @@
   import { getApi } from '../utils/api';
   import { onMount, untrack } from 'svelte';
   import { notifications } from '../notifications.svelte';
-  import { profileState, profileColorStore, type Profile } from '../stores.svelte';
+  import { profileState, profileColorStore, integrationState, type Profile } from '../stores.svelte';
   import { getProfileColor, profileColorStyle, PROFILE_PALETTE } from '../utils/profileColors';
   import PieChart from '../components/PieChart.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import GatewayEnvEditor from '../components/GatewayEnvEditor.svelte';
   import ProfileServersEditor from '../components/ProfileServersEditor.svelte';
+  import CredentialBundleEditor from '../components/CredentialBundleEditor.svelte';
   import CardExpander from '../components/CardExpander.svelte';
 
   // --- Profile image state ---
@@ -494,6 +495,9 @@
 
           <GatewayEnvEditor profile={p.name} unlocked={gatewayUnlocked} />
           <ProfileServersEditor profile={p.name} />
+          {#if integrationState.minioEnabled}
+            <CredentialBundleEditor profile={p.name} />
+          {/if}
 
           {#if logs.length > 0}
             <CardExpander label="build log" count="({logs.length})" bind:open={imageLogsOpen[p.name]}>
