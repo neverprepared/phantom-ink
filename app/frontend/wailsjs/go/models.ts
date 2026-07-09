@@ -554,6 +554,7 @@ export namespace brainbox {
 	    workspace_profile?: string;
 	    workspace_home?: string;
 	    task?: string;
+	    continue_from?: string;
 	    ports?: Record<string, number>;
 	    docker_host?: string;
 	    runner?: string;
@@ -580,6 +581,7 @@ export namespace brainbox {
 	        this.workspace_profile = source["workspace_profile"];
 	        this.workspace_home = source["workspace_home"];
 	        this.task = source["task"];
+	        this.continue_from = source["continue_from"];
 	        this.ports = source["ports"];
 	        this.docker_host = source["docker_host"];
 	        this.runner = source["runner"];

@@ -46,6 +46,7 @@ type CreateSessionRequest struct {
 	WorkspaceProfile string            `json:"workspace_profile,omitempty"`
 	WorkspaceHome    string            `json:"workspace_home,omitempty"`
 	Task             string            `json:"task,omitempty"`
+	ContinueFrom     string            `json:"continue_from,omitempty"` // prior session whose handoff.md seeds the task
 	Ports            map[string]int    `json:"ports,omitempty"`
 	DockerHost       string            `json:"docker_host,omitempty"`
 	Runner           string            `json:"runner,omitempty"`
