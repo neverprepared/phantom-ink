@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from .config import settings
@@ -109,6 +110,10 @@ def _make_client(endpoint_url: str):
         aws_access_key_id=settings.minio.access_key.get_secret_value(),
         aws_secret_access_key=settings.minio.secret_key.get_secret_value(),
         region_name=settings.minio.region,
+        # boto's presigner falls back to legacy SigV2 URLs without this;
+        # MinIO tolerates v2 on GET but rejects it on PUT
+        # (SignatureDoesNotMatch). Force SigV4 everywhere.
+        config=Config(signature_version="s3v4"),
     )
 
 

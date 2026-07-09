@@ -168,6 +168,14 @@ class TestPresignPublicEndpoint:
         assert url.startswith("https://minio.example.com/"), url
         assert "localhost" not in url
 
+    def test_presign_is_sigv4(self, monkeypatch):
+        # boto defaults to legacy SigV2 presigned URLs without an explicit
+        # signature_version — MinIO rejects v2 PUTs (SignatureDoesNotMatch).
+        for op in ("get", "put"):
+            fn = artifacts.presigned_get_url if op == "get" else artifacts.presigned_put_url
+            url = fn("artifacts", "a/b.txt")
+            assert "X-Amz-Signature=" in url, f"{op} URL is not SigV4: {url}"
+
     def test_presign_falls_back_to_endpoint(self, monkeypatch):
         monkeypatch.setattr(settings.minio, "public_endpoint", "")
         url = artifacts.presigned_get_url("artifacts", "a/b.txt")
