@@ -68,6 +68,25 @@ def _profile_env(profile: str) -> dict[str, str]:
     return {}
 
 
+def _bundle_env(profile: str) -> dict[str, str]:
+    """Materialized credential-bundle env for a profile; {} on ANY failure.
+
+    A broken/missing bundle must degrade to "no bundle", never to a failed
+    server spawn — the env store alone kept servers working before bundles
+    existed and must keep doing so.
+    """
+    try:
+        from . import gateway_bundle
+
+        return gateway_bundle.materialize(profile, audience="gateway")
+    except Exception as exc:
+        log.warning(
+            "gateway_pool.bundle_env_failed",
+            metadata={"profile": profile, "error": str(exc)},
+        )
+        return {}
+
+
 class _Connection:
     """One downstream session, owned by a single task."""
 
@@ -182,10 +201,18 @@ class GatewayPool:
                 return conn
             # Seed from the SDK's default environment (PATH, HOME, …) so the
             # spawned command — usually a bare `uvx`/`npx`/`node` — is
-            # resolvable; then layer the catalog literals and per-profile
-            # creds on top. Without this the subprocess gets no PATH and every
-            # non-absolute command fails to spawn.
-            env = {**get_default_environment(), **spec.base_env, **_profile_env(profile)}
+            # resolvable; then layer the catalog literals, materialized
+            # credential-bundle mappings, and per-profile creds on top. The
+            # profile env store stays last: an operator-set key always wins
+            # over bundle automation. Without the default env the subprocess
+            # gets no PATH and every non-absolute command fails to spawn.
+            bundle_env = await asyncio.to_thread(_bundle_env, profile)
+            env = {
+                **get_default_environment(),
+                **spec.base_env,
+                **bundle_env,
+                **_profile_env(profile),
+            }
             conn = _Connection(spec, env)
             try:
                 await conn.start(self._connect_timeout)

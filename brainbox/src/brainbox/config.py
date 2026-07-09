@@ -187,6 +187,12 @@ class GatewaySettings(BaseSettings):
 
     secret_key: SecretStr = SecretStr("")
     secrets_dir: str = ""
+    # Credential bundles (files the app captures from the operator's
+    # workstation, stored age-encrypted in MinIO, materialized per profile at
+    # MCP-server spawn). ``bundle_cache_dir`` empty = ``<config_dir>/gateway/
+    # bundles``; ``bundle_max_bytes`` caps the accepted plaintext tar.gz size.
+    bundle_cache_dir: str = ""
+    bundle_max_bytes: int = 10_485_760
     # Path to the curated MCP server catalog (reflex's mcp-catalog.json). Empty
     # = no downstream servers. (DB-backed/app-editable registry is issue #152.)
     catalog_path: str = ""
