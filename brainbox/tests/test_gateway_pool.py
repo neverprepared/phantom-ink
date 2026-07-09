@@ -77,6 +77,28 @@ async def test_profile_isolation(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_bundle_env_sits_under_profile_env(tmp_path, monkeypatch):
+    # Credential-bundle mappings are defaults; an operator-set key in the
+    # profile env store must win. A bundle-only key still flows through.
+    import brainbox.gateway_pool as gp
+
+    monkeypatch.setattr(settings.gateway, "secrets_dir", str(tmp_path))
+    monkeypatch.setattr(settings.gateway, "secret_key", SecretStr("pp"))
+    gw.set_profile_env("personal", {"MY_SECRET": "from-store"})
+    monkeypatch.setattr(
+        gp, "_bundle_env", lambda p: {"MY_SECRET": "from-bundle", "BUNDLE_ONLY": "bval"}
+    )
+    pool = GatewayPool()
+    try:
+        res = await pool.call_tool("personal", _spec(), "getenv", {"name": "MY_SECRET"})
+        assert any("from-store" in t for t in _texts(res)), "env store must beat bundle"
+        res = await pool.call_tool("personal", _spec(), "getenv", {"name": "BUNDLE_ONLY"})
+        assert any("bval" in t for t in _texts(res))
+    finally:
+        await pool.aclose()
+
+
+@pytest.mark.asyncio
 async def test_concurrent_calls():
     pool = GatewayPool()
     try:

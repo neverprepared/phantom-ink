@@ -4494,6 +4494,73 @@ async def gateway_delete_profile_env(profile: str):
     return {"profile": profile, "deleted": deleted}
 
 
+# MCP gateway — per-profile credential bundles (files via MinIO)
+# ---------------------------------------------------------------------------
+
+
+def _bundle_http_error(exc: Exception) -> HTTPException:
+    from . import gateway_bundle
+
+    if isinstance(exc, gateway_bundle.BundleDisabledError):
+        return HTTPException(status_code=503, detail=str(exc))
+    if isinstance(exc, gateway_secrets.LockedError):
+        return HTTPException(status_code=409, detail=str(exc))
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+@app.put("/api/gateway/profiles/{profile}/bundle", dependencies=[Depends(require_api_key)])
+async def gateway_put_profile_bundle(profile: str, request: Request):
+    """Store a profile's credential bundle (raw tar.gz body, encrypted at rest)."""
+    from . import gateway_bundle
+
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="body must be a bundle tar.gz")
+    app_version = request.headers.get("X-App-Version", "")
+    try:
+        meta = await asyncio.to_thread(
+            gateway_bundle.store_bundle, profile, body, app_version=app_version
+        )
+    except gateway_secrets.GatewaySecretsError as exc:
+        raise _bundle_http_error(exc)
+    # Live-reload contract (same as env PUT): pooled servers were spawned with
+    # the OLD materialized files — evict them and the stale cache so the next
+    # call re-materializes from this upload.
+    await _gateway_pool.close(profile)
+    await asyncio.to_thread(gateway_bundle.cleanup, profile)
+    log.info(
+        "gateway.profile_bundle_updated",
+        metadata={"profile": profile, "sources": meta.get("sources")},
+    )
+    return {"profile": profile, "saved": True, **meta}
+
+
+@app.get("/api/gateway/profiles/{profile}/bundle", dependencies=[Depends(require_api_key)])
+async def gateway_get_profile_bundle(profile: str):
+    """Bundle object metadata (never the plaintext)."""
+    from . import gateway_bundle
+
+    try:
+        meta = await asyncio.to_thread(gateway_bundle.get_bundle_meta, profile)
+    except gateway_secrets.GatewaySecretsError as exc:
+        raise _bundle_http_error(exc)
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"no bundle stored for {profile!r}")
+    return meta
+
+
+@app.delete("/api/gateway/profiles/{profile}/bundle", dependencies=[Depends(require_api_key)])
+async def gateway_delete_profile_bundle(profile: str):
+    from . import gateway_bundle
+
+    try:
+        deleted = await asyncio.to_thread(gateway_bundle.delete_bundle, profile)
+    except gateway_secrets.GatewaySecretsError as exc:
+        raise _bundle_http_error(exc)
+    await _gateway_pool.close(profile)
+    return {"profile": profile, "deleted": deleted}
+
+
 # MCP gateway — Tier-0 token minting (ADR-002 phase 3)
 # ---------------------------------------------------------------------------
 # Operator-only. Mints a profile-bound gateway token so a local client
