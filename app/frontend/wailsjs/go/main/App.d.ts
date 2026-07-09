@@ -272,6 +272,8 @@ export function ListTasks(arg1:string,arg2:string,arg3:number):Promise<Array<mai
 
 export function ListUpcomingFires(arg1:number):Promise<Array<main.UpcomingFire>>;
 
+export function MinioIntegrationEnabled():Promise<boolean>;
+
 export function MintGatewayToken(arg1:string,arg2:Array<string>,arg3:number,arg4:string):Promise<brainbox.GatewayToken>;
 
 export function OpenLocalSession(arg1:string):Promise<void>;
