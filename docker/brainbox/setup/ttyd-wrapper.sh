@@ -54,6 +54,15 @@ if [ -f "$HOME/.claude/.claude.json" ]; then
     cp -f "$HOME/.claude/.claude.json" "$HOME/.claude.json"
 fi
 
+# Source the session env (non-hardened sessions deliver secrets + the
+# LLM_PROVIDER / CLAUDE_MODEL / gateway-contract vars via ~/.env). This MUST
+# run before the provider case below — otherwise LLM_PROVIDER is empty at
+# decision time and every ollama/codex session falls through to claude.
+# Sourcing again later is harmless (idempotent).
+set -a
+[ -f "$HOME/.env" ] && . "$HOME/.env" 2>/dev/null
+set +a
+
 # In hardened mode secrets land in /run/secrets/ rather than ~/.env.
 # Read the vars we need from there if not already in the environment.
 _secret() {
