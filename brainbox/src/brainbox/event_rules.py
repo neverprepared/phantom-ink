@@ -539,11 +539,16 @@ def _rate_limited(rule_id: str) -> bool:
 # Action executors
 # ---------------------------------------------------------------------------
 
-# Action types whose failures are worth retrying (transient causes). Task /
-# playbook / loop dispatch failures are config errors retry can't fix — and
-# retrying them risks double-created work; submitted tasks already have their
-# own max_attempts machinery in the scheduler.
-_RETRYABLE_TYPES: frozenset[str] = frozenset()  # webhook/run_script join in PR2
+# Action types whose failures are worth retrying (transient causes: network
+# flake, 5xx, script hiccup). Task / playbook / loop dispatch failures are
+# config errors retry can't fix — and retrying them risks double-created
+# work; submitted tasks already have their own max_attempts machinery in the
+# scheduler.
+_RETRYABLE_TYPES: frozenset[str] = frozenset({"webhook", "run_script"})
+
+
+class _PermanentActionError(RuntimeError):
+    """An action failure that must not be retried (e.g. webhook 4xx)."""
 
 
 def _cap(text: str) -> str:
@@ -574,21 +579,166 @@ async def _exec_submit_task(
     return {"task_id": task.id}
 
 
+async def _exec_run_playbook(
+    action: RunPlaybookAction, rule: EventRule, doc: dict[str, Any]
+) -> dict[str, Any]:
+    from . import playbooks
+
+    pb = playbooks.get_playbook(action.playbook)
+    if pb is None:
+        named = [p for p in playbooks.list_playbooks() if p.name == action.playbook]
+        if len(named) == 1:
+            pb = named[0]
+        elif len(named) > 1:
+            raise _PermanentActionError(
+                f"playbook name '{action.playbook}' is ambiguous ({len(named)} matches) — use the id"
+            )
+    if pb is None:
+        raise _PermanentActionError(f"playbook '{action.playbook}' not found")
+
+    started = await playbooks.run_playbook(
+        pb.id,
+        workspace_profile=action.workspace_profile or doc.get("workspace"),
+        runner=action.runner,
+        origin_rule_id=rule.id,
+        rule_chain_depth=_chain_depth(doc) + 1,
+    )
+    return {"playbook_id": started.id}
+
+
+async def _exec_start_loop(
+    action: StartLoopAction, rule: EventRule, doc: dict[str, Any]
+) -> dict[str, Any]:
+    from . import loop_runner
+    from .loop_template import load_template
+    from .loops import HandoffEnvelope
+
+    spec = load_template(action.template_name)  # TemplateError → dead (permanent)
+    envelope = HandoffEnvelope.model_validate(
+        {"artifact_refs": _render_leaves(action.artifact_refs, doc)}
+    )
+    inst = await loop_runner.start_loop(
+        spec,
+        envelope,
+        workspace_profile=action.workspace_profile or doc.get("workspace"),
+        workspace_home=action.workspace_home,
+        origin_rule_id=rule.id,
+        rule_chain_depth=_chain_depth(doc) + 1,
+    )
+    return {"loop_id": inst.id, "parent_task_id": inst.parent_task_id}
+
+
+async def _exec_webhook(
+    action: WebhookAction, rule: EventRule, doc: dict[str, Any]
+) -> dict[str, Any]:
+    # LAN-safe outbound HTTP: httpx is broken for LAN destinations on this
+    # daemon (see CLAUDE.md known issue) — all outbound calls go via curl.
+    from .ollama import acurl_request
+
+    if action.body is not None:
+        payload = _render_leaves(action.body, doc)
+        if not isinstance(payload, dict):
+            payload = {"body": payload}
+    else:
+        payload = {k: v for k, v in doc.items() if k not in ("seq", "ts")}
+    payload["_brainbox"] = {
+        "rule_id": rule.id,
+        "rule_name": rule.name,
+        "event_seq": doc.get("seq"),
+        "chain_depth": _chain_depth(doc) + 1,
+    }
+    headers = {k: _render(v, doc) for k, v in action.headers.items()}
+    timeout = action.timeout_s or settings.rules.webhook_timeout_s
+
+    status, body_text = await acurl_request(
+        "POST", action.url, "", body=payload, headers=headers, timeout=timeout
+    )
+    result = {"http_status": status, "body": _cap(body_text)}
+    if 200 <= status < 300:
+        return result
+    if 400 <= status < 500:
+        raise _PermanentActionError(f"webhook returned {status}: {_cap(body_text)}")
+    raise RuntimeError(f"webhook returned {status}: {_cap(body_text)}")
+
+
+async def _exec_run_script(
+    action: RunScriptAction, rule: EventRule, doc: dict[str, Any]
+) -> dict[str, Any]:
+    import os
+
+    # Defense in depth: the API gate rejects run_script rules while disabled,
+    # but a rule created before the flag was flipped off must not execute.
+    if not settings.rules.allow_run_script:
+        raise _PermanentActionError(
+            "run_script actions are disabled (CL_RULES__ALLOW_RUN_SCRIPT)"
+        )
+
+    # The argv is fixed in the rule; the event reaches the script via stdin
+    # JSON + env vars only. Nothing event-derived touches the command line.
+    env = {
+        **os.environ,
+        "BRAINBOX_EVENT_ID": str(doc.get("id") or ""),
+        "BRAINBOX_EVENT_SEQ": str(doc.get("seq") or ""),
+        "BRAINBOX_EVENT_TYPE": str(doc.get("type") or ""),
+        "BRAINBOX_EVENT_STATUS": str(doc.get("status") or ""),
+        "BRAINBOX_EVENT_WORKSPACE": str(doc.get("workspace") or ""),
+        "BRAINBOX_RULE_ID": rule.id,
+        "BRAINBOX_RULE_NAME": rule.name,
+        "BRAINBOX_CHAIN_DEPTH": str(_chain_depth(doc) + 1),
+    }
+    timeout = action.timeout_s or settings.rules.script_timeout_s
+    proc = await asyncio.create_subprocess_exec(
+        *action.argv,
+        cwd=action.cwd,
+        env=env,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(json.dumps(doc).encode()), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError(f"script timed out after {timeout}s")
+
+    result = {
+        "exit_code": proc.returncode,
+        "stdout": _cap(stdout.decode("utf-8", errors="replace")),
+        "stderr": _cap(stderr.decode("utf-8", errors="replace")),
+    }
+    if proc.returncode != 0:
+        raise RuntimeError(f"script exited {proc.returncode}: {result['stderr']}")
+    return result
+
+
 async def _execute_action(
     action: Any, rule: EventRule, doc: dict[str, Any]
 ) -> dict[str, Any]:
     if action.type == "submit_task":
         return await _exec_submit_task(action, rule, doc)
-    # run_playbook / start_loop / webhook / run_script executors ship in the
-    # follow-up PR; until then their executions dead-letter visibly.
+    if action.type == "run_playbook":
+        return await _exec_run_playbook(action, rule, doc)
+    if action.type == "start_loop":
+        return await _exec_start_loop(action, rule, doc)
+    if action.type == "webhook":
+        return await _exec_webhook(action, rule, doc)
+    if action.type == "run_script":
+        return await _exec_run_script(action, rule, doc)
     raise RuntimeError(f"no executor for action type '{action.type}' in this build")
 
 
 def _timeout_for(action: Any) -> float:
+    """Outer backstop timeout for one execution attempt. webhook/run_script
+    enforce their own precise timeouts internally (curl --max-time,
+    proc.kill), so the outer wait_for gets headroom to let those fire first
+    and produce their specific error messages."""
     if action.type == "webhook":
-        return action.timeout_s or settings.rules.webhook_timeout_s
+        return (action.timeout_s or settings.rules.webhook_timeout_s) + 10.0
     if action.type == "run_script":
-        return action.timeout_s or settings.rules.script_timeout_s
+        return (action.timeout_s or settings.rules.script_timeout_s) + 10.0
     return settings.rules.dispatch_timeout_s
 
 
@@ -627,6 +777,7 @@ async def _run_execution(ex: RuleExecution) -> None:
                     err = f"{type(exc).__name__}: {exc}"
                     if (
                         action.type in _RETRYABLE_TYPES
+                        and not isinstance(exc, _PermanentActionError)
                         and attempts < settings.rules.max_attempts
                     ):
                         await asyncio.sleep(
