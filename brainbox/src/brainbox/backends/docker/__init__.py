@@ -320,7 +320,13 @@ class DockerBackend:
             title = f"{ctx.role.capitalize()} - {ctx.session_name}"
             # exec_run provides a minimal environment; ensure standard bin dirs are present
             # so ttyd-wrapper.sh can find tmux/ttyd regardless of image PATH configuration.
-            _exec_env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+            # ~/.local/bin MUST lead: python3 is uv-managed there in the image, and the
+            # wrapper's .claude.enc credential extraction pipes through python3 — without
+            # it the pipe dies silently and profile sessions start unauthenticated.
+            _exec_env = {
+                "PATH": "/home/developer/.local/bin:"
+                        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            }
 
             try:
                 await _run(

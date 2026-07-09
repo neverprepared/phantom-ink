@@ -2,7 +2,10 @@
 # Start tmux session with the configured LLM agent
 
 # Docker exec_run provides a minimal environment; ensure standard bin dirs are present.
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}
+# ~/.local/bin first: python3 is uv-managed there, and the credential
+# extraction below pipes through it — a launcher that omits it from PATH
+# must not leave sessions unauthenticated.
+export PATH=${HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}
 
 # Ensure WORKSPACE_HOME has a sensible default so vars like CLAUDE_CONFIG_DIR
 # that reference it expand correctly before the profile env is fully loaded.
