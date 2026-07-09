@@ -76,7 +76,7 @@ from .router import (
     on_event,
     submit_task,
 )
-from . import agent_store, event_match, event_rules
+from . import agent_store, event_match, event_rules, os_sink
 from .langfuse_client import (
     LangfuseError,
     health_check as langfuse_health_check,
@@ -1157,6 +1157,43 @@ async def agent_events_list(
     return {"events": rows, "count": len(rows)}
 
 
+@app.get("/api/agent_events/search")
+async def agent_events_search(
+    q: str = Query("", description="Full-text query (title/description/envelope)"),
+    type: str = Query("", description="Event type prefix, e.g. task. or rule."),
+    workspace: str = Query(""),
+    status: str = Query(""),
+    source: str = Query(""),
+    since_ms: int = Query(0, ge=0),
+    until_ms: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    _key=Depends(require_api_key),
+):
+    """Search event history. Served by OpenSearch when the sink is
+    configured (CL_OPENSEARCH__ADDRESSES); falls back to Postgres filters
+    otherwise — the response says which backend answered."""
+    if settings.opensearch.enabled:
+        try:
+            res = await asyncio.to_thread(
+                lambda: os_sink.search(
+                    q=q, type_prefix=type, workspace=workspace, status=status,
+                    source=source, since_ms=since_ms, until_ms=until_ms, limit=limit,
+                )
+            )
+            return {"items": res["items"], "backend": "opensearch", "total": res["total"]}
+        except Exception as exc:
+            log.warning("agent_events.search_os_failed", metadata={"reason": str(exc)})
+            # graceful degradation to Postgres below
+
+    items = await asyncio.to_thread(
+        lambda: agent_store.search_events(
+            q=q, type_prefix=type, workspace=workspace, status=status,
+            source=source, since_ms=since_ms, until_ms=until_ms, limit=limit,
+        )
+    )
+    return {"items": items, "backend": "postgres", "total": None}
+
+
 @app.get("/api/agent_state")
 async def agent_state_list(
     status: str | None = Query(None, description="Comma-separated statuses, e.g. failed,blocked"),
@@ -1264,6 +1301,16 @@ async def rules_executions_all(
         )
     )
     return {"executions": [e.model_dump() for e in rows], "count": len(rows)}
+
+
+@app.get("/api/rules/status")
+async def rules_status(_key=Depends(require_api_key)):
+    """Queue-health snapshot: execution counts by status (ok windowed to
+    24h), the rules consumer's cursor/lag against the event-log head, and
+    the OpenSearch sink's cursor/lag when configured."""
+    snapshot = await asyncio.to_thread(event_rules.status_snapshot)
+    snapshot["sink"] = await asyncio.to_thread(os_sink.get_sink_status)
+    return snapshot
 
 
 @app.post("/api/rules/test")

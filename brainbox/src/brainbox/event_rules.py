@@ -486,6 +486,42 @@ def fetch_events_after(seq: int, limit: int) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def status_snapshot() -> dict[str, Any]:
+    """One-shot queue-health snapshot for /api/rules/status: execution counts
+    by status ('ok' windowed to 24h — the all-time count grows unboundedly
+    and means nothing on a status strip), the consumer cursor, the log head,
+    and the derived lag."""
+    day_ago = _now_ms() - 86_400_000
+    with _conn() as c:
+        count_rows = c.execute(
+            "SELECT status, COUNT(*) AS n FROM event_rule_executions "
+            "WHERE status IN ('queued', 'running', 'throttled', 'dead') "
+            "GROUP BY status"
+        ).fetchall()
+        ok_24h = c.execute(
+            "SELECT COUNT(*) AS n FROM event_rule_executions "
+            "WHERE status = 'ok' AND updated_at >= %s",
+            (day_ago,),
+        ).fetchone()["n"]
+        head_row = c.execute("SELECT MAX(seq) AS head FROM agent_events").fetchone()
+        cursor_row = c.execute(
+            "SELECT last_seq FROM event_rule_cursor WHERE name = %s", (CURSOR_NAME,)
+        ).fetchone()
+
+    counts = {"queued": 0, "running": 0, "throttled": 0, "dead": 0}
+    for r in count_rows:
+        counts[r["status"]] = r["n"]
+    counts["ok_24h"] = ok_24h
+    head = head_row["head"] or 0
+    cursor = cursor_row["last_seq"] if cursor_row else 0
+    return {
+        "counts": counts,
+        "cursor": cursor,
+        "head_seq": head,
+        "lag": max(0, head - cursor),
+    }
+
+
 def _load_event_doc(seq: int) -> dict[str, Any] | None:
     with _conn() as c:
         row = c.execute(
@@ -742,13 +778,69 @@ def _timeout_for(action: Any) -> float:
     return settings.rules.dispatch_timeout_s
 
 
+def _emit_terminal_envelope(
+    ex: RuleExecution,
+    rule: EventRule,
+    doc: dict[str, Any],
+    status: str,
+    attempts: int,
+    *,
+    error: str | None = None,
+) -> None:
+    """Put a terminal execution outcome onto the agent bus (status 'ok' or
+    'dead'). The envelope id is stable per execution row, so a DLQ retry that
+    later succeeds upserts the same agent_state row to 'done' — clearing the
+    attention card the failure raised. Carries origin_rule_id +
+    rule_chain_depth so meta-rules can match rule.execution events without
+    unbounded chains. Never raises — the execution outcome is already
+    durably recorded before this is called.
+
+    Throttled executions never reach the executor, so they can never emit —
+    a rate-limit storm cannot amplify itself onto the bus.
+    """
+    try:
+        metadata: dict[str, Any] = {
+            "rule_id": rule.id,
+            "rule_name": rule.name,
+            "action_type": ex.action_type,
+            "event_seq": ex.event_seq,
+            "attempts": attempts,
+            "execution_id": ex.id,
+            "origin_rule_id": rule.id,
+            "rule_chain_depth": _chain_depth(doc) + 1,
+        }
+        if error:
+            metadata["error"] = error
+        agent_store.ingest(agent_store.AgentEnvelope(
+            id=f"rule-exec:{ex.id}",
+            kind="event",
+            type="rule.execution",
+            source="brainbox-rules",
+            status="done" if status == "ok" else "failed",
+            title=f"{rule.name} → {ex.action_type}",
+            workspace=doc.get("workspace"),
+            parent_id=ex.event_id,
+            tags=["rule-execution"],
+            metadata=metadata,
+            outcome=agent_store.ActionOutcome(
+                ok=(status == "ok"), actor="rules-engine", error=error
+            ),
+        ))
+    except Exception as exc:
+        log.warning("rules.emit_failed", metadata={"execution": ex.id, "reason": str(exc)})
+
+
 async def _run_execution(ex: RuleExecution) -> None:
     assert _sema is not None
     async with _sema:
+        rule: EventRule | None = None
+        doc: dict[str, Any] | None = None
         try:
             rule = await asyncio.to_thread(get_rule, ex.rule_id)
             doc = await asyncio.to_thread(_load_event_doc, ex.event_seq)
             if rule is None or doc is None or ex.action_index >= len(rule.actions):
+                # No envelope here — without the source doc there is no
+                # workspace/depth to stamp; the DLQ row still records it.
                 await asyncio.to_thread(
                     finish_execution, ex.id, "dead",
                     attempts=ex.attempts,
@@ -765,6 +857,9 @@ async def _run_execution(ex: RuleExecution) -> None:
                     )
                     await asyncio.to_thread(
                         finish_execution, ex.id, "ok", attempts=attempts, result=result
+                    )
+                    await asyncio.to_thread(
+                        _emit_terminal_envelope, ex, rule, doc, "ok", attempts
                     )
                     log.info(
                         "rules.execution_ok",
@@ -787,6 +882,10 @@ async def _run_execution(ex: RuleExecution) -> None:
                     await asyncio.to_thread(
                         finish_execution, ex.id, "dead", attempts=attempts, error=_cap(err)
                     )
+                    await asyncio.to_thread(
+                        _emit_terminal_envelope, ex, rule, doc, "dead", attempts,
+                        error=_cap(err),
+                    )
                     log.warning(
                         "rules.execution_dead",
                         metadata={"rule": ex.rule_id, "seq": ex.event_seq, "reason": err},
@@ -801,6 +900,11 @@ async def _run_execution(ex: RuleExecution) -> None:
                     finish_execution, ex.id, "dead",
                     attempts=ex.attempts, error=_cap(f"executor error: {exc}"),
                 )
+                if rule is not None and doc is not None:
+                    await asyncio.to_thread(
+                        _emit_terminal_envelope, ex, rule, doc, "dead", ex.attempts,
+                        error=_cap(f"executor error: {exc}"),
+                    )
             except Exception:
                 pass
 
