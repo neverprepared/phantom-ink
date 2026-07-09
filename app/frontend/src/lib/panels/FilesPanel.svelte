@@ -44,6 +44,28 @@
   let loading = $state(false);
   let listingError = $state<string | null>(null);
 
+  // --- Search (whole-bucket, profile-scoped server-side) ---
+  let query = $state('');
+  let searching = $state(false);
+  let searchResults = $state<File[]>([]);
+  let searchTruncated = $state(false);
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // --- Preview drawer ---
+  type Preview = {
+    kind: 'text' | 'image' | 'unsupported';
+    content_type: string;
+    size: number;
+    text?: string;
+    data_uri?: string;
+    truncated?: boolean;
+    reason?: string;
+  };
+  let selected = $state<File | null>(null);
+  let preview = $state<Preview | null>(null);
+  let previewLoading = $state(false);
+  let downloading = $state(false);
+
   async function bootstrap() {
     const api = await getApi();
     if (!api) return;
@@ -63,10 +85,95 @@
   async function openBucket(bucket: Bucket) {
     selectedBucket = bucket;
     currentPrefix = '';
+    clearSearch();
+    closePreview();
     await refreshListing();
   }
 
+  function relPath(key: string): string {
+    const root = (health?.profile_prefix ?? '').replace(/\/$/, '');
+    return root && key.startsWith(root + '/') ? key.slice(root.length + 1) : key;
+  }
+
+  function clearSearch() {
+    query = '';
+    searchResults = [];
+    searchTruncated = false;
+    if (searchTimer) clearTimeout(searchTimer);
+  }
+
+  function onQueryInput() {
+    if (searchTimer) clearTimeout(searchTimer);
+    const q = query.trim();
+    if (!q) {
+      searchResults = [];
+      searchTruncated = false;
+      return;
+    }
+    searchTimer = setTimeout(() => void runSearch(q), 300);
+  }
+
+  async function runSearch(q: string) {
+    if (!selectedBucket) return;
+    searching = true;
+    try {
+      const api = await getApi();
+      if (!api) return;
+      const res = await api.SearchArtifactsFiles(selectedBucket.key, q);
+      // Ignore stale responses — only apply if the box still holds this query.
+      if (query.trim() === q) {
+        searchResults = (res?.files ?? []) as File[];
+        searchTruncated = !!res?.truncated;
+      }
+    } catch (err) {
+      notifications.error(`Search failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      searching = false;
+    }
+  }
+
+  function closePreview() {
+    selected = null;
+    preview = null;
+  }
+
+  async function selectFile(file: File) {
+    selected = file;
+    preview = null;
+    previewLoading = true;
+    try {
+      const api = await getApi();
+      if (!api) return;
+      if (selectedBucket) {
+        preview = (await api.GetArtifactPreview(selectedBucket.key, file.key)) as Preview;
+      }
+    } catch (err) {
+      preview = {
+        kind: 'unsupported', content_type: '', size: file.size,
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    } finally {
+      previewLoading = false;
+    }
+  }
+
+  async function downloadFile(file: File) {
+    if (!selectedBucket) return;
+    downloading = true;
+    try {
+      const api = await getApi();
+      if (!api) return;
+      const path = await api.DownloadArtifactObject(selectedBucket.key, file.key, file.name);
+      if (path) notifications.success(`Saved to ${path}`);
+    } catch (err) {
+      notifications.error(`Download failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      downloading = false;
+    }
+  }
+
   async function enterFolder(folder: Folder) {
+    clearSearch();
     // The API's `prefix` is namespace-relative — strip the server-side
     // profile prefix the listing returned (it's already in `folder.prefix`).
     const profileRoot = (health?.profile_prefix ?? '').replace(/\/$/, '');
@@ -162,7 +269,17 @@
   <header class="panel-header">
     <h2>Files</h2>
     {#if health?.ok}
-      <button class="btn-refresh" onclick={refreshListing} title="Refresh">↻</button>
+      <div class="header-actions">
+        <input
+          class="search-input"
+          type="search"
+          placeholder="search {selectedBucket?.label ?? 'bucket'}…"
+          bind:value={query}
+          oninput={onQueryInput}
+          onkeydown={(e) => { if (e.key === 'Escape') clearSearch(); }}
+        />
+        <button class="btn-refresh" onclick={refreshListing} title="Refresh">↻</button>
+      </div>
     {/if}
   </header>
 
@@ -179,7 +296,7 @@
       message="Daemon couldn't reach the configured endpoint: {health.reason ?? 'unknown error'}"
     />
   {:else}
-    <div class="browser">
+    <div class="browser" class:with-detail={!!selected}>
       <aside class="bucket-list">
         <div class="aside-label">Buckets</div>
         {#each buckets as bucket (bucket.key)}
@@ -203,6 +320,29 @@
       </aside>
 
       <section class="listing">
+        {#if query.trim()}
+          <div class="search-status">
+            {#if searching}
+              <Spinner />
+            {:else}
+              <span class="dim">{searchResults.length} result{searchResults.length === 1 ? '' : 's'} for “{query.trim()}”{searchTruncated ? ` — showing first ${searchResults.length}` : ''}</span>
+            {/if}
+            <button class="crumb" onclick={clearSearch}>clear</button>
+          </div>
+          <div class="grid">
+            {#each searchResults as file (file.key)}
+              <div class="row file-row" class:selected={selected?.key === file.key}>
+                <span class="row-icon">📄</span>
+                <button class="row-name link" onclick={() => selectFile(file)}>{relPath(file.key)}</button>
+                <span class="row-meta dim">{fmtSize(file.size)} · {fmtTime(file.last_modified_ms)}</span>
+              </div>
+            {:else}
+              {#if !searching}
+                <EmptyState title="No matches" message="No object keys contain “{query.trim()}”." />
+              {/if}
+            {/each}
+          </div>
+        {:else}
         <div class="breadcrumb">
           <button class="crumb" disabled={!currentPrefix} onclick={() => { currentPrefix = ''; void refreshListing(); }}>
             {selectedBucket?.label ?? ''}
@@ -238,16 +378,49 @@
               </button>
             {/each}
             {#each files as file (file.key)}
-              <div class="row file-row">
+              <div class="row file-row" class:selected={selected?.key === file.key}>
                 <span class="row-icon">📄</span>
-                <button class="row-name link" onclick={() => openFile(file)}>{file.name}</button>
+                <button class="row-name link" onclick={() => selectFile(file)}>{file.name}</button>
                 <span class="row-meta dim">{fmtSize(file.size)} · {fmtTime(file.last_modified_ms)}</span>
                 <button class="row-delete" onclick={() => deleteFile(file)} title="Delete">×</button>
               </div>
             {/each}
           </div>
         {/if}
+        {/if}
       </section>
+
+      {#if selected}
+        <aside class="detail">
+          <div class="detail-head">
+            <span class="detail-name" title={selected.key}>{selected.name}</span>
+            <button class="detail-close" onclick={closePreview} title="Close">×</button>
+          </div>
+          <div class="detail-meta">
+            <span class="dim">{fmtSize(selected.size)} · {fmtTime(selected.last_modified_ms)}</span>
+            {#if preview?.content_type}<span class="mono small">{preview.content_type}</span>{/if}
+          </div>
+          <div class="detail-actions">
+            <button class="btn-action" onclick={() => downloadFile(selected!)} disabled={downloading}>
+              {downloading ? 'saving…' : 'download'}
+            </button>
+            <button class="btn-action ghost" onclick={() => openFile(selected!)}>open</button>
+            <button class="btn-action ghost danger" onclick={() => { const f = selected!; closePreview(); void deleteFile(f); }}>delete</button>
+          </div>
+          <div class="detail-preview">
+            {#if previewLoading}
+              <div class="centered"><Spinner /></div>
+            {:else if preview?.kind === 'text'}
+              <pre class="preview-text">{preview.text}</pre>
+              {#if preview.truncated}<div class="dim preview-note">preview truncated</div>{/if}
+            {:else if preview?.kind === 'image'}
+              <img class="preview-image" src={preview.data_uri} alt={selected.name} />
+            {:else}
+              <EmptyState title="No preview" message={preview?.reason ?? 'This file type has no inline preview.'} />
+            {/if}
+          </div>
+        </aside>
+      {/if}
     </div>
   {/if}
 </div>
@@ -293,6 +466,95 @@
     gap: 16px;
     padding: 16px 24px;
   }
+  .browser.with-detail {
+    grid-template-columns: 220px 1fr minmax(320px, 420px);
+  }
+
+  .header-actions { display: flex; align-items: center; gap: 8px; }
+  .search-input {
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--r-sm);
+    padding: 5px 10px;
+    font-size: 12px;
+    width: 240px;
+  }
+  .search-input:focus { outline: none; border-color: var(--accent); }
+  .search-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    font-size: 12px;
+  }
+
+  .file-row.selected {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+  }
+
+  .detail {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+    border-left: 1px solid var(--border);
+    padding-left: 16px;
+  }
+  .detail-head { display: flex; align-items: center; gap: 8px; }
+  .detail-name {
+    font-weight: 600;
+    font-size: 13px;
+    word-break: break-all;
+  }
+  .detail-close {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 4px;
+  }
+  .detail-close:hover { color: var(--text); }
+  .detail-meta { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
+  .detail-actions { display: flex; gap: 6px; }
+  .btn-action {
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-size: 11px;
+    padding: 3px 12px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+  }
+  .btn-action:disabled { opacity: 0.5; cursor: default; }
+  .btn-action.ghost { background: transparent; border-color: var(--border); color: var(--text-muted); }
+  .btn-action.ghost:hover { color: var(--text); }
+  .btn-action.ghost.danger:hover { color: var(--fail); border-color: var(--fail); }
+  .detail-preview {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-sunken);
+  }
+  .preview-text {
+    margin: 0;
+    padding: 10px 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .preview-image { max-width: 100%; display: block; padding: 8px; }
+  .preview-note { padding: 4px 12px 8px; font-size: 10px; }
   .bucket-list {
     display: flex;
     flex-direction: column;

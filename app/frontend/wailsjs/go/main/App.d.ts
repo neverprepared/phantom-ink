@@ -82,6 +82,8 @@ export function DisableLocalRunner():Promise<void>;
 
 export function DismissAttention(arg1:string):Promise<void>;
 
+export function DownloadArtifactObject(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function DryRunLoopTemplate(arg1:string,arg2:Record<string, any>):Promise<Record<string, any>>;
 
 export function EnableLocalRunner(arg1:string):Promise<void>;
@@ -107,6 +109,8 @@ export function GetAgentRole(arg1:string):Promise<brainbox.AgentDefinition>;
 export function GetAgentState(arg1:string):Promise<brainbox.AgentStateItem>;
 
 export function GetAppLogs():Promise<Array<string>>;
+
+export function GetArtifactPreview(arg1:string,arg2:string):Promise<main.ArtifactPreview>;
 
 export function GetArtifactsHealth():Promise<brainbox.ArtifactsHealth>;
 
@@ -325,6 +329,8 @@ export function SaveSequence(arg1:main.Sequence):Promise<main.Sequence>;
 export function ScanDiskUsage():Promise<main.DiskOverview>;
 
 export function ScanProfiles():Promise<Array<main.Profile>>;
+
+export function SearchArtifactsFiles(arg1:string,arg2:string):Promise<any>;
 
 export function SetActiveProfile(arg1:string):Promise<void>;
 

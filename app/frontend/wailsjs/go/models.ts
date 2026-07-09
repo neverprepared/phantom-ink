@@ -1679,6 +1679,30 @@ export namespace main {
 	        this.limit = source["limit"];
 	    }
 	}
+	export class ArtifactPreview {
+	    kind: string;
+	    content_type: string;
+	    size: number;
+	    text?: string;
+	    data_uri?: string;
+	    truncated: boolean;
+	    reason?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ArtifactPreview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.content_type = source["content_type"];
+	        this.size = source["size"];
+	        this.text = source["text"];
+	        this.data_uri = source["data_uri"];
+	        this.truncated = source["truncated"];
+	        this.reason = source["reason"];
+	    }
+	}
 	export class AttentionItem {
 	    id: string;
 	    source: string;

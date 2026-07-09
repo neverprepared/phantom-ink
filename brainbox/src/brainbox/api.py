@@ -4392,6 +4392,40 @@ async def api_artifacts_list_folder(bucket: str, prefix: str = ""):
     }
 
 
+@app.get("/api/artifacts/{bucket}/search", dependencies=[Depends(require_api_key)])
+async def api_artifacts_search(bucket: str, q: str = "", limit: int = 200):
+    """Substring search over object keys in the profile namespace.
+    Whole-bucket (profile-scoped) — the file browser's find box."""
+    from . import artifacts
+
+    if not artifacts.is_enabled():
+        raise HTTPException(status_code=503, detail="minio integration is disabled")
+    q = q.strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="q must be non-empty")
+    limit = max(1, min(limit, 500))
+    try:
+        res = await asyncio.to_thread(artifacts.search_objects, bucket, q, limit=limit)
+    except artifacts.ArtifactError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "bucket": res["bucket"],
+        "query": res["query"],
+        "truncated": res["truncated"],
+        "scanned": res["scanned"],
+        "files": [
+            {
+                "name": f.name,
+                "key": f.key,
+                "size": f.size,
+                "etag": f.etag,
+                "last_modified_ms": f.last_modified_ms,
+            }
+            for f in res["files"]
+        ],
+    }
+
+
 @app.get("/api/artifacts/{bucket}/head", dependencies=[Depends(require_api_key)])
 async def api_artifacts_head(bucket: str, key: str):
     """Object metadata for the file detail pane."""
