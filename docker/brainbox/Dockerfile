@@ -206,6 +206,19 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 WORKDIR /home/developer/workspace
 
+# Ollama CLI (client only): sessions with llm_provider=ollama run
+# `ollama run <model>` against the HOST daemon (OLLAMA_HOST env above) —
+# the container never serves models. Extract just bin/ollama from the
+# release tarball; the bundled GPU libraries are server-side dead weight.
+# Placed late so the heavy toolchain layers above stay cached.
+USER root
+RUN ARCH=$(dpkg --print-architecture) \
+    && curl -fsSL "https://ollama.com/download/ollama-linux-${ARCH}.tgz" \
+       | tar -xz -C /usr/local bin/ollama \
+    && chmod 755 /usr/local/bin/ollama \
+    && /usr/local/bin/ollama --version
+USER developer
+
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD pgrep -x "claude" > /dev/null || pgrep -x "codex" > /dev/null || pgrep -x "ollama" > /dev/null || exit 1
 
