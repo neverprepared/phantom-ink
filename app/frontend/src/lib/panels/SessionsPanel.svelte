@@ -164,6 +164,15 @@
   // Task (optional — runs after session starts)
   let newTask = $state('');
 
+  // Continue-from: seed the task with a prior session's stored handoff
+  // (session-store handoff.md — cross-machine session handoff). Candidates
+  // = active sessions + history, both already loaded by refresh().
+  let continueFrom = $state('');
+  const handoffCandidates = $derived([...new Set([
+    ...allSessions.map((s: any) => s.session_name ?? s.name),
+    ...pastSessions.map((h: any) => h.session_name),
+  ].filter(Boolean))] as string[]);
+
   // Dispatch preview — reactively asks the API where this session will land.
   interface DispatchCandidate {
     name: string;
@@ -581,6 +590,7 @@
         workspace_profile: newProfile,
         workspace_home: wsHome,
         task: newTask.trim() || undefined,
+        continue_from: continueFrom || undefined,
         backend: newBackend,
         runner: newRunner || undefined,
         volumes: volumes.length > 0 ? volumes : undefined,
@@ -593,7 +603,7 @@
       if (resp.success ?? resp.Success) {
         notifications.success(`Created session: ${newName}`);
         showNewModal = false;
-        newName = ''; newVMTemplate = ''; mountPaths = []; newTask = '';
+        newName = ''; newVMTemplate = ''; mountPaths = []; newTask = ''; continueFrom = '';
         refresh();
       } else {
         notifications.error(resp.error ?? resp.Error ?? 'Failed to create session');
@@ -1141,6 +1151,18 @@
         <label for="stask">task (optional)</label>
         <textarea id="stask" bind:value={newTask} rows="3" placeholder="Describe what the agent should do after starting..."></textarea>
         <p class="hint">if provided, the agent will start working on this immediately</p>
+      </div>
+
+      <!-- Continue from a prior session's handoff -->
+      <div class="field">
+        <label for="scontinue">continue from (optional)</label>
+        <select id="scontinue" bind:value={continueFrom}>
+          <option value="">— none —</option>
+          {#each handoffCandidates as s (s)}
+            <option value={s}>{s}</option>
+          {/each}
+        </select>
+        <p class="hint">prepends that session's stored handoff into this task — fails if it never saved one</p>
       </div>
 
       <div class="modal-actions">
