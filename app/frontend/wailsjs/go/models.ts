@@ -1274,6 +1274,144 @@ export namespace brainbox {
 	    }
 	}
 	
+	export class Rule {
+	    id: string;
+	    name: string;
+	    profile: string;
+	    enabled: boolean;
+	    description: string;
+	    pattern: Record<string, any>;
+	    actions: any[];
+	    created_at: number;
+	    updated_at: number;
+	    last_triggered_at?: number;
+	    trigger_count: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Rule(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.profile = source["profile"];
+	        this.enabled = source["enabled"];
+	        this.description = source["description"];
+	        this.pattern = source["pattern"];
+	        this.actions = source["actions"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	        this.last_triggered_at = source["last_triggered_at"];
+	        this.trigger_count = source["trigger_count"];
+	    }
+	}
+	export class RuleEnabledState {
+	    id: string;
+	    enabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RuleEnabledState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.enabled = source["enabled"];
+	    }
+	}
+	export class RuleExecution {
+	    id: number;
+	    rule_id: string;
+	    event_seq: number;
+	    event_id: string;
+	    action_index: number;
+	    action_type: string;
+	    status: string;
+	    attempts: number;
+	    result: Record<string, any>;
+	    error: string;
+	    created_at: number;
+	    updated_at: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RuleExecution(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.rule_id = source["rule_id"];
+	        this.event_seq = source["event_seq"];
+	        this.event_id = source["event_id"];
+	        this.action_index = source["action_index"];
+	        this.action_type = source["action_type"];
+	        this.status = source["status"];
+	        this.attempts = source["attempts"];
+	        this.result = source["result"];
+	        this.error = source["error"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	    }
+	}
+	export class RuleTestMatch {
+	    seq: number;
+	    id: string;
+	    type: string;
+	    status: string;
+	    ts: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RuleTestMatch(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.seq = source["seq"];
+	        this.id = source["id"];
+	        this.type = source["type"];
+	        this.status = source["status"];
+	        this.ts = source["ts"];
+	    }
+	}
+	export class RuleTestResult {
+	    valid: boolean;
+	    errors: string[];
+	    matched?: boolean;
+	    matches?: RuleTestMatch[];
+	    scanned?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RuleTestResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.valid = source["valid"];
+	        this.errors = source["errors"];
+	        this.matched = source["matched"];
+	        this.matches = this.convertValues(source["matches"], RuleTestMatch);
+	        this.scanned = source["scanned"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class Runner {
 	    name: string;
 	    capabilities: Record<string, boolean>;

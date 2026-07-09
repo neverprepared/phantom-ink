@@ -68,6 +68,8 @@ export function DeleteProfileBundle(arg1:string):Promise<void>;
 
 export function DeleteProfileImageRecord(arg1:string):Promise<void>;
 
+export function DeleteRule(arg1:string):Promise<void>;
+
 export function DeleteRunner(arg1:string):Promise<void>;
 
 export function DeleteSchedule(arg1:string):Promise<void>;
@@ -188,6 +190,8 @@ export function GetRegistrySettings():Promise<Record<string, string>>;
 
 export function GetRemoteProfileImageStatus(arg1:string):Promise<any>;
 
+export function GetRule(arg1:string):Promise<brainbox.Rule>;
+
 export function GetSessionHistory(arg1:number,arg2:number):Promise<Array<brainbox.SessionHistoryEntry>>;
 
 export function GetSessionTraces(arg1:string,arg2:number):Promise<Array<brainbox.Trace>>;
@@ -224,6 +228,8 @@ export function ListAgentState(arg1:main.AgentStateFilter):Promise<Array<brainbo
 
 export function ListAgents():Promise<Array<main.DetectedAgent>>;
 
+export function ListAllRuleExecutions(arg1:string,arg2:number,arg3:number):Promise<Array<brainbox.RuleExecution>>;
+
 export function ListArtifactsBuckets(arg1:string):Promise<Array<brainbox.ArtifactBucket>>;
 
 export function ListArtifactsFolder(arg1:string,arg2:string):Promise<brainbox.ArtifactListing>;
@@ -257,6 +263,10 @@ export function ListPlaybooks(arg1:string):Promise<Array<brainbox.Playbook>>;
 export function ListProfileDirs(arg1:string):Promise<Array<string>>;
 
 export function ListProfileImages():Promise<Array<main.ProfileImageRow>>;
+
+export function ListRuleExecutions(arg1:string,arg2:string,arg3:number,arg4:number):Promise<Array<brainbox.RuleExecution>>;
+
+export function ListRules(arg1:string):Promise<Array<brainbox.Rule>>;
 
 export function ListRunners():Promise<Array<brainbox.Runner>>;
 
@@ -306,6 +316,8 @@ export function RestoreAttention(arg1:string):Promise<void>;
 
 export function RestoreProfile(arg1:string):Promise<void>;
 
+export function RetryRuleExecution(arg1:number):Promise<brainbox.RuleExecution>;
+
 export function RetryTask(arg1:string):Promise<void>;
 
 export function RunCollectJobNow(arg1:string):Promise<void>;
@@ -325,6 +337,8 @@ export function SaveCollectJob(arg1:main.CollectJob):Promise<main.CollectJob>;
 export function SaveCustomBundleSource(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SaveDashboardLayout(arg1:string,arg2:string):Promise<void>;
+
+export function SaveRule(arg1:brainbox.Rule):Promise<brainbox.Rule>;
 
 export function SaveSchedule(arg1:main.ScheduleRow):Promise<main.ScheduleRow>;
 
@@ -360,6 +374,8 @@ export function SetProfileServerOverride(arg1:string,arg2:string,arg3:boolean):P
 
 export function SetRegistrySettings(arg1:string,arg2:string):Promise<void>;
 
+export function SetRuleEnabled(arg1:string,arg2:boolean):Promise<brainbox.RuleEnabledState>;
+
 export function SetServiceConfig(arg1:string,arg2:boolean,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 
 export function SetTheme(arg1:string):Promise<void>;
@@ -387,6 +403,10 @@ export function SyncProfileBundleNow(arg1:string):Promise<brainbox.BundlePutResu
 export function TailLogs(arg1:string,arg2:number):Promise<Array<opensearch.LogEntry>>;
 
 export function TestGatewayTools(arg1:string):Promise<brainbox.GatewayToolsResult>;
+
+export function TestRuleEvent(arg1:Record<string, any>,arg2:Record<string, any>):Promise<brainbox.RuleTestResult>;
+
+export function TestRulePattern(arg1:Record<string, any>,arg2:number):Promise<brainbox.RuleTestResult>;
 
 export function TriggerRule(arg1:string,arg2:string,arg3:string):Promise<void>;
 
