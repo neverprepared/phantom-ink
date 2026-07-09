@@ -25,18 +25,31 @@
 
   // Refresh integration flags so the sidebar can hide panels that
   // require unconfigured integrations (e.g. Files hidden until MinIO
-  // is wired up). Cheap probe; 503 from /api/artifacts/health is the
-  // "off" signal, 200 + ok=true is "on".
+  // is wired up). The operator's MinIO integration toggle gates first —
+  // toggled off means hidden, no daemon probe; toggled on additionally
+  // requires the daemon's /api/artifacts/health to report ok.
   async function refreshIntegrations() {
     try {
       const api = await getApi();
       if (!api) return;
+      if (!(await api.MinioIntegrationEnabled())) {
+        integrationState.minioEnabled = false;
+        return;
+      }
       const h = await api.GetArtifactsHealth();
       integrationState.minioEnabled = !!h?.ok;
     } catch {
       integrationState.minioEnabled = false;
     }
   }
+
+  // If the Files panel is open when the integration flips off, bounce
+  // to the dashboard rather than rendering a hidden panel.
+  $effect(() => {
+    if (currentPanel.value === 'files' && !integrationState.minioEnabled) {
+      currentPanel.value = 'dashboard';
+    }
+  });
 
   // Attention store powers the sidebar badge + Dashboard ActionItems fold-in.
   // Bootstrapping it here means the count is fresh on every panel, not only

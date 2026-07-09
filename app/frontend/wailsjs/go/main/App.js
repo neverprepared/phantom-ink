@@ -538,6 +538,10 @@ export function ListUpcomingFires(arg1) {
   return window['go']['main']['App']['ListUpcomingFires'](arg1);
 }
 
+export function MinioIntegrationEnabled() {
+  return window['go']['main']['App']['MinioIntegrationEnabled']();
+}
+
 export function MintGatewayToken(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['MintGatewayToken'](arg1, arg2, arg3, arg4);
 }

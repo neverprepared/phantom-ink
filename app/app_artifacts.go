@@ -64,6 +64,17 @@ func (a *App) GetMinioBrowserAddress() string {
 	return a.resolveMinioAddress()
 }
 
+// MinioIntegrationEnabled reports whether the app's MinIO integration
+// row is toggled on. Gates the Files menu item: the operator's toggle
+// wins regardless of daemon-side health — off means hidden.
+func (a *App) MinioIntegrationEnabled() bool {
+	if a.db == nil {
+		return false
+	}
+	row, ok := a.db.GetIntegration("minio")
+	return ok && row.Enabled
+}
+
 // PresignArtifactURL mints a presigned GET (operator opens) or PUT
 // (Phase 4 worker writes) URL, signed against this app's resolved
 // MinIO address so the URL is fetchable from where the app runs.

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { commandPalette, currentPanel } from '../stores.svelte';
+  import { commandPalette, currentPanel, integrationState } from '../stores.svelte';
   import { panels } from '../panels';
 
   interface Command {
@@ -13,19 +13,23 @@
   let selectedIndex = $state(0);
   let inputEl = $state<HTMLInputElement | null>(null);
 
-  const baseCommands: Command[] = [
-    ...panels.map(p => ({
-      id: `nav:${p.id}`,
-      label: `Go to ${p.label}`,
-      description: p.shortcut,
-      action: () => { currentPanel.value = p.id; commandPalette.close(); },
-    })),
+  // Derived so integration-gated panels (Files requires MinIO) drop out
+  // of the palette the same way they drop out of the sidebar.
+  const baseCommands: Command[] = $derived([
+    ...panels
+      .filter(p => !(p.requires === 'minio' && !integrationState.minioEnabled))
+      .map(p => ({
+        id: `nav:${p.id}`,
+        label: `Go to ${p.label}`,
+        description: p.shortcut,
+        action: () => { currentPanel.value = p.id; commandPalette.close(); },
+      })),
     {
       id: 'reload',
       label: 'Reload app',
       action: () => { commandPalette.close(); window.location.reload(); },
     },
-  ];
+  ]);
 
   function score(cmd: Command, q: string): number {
     const label = cmd.label.toLowerCase();
