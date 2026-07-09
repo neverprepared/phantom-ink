@@ -361,6 +361,28 @@ class RulesSettings(BaseSettings):
     stuck_running_ms: int = 300_000     # 'running' rows older than this requeue on boot
 
 
+class OpenSearchSettings(BaseSettings):
+    """Event-stream sink: a durable consumer indexes agent_events into
+    OpenSearch (monthly brainbox-events-YYYY.MM indices) for history/search.
+    Enabled purely by configuring addresses — mirrors phantom-brain's
+    convention. OpenSearch is never in any hot path: the rules engine and
+    ingest only touch Postgres; a down cluster just pauses indexing.
+    """
+
+    addresses: list[str] = Field(default_factory=list)  # CL_OPENSEARCH__ADDRESSES='["http://localhost:9200"]'
+    username: str = ""
+    password: SecretStr = SecretStr("")
+    insecure_skip_verify: bool = False
+    index_prefix: str = "brainbox-events"  # pbrain owns pb_* — keep namespaces distinct
+    request_timeout_s: float = 10.0
+    batch_size: int = 500
+    poll_interval_s: float = 5.0
+
+    @property
+    def enabled(self) -> bool:
+        return len(self.addresses) > 0
+
+
 class Settings(BaseSettings):
     role: str = "assistant"
     image: str = ""
@@ -439,6 +461,7 @@ class Settings(BaseSettings):
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     docker: DockerSettings = Field(default_factory=DockerSettings)
     rules: RulesSettings = Field(default_factory=RulesSettings)
+    opensearch: OpenSearchSettings = Field(default_factory=OpenSearchSettings)
     path_map: dict[str, str] = Field(
         default_factory=dict
     )  # host path → container path substitutions

@@ -93,7 +93,10 @@ class TestMatchingAndEnqueue:
         _ingest("task.failed")
         await er.run_once()
         assert er.get_cursor() == 1
-        assert await er.run_once() == 0  # nothing new
+        # The ok execution emitted a rule.execution envelope — exactly one
+        # more event to consume (which matches no rule), then quiescent.
+        assert await er.run_once() == 1
+        assert await er.run_once() == 0
 
     async def test_unique_key_dedupes_reprocessing(self, stub_executor):
         er.init_cursor_if_absent()

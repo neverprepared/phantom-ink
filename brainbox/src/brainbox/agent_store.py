@@ -253,6 +253,60 @@ def list_attention(workspace: str | None = None, limit: int = 200) -> list[dict[
     return list_state(status=list(ATTENTION_STATUSES), workspace=workspace, limit=limit)
 
 
+def search_events(
+    *,
+    q: str = "",
+    type_prefix: str = "",
+    workspace: str = "",
+    status: str = "",
+    source: str = "",
+    since_ms: int = 0,
+    until_ms: int = 0,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Postgres fallback for event history search (used when the OpenSearch
+    sink is not configured). Filters are exact/prefix; ``q`` degrades to a
+    substring scan over the raw envelope JSON — no ranking, fine at this
+    scale."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    if type_prefix:
+        clauses.append("type LIKE %s")
+        params.append(type_prefix + "%")
+    if workspace:
+        clauses.append("envelope LIKE %s")  # workspace isn't a column on agent_events
+        params.append(f'%"workspace":"{workspace}"%')
+    if status:
+        clauses.append("status = %s")
+        params.append(status)
+    if source:
+        clauses.append("source = %s")
+        params.append(source)
+    if since_ms:
+        clauses.append("ts >= %s")
+        params.append(since_ms)
+    if until_ms:
+        clauses.append("ts <= %s")
+        params.append(until_ms)
+    if q:
+        clauses.append("envelope ILIKE %s")
+        params.append(f"%{q}%")
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    with _conn() as c:
+        rows = c.execute(
+            f"SELECT seq, id, source, type, status, parent_id, ts, envelope "
+            f"FROM agent_events {where} ORDER BY seq DESC LIMIT %s",
+            (*params, limit),
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        env_raw = d.pop("envelope", None)
+        d["envelope"] = json.loads(env_raw) if env_raw else None
+        out.append(d)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Async wrappers
 # ---------------------------------------------------------------------------

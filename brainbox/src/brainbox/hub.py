@@ -82,6 +82,9 @@ async def init() -> None:
     from . import event_rules as _event_rules
     _event_rules.start()
 
+    from . import os_sink as _os_sink
+    _os_sink.start()
+
     log.info(
         "hub.initialized",
         metadata={
@@ -109,6 +112,9 @@ async def shutdown() -> None:
 
     from . import event_rules as _event_rules
     await _event_rules.stop()
+
+    from . import os_sink as _os_sink
+    await _os_sink.stop()
 
     await _flush_state()
     log.info("hub.shutdown")

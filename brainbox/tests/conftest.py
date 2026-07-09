@@ -20,6 +20,7 @@ def reset_hub_state():
     from brainbox.scheduler import reset_for_tests as _reset_scheduler
     from brainbox.loop_runner import reset_for_tests as _reset_loop_runner
     from brainbox.event_rules import reset_for_tests as _reset_event_rules
+    from brainbox.os_sink import reset_for_tests as _reset_os_sink
 
     def _reset():
         _auth._api_key = ""
@@ -36,6 +37,7 @@ def reset_hub_state():
         _reset_scheduler()
         _reset_loop_runner()  # clears _instances + _child_to_loop
         _reset_event_rules()  # clears wakeup/rate windows/inflight
+        _reset_os_sink()  # clears sink task/listener/client cache
         reset_store_for_tests()  # fresh in-memory DB per test
 
     _reset()
