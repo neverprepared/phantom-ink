@@ -378,6 +378,10 @@ export function GetRule(arg1) {
   return window['go']['main']['App']['GetRule'](arg1);
 }
 
+export function GetRulesStatus() {
+  return window['go']['main']['App']['GetRulesStatus']();
+}
+
 export function GetSessionHistory(arg1, arg2) {
   return window['go']['main']['App']['GetSessionHistory'](arg1, arg2);
 }
@@ -688,6 +692,10 @@ export function ScanDiskUsage() {
 
 export function ScanProfiles() {
   return window['go']['main']['App']['ScanProfiles']();
+}
+
+export function SearchAgentEvents(arg1) {
+  return window['go']['main']['App']['SearchAgentEvents'](arg1);
 }
 
 export function SearchArtifactsFiles(arg1, arg2, arg3) {

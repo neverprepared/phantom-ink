@@ -74,3 +74,13 @@ func (a *App) OutboxPending() int {
 	}
 	return a.outbox.PendingFromDB()
 }
+
+// SearchAgentEvents queries event history through the daemon — OpenSearch
+// when the sink is configured, Postgres fallback otherwise. The result's
+// Backend field says which one answered.
+func (a *App) SearchAgentEvents(opts brainbox.SearchAgentEventsOptions) (brainbox.SearchAgentEventsResult, error) {
+	if a.client == nil {
+		return brainbox.SearchAgentEventsResult{Backend: "postgres"}, nil
+	}
+	return a.client.SearchAgentEvents(opts)
+}

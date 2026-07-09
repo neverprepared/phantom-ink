@@ -249,3 +249,24 @@ func TestPatternErrorsSurfaceInError(t *testing.T) {
 		t.Fatalf("expected pattern_errors in error string, got %v", err)
 	}
 }
+
+func TestGetRulesStatus(t *testing.T) {
+	client, cap := stubServer(t, 200, `{
+		"counts": {"queued": 2, "running": 1, "throttled": 0, "dead": 3, "ok_24h": 40},
+		"cursor": 1234, "head_seq": 1240, "lag": 6,
+		"sink": {"enabled": true, "cursor": 1100, "lag": 140, "last_error": "boom"}}`)
+
+	status, err := client.GetRulesStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cap.method != "GET" || cap.path != "/api/rules/status" {
+		t.Fatalf("unexpected request: %s %s", cap.method, cap.path)
+	}
+	if status.Counts.Queued != 2 || status.Counts.Dead != 3 || status.Counts.Ok24h != 40 {
+		t.Fatalf("bad counts: %+v", status.Counts)
+	}
+	if status.Lag != 6 || !status.Sink.Enabled || status.Sink.Lag != 140 || status.Sink.LastError != "boom" {
+		t.Fatalf("bad decode: %+v", status)
+	}
+}

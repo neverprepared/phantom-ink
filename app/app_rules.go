@@ -54,3 +54,9 @@ func (a *App) ListAllRuleExecutions(status string, limit, offset int) ([]brainbo
 func (a *App) RetryRuleExecution(executionID int64) (brainbox.RuleExecution, error) {
 	return a.client.RetryRuleExecution(executionID)
 }
+
+// GetRulesStatus powers the Rules tab status strip: execution counts by
+// status, consumer cursor/lag, and OpenSearch sink health.
+func (a *App) GetRulesStatus() (brainbox.RulesStatus, error) {
+	return a.client.GetRulesStatus()
+}

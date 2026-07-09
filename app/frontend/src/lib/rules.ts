@@ -38,6 +38,25 @@ export interface RuleTestMatch {
   ts: number;
 }
 
+export interface RulesStatus {
+  counts: {
+    queued: number;
+    running: number;
+    throttled: number;
+    dead: number;
+    ok_24h: number;
+  };
+  cursor: number;
+  head_seq: number;
+  lag: number;
+  sink: {
+    enabled: boolean;
+    cursor: number;
+    lag: number;
+    last_error: string;
+  };
+}
+
 export const ACTION_TYPES = [
   'submit_task',
   'run_playbook',

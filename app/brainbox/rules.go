@@ -198,3 +198,38 @@ func (c *Client) RetryRuleExecution(executionID int64) (RuleExecution, error) {
 	err := c.post(fmt.Sprintf("/api/rules/executions/%d/retry", executionID), nil, &ex)
 	return ex, err
 }
+
+// RulesStatusCounts breaks executions down by status. Ok24h is windowed —
+// an all-time ok counter grows unboundedly and means nothing on a strip.
+type RulesStatusCounts struct {
+	Queued    int64 `json:"queued"`
+	Running   int64 `json:"running"`
+	Throttled int64 `json:"throttled"`
+	Dead      int64 `json:"dead"`
+	Ok24h     int64 `json:"ok_24h"`
+}
+
+// RulesSinkStatus reports the OpenSearch event sink's cursor health.
+type RulesSinkStatus struct {
+	Enabled   bool   `json:"enabled"`
+	Cursor    int64  `json:"cursor"`
+	Lag       int64  `json:"lag"`
+	LastError string `json:"last_error"` // server null → ""
+}
+
+// RulesStatus is the queue-health snapshot behind the Rules tab status
+// strip: execution counts, the consumer's cursor/lag against the event-log
+// head, and the sink block.
+type RulesStatus struct {
+	Counts  RulesStatusCounts `json:"counts"`
+	Cursor  int64             `json:"cursor"`
+	HeadSeq int64             `json:"head_seq"`
+	Lag     int64             `json:"lag"`
+	Sink    RulesSinkStatus   `json:"sink"`
+}
+
+func (c *Client) GetRulesStatus() (RulesStatus, error) {
+	var status RulesStatus
+	err := c.get("/api/rules/status", &status)
+	return status, err
+}
