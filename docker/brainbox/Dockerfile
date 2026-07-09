@@ -70,6 +70,11 @@ COPY --chown=developer:developer reflex/plugins/reflex                  /opt/ref
 # brainbox-complete: records the session result via the hub session store
 COPY docker/brainbox/setup/complete.sh /usr/local/bin/brainbox-complete
 RUN chmod 755 /usr/local/bin/brainbox-complete
+# ollama-mcp: bridges an Ollama session to the MCP gateway (ollama is not an
+# MCP client). Launched automatically by ttyd-wrapper for gateway-wired
+# ollama sessions; a uv-script shebang self-installs its deps on first run.
+COPY docker/brainbox/setup/ollama-mcp.py /usr/local/bin/ollama-mcp
+RUN chmod 755 /usr/local/bin/ollama-mcp
 
 # =============================================================================
 # Developer: all language runtimes, tools, MCP servers, Claude Code
