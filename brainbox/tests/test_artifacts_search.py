@@ -201,3 +201,83 @@ class TestPresignPublicEndpoint:
             )
         assert r.status_code == 200, r.text
         assert r.json()["url"].startswith("https://minio.example.com/")
+
+
+class TestTrash:
+    """Deletes are soft — objects move to .trash/<ts>/<key>; deleting a
+    trash key is permanent; search never surfaces trash."""
+
+    class _Client:
+        def __init__(self):
+            self.objects = {"phantom-artifacts": {"personal/notes/a.md": b"hello"}}
+
+        def copy_object(self, *, Bucket, Key, CopySource, MetadataDirective):
+            src = CopySource["Key"]
+            self.objects[Bucket][Key] = self.objects[Bucket][src]
+
+        def delete_object(self, *, Bucket, Key):
+            self.objects[Bucket].pop(Key, None)
+
+        def get_paginator(self, name):
+            store = self.objects
+
+            class _P:
+                def paginate(self, *, Bucket, Prefix=""):
+                    from datetime import datetime, timezone
+
+                    ts = datetime(2026, 7, 9, tzinfo=timezone.utc)
+                    yield {
+                        "Contents": [
+                            {"Key": k, "Size": len(v), "LastModified": ts, "ETag": '"e"'}
+                            for k, v in store.get(Bucket, {}).items()
+                            if k.startswith(Prefix)
+                        ]
+                    }
+
+            return _P()
+
+    @pytest.fixture
+    def client(self, monkeypatch):
+        c = self._Client()
+        monkeypatch.setattr(settings.minio, "enabled", True)
+        monkeypatch.setattr(artifacts, "_client", lambda: c)
+        return c
+
+    def test_trash_moves_object(self, client):
+        trash_key = artifacts.trash_object("artifacts", "personal/notes/a.md")
+        assert trash_key.startswith(".trash/")
+        assert trash_key.endswith("/personal/notes/a.md")
+        objs = client.objects["phantom-artifacts"]
+        assert "personal/notes/a.md" not in objs
+        assert objs[trash_key] == b"hello"
+
+    def test_trash_key_is_permanent(self, client):
+        trash_key = artifacts.trash_object("artifacts", "personal/notes/a.md")
+        with pytest.raises(artifacts.ArtifactError, match="already in trash"):
+            artifacts.trash_object("artifacts", trash_key)
+        artifacts.delete_object("artifacts", trash_key)
+        assert client.objects["phantom-artifacts"] == {}
+
+    def test_search_excludes_trash(self, client):
+        artifacts.trash_object("artifacts", "personal/notes/a.md")
+        res = artifacts.search_objects("artifacts", "a.md")
+        assert res["files"] == []
+
+    async def test_delete_endpoint_soft_then_permanent(self, client):
+        from httpx import ASGITransport, AsyncClient
+
+        from brainbox.api import app
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+            r = await c.delete(
+                "/api/artifacts/artifacts/object", params={"key": "personal/notes/a.md"}
+            )
+            assert r.status_code == 200
+            body = r.json()
+            assert body["permanent"] is False and body["trash_key"].startswith(".trash/")
+
+            r = await c.delete(
+                "/api/artifacts/artifacts/object", params={"key": body["trash_key"]}
+            )
+            assert r.status_code == 200 and r.json()["permanent"] is True
+        assert client.objects["phantom-artifacts"] == {}

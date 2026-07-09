@@ -255,12 +255,18 @@
 
   async function deleteFile(file: File) {
     if (!selectedBucket) return;
-    if (!window.confirm(`Delete ${file.name}?`)) return;
+    // Deletes are soft — the daemon moves the object to the bucket's
+    // .trash/ namespace. Inside .trash/ a delete is permanent.
+    const inTrash = file.key.startsWith('.trash/');
+    const prompt = inTrash
+      ? `Permanently delete ${file.name}? This cannot be undone.`
+      : `Move ${file.name} to trash?`;
+    if (!window.confirm(prompt)) return;
     try {
       const api = await getApi();
       if (!api) return;
       await api.DeleteArtifactObject(selectedBucket.key, file.key);
-      notifications.success(`Deleted ${file.name}`);
+      notifications.success(inTrash ? `Permanently deleted ${file.name}` : `Moved ${file.name} to trash`);
       await refreshListing();
     } catch (err) {
       notifications.error(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
