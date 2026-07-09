@@ -4457,11 +4457,17 @@ async def api_artifacts_delete(bucket: str, key: str):
 
     if not artifacts.is_enabled():
         raise HTTPException(status_code=503, detail="minio integration is disabled")
+    # Soft-delete: objects move to the bucket's .trash/ namespace via a
+    # server-side copy. Deleting a key already under .trash/ is permanent —
+    # that's how trash gets emptied by hand (ILM expiry ages out the rest).
     try:
-        artifacts.delete_object(bucket, key)
+        if artifacts.is_trash_key(key):
+            await asyncio.to_thread(artifacts.delete_object, bucket, key)
+            return {"deleted": key, "permanent": True}
+        trash_key = await asyncio.to_thread(artifacts.trash_object, bucket, key)
     except artifacts.ArtifactError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return {"deleted": key}
+    return {"deleted": key, "permanent": False, "trash_key": trash_key}
 
 
 @app.get("/api/artifacts/{bucket}/presign", dependencies=[Depends(require_api_key)])

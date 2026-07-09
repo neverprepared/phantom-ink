@@ -350,6 +350,41 @@ def delete_object(bucket: str, key: str) -> None:
         raise ArtifactError("delete", real_key, str(exc)) from exc
 
 
+# Reserved trash namespace at the bucket root. Browser deletes move
+# objects here (server-side copy, no data transfer); deleting a key
+# already under it is permanent. An ILM rule on the bucket expires
+# trash automatically (see docs in the ops runbook / bootstrap).
+TRASH_PREFIX = ".trash/"
+
+
+def is_trash_key(key: str) -> bool:
+    return _norm_key(key).startswith(TRASH_PREFIX)
+
+
+def trash_object(bucket: str, key: str) -> str:
+    """Soft-delete: move ``key`` to ``.trash/<epoch-ms>/<key>`` in the
+    same bucket and remove the original. Returns the trash key. The
+    timestamp segment keeps repeated deletes of the same key distinct
+    and gives the ILM expiry rule a stable prefix to age out.
+    """
+    real_bucket = _resolve_bucket(bucket)
+    real_key = _norm_key(key)
+    if real_key.startswith(TRASH_PREFIX):
+        raise ArtifactError("trash", real_key, "already in trash — delete is permanent there")
+    trash_key = f"{TRASH_PREFIX}{int(time.time() * 1000)}/{real_key}"
+    try:
+        _client().copy_object(
+            Bucket=real_bucket,
+            Key=trash_key,
+            CopySource={"Bucket": real_bucket, "Key": real_key},
+            MetadataDirective="COPY",
+        )
+        _client().delete_object(Bucket=real_bucket, Key=real_key)
+    except ClientError as exc:
+        raise ArtifactError("trash", real_key, str(exc)) from exc
+    return trash_key
+
+
 # ---------------------------------------------------------------------------
 # Folder browsing — the file browser's main affordance
 # ---------------------------------------------------------------------------
@@ -437,6 +472,8 @@ def search_objects(bucket: str, query: str, *, limit: int = 200, prefix: str = "
                 rel = key[len(scoped):] if scoped and key.startswith(scoped) else key
                 if key.endswith("/"):
                     continue  # directory markers
+                if key.startswith(TRASH_PREFIX):
+                    continue  # trash is browsable, not searchable noise
                 if needle in rel.lower():
                     files.append(ArtifactEntry(
                         bucket=real_bucket,
