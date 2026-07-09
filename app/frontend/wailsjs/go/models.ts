@@ -256,6 +256,50 @@ export namespace brainbox {
 	        this.profile_prefix = source["profile_prefix"];
 	    }
 	}
+	export class BundleMeta {
+	    profile: string;
+	    etag: string;
+	    size: number;
+	    last_modified_ms: number;
+	    captured_at: string;
+	    app_version: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BundleMeta(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.etag = source["etag"];
+	        this.size = source["size"];
+	        this.last_modified_ms = source["last_modified_ms"];
+	        this.captured_at = source["captured_at"];
+	        this.app_version = source["app_version"];
+	    }
+	}
+	export class BundlePutResult {
+	    profile: string;
+	    saved: boolean;
+	    etag: string;
+	    captured_at: string;
+	    sources: string[];
+	    size: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new BundlePutResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.saved = source["saved"];
+	        this.etag = source["etag"];
+	        this.captured_at = source["captured_at"];
+	        this.sources = source["sources"];
+	        this.size = source["size"];
+	    }
+	}
 	export class ChannelParticipant {
 	    name: string;
 	    type: string;
@@ -1719,6 +1763,30 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.profile = source["profile"];
 	        this.no_cache = source["no_cache"];
+	    }
+	}
+	export class BundleSourceView {
+	    name: string;
+	    label: string;
+	    kind: string;
+	    audience: string;
+	    enabled: boolean;
+	    detected: boolean;
+	    definition: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BundleSourceView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.label = source["label"];
+	        this.kind = source["kind"];
+	        this.audience = source["audience"];
+	        this.enabled = source["enabled"];
+	        this.detected = source["detected"];
+	        this.definition = source["definition"];
 	    }
 	}
 	export class CollectJob {

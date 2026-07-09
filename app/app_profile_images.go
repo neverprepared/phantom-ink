@@ -132,6 +132,27 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 		})
 	}
 
+	// Credential-bundle sync rides along with the rebuild (warn-and-continue:
+	// a MinIO/daemon hiccup must never fail an otherwise good image build).
+	// Only runs when the profile has sources enabled and MinIO is reachable.
+	anyEnabled := false
+	if a.db != nil {
+		for _, r := range a.db.GetBundleSources(req.Profile) {
+			if r.Enabled {
+				anyEnabled = true
+				break
+			}
+		}
+	}
+	if anyEnabled {
+		emit("Syncing credential bundle…", false, nil, nil)
+		if _, err := a.syncProfileBundle(req.Profile, prof.WorkspaceHome, func(msg string) {
+			emit(msg, false, nil, nil)
+		}); err != nil {
+			emit(fmt.Sprintf("warning: credential bundle sync failed: %v", err), false, nil, nil)
+		}
+	}
+
 	emit("Build complete", true, nil, &result)
 	return nil
 }

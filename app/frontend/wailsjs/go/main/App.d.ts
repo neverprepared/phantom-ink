@@ -48,6 +48,8 @@ export function DeleteArtifactObject(arg1:string,arg2:string):Promise<void>;
 
 export function DeleteAutomationRule(arg1:string):Promise<void>;
 
+export function DeleteBundleSource(arg1:string,arg2:string):Promise<void>;
+
 export function DeleteChannel(arg1:string):Promise<void>;
 
 export function DeleteCollectJob(arg1:string):Promise<void>;
@@ -61,6 +63,8 @@ export function DeleteOllamaModel(arg1:string):Promise<void>;
 export function DeletePlaybook(arg1:string):Promise<void>;
 
 export function DeleteProfile(arg1:string,arg2:boolean):Promise<void>;
+
+export function DeleteProfileBundle(arg1:string):Promise<void>;
 
 export function DeleteProfileImageRecord(arg1:string):Promise<void>;
 
@@ -162,6 +166,8 @@ export function GetPlatform():Promise<string>;
 
 export function GetPlaybook(arg1:string):Promise<brainbox.Playbook>;
 
+export function GetProfileBundleMeta(arg1:string):Promise<brainbox.BundleMeta>;
+
 export function GetProfileColors():Promise<Record<string, string>>;
 
 export function GetProfileEnvKey(arg1:string):Promise<string>;
@@ -221,6 +227,8 @@ export function ListAttention(arg1:string):Promise<Array<main.AttentionItem>>;
 export function ListAutomationRules(arg1:string):Promise<Array<main.AutomationRule>>;
 
 export function ListBackups():Promise<Array<string>>;
+
+export function ListBundleSources(arg1:string):Promise<Array<main.BundleSourceView>>;
 
 export function ListChannels(arg1:string):Promise<Array<brainbox.Channel>>;
 
@@ -306,6 +314,8 @@ export function SaveAutomationRule(arg1:main.AutomationRule):Promise<void>;
 
 export function SaveCollectJob(arg1:main.CollectJob):Promise<main.CollectJob>;
 
+export function SaveCustomBundleSource(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function SaveDashboardLayout(arg1:string,arg2:string):Promise<void>;
 
 export function SaveSchedule(arg1:main.ScheduleRow):Promise<main.ScheduleRow>;
@@ -319,6 +329,8 @@ export function ScanProfiles():Promise<Array<main.Profile>>;
 export function SetActiveProfile(arg1:string):Promise<void>;
 
 export function SetAgentEnabled(arg1:string,arg2:boolean):Promise<void>;
+
+export function SetBundleSourceEnabled(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
 export function SetConfig(arg1:string,arg2:string,arg3:string):Promise<void>;
 
@@ -359,6 +371,8 @@ export function StopSession(arg1:string):Promise<brainbox.SessionActionResponse>
 export function SubmitTask(arg1:brainbox.SubmitTaskRequest):Promise<main.HubTask>;
 
 export function SubmitTaskAndWait(arg1:brainbox.WaitForTaskRequest):Promise<brainbox.WaitForTaskResponse>;
+
+export function SyncProfileBundleNow(arg1:string):Promise<brainbox.BundlePutResult>;
 
 export function TailLogs(arg1:string,arg2:number):Promise<Array<opensearch.LogEntry>>;
 

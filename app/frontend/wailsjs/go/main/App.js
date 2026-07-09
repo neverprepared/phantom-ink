@@ -90,6 +90,10 @@ export function DeleteAutomationRule(arg1) {
   return window['go']['main']['App']['DeleteAutomationRule'](arg1);
 }
 
+export function DeleteBundleSource(arg1, arg2) {
+  return window['go']['main']['App']['DeleteBundleSource'](arg1, arg2);
+}
+
 export function DeleteChannel(arg1) {
   return window['go']['main']['App']['DeleteChannel'](arg1);
 }
@@ -116,6 +120,10 @@ export function DeletePlaybook(arg1) {
 
 export function DeleteProfile(arg1, arg2) {
   return window['go']['main']['App']['DeleteProfile'](arg1, arg2);
+}
+
+export function DeleteProfileBundle(arg1) {
+  return window['go']['main']['App']['DeleteProfileBundle'](arg1);
 }
 
 export function DeleteProfileImageRecord(arg1) {
@@ -318,6 +326,10 @@ export function GetPlaybook(arg1) {
   return window['go']['main']['App']['GetPlaybook'](arg1);
 }
 
+export function GetProfileBundleMeta(arg1) {
+  return window['go']['main']['App']['GetProfileBundleMeta'](arg1);
+}
+
 export function GetProfileColors() {
   return window['go']['main']['App']['GetProfileColors']();
 }
@@ -436,6 +448,10 @@ export function ListAutomationRules(arg1) {
 
 export function ListBackups() {
   return window['go']['main']['App']['ListBackups']();
+}
+
+export function ListBundleSources(arg1) {
+  return window['go']['main']['App']['ListBundleSources'](arg1);
 }
 
 export function ListChannels(arg1) {
@@ -606,6 +622,10 @@ export function SaveCollectJob(arg1) {
   return window['go']['main']['App']['SaveCollectJob'](arg1);
 }
 
+export function SaveCustomBundleSource(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SaveCustomBundleSource'](arg1, arg2, arg3);
+}
+
 export function SaveDashboardLayout(arg1, arg2) {
   return window['go']['main']['App']['SaveDashboardLayout'](arg1, arg2);
 }
@@ -632,6 +652,10 @@ export function SetActiveProfile(arg1) {
 
 export function SetAgentEnabled(arg1, arg2) {
   return window['go']['main']['App']['SetAgentEnabled'](arg1, arg2);
+}
+
+export function SetBundleSourceEnabled(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetBundleSourceEnabled'](arg1, arg2, arg3);
 }
 
 export function SetConfig(arg1, arg2, arg3) {
@@ -712,6 +736,10 @@ export function SubmitTask(arg1) {
 
 export function SubmitTaskAndWait(arg1) {
   return window['go']['main']['App']['SubmitTaskAndWait'](arg1);
+}
+
+export function SyncProfileBundleNow(arg1) {
+  return window['go']['main']['App']['SyncProfileBundleNow'](arg1);
 }
 
 export function TailLogs(arg1, arg2) {
