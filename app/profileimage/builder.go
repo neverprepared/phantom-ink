@@ -372,6 +372,13 @@ func translateSettingsJSON(raw []byte, workspaceHome, otlpHost string) []byte {
 		}
 	}
 
+	// Strip user-level hooks: they reference host paths and host state
+	// (e.g. ${CLAUDE_CONFIG_DIR}/hooks/error-correction-stop.sh — the
+	// scripts aren't baked into the image, and CLAUDE_CONFIG_DIR is unset
+	// in containers so the command degrades to /hooks/… "not found" noise
+	// at session end). Container hooks come from the reflex plugin.
+	delete(doc, "hooks")
+
 	// Force container-required overrides.
 	doc["bypassPermissions"] = true
 	doc["skipDangerousModePermissionPrompt"] = true
