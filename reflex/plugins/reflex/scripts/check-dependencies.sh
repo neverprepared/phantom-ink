@@ -19,14 +19,14 @@ GIT_USER_EMAIL=""
 
 if [[ -n "${GIT_CONFIG_GLOBAL:-}" ]] && [[ -f "${GIT_CONFIG_GLOBAL}" ]]; then
   _git_list=$(git config --file "${GIT_CONFIG_GLOBAL}" --list 2>/dev/null || true)
-  GIT_USER_NAME=$(printf '%s\n' "$_git_list" | grep '^user\.name=' | head -1 | cut -d= -f2-)
-  GIT_USER_EMAIL=$(printf '%s\n' "$_git_list" | grep '^user\.email=' | head -1 | cut -d= -f2-)
+  GIT_USER_NAME=$(printf '%s\n' "$_git_list" | grep '^user\.name=' | head -1 | cut -d= -f2- || true)
+  GIT_USER_EMAIL=$(printf '%s\n' "$_git_list" | grep '^user\.email=' | head -1 | cut -d= -f2- || true)
 fi
 
 if [[ -z "$GIT_USER_NAME" ]] || [[ -z "$GIT_USER_EMAIL" ]]; then
   _git_global=$(git config --global --list 2>/dev/null || true)
-  [[ -z "$GIT_USER_NAME" ]] && GIT_USER_NAME=$(printf '%s\n' "$_git_global" | grep '^user\.name=' | head -1 | cut -d= -f2-)
-  [[ -z "$GIT_USER_EMAIL" ]] && GIT_USER_EMAIL=$(printf '%s\n' "$_git_global" | grep '^user\.email=' | head -1 | cut -d= -f2-)
+  [[ -z "$GIT_USER_NAME" ]] && GIT_USER_NAME=$(printf '%s\n' "$_git_global" | grep '^user\.name=' | head -1 | cut -d= -f2- || true)
+  [[ -z "$GIT_USER_EMAIL" ]] && GIT_USER_EMAIL=$(printf '%s\n' "$_git_global" | grep '^user\.email=' | head -1 | cut -d= -f2- || true)
 fi
 
 # Persist git user info to session environment if CLAUDE_ENV_FILE is available
