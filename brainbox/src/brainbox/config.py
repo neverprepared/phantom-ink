@@ -159,6 +159,11 @@ class MinioSettings(BaseSettings):
 
     enabled: bool = False
     endpoint: str = "http://localhost:9090"
+    # Public/browser-facing base URL used when SIGNING presigned URLs.
+    # SigV4 signs the host, so a URL signed against a localhost endpoint is
+    # unusable from any other machine (the app's file browser fetches these).
+    # Empty = presign against ``endpoint`` (single-machine setups).
+    public_endpoint: str = ""
     access_key: SecretStr = SecretStr("")
     secret_key: SecretStr = SecretStr("")
     region: str = "us-east-1"
