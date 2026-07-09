@@ -192,6 +192,8 @@ export function GetRemoteProfileImageStatus(arg1:string):Promise<any>;
 
 export function GetRule(arg1:string):Promise<brainbox.Rule>;
 
+export function GetRulesStatus():Promise<brainbox.RulesStatus>;
+
 export function GetSessionHistory(arg1:number,arg2:number):Promise<Array<brainbox.SessionHistoryEntry>>;
 
 export function GetSessionTraces(arg1:string,arg2:number):Promise<Array<brainbox.Trace>>;
@@ -347,6 +349,8 @@ export function SaveSequence(arg1:main.Sequence):Promise<main.Sequence>;
 export function ScanDiskUsage():Promise<main.DiskOverview>;
 
 export function ScanProfiles():Promise<Array<main.Profile>>;
+
+export function SearchAgentEvents(arg1:brainbox.SearchAgentEventsOptions):Promise<brainbox.SearchAgentEventsResult>;
 
 export function SearchArtifactsFiles(arg1:string,arg2:string,arg3:string):Promise<any>;
 

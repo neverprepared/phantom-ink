@@ -1412,6 +1412,83 @@ export namespace brainbox {
 		    return a;
 		}
 	}
+	export class RulesSinkStatus {
+	    enabled: boolean;
+	    cursor: number;
+	    lag: number;
+	    last_error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RulesSinkStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.cursor = source["cursor"];
+	        this.lag = source["lag"];
+	        this.last_error = source["last_error"];
+	    }
+	}
+	export class RulesStatusCounts {
+	    queued: number;
+	    running: number;
+	    throttled: number;
+	    dead: number;
+	    ok_24h: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RulesStatusCounts(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.queued = source["queued"];
+	        this.running = source["running"];
+	        this.throttled = source["throttled"];
+	        this.dead = source["dead"];
+	        this.ok_24h = source["ok_24h"];
+	    }
+	}
+	export class RulesStatus {
+	    counts: RulesStatusCounts;
+	    cursor: number;
+	    head_seq: number;
+	    lag: number;
+	    sink: RulesSinkStatus;
+	
+	    static createFrom(source: any = {}) {
+	        return new RulesStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.counts = this.convertValues(source["counts"], RulesStatusCounts);
+	        this.cursor = source["cursor"];
+	        this.head_seq = source["head_seq"];
+	        this.lag = source["lag"];
+	        this.sink = this.convertValues(source["sink"], RulesSinkStatus);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class Runner {
 	    name: string;
 	    capabilities: Record<string, boolean>;
@@ -1441,6 +1518,66 @@ export namespace brainbox {
 	        this.max_concurrent = source["max_concurrent"];
 	        this.host = source["host"];
 	    }
+	}
+	export class SearchAgentEventsOptions {
+	    Q: string;
+	    Type: string;
+	    Workspace: string;
+	    Status: string;
+	    Source: string;
+	    SinceMs: number;
+	    UntilMs: number;
+	    Limit: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SearchAgentEventsOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Q = source["Q"];
+	        this.Type = source["Type"];
+	        this.Workspace = source["Workspace"];
+	        this.Status = source["Status"];
+	        this.Source = source["Source"];
+	        this.SinceMs = source["SinceMs"];
+	        this.UntilMs = source["UntilMs"];
+	        this.Limit = source["Limit"];
+	    }
+	}
+	export class SearchAgentEventsResult {
+	    items: AgentEventEntry[];
+	    backend: string;
+	    total?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SearchAgentEventsResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.items = this.convertValues(source["items"], AgentEventEntry);
+	        this.backend = source["backend"];
+	        this.total = source["total"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class Session {
 	    name: string;

@@ -14,6 +14,7 @@
     relativeMs,
     type Rule,
     type RuleExecution,
+    type RulesStatus,
   } from '../rules';
 
   // Server-side event rules (brainbox /api/rules): rules run on the daemon
@@ -26,9 +27,9 @@
   let loading = $state(true);
   let loadError = $state('');
   let editing = $state<Rule | 'new' | null>(null);
-  let deadCount = $state(0);
-  let deadView = $state(false);
-  let deadExecs = $state<RuleExecution[]>([]);
+  let rulesStatus = $state<RulesStatus | null>(null);
+  let statusView = $state<string | null>(null); // open execution-filter panel
+  let statusExecs = $state<RuleExecution[]>([]);
   let execTick = $state(0); // bumped by the poll to refresh open executions lists
 
   const POLL_MS = 5000;
@@ -59,17 +60,24 @@
     }
   }
 
-  async function refreshDead() {
+  async function refreshStatus() {
     const api = await getApi();
     if (!api) return;
     try {
-      const res = await api.ListAllRuleExecutions('dead', 2000, 0);
-      const execs = (res ?? []) as RuleExecution[];
-      deadCount = execs.length;
-      if (deadView) deadExecs = execs;
+      rulesStatus = (await api.GetRulesStatus()) as RulesStatus;
+      if (statusView !== null) {
+        const res = await api.ListAllRuleExecutions(statusView, 2000, 0);
+        statusExecs = (res ?? []) as RuleExecution[];
+      }
     } catch {
       /* transient — next tick retries */
     }
+  }
+
+  function toggleStatusView(status: string) {
+    statusView = statusView === status ? null : status;
+    statusExecs = [];
+    if (statusView !== null) void refreshStatus();
   }
 
   async function toggle(rule: Rule) {
@@ -95,12 +103,14 @@
     }
   }
 
-  async function retryDead(ex: RuleExecution) {
+  const RETRYABLE = new Set(['failed', 'throttled', 'dead']);
+
+  async function retryFromPanel(ex: RuleExecution) {
     const api = await getApi();
     if (!api) return;
     try {
       await api.RetryRuleExecution(ex.id);
-      await refreshDead();
+      await refreshStatus();
     } catch (e: any) {
       notifications.error(`Retry failed: ${e?.message ?? e}`);
     }
@@ -121,10 +131,10 @@
 
   onMount(() => {
     void load();
-    void refreshDead();
+    void refreshStatus();
     pollHandle = setInterval(() => {
       void load(true);
-      void refreshDead();
+      void refreshStatus();
       execTick += 1;
     }, POLL_MS);
   });
@@ -144,32 +154,53 @@
     <span class="sr-note">rules run on the brainbox daemon — active even when this app is closed</span>
     <div class="sr-toolbar-right">
       {#if loading}<Spinner />{/if}
-      <button class="dead-chip" class:has-dead={deadCount > 0} class:active={deadView}
-        onclick={() => { deadView = !deadView; if (deadView) void refreshDead(); }}
-        title="dead-letter executions across all rules">
-        dead: {deadCount}
-      </button>
+      {#if rulesStatus}
+        <div class="status-strip">
+          {#each (['queued', 'running', 'throttled', 'dead'] as const) as s (s)}
+            <button
+              class="status-chip"
+              class:alert={s === 'dead' && rulesStatus.counts.dead > 0}
+              class:active={statusView === s}
+              onclick={() => toggleStatusView(s)}
+              title="{s} executions across all rules">
+              {s} {rulesStatus.counts[s]}
+            </button>
+          {/each}
+          <span class="status-lag" class:alert={rulesStatus.lag > 50}
+            title="events waiting for the rules consumer (cursor {rulesStatus.cursor} / head {rulesStatus.head_seq})">
+            lag {rulesStatus.lag}
+          </span>
+          {#if rulesStatus.sink.enabled}
+            <span class="status-lag" class:alert={!!rulesStatus.sink.last_error}
+              title={rulesStatus.sink.last_error || `events not yet indexed to OpenSearch (cursor ${rulesStatus.sink.cursor})`}>
+              sink {rulesStatus.sink.lag}
+            </span>
+          {/if}
+        </div>
+      {/if}
       {#if editing === null}
         <button class="btn primary" onclick={() => (editing = 'new')}>+ new rule</button>
       {/if}
     </div>
   </div>
 
-  {#if deadView}
-    <div class="dead-panel">
-      {#if deadExecs.length === 0}
-        <div class="sr-empty">dead-letter queue is empty</div>
+  {#if statusView !== null}
+    <div class="status-panel" class:alert={statusView === 'dead'}>
+      {#if statusExecs.length === 0}
+        <div class="sr-empty">no {statusView} executions</div>
       {:else}
-        {#each deadExecs as ex (ex.id)}
-          <div class="dead-row">
-            <span class="dead-rule">{ruleName(ex.rule_id)}</span>
-            <span class="dead-type">{ex.action_type}</span>
+        {#each statusExecs as ex (ex.id)}
+          <div class="status-row">
+            <span class="srow-rule">{ruleName(ex.rule_id)}</span>
+            <span class="srow-type">{ex.action_type}</span>
             <span class={executionStatusClass(ex.status)}>{ex.status}</span>
-            <span class="dead-when">{relativeMs(ex.updated_at)}</span>
+            <span class="srow-when">{relativeMs(ex.updated_at)}</span>
             {#if ex.error}
-              <span class="dead-error" title={ex.error}>{ex.error.length > 70 ? ex.error.slice(0, 70) + '…' : ex.error}</span>
+              <span class="srow-error" title={ex.error}>{ex.error.length > 70 ? ex.error.slice(0, 70) + '…' : ex.error}</span>
             {/if}
-            <button class="dead-retry" onclick={() => retryDead(ex)}>retry</button>
+            {#if RETRYABLE.has(ex.status)}
+              <button class="srow-retry" onclick={() => retryFromPanel(ex)}>retry</button>
+            {/if}
           </div>
         {/each}
       {/if}
@@ -245,40 +276,48 @@
   .sr-note { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-tertiary); }
   .sr-toolbar-right { display: flex; align-items: center; gap: var(--spacing-md); }
 
-  .dead-chip {
+  .status-strip { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .status-chip {
     font-family: var(--font-mono); font-size: 10px;
     padding: 2px 8px; border-radius: 999px;
     border: 1px solid var(--color-border-primary);
     background: none; color: var(--color-text-muted); cursor: pointer;
   }
-  .dead-chip.has-dead { color: var(--color-error); border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.06); }
-  .dead-chip.active { border-color: var(--color-accent); }
+  .status-chip:hover { color: var(--color-text-secondary); }
+  .status-chip.alert { color: var(--color-error); border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.06); }
+  .status-chip.active { border-color: var(--color-accent); color: var(--color-accent); }
+  .status-lag {
+    font-family: var(--font-mono); font-size: 10px;
+    padding: 2px 8px; color: var(--color-text-tertiary);
+  }
+  .status-lag.alert { color: var(--color-error); }
 
-  .dead-panel {
+  .status-panel {
     display: flex; flex-direction: column; gap: 4px;
-    border: 1px solid rgba(239,68,68,0.25);
+    border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-md);
     padding: var(--spacing-md);
     background: var(--color-bg-secondary);
   }
-  .dead-row {
+  .status-panel.alert { border-color: rgba(239,68,68,0.25); }
+  .status-row {
     display: flex; align-items: center; gap: var(--spacing-sm);
     font-family: var(--font-mono); font-size: 10px;
     padding: 3px 0; border-bottom: 1px solid var(--color-border-primary);
     flex-wrap: wrap;
   }
-  .dead-row:last-child { border-bottom: none; }
-  .dead-rule { color: var(--color-text-primary); }
-  .dead-type { color: var(--color-text-secondary); }
-  .dead-when { color: var(--color-text-tertiary); }
-  .dead-error { color: var(--color-error); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .dead-retry {
+  .status-row:last-child { border-bottom: none; }
+  .srow-rule { color: var(--color-text-primary); }
+  .srow-type { color: var(--color-text-secondary); }
+  .srow-when { color: var(--color-text-tertiary); }
+  .srow-error { color: var(--color-error); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .srow-retry {
     background: none; border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-sm); padding: 1px 6px;
     font-size: 10px; cursor: pointer; color: var(--color-text-muted);
     font-family: var(--font-mono); margin-left: auto;
   }
-  .dead-retry:hover { border-color: var(--color-accent); color: var(--color-accent); }
+  .srow-retry:hover { border-color: var(--color-accent); color: var(--color-accent); }
 
   .sr-empty { font-size: 13px; color: var(--color-text-tertiary); padding: var(--spacing-lg) 0; }
   .sr-error { font-family: var(--font-mono); font-size: 11px; color: var(--color-error); }

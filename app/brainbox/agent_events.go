@@ -3,6 +3,7 @@ package brainbox
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 )
 
 // AgentEventBatch is the wire shape accepted by POST /api/agent_events.
@@ -168,4 +169,64 @@ func (c *Client) ListAgentState(opts ListAgentStateOptions) ([]AgentStateItem, e
 		return nil, fmt.Errorf("list agent state: %w", err)
 	}
 	return resp.Items, nil
+}
+
+// SearchAgentEventsOptions narrows GET /api/agent_events/search. Zero
+// values skip the corresponding filter.
+type SearchAgentEventsOptions struct {
+	Q         string // full-text (title/description/envelope)
+	Type      string // event type prefix, e.g. "task." or "rule."
+	Workspace string
+	Status    string
+	Source    string
+	SinceMs   int64
+	UntilMs   int64
+	Limit     int
+}
+
+// SearchAgentEventsResult carries the hits plus which backend answered —
+// "opensearch" when the daemon's sink is configured, "postgres" otherwise.
+type SearchAgentEventsResult struct {
+	Items   []AgentEventEntry `json:"items"`
+	Backend string            `json:"backend"`
+	Total   *int64            `json:"total"` // null on the postgres path
+}
+
+// SearchAgentEvents queries event history through the daemon (which owns
+// the OpenSearch-vs-Postgres decision). Results are newest-first.
+func (c *Client) SearchAgentEvents(opts SearchAgentEventsOptions) (SearchAgentEventsResult, error) {
+	q := url.Values{}
+	if opts.Q != "" {
+		q.Set("q", opts.Q)
+	}
+	if opts.Type != "" {
+		q.Set("type", opts.Type)
+	}
+	if opts.Workspace != "" {
+		q.Set("workspace", opts.Workspace)
+	}
+	if opts.Status != "" {
+		q.Set("status", opts.Status)
+	}
+	if opts.Source != "" {
+		q.Set("source", opts.Source)
+	}
+	if opts.SinceMs > 0 {
+		q.Set("since_ms", fmt.Sprintf("%d", opts.SinceMs))
+	}
+	if opts.UntilMs > 0 {
+		q.Set("until_ms", fmt.Sprintf("%d", opts.UntilMs))
+	}
+	if opts.Limit > 0 {
+		q.Set("limit", fmt.Sprintf("%d", opts.Limit))
+	}
+	path := "/api/agent_events/search"
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	var result SearchAgentEventsResult
+	if err := c.get(path, &result); err != nil {
+		return SearchAgentEventsResult{}, fmt.Errorf("search agent events: %w", err)
+	}
+	return result, nil
 }
