@@ -87,9 +87,17 @@ else
             AGENT_CMD="codex --sandbox off --ask-for-approval never"
             ;;
         ollama)
-            # CLAUDE_MODEL is set to the ollama model name by lifecycle.py
-            OLLAMA_MODEL="${CLAUDE_MODEL:-llama3}"
-            AGENT_CMD="ollama run \"$OLLAMA_MODEL\""
+            # CLAUDE_MODEL is set to the ollama model name by lifecycle.py.
+            OLLAMA_MODEL="${CLAUDE_MODEL:-qwen3:8b}"
+            # When the MCP gateway is wired for this session, launch the
+            # ollama-mcp bridge so the model can call gateway tools (ollama
+            # is not an MCP client). Otherwise fall back to the plain REPL.
+            if [ -n "${PHANTOM_GATEWAY_URL:-}" ] && [ -n "${PHANTOM_GATEWAY_TOKEN:-}" ] \
+               && command -v ollama-mcp >/dev/null 2>&1; then
+                AGENT_CMD="MODEL=\"$OLLAMA_MODEL\" ollama-mcp"
+            else
+                AGENT_CMD="ollama run \"$OLLAMA_MODEL\""
+            fi
             ;;
         *)
             # Default: Claude Code
