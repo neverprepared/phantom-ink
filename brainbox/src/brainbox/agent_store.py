@@ -368,9 +368,13 @@ def envelope_from_hub_task(event: str, task: Any) -> AgentEnvelope:
         "runner_name": getattr(task, "runner_name", None),
         "backend": getattr(task, "backend", None),
         "session_name": getattr(task, "session_name", None),
+        "origin_rule_id": getattr(task, "origin_rule_id", None),
     }
     if getattr(task, "last_error", None):
         metadata["last_error"] = task.last_error
+    # Only stamp nonzero depths so non-rule tasks keep clean envelopes.
+    if getattr(task, "rule_chain_depth", 0):
+        metadata["rule_chain_depth"] = task.rule_chain_depth
 
     return AgentEnvelope(
         id=f"hub-task:{task.id}",
@@ -386,4 +390,141 @@ def envelope_from_hub_task(event: str, task: Any) -> AgentEnvelope:
         end_at=getattr(task, "updated_at", None) if mapped in ("done", "failed") else None,
         tags=["hub-task"],
         metadata={k: v for k, v in metadata.items() if v is not None},
+    )
+
+
+# Playbook.status → envelope status.
+_PLAYBOOK_STATUS_MAP: dict[str, str] = {
+    "idle":      "upcoming",
+    "running":   "active",
+    "completed": "done",
+    "failed":    "failed",
+    "cancelled": "done",
+}
+
+
+def _playbook_workspace(pb: Any) -> str | None:
+    """Playbooks store the literal string 'global' for all-profiles; the bus
+    convention is workspace=None for unscoped things. Normalize so
+    profile-scoped rules don't match global playbooks as if owned."""
+    ws = getattr(pb, "workspace_profile", None)
+    return None if ws in (None, "", "global") else ws
+
+
+def envelope_from_playbook(event: str, data: Any) -> AgentEnvelope | None:
+    """Translate a playbook lifecycle event into the unified envelope.
+
+    Lifecycle events (playbook.created/updated/started/completed/failed/
+    cancelled) carry the Playbook model; per-task events (task_started/
+    task_done) carry {"playbook_id", "task_id"[, "status"]} dicts and upsert
+    the same `playbook:{id}` envelope so agent_state stays one-row-per-playbook.
+    Returns None for shapes we can't resolve.
+    """
+    if isinstance(data, dict):
+        pb_id = data.get("playbook_id")
+        if not pb_id:
+            return None
+        from . import playbooks as _playbooks_mod
+
+        pb = _playbooks_mod.get_playbook(pb_id)
+        title = pb.name if pb else pb_id
+        metadata: dict[str, Any] = {k: v for k, v in data.items() if k != "playbook_id"}
+        if pb and getattr(pb, "origin_rule_id", None):
+            metadata["origin_rule_id"] = pb.origin_rule_id
+        if pb and getattr(pb, "rule_chain_depth", 0):
+            metadata["rule_chain_depth"] = pb.rule_chain_depth
+        return AgentEnvelope(
+            id=f"playbook:{pb_id}",
+            kind="event",
+            source="brainbox-hub",
+            type=event,
+            status=_PLAYBOOK_STATUS_MAP.get(pb.status, pb.status) if pb else None,
+            title=title,
+            workspace=_playbook_workspace(pb) if pb else None,
+            tags=["playbook"],
+            metadata=metadata,
+        )
+
+    pb = data
+    pb_id = getattr(pb, "id", None)
+    if not pb_id:
+        return None
+    status_raw = getattr(pb, "status", "idle")
+    tasks = getattr(pb, "tasks", []) or []
+    metadata = {
+        "tasks_total": len(tasks),
+        "tasks_done": sum(1 for t in tasks if getattr(t, "status", "") == "completed"),
+        "runner": getattr(pb, "runner", None),
+        "origin_rule_id": getattr(pb, "origin_rule_id", None),
+    }
+    if getattr(pb, "rule_chain_depth", 0):
+        metadata["rule_chain_depth"] = pb.rule_chain_depth
+    return AgentEnvelope(
+        id=f"playbook:{pb_id}",
+        kind="event",
+        source="brainbox-hub",
+        type=event,
+        status=_PLAYBOOK_STATUS_MAP.get(status_raw, status_raw),
+        title=getattr(pb, "name", pb_id),
+        workspace=_playbook_workspace(pb),
+        start_at=getattr(pb, "started_at", None),
+        end_at=getattr(pb, "finished_at", None),
+        tags=["playbook"],
+        metadata={k: v for k, v in metadata.items() if v is not None},
+    )
+
+
+def envelope_from_channel(event: str, data: Any) -> AgentEnvelope | None:
+    """Translate a channel event into the unified envelope.
+
+    channel.message returns None — it is the only high-frequency event on the
+    hub, and pushing every chat message through the durable bus (and through
+    rule evaluation) invites rule storms for no attention-model gain. SSE
+    delivery of messages is unaffected.
+    """
+    if event == "channel.message":
+        return None
+
+    if isinstance(data, dict):
+        ch_id = data.get("channel_id")
+        if not ch_id:
+            return None
+        from . import channels as _channels_mod
+
+        ch = _channels_mod.get_channel(ch_id)
+        metadata = {k: v for k, v in data.items() if k != "channel_id" and not hasattr(v, "model_dump")}
+        return AgentEnvelope(
+            id=f"channel:{ch_id}",
+            kind="event",
+            source="brainbox-hub",
+            type=event,
+            status=("done" if ch and ch.status == "completed" else "active") if ch else None,
+            title=ch.name if ch else ch_id,
+            workspace=getattr(ch, "workspace_profile", None) if ch else None,
+            parent_id=(
+                f"hub-task:{ch.parent_task_id}" if ch and getattr(ch, "parent_task_id", None) else None
+            ),
+            tags=["channel"],
+            metadata=metadata,
+        )
+
+    ch = data
+    ch_id = getattr(ch, "id", None)
+    if not ch_id:
+        return None
+    return AgentEnvelope(
+        id=f"channel:{ch_id}",
+        kind="event",
+        source="brainbox-hub",
+        type=event,
+        status="done" if getattr(ch, "status", "") == "completed" else "active",
+        title=getattr(ch, "name", ch_id),
+        workspace=getattr(ch, "workspace_profile", None),
+        parent_id=(
+            f"hub-task:{ch.parent_task_id}" if getattr(ch, "parent_task_id", None) else None
+        ),
+        start_at=getattr(ch, "created_at", None),
+        end_at=getattr(ch, "completed_at", None),
+        tags=["channel"],
+        metadata={"participants": len(getattr(ch, "participants", []) or [])},
     )

@@ -63,6 +63,8 @@ async def submit_task(
     permission_tier: str | None = None,
     node_requires: list[str] | None = None,
     model_target: ModelTarget | None = None,
+    origin_rule_id: str | None = None,
+    rule_chain_depth: int = 0,
 ) -> Task:
     """Enqueue a task for the given agent.
 
@@ -116,6 +118,8 @@ async def submit_task(
         permission_tier=permission_tier,
         node_requires=node_requires or [],
         model_target=model_target,
+        origin_rule_id=origin_rule_id,
+        rule_chain_depth=rule_chain_depth,
     )
 
     # Register as child of parent task

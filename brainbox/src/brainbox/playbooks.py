@@ -147,11 +147,16 @@ async def run_playbook(
     *,
     workspace_profile: str | None = None,
     runner: str | None = None,
+    origin_rule_id: str | None = None,
+    rule_chain_depth: int = 0,
 ) -> Playbook:
     """Start sequential execution; returns immediately. Runs in background.
 
     *workspace_profile* overrides the playbook's saved profile for this run.
     *runner* overrides the playbook's saved runner for this run.
+    *origin_rule_id*/*rule_chain_depth* stamp event-rule provenance for this
+    run (reset to defaults on manual runs) so playbook lifecycle envelopes
+    carry the chain depth.
     """
     pb = _playbooks.get(playbook_id)
     if not pb:
@@ -161,6 +166,8 @@ async def run_playbook(
 
     run_profile = workspace_profile or pb.workspace_profile
     run_runner = runner if runner is not None else pb.runner
+    pb.origin_rule_id = origin_rule_id
+    pb.rule_chain_depth = rule_chain_depth
 
     for task in pb.tasks:
         task.status = "pending"

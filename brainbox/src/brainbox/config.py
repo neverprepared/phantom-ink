@@ -336,6 +336,31 @@ class DockerSettings(BaseSettings):
     cert_path: str | None = None
 
 
+class RulesSettings(BaseSettings):
+    """Event rules engine (EventBridge-style rules over the agent event bus).
+
+    ``allow_run_script`` defaults off because run_script actions execute on
+    the API HOST — a privilege class nothing else in the daemon has (all
+    other agent work runs in containers). Explicit opt-in required.
+    """
+
+    enabled: bool = True                # CL_RULES__ENABLED
+    batch_size: int = 100               # events per consumer read
+    poll_interval_s: float = 5.0        # tick when no notify arrives
+    max_concurrency: int = 4            # concurrent action executions
+    max_attempts: int = 3               # webhook/run_script attempts before dead
+    retry_backoff_s: float = 5.0        # base delay; exponential per attempt
+    max_chain_depth: int = 4            # refuse to fire on events at/beyond this depth
+    rate_limit_per_minute: int = 30     # per-rule fires/min before 'throttled'
+    dispatch_timeout_s: float = 30.0    # submit_task / run_playbook / start_loop
+    webhook_timeout_s: float = 15.0
+    script_timeout_s: float = 60.0
+    output_cap_bytes: int = 16384       # stdout/stderr/http-body cap in execution.result
+    allow_run_script: bool = False      # host-exec actions require explicit opt-in
+    shutdown_drain_s: float = 20.0      # graceful drain of in-flight executions
+    stuck_running_ms: int = 300_000     # 'running' rows older than this requeue on boot
+
+
 class Settings(BaseSettings):
     role: str = "assistant"
     image: str = ""
@@ -413,6 +438,7 @@ class Settings(BaseSettings):
     utm: UTMSettings = Field(default_factory=UTMSettings)
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     docker: DockerSettings = Field(default_factory=DockerSettings)
+    rules: RulesSettings = Field(default_factory=RulesSettings)
     path_map: dict[str, str] = Field(
         default_factory=dict
     )  # host path → container path substitutions

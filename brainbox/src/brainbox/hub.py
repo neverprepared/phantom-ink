@@ -79,6 +79,9 @@ async def init() -> None:
     _loop_runner.start()
     await _loop_runner.rehydrate_from_store()
 
+    from . import event_rules as _event_rules
+    _event_rules.start()
+
     log.info(
         "hub.initialized",
         metadata={
@@ -103,6 +106,9 @@ async def shutdown() -> None:
 
     from . import scheduler as _scheduler
     _scheduler.stop()
+
+    from . import event_rules as _event_rules
+    await _event_rules.stop()
 
     await _flush_state()
     log.info("hub.shutdown")

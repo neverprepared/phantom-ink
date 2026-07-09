@@ -76,7 +76,7 @@ from .router import (
     on_event,
     submit_task,
 )
-from . import agent_store
+from . import agent_store, event_match, event_rules
 from .langfuse_client import (
     LangfuseError,
     health_check as langfuse_health_check,
@@ -332,6 +332,23 @@ async def lifespan(app: FastAPI):
             log.warning("agent_bus.ingest_failed", metadata={"event": event, "reason": str(exc)})
 
     on_event(_on_hub_task_event)
+
+    # Widen durable bus coverage: playbook + channel lifecycle events also
+    # become envelopes in agent_events so the rules consumer sees them.
+    # Converters returning None (e.g. channel.message) are skipped; the SSE
+    # listeners below are untouched.
+    def _ingest_converted(converter):
+        def _listener(event: str, data: object) -> None:
+            try:
+                env = converter(event, data)
+                if env is not None:
+                    agent_store.ingest(env)
+            except Exception as exc:
+                log.warning("agent_bus.ingest_failed", metadata={"event": event, "reason": str(exc)})
+        return _listener
+
+    playbook_on_event(_ingest_converted(agent_store.envelope_from_playbook))
+    channel_on_event(_ingest_converted(agent_store.envelope_from_channel))
 
     # Forward every successful ingest into the SSE bus as a unified 'agent.event'.
     def _on_agent_envelope(env: object) -> None:
@@ -1174,6 +1191,205 @@ async def agent_state_get(envelope_id: str, _key=Depends(require_api_key)):
     if not row:
         raise HTTPException(status_code=404, detail="Envelope not found")
     return row
+
+
+# ---------------------------------------------------------------------------
+# Event rules (EventBridge-style rules over the agent event bus)
+# ---------------------------------------------------------------------------
+
+
+def _validate_rule_body(body: dict, rule_id: str | None = None) -> event_rules.EventRule:
+    """Build + validate an EventRule from a request body. Raises HTTPException."""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a rule object")
+    pattern = body.get("pattern")
+    errors = event_match.validate_pattern(pattern)
+    if errors:
+        raise HTTPException(status_code=400, detail={"pattern_errors": errors})
+
+    payload = {k: v for k, v in body.items() if k in (
+        "name", "profile", "enabled", "description", "pattern", "actions",
+    )}
+    if rule_id:
+        payload["id"] = rule_id
+    from pydantic import ValidationError as _PydanticValidationError
+    try:
+        rule = event_rules.EventRule(**payload)
+    except _PydanticValidationError as exc:
+        raise HTTPException(status_code=422, detail=f"Rule validation: {exc}")
+
+    if not settings.rules.allow_run_script and any(
+        a.type == "run_script" for a in rule.actions
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="run_script actions are disabled — set CL_RULES__ALLOW_RUN_SCRIPT=true "
+                   "on the daemon to allow host-exec rule actions",
+        )
+    return rule
+
+
+@app.get("/api/rules")
+async def rules_list(
+    profile: str | None = Query(None, description="Profile filter; includes global rules"),
+    enabled: bool | None = Query(None),
+    _key=Depends(require_api_key),
+):
+    rules = await asyncio.to_thread(event_rules.list_rules, profile, enabled)
+    return {"rules": [r.model_dump() for r in rules], "count": len(rules)}
+
+
+@app.post("/api/rules", status_code=201)
+async def rules_create(request: Request, _key=Depends(require_api_key)):
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    rule = _validate_rule_body(body)
+    stored = await asyncio.to_thread(event_rules.upsert_rule, rule)
+    return stored.model_dump()
+
+
+@app.get("/api/rules/executions")
+async def rules_executions_all(
+    status: str | None = Query(None, description="e.g. dead for the DLQ view"),
+    rule_id: str | None = Query(None),
+    limit: int = Query(200, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+    _key=Depends(require_api_key),
+):
+    rows = await asyncio.to_thread(
+        lambda: event_rules.list_executions(
+            rule_id=rule_id, status=status, limit=limit, offset=offset
+        )
+    )
+    return {"executions": [e.model_dump() for e in rows], "count": len(rows)}
+
+
+@app.post("/api/rules/test")
+async def rules_test(request: Request, _key=Depends(require_api_key)):
+    """Dry-run a pattern. Body: {pattern, event} matches one supplied event
+    document; {pattern, sample: {limit}} matches against the most recent
+    agent_events rows and returns which matched."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    pattern = body.get("pattern")
+    errors = event_match.validate_pattern(pattern)
+    if errors:
+        return {"valid": False, "errors": errors}
+
+    if "event" in body:
+        event_doc = body["event"]
+        if not isinstance(event_doc, dict):
+            raise HTTPException(status_code=400, detail="'event' must be an object")
+        return {"valid": True, "errors": [], "matched": event_match.matches(pattern, event_doc)}
+
+    sample = body.get("sample") or {}
+    limit = min(int(sample.get("limit", 50)), 500)
+
+    def _sample_match():
+        from .store import _conn
+        with _conn() as c:
+            rows = c.execute(
+                "SELECT seq, id, ts, envelope FROM agent_events ORDER BY seq DESC LIMIT %s",
+                (limit,),
+            ).fetchall()
+        matched = []
+        for r in rows:
+            doc = json.loads(r["envelope"])
+            doc["seq"] = r["seq"]
+            doc["ts"] = r["ts"]
+            if event_match.matches(pattern, doc):
+                matched.append({
+                    "seq": r["seq"], "id": r["id"],
+                    "type": doc.get("type"), "status": doc.get("status"), "ts": r["ts"],
+                })
+        return {"valid": True, "errors": [], "matches": matched, "scanned": len(rows)}
+
+    return await asyncio.to_thread(_sample_match)
+
+
+@app.post("/api/rules/executions/{execution_id}/retry")
+async def rules_execution_retry(execution_id: int, _key=Depends(require_api_key)):
+    """Requeue a dead/failed/throttled execution (DLQ retry)."""
+    existing = await asyncio.to_thread(event_rules.get_execution, execution_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Execution not found")
+    if existing.status in ("queued", "running", "ok"):
+        raise HTTPException(
+            status_code=409, detail=f"Execution is '{existing.status}' — not retryable"
+        )
+    requeued = await asyncio.to_thread(event_rules.requeue_execution, execution_id)
+    if requeued is None:
+        raise HTTPException(status_code=409, detail="Execution is no longer retryable")
+    event_rules.notify()
+    return requeued.model_dump()
+
+
+@app.get("/api/rules/{rule_id}")
+async def rules_get(rule_id: str, _key=Depends(require_api_key)):
+    rule = await asyncio.to_thread(event_rules.get_rule, rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return rule.model_dump()
+
+
+@app.put("/api/rules/{rule_id}")
+async def rules_update(rule_id: str, request: Request, _key=Depends(require_api_key)):
+    existing = await asyncio.to_thread(event_rules.get_rule, rule_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    rule = _validate_rule_body(body, rule_id=rule_id)
+    rule.created_at = existing.created_at
+    rule.trigger_count = existing.trigger_count
+    rule.last_triggered_at = existing.last_triggered_at
+    stored = await asyncio.to_thread(event_rules.upsert_rule, rule)
+    return stored.model_dump()
+
+
+@app.delete("/api/rules/{rule_id}", status_code=204)
+async def rules_delete(rule_id: str, _key=Depends(require_api_key)):
+    deleted = await asyncio.to_thread(event_rules.delete_rule, rule_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+
+@app.post("/api/rules/{rule_id}/enable")
+async def rules_enable(rule_id: str, _key=Depends(require_api_key)):
+    rule = await asyncio.to_thread(event_rules.set_rule_enabled, rule_id, True)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return {"id": rule.id, "enabled": rule.enabled}
+
+
+@app.post("/api/rules/{rule_id}/disable")
+async def rules_disable(rule_id: str, _key=Depends(require_api_key)):
+    rule = await asyncio.to_thread(event_rules.set_rule_enabled, rule_id, False)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return {"id": rule.id, "enabled": rule.enabled}
+
+
+@app.get("/api/rules/{rule_id}/executions")
+async def rules_executions(
+    rule_id: str,
+    status: str | None = Query(None),
+    limit: int = Query(200, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+    _key=Depends(require_api_key),
+):
+    rows = await asyncio.to_thread(
+        lambda: event_rules.list_executions(
+            rule_id=rule_id, status=status, limit=limit, offset=offset
+        )
+    )
+    return {"executions": [e.model_dump() for e in rows], "count": len(rows)}
 
 
 @app.post("/api/sessions/preview")
