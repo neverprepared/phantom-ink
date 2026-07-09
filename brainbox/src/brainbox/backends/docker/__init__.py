@@ -104,6 +104,16 @@ def _build_container_env(ctx: "SessionContext") -> dict[str, str]:
     if vault_path:
         env["OBSIDIAN_VAULT_PATH"] = vault_path
 
+    # PROFILE_ENV_KEY must be CONTAINER env, not a ~/.env line: the entrypoint
+    # wrapper needs it BEFORE any decrypted file exists (it gates the
+    # .env.enc/.claude.enc decryption of baked profile credentials). Runner
+    # sessions already get it this way — the Swift runner applies the whole
+    # extraEnv map to the container — so this gives daemon-local sessions
+    # parity. Without it, local profile-image sessions start unauthenticated.
+    profile_env_key = (getattr(ctx, "extra_env", None) or {}).get("PROFILE_ENV_KEY")
+    if profile_env_key:
+        env["PROFILE_ENV_KEY"] = profile_env_key
+
     return env
 
 

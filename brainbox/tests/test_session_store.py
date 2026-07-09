@@ -383,3 +383,30 @@ class TestOperatorGet:
         monkeypatch.setattr(settings.minio, "enabled", False)
         r = await client.get("/api/session-store/nope/task.json")
         assert r.status_code == 404
+
+
+class TestLocalContainerEnv:
+    def test_profile_env_key_passes_into_container_env(self):
+        """PROFILE_ENV_KEY must be real container env on the local path —
+        the entrypoint wrapper gates baked-credential decryption on it."""
+        from brainbox.backends.docker import _build_container_env
+        from brainbox.models import SessionContext
+
+        ctx = SessionContext(
+            session_name="s", container_name="c", port=1, role="assistant",
+            created_at=1, ttl=3600,
+            extra_env={"PROFILE_ENV_KEY": "k123", "OTHER": "no"},
+        )
+        env = _build_container_env(ctx)
+        assert env["PROFILE_ENV_KEY"] == "k123"
+        assert "OTHER" not in env  # only the decrypt key passes through
+
+    def test_no_key_no_var(self):
+        from brainbox.backends.docker import _build_container_env
+        from brainbox.models import SessionContext
+
+        ctx = SessionContext(
+            session_name="s", container_name="c", port=1, role="assistant",
+            created_at=1, ttl=3600,
+        )
+        assert "PROFILE_ENV_KEY" not in _build_container_env(ctx)
