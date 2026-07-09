@@ -130,6 +130,10 @@ export function DeleteProfileImageRecord(arg1) {
   return window['go']['main']['App']['DeleteProfileImageRecord'](arg1);
 }
 
+export function DeleteRule(arg1) {
+  return window['go']['main']['App']['DeleteRule'](arg1);
+}
+
 export function DeleteRunner(arg1) {
   return window['go']['main']['App']['DeleteRunner'](arg1);
 }
@@ -370,6 +374,10 @@ export function GetRemoteProfileImageStatus(arg1) {
   return window['go']['main']['App']['GetRemoteProfileImageStatus'](arg1);
 }
 
+export function GetRule(arg1) {
+  return window['go']['main']['App']['GetRule'](arg1);
+}
+
 export function GetSessionHistory(arg1, arg2) {
   return window['go']['main']['App']['GetSessionHistory'](arg1, arg2);
 }
@@ -442,6 +450,10 @@ export function ListAgents() {
   return window['go']['main']['App']['ListAgents']();
 }
 
+export function ListAllRuleExecutions(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListAllRuleExecutions'](arg1, arg2, arg3);
+}
+
 export function ListArtifactsBuckets(arg1) {
   return window['go']['main']['App']['ListArtifactsBuckets'](arg1);
 }
@@ -508,6 +520,14 @@ export function ListProfileDirs(arg1) {
 
 export function ListProfileImages() {
   return window['go']['main']['App']['ListProfileImages']();
+}
+
+export function ListRuleExecutions(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ListRuleExecutions'](arg1, arg2, arg3, arg4);
+}
+
+export function ListRules(arg1) {
+  return window['go']['main']['App']['ListRules'](arg1);
 }
 
 export function ListRunners() {
@@ -606,6 +626,10 @@ export function RestoreProfile(arg1) {
   return window['go']['main']['App']['RestoreProfile'](arg1);
 }
 
+export function RetryRuleExecution(arg1) {
+  return window['go']['main']['App']['RetryRuleExecution'](arg1);
+}
+
 export function RetryTask(arg1) {
   return window['go']['main']['App']['RetryTask'](arg1);
 }
@@ -644,6 +668,10 @@ export function SaveCustomBundleSource(arg1, arg2, arg3) {
 
 export function SaveDashboardLayout(arg1, arg2) {
   return window['go']['main']['App']['SaveDashboardLayout'](arg1, arg2);
+}
+
+export function SaveRule(arg1) {
+  return window['go']['main']['App']['SaveRule'](arg1);
 }
 
 export function SaveSchedule(arg1) {
@@ -714,6 +742,10 @@ export function SetRegistrySettings(arg1, arg2) {
   return window['go']['main']['App']['SetRegistrySettings'](arg1, arg2);
 }
 
+export function SetRuleEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetRuleEnabled'](arg1, arg2);
+}
+
 export function SetServiceConfig(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['SetServiceConfig'](arg1, arg2, arg3, arg4, arg5);
 }
@@ -768,6 +800,14 @@ export function TailLogs(arg1, arg2) {
 
 export function TestGatewayTools(arg1) {
   return window['go']['main']['App']['TestGatewayTools'](arg1);
+}
+
+export function TestRuleEvent(arg1, arg2) {
+  return window['go']['main']['App']['TestRuleEvent'](arg1, arg2);
+}
+
+export function TestRulePattern(arg1, arg2) {
+  return window['go']['main']['App']['TestRulePattern'](arg1, arg2);
 }
 
 export function TriggerRule(arg1, arg2, arg3) {

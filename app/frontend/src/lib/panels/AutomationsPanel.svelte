@@ -5,6 +5,12 @@
   import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import ServerRulesTab from '../components/ServerRulesTab.svelte';
+
+  // Two automation surfaces: server-side rules (brainbox /api/rules — run
+  // 24/7 on the daemon) and the app-local engine below (entry triggers,
+  // fire_job, notify — concepts that live in this app's SQLite).
+  let activeTab = $state<'rules' | 'local'>('rules');
 
   // ── Types ──────────────────────────────────────────────────────────────
 
@@ -324,17 +330,30 @@
 <div class="automations">
   <div class="panel-header" style="margin-bottom:var(--spacing-sm);">
     <h1 class="page-title">automations</h1>
+    <nav class="tabs">
+      <button class="tab" class:active={activeTab === 'rules'}
+        onclick={() => (activeTab = 'rules')}>Rules</button>
+      <button class="tab" class:active={activeTab === 'local'}
+        onclick={() => (activeTab = 'local')}>Local</button>
+    </nav>
     <div style="display:flex;align-items:center;gap:var(--spacing-md);">
-      {#if loading}<Spinner />{/if}
-      {#if statusMsg}
-        <span class="status-msg">{statusMsg}</span>
-      {/if}
-      {#if editingId !== 'new'}
-        <button class="btn primary" onclick={startNew}>+ new rule</button>
+      {#if activeTab === 'local'}
+        {#if loading}<Spinner />{/if}
+        {#if statusMsg}
+          <span class="status-msg">{statusMsg}</span>
+        {/if}
+        {#if editingId !== 'new'}
+          <button class="btn primary" onclick={startNew}>+ new rule</button>
+        {/if}
       {/if}
     </div>
   </div>
 
+  {#if activeTab === 'rules'}
+    <ServerRulesTab />
+  {/if}
+
+  {#if activeTab === 'local'}
   <!-- Create form -->
   {#if editingId === 'new'}
     <div class="rule-form">
@@ -675,6 +694,7 @@
       {/each}
     </div>
   {/if}
+  {/if}
 </div>
 
 <style>
@@ -687,6 +707,28 @@
   }
 
   .status-msg { font-family: var(--font-mono); font-size: 11px; color: var(--color-success); }
+
+  .tabs {
+    display: flex;
+    gap: 4px;
+    margin-right: auto;
+    margin-left: var(--spacing-lg);
+  }
+  .tab {
+    background: transparent;
+    border: none;
+    color: var(--color-text-muted, #888);
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .tab:hover { color: var(--color-text-primary); }
+  .tab.active {
+    color: var(--color-text-primary);
+    border-bottom-color: var(--color-accent);
+  }
 
   .empty { font-size: 13px; color: var(--color-text-tertiary); padding: var(--spacing-3xl) 0; line-height: 1.5; }
 
