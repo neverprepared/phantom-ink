@@ -137,6 +137,20 @@ class TestCreateWritesTask:
         assert env["BRAINBOX_PROFILE"] == "personal"
         assert env["MY_VAR"] == "1"  # caller env still flows
 
+    async def test_env_contract_provider(self, client, fake_pipeline):
+        r = await client.post("/api/create", json={
+            "name": "cprov", "llm_provider": "ollama", "llm_model": "qwen3:8b",
+        })
+        assert r.status_code == 200, r.text
+        env = fake_pipeline["extra_env"]
+        assert env["LLM_PROVIDER"] == "ollama"     # rides the contract to the runner
+        assert env["CLAUDE_MODEL"] == "qwen3:8b"
+
+    async def test_env_contract_provider_defaults_claude(self, client, fake_pipeline):
+        r = await client.post("/api/create", json={"name": "cprov2"})
+        assert r.status_code == 200
+        assert fake_pipeline["extra_env"]["LLM_PROVIDER"] == "claude"
+
     async def test_env_contract_public_url_fallback(self, client, fake_pipeline, monkeypatch):
         monkeypatch.setattr(settings, "public_url", "")
         r = await client.post("/api/create", json={"name": "cs4", "task": "t"})

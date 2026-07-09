@@ -2240,6 +2240,18 @@ async def api_create_session(
             or f"http://host.docker.internal:{settings.api_port}",
             "BRAINBOX_PROFILE": body.workspace_profile or "",
         }
+        # Provider selection MUST ride the env contract: runner sessions skip
+        # the daemon's configure()/inject_env_file, so LLM_PROVIDER never
+        # lands in ~/.env on the runner and the wrapper's provider switch
+        # falls through to claude. Shipping it via extra_env means the Swift
+        # runner passes it as real container env (and local sessions get it in
+        # ~/.env too). CLAUDE_MODEL carries the model for every provider
+        # (the ollama branch reads it as the ollama model name).
+        contract_env["LLM_PROVIDER"] = body.llm_provider or "claude"
+        if body.llm_model:
+            contract_env["CLAUDE_MODEL"] = body.llm_model
+        if body.llm_effort:
+            contract_env["CLAUDE_EFFORT"] = body.llm_effort
         if hub_token:
             contract_env["BRAINBOX_TOKEN"] = hub_token.token_id
         if task_id:

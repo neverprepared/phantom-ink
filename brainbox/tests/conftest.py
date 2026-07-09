@@ -46,6 +46,21 @@ def reset_hub_state():
 
 
 @pytest.fixture(autouse=True)
+def _disable_rate_limiter():
+    """Turn off the slowapi limiter for tests — create-heavy suites otherwise
+    trip the 10/min /api/create cap and 429 mid-run (the limit is per-IP and
+    shared across the whole test session, not reset between tests)."""
+    try:
+        from brainbox.rate_limit import limiter
+        prev = limiter.enabled
+        limiter.enabled = False
+        yield
+        limiter.enabled = prev
+    except ImportError:
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _override_api_key_auth():
     """Disable API key auth for all tests by default.
 
