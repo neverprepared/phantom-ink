@@ -129,6 +129,30 @@ func (c *Client) DeleteArtifactObject(bucketKey, key string) error {
 	return c.doWith(c.httpClient, "DELETE", path, nil, nil)
 }
 
+// ArtifactSearchResult is what /api/artifacts/{bucket}/search returns.
+type ArtifactSearchResult struct {
+	Bucket    string         `json:"bucket"`
+	Query     string         `json:"query"`
+	Truncated bool           `json:"truncated"`
+	Scanned   int            `json:"scanned"`
+	Files     []ArtifactFile `json:"files"`
+}
+
+// SearchArtifacts runs a whole-bucket (profile-scoped) substring search
+// over object keys.
+func (c *Client) SearchArtifacts(bucketKey, query string) (ArtifactSearchResult, error) {
+	path := fmt.Sprintf(
+		"/api/artifacts/%s/search?q=%s",
+		url.PathEscape(bucketKey),
+		url.QueryEscape(query),
+	)
+	var res ArtifactSearchResult
+	if err := c.get(path, &res); err != nil {
+		return ArtifactSearchResult{}, err
+	}
+	return res, nil
+}
+
 // PresignArtifactURL mints a presigned URL. ``op`` is "get" (for
 // operator file opens) or "put" (reserved for the Phase 4 assist
 // worker writes).

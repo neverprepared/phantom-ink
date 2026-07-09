@@ -352,6 +352,60 @@ def list_folder(bucket: str, prefix: str = "", max_keys: int = 500) -> FolderLis
     )
 
 
+def search_objects(bucket: str, query: str, *, limit: int = 200) -> dict:
+    """Case-insensitive substring search over object keys in the profile's
+    namespace. Paginates ``list_objects_v2`` under the profile prefix
+    (bounded — MAX_SCAN keys) and matches against the profile-relative
+    portion of each key. Returns the same file shape as ``list_folder``.
+    """
+    MAX_SCAN = 10_000
+    real_bucket = _resolve_bucket(bucket)
+    scoped = _full_key("")
+    if scoped and not scoped.endswith("/"):
+        scoped += "/"
+    needle = query.lower()
+
+    files: list[ArtifactEntry] = []
+    scanned = 0
+    truncated = False
+    try:
+        paginator = _client().get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=real_bucket, Prefix=scoped):
+            for obj in page.get("Contents", []):
+                scanned += 1
+                key = obj["Key"]
+                rel = key[len(scoped):] if scoped and key.startswith(scoped) else key
+                if key.endswith("/"):
+                    continue  # directory markers
+                if needle in rel.lower():
+                    files.append(ArtifactEntry(
+                        bucket=real_bucket,
+                        key=key,
+                        name=key.rsplit("/", 1)[-1],
+                        size=obj["Size"],
+                        last_modified_ms=int(obj["LastModified"].timestamp() * 1000),
+                        etag=obj.get("ETag", "").strip('"'),
+                    ))
+                    if len(files) >= limit:
+                        truncated = True
+                        break
+                if scanned >= MAX_SCAN:
+                    truncated = True
+                    break
+            if truncated:
+                break
+    except ClientError as exc:
+        raise ArtifactError("search", query, str(exc)) from exc
+
+    return {
+        "bucket": real_bucket,
+        "query": query,
+        "files": files,
+        "truncated": truncated,
+        "scanned": scanned,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Presigned URLs — for the assist worker writes, Phase 4
 # ---------------------------------------------------------------------------

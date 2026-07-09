@@ -158,6 +158,10 @@ export function DismissAttention(arg1) {
   return window['go']['main']['App']['DismissAttention'](arg1);
 }
 
+export function DownloadArtifactObject(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DownloadArtifactObject'](arg1, arg2, arg3);
+}
+
 export function DryRunLoopTemplate(arg1, arg2) {
   return window['go']['main']['App']['DryRunLoopTemplate'](arg1, arg2);
 }
@@ -208,6 +212,10 @@ export function GetAgentState(arg1) {
 
 export function GetAppLogs() {
   return window['go']['main']['App']['GetAppLogs']();
+}
+
+export function GetArtifactPreview(arg1, arg2) {
+  return window['go']['main']['App']['GetArtifactPreview'](arg1, arg2);
 }
 
 export function GetArtifactsHealth() {
@@ -644,6 +652,10 @@ export function ScanDiskUsage() {
 
 export function ScanProfiles() {
   return window['go']['main']['App']['ScanProfiles']();
+}
+
+export function SearchArtifactsFiles(arg1, arg2) {
+  return window['go']['main']['App']['SearchArtifactsFiles'](arg1, arg2);
 }
 
 export function SetActiveProfile(arg1) {
