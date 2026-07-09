@@ -155,8 +155,10 @@ func (c *Client) SearchArtifacts(bucketKey, query string) (ArtifactSearchResult,
 
 // PresignArtifactURL mints a presigned URL. ``op`` is "get" (for
 // operator file opens) or "put" (reserved for the Phase 4 assist
-// worker writes).
-func (c *Client) PresignArtifactURL(bucketKey, key, op string, ttlSeconds int) (ArtifactPresignedURL, error) {
+// worker writes). ``host`` is the base URL the caller will fetch from —
+// SigV4 signs the Host, so it must be supplied at signing time; empty
+// defers to the daemon's configured public endpoint.
+func (c *Client) PresignArtifactURL(bucketKey, key, op string, ttlSeconds int, host string) (ArtifactPresignedURL, error) {
 	path := fmt.Sprintf(
 		"/api/artifacts/%s/presign?key=%s&op=%s&ttl=%d",
 		url.PathEscape(bucketKey),
@@ -164,6 +166,9 @@ func (c *Client) PresignArtifactURL(bucketKey, key, op string, ttlSeconds int) (
 		url.QueryEscape(op),
 		ttlSeconds,
 	)
+	if host != "" {
+		path += "&host=" + url.QueryEscape(host)
+	}
 	var resp ArtifactPresignedURL
 	if err := c.get(path, &resp); err != nil {
 		return ArtifactPresignedURL{}, err

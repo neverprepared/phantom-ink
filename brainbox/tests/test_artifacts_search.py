@@ -131,3 +131,27 @@ class TestPresignPublicEndpoint:
         monkeypatch.setattr(settings.minio, "public_endpoint", "https://minio.example.com")
         url = artifacts.presigned_put_url("artifacts", "a/b.txt")
         assert url.startswith("https://minio.example.com/"), url
+
+    def test_presign_explicit_host_wins(self, monkeypatch):
+        monkeypatch.setattr(settings.minio, "public_endpoint", "https://minio.example.com")
+        url = artifacts.presigned_get_url(
+            "artifacts", "a/b.txt", public_base="http://192.168.87.200:9000"
+        )
+        assert url.startswith("http://192.168.87.200:9000/"), url
+
+    def test_presign_rejects_non_http_host(self):
+        with pytest.raises(artifacts.ArtifactError, match="http"):
+            artifacts.presigned_get_url("artifacts", "a/b.txt", public_base="ftp://nope")
+
+    async def test_presign_endpoint_host_param(self):
+        from httpx import ASGITransport, AsyncClient
+
+        from brainbox.api import app
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+            r = await c.get(
+                "/api/artifacts/artifacts/presign",
+                params={"key": "x.txt", "op": "get", "host": "https://minio.example.com"},
+            )
+        assert r.status_code == 200, r.text
+        assert r.json()["url"].startswith("https://minio.example.com/")

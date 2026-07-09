@@ -314,6 +314,10 @@ export function GetMetricsHistory() {
   return window['go']['main']['App']['GetMetricsHistory']();
 }
 
+export function GetMinioBrowserAddress() {
+  return window['go']['main']['App']['GetMinioBrowserAddress']();
+}
+
 export function GetOTLPHost() {
   return window['go']['main']['App']['GetOTLPHost']();
 }

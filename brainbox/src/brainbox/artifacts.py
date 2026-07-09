@@ -124,29 +124,41 @@ def _client():
     return _s3_client_cached
 
 
-def _presign_client():
+_presign_clients_by_host: dict[str, Any] = {}
+
+
+def _presign_client(public_base: str | None = None):
     """Client used ONLY to sign presigned URLs. SigV4 covers the Host
     header, so URLs must be signed against the address the *browser/app*
-    will fetch them from (``public_endpoint``), not the daemon-local one.
-    Falls back to the regular endpoint when no public address is set."""
-    global _s3_presign_client_cached
-    public = settings.minio.public_endpoint.strip()
-    if not public or public == settings.minio.endpoint:
-        return _client()
+    will fetch them from, not the daemon-local one.
+
+    Resolution: an explicit ``public_base`` (the app passes its MinIO
+    integration address — local or remote depending on its toggle) wins;
+    then ``settings.minio.public_endpoint``; then the daemon endpoint
+    (single-machine setups). Clients are cached per host — signing is
+    offline, so these are cheap, but boto client construction isn't.
+    """
     if not settings.minio.enabled:
         raise ArtifactError(
             "client", "", "minio integration is disabled (CL_MINIO__ENABLED=false)"
         )
-    if _s3_presign_client_cached is None:
-        _s3_presign_client_cached = _make_client(public)
-    return _s3_presign_client_cached
+    base = (public_base or "").strip() or settings.minio.public_endpoint.strip()
+    if not base or base == settings.minio.endpoint:
+        return _client()
+    if not base.startswith(("http://", "https://")):
+        raise ArtifactError("presign", base, "presign host must be an http(s) URL")
+    client = _presign_clients_by_host.get(base)
+    if client is None:
+        client = _make_client(base)
+        _presign_clients_by_host[base] = client
+    return client
 
 
 def reset_client_for_tests() -> None:
     """Drop the cached clients; used by tests that override settings."""
-    global _s3_client_cached, _s3_presign_client_cached
+    global _s3_client_cached
     _s3_client_cached = None
-    _s3_presign_client_cached = None
+    _presign_clients_by_host.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +448,9 @@ def search_objects(bucket: str, query: str, *, limit: int = 200) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def presigned_put_url(bucket: str, key: str, *, expires_seconds: int = 3600) -> str:
+def presigned_put_url(
+    bucket: str, key: str, *, expires_seconds: int = 3600, public_base: str | None = None
+) -> str:
     """Generate a presigned PUT URL the worker container can write to
     directly. The Phase 4 assist race fix uses this — agent writes to
     the URL, brainbox reads from the bucket after the container is gone.
@@ -444,7 +458,7 @@ def presigned_put_url(bucket: str, key: str, *, expires_seconds: int = 3600) -> 
     real_bucket = _resolve_bucket(bucket)
     real_key = _full_key(key)
     try:
-        return _presign_client().generate_presigned_url(
+        return _presign_client(public_base).generate_presigned_url(
             "put_object",
             Params={"Bucket": real_bucket, "Key": real_key},
             ExpiresIn=expires_seconds,
@@ -453,11 +467,13 @@ def presigned_put_url(bucket: str, key: str, *, expires_seconds: int = 3600) -> 
         raise ArtifactError("presign_put", real_key, str(exc)) from exc
 
 
-def presigned_get_url(bucket: str, key: str, *, expires_seconds: int = 3600) -> str:
+def presigned_get_url(
+    bucket: str, key: str, *, expires_seconds: int = 3600, public_base: str | None = None
+) -> str:
     real_bucket = _resolve_bucket(bucket)
     real_key = _full_key(key)
     try:
-        return _presign_client().generate_presigned_url(
+        return _presign_client(public_base).generate_presigned_url(
             "get_object",
             Params={"Bucket": real_bucket, "Key": real_key},
             ExpiresIn=expires_seconds,

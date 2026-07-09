@@ -160,6 +160,8 @@ export function GetMessageLog():Promise<Array<brainbox.Message>>;
 
 export function GetMetricsHistory():Promise<Array<brainbox.MetricsSample>>;
 
+export function GetMinioBrowserAddress():Promise<string>;
+
 export function GetOTLPHost():Promise<string>;
 
 export function GetObservabilityOverview(arg1:string):Promise<opensearch.Overview>;

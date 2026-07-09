@@ -79,9 +79,11 @@ func classifyPreview(contentType, name string, size int64) (kind, reason string)
 	}
 }
 
-// fetchPresigned downloads an object body via a fresh presigned GET.
+// fetchPresigned downloads an object body via a fresh presigned GET,
+// signed against this app's resolved MinIO address (the fetch happens
+// from the app's machine, not the daemon's).
 func (a *App) fetchPresigned(bucketKey, key string, maxBytes int64) ([]byte, error) {
-	presigned, err := a.client.PresignArtifactURL(bucketKey, key, "get", 300)
+	presigned, err := a.client.PresignArtifactURL(bucketKey, key, "get", 300, a.resolveMinioAddress())
 	if err != nil {
 		return nil, fmt.Errorf("presign: %w", err)
 	}
@@ -143,7 +145,7 @@ func (a *App) DownloadArtifactObject(bucketKey, key, suggestedName string) (stri
 	if err != nil || dest == "" {
 		return "", err
 	}
-	presigned, err := a.client.PresignArtifactURL(bucketKey, key, "get", 300)
+	presigned, err := a.client.PresignArtifactURL(bucketKey, key, "get", 300, a.resolveMinioAddress())
 	if err != nil {
 		return "", fmt.Errorf("presign: %w", err)
 	}

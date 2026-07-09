@@ -35,7 +35,11 @@
     last_modified_ms: number;
   }
 
-  let health = $state<{ ok: boolean; reason?: string; endpoint?: string; profile_prefix?: string } | null>(null);
+  let health = $state<{ ok: boolean; reason?: string; endpoint?: string; public_endpoint?: string; profile_prefix?: string } | null>(null);
+  // The MinIO address this app fetches presigned URLs from: the app's
+  // MinIO integration entry (local/remote per its toggle), falling back
+  // to the daemon's public endpoint.
+  let browserAddress = $state('');
   let buckets = $state<Bucket[]>([]);
   let selectedBucket = $state<Bucket | null>(null);
   let currentPrefix = $state<string>('');
@@ -71,6 +75,7 @@
     if (!api) return;
     try {
       health = await api.GetArtifactsHealth();
+      browserAddress = (await api.GetMinioBrowserAddress()) || health?.public_endpoint || health?.endpoint || '';
       if (health?.ok) {
         buckets = (await api.ListArtifactsBuckets()) ?? [];
         if (buckets.length > 0) {
@@ -311,7 +316,7 @@
         {/each}
         <div class="endpoint-info">
           <div class="dim">endpoint</div>
-          <div class="mono small">{health.endpoint}</div>
+          <div class="mono small">{browserAddress}</div>
           {#if health.profile_prefix}
             <div class="dim" style="margin-top: 6px;">profile</div>
             <div class="mono small">{health.profile_prefix}</div>

@@ -4456,9 +4456,15 @@ async def api_artifacts_delete(bucket: str, key: str):
 
 
 @app.get("/api/artifacts/{bucket}/presign", dependencies=[Depends(require_api_key)])
-async def api_artifacts_presign(bucket: str, key: str, op: str = "get", ttl: int = 3600):
+async def api_artifacts_presign(
+    bucket: str, key: str, op: str = "get", ttl: int = 3600, host: str = ""
+):
     """Mint a presigned URL. ``op=get`` is for the operator opening a
-    file; ``op=put`` is reserved for the Phase 4 assist worker writes."""
+    file; ``op=put`` is reserved for the Phase 4 assist worker writes.
+    ``host`` (optional) is the base URL the CLIENT will fetch from —
+    SigV4 signs the Host header, so the app passes its MinIO integration
+    address (local or remote) to get a URL that works from where it sits.
+    Empty falls back to CL_MINIO__PUBLIC_ENDPOINT, then the daemon endpoint."""
     from . import artifacts
 
     if not artifacts.is_enabled():
@@ -4467,9 +4473,9 @@ async def api_artifacts_presign(bucket: str, key: str, op: str = "get", ttl: int
         raise HTTPException(status_code=400, detail="op must be 'get' or 'put'")
     try:
         if op == "get":
-            url = artifacts.presigned_get_url(bucket, key, expires_seconds=ttl)
+            url = artifacts.presigned_get_url(bucket, key, expires_seconds=ttl, public_base=host)
         else:
-            url = artifacts.presigned_put_url(bucket, key, expires_seconds=ttl)
+            url = artifacts.presigned_put_url(bucket, key, expires_seconds=ttl, public_base=host)
     except artifacts.ArtifactError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"url": url, "expires_in": ttl}
