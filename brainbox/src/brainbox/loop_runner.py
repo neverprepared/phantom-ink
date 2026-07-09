@@ -100,6 +100,8 @@ async def start_loop(
     *,
     workspace_profile: str | None = None,
     workspace_home: str | None = None,
+    origin_rule_id: str | None = None,
+    rule_chain_depth: int = 0,
 ) -> LoopInstance:
     """Create a LoopInstance, its parent task, and enqueue iteration 1.
 
@@ -157,6 +159,8 @@ async def start_loop(
         job_id=parent_id,
         workspace_profile=workspace_profile,
         workspace_home=workspace_home,
+        origin_rule_id=origin_rule_id,
+        rule_chain_depth=rule_chain_depth,
     )
     router._tasks[parent_id] = parent
 
@@ -352,6 +356,10 @@ async def _enqueue_iteration(
     loop = _parsed_for(inst)
     description = f"loop {inst.id[:8]} iter {iteration}: {loop.agent}"
 
+    # Rule-started loops keep their provenance on every iteration child so
+    # the rules consumer sees the chain depth on child lifecycle events.
+    parent = router._tasks.get(inst.parent_task_id)
+
     task = await router.submit_task(
         description=description,
         agent_name=loop.agent,
@@ -362,6 +370,8 @@ async def _enqueue_iteration(
         loop_iteration=iteration,
         permission_tier=loop.permissions.value,
         node_requires=[],
+        origin_rule_id=parent.origin_rule_id if parent else None,
+        rule_chain_depth=parent.rule_chain_depth if parent else 0,
     )
     _child_to_loop[task.id] = inst.id
     return task.id

@@ -301,6 +301,48 @@ _SCHEMA: tuple[str, ...] = (
         PRIMARY KEY (profile, server)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS event_rules (
+        id                TEXT   PRIMARY KEY,
+        name              TEXT   NOT NULL,
+        profile           TEXT   NOT NULL DEFAULT '',
+        enabled           BIGINT NOT NULL DEFAULT 1,
+        description       TEXT,
+        pattern           TEXT   NOT NULL,
+        actions           TEXT   NOT NULL,
+        created_at        BIGINT NOT NULL,
+        updated_at        BIGINT NOT NULL,
+        last_triggered_at BIGINT,
+        trigger_count     BIGINT NOT NULL DEFAULT 0
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_event_rules_profile ON event_rules(profile, enabled)",
+    """
+    CREATE TABLE IF NOT EXISTS event_rule_cursor (
+        name       TEXT   PRIMARY KEY,
+        last_seq   BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS event_rule_executions (
+        id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        rule_id      TEXT   NOT NULL,
+        event_seq    BIGINT NOT NULL,
+        event_id     TEXT   NOT NULL,
+        action_index BIGINT NOT NULL,
+        action_type  TEXT   NOT NULL,
+        status       TEXT   NOT NULL,
+        attempts     BIGINT NOT NULL DEFAULT 0,
+        result       TEXT,
+        error        TEXT,
+        created_at   BIGINT NOT NULL,
+        updated_at   BIGINT NOT NULL,
+        UNIQUE (rule_id, event_seq, action_index)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_rule_exec_rule ON event_rule_executions(rule_id, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_rule_exec_status ON event_rule_executions(status, updated_at)",
 )
 
 

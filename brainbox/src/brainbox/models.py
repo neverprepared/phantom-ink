@@ -241,6 +241,14 @@ class Task(BaseModel):
     # Per-task LLM selection (Phase 2). None → agent/global defaults (unchanged).
     model_target: ModelTarget | None = None
 
+    # Event-rule provenance — set only when this task was created by an event
+    # rule action (event_rules.py). rule_chain_depth propagates through loop
+    # iteration children and rides envelope metadata so the rules consumer can
+    # refuse runaway rule→task→rule chains. Not client-suppliable (absent from
+    # TaskCreate deliberately).
+    origin_rule_id: str | None = None
+    rule_chain_depth: int = 0
+
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -378,3 +386,8 @@ class Playbook(BaseModel):
     created_at: int = Field(default_factory=_now_ms)
     started_at: int | None = None
     finished_at: int | None = None
+
+    # Event-rule provenance for the current/most-recent run (see Task fields
+    # of the same name). Reset to defaults on non-rule-triggered runs.
+    origin_rule_id: str | None = None
+    rule_chain_depth: int = 0
