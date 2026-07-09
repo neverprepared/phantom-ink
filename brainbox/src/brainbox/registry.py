@@ -319,6 +319,31 @@ def issue_session_token(role: str, session_id: str) -> Token | None:
     return issue_token(role, session_id, ttl=ttl)
 
 
+def issue_bare_session_token(role: str, session_id: str) -> Token:
+    """Mint a capability-less token for a session whose role is NOT a
+    registered agent. Task-bearing sessions need a bearer identity to fetch
+    their task from the session store; without an agent definition there are
+    no capabilities to grant, but possession still proves session identity.
+    """
+    from .config import settings
+
+    now = int(time.time() * 1000)
+    token = Token(
+        token_id=str(uuid.uuid4()),
+        agent_name=role,
+        task_id=session_id,
+        capabilities=[],
+        issued=now,
+        expiry=now + settings.hub.token_ttl * 1000,
+    )
+    _tokens[token.token_id] = token
+    log.info(
+        "registry.bare_session_token_issued",
+        metadata={"token_id": token.token_id, "role": role, "session_id": session_id},
+    )
+    return token
+
+
 def issue_gateway_token(
     profile: str,
     scope: list[str] | None = None,

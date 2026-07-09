@@ -343,6 +343,22 @@ _SCHEMA: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_rule_exec_rule ON event_rule_executions(rule_id, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_rule_exec_status ON event_rule_executions(status, updated_at)",
+    """
+    CREATE TABLE IF NOT EXISTS session_store (
+        session_name TEXT   NOT NULL,
+        key          TEXT   NOT NULL,
+        profile      TEXT   NOT NULL DEFAULT '',
+        task_id      TEXT,
+        token_id     TEXT,
+        content      BYTEA  NOT NULL,
+        content_type TEXT   NOT NULL DEFAULT 'application/json',
+        created_at   BIGINT NOT NULL,
+        updated_at   BIGINT NOT NULL,
+        PRIMARY KEY (session_name, key)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_session_store_task ON session_store(task_id)",
+    "CREATE INDEX IF NOT EXISTS idx_session_store_token ON session_store(token_id)",
 )
 
 
