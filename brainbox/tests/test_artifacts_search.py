@@ -98,3 +98,36 @@ class TestSearchEndpoint:
         monkeypatch.setattr(settings.minio, "enabled", False)
         r = await self._get("/api/artifacts/artifacts/search?q=x")
         assert r.status_code == 503
+
+
+class TestPresignPublicEndpoint:
+    """SigV4 signs the Host — presigned URLs must be minted against the
+    address the app will fetch from, not the daemon-local endpoint."""
+
+    @pytest.fixture(autouse=True)
+    def _minio(self, monkeypatch):
+        from pydantic import SecretStr
+
+        monkeypatch.setattr(settings.minio, "enabled", True)
+        monkeypatch.setattr(settings.minio, "endpoint", "http://localhost:9000")
+        monkeypatch.setattr(settings.minio, "access_key", SecretStr("ak"))
+        monkeypatch.setattr(settings.minio, "secret_key", SecretStr("sk"))
+        artifacts.reset_client_for_tests()
+        yield
+        artifacts.reset_client_for_tests()
+
+    def test_presign_uses_public_endpoint(self, monkeypatch):
+        monkeypatch.setattr(settings.minio, "public_endpoint", "https://minio.example.com")
+        url = artifacts.presigned_get_url("artifacts", "a/b.txt")
+        assert url.startswith("https://minio.example.com/"), url
+        assert "localhost" not in url
+
+    def test_presign_falls_back_to_endpoint(self, monkeypatch):
+        monkeypatch.setattr(settings.minio, "public_endpoint", "")
+        url = artifacts.presigned_get_url("artifacts", "a/b.txt")
+        assert url.startswith("http://localhost:9000/"), url
+
+    def test_put_presign_uses_public_endpoint(self, monkeypatch):
+        monkeypatch.setattr(settings.minio, "public_endpoint", "https://minio.example.com")
+        url = artifacts.presigned_put_url("artifacts", "a/b.txt")
+        assert url.startswith("https://minio.example.com/"), url

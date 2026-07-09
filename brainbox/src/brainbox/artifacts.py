@@ -99,6 +99,17 @@ class FolderListing:
 
 
 _s3_client_cached = None
+_s3_presign_client_cached = None
+
+
+def _make_client(endpoint_url: str):
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint_url,
+        aws_access_key_id=settings.minio.access_key.get_secret_value(),
+        aws_secret_access_key=settings.minio.secret_key.get_secret_value(),
+        region_name=settings.minio.region,
+    )
 
 
 def _client():
@@ -109,20 +120,33 @@ def _client():
             "client", "", "minio integration is disabled (CL_MINIO__ENABLED=false)"
         )
     if _s3_client_cached is None:
-        _s3_client_cached = boto3.client(
-            "s3",
-            endpoint_url=settings.minio.endpoint,
-            aws_access_key_id=settings.minio.access_key.get_secret_value(),
-            aws_secret_access_key=settings.minio.secret_key.get_secret_value(),
-            region_name=settings.minio.region,
-        )
+        _s3_client_cached = _make_client(settings.minio.endpoint)
     return _s3_client_cached
 
 
+def _presign_client():
+    """Client used ONLY to sign presigned URLs. SigV4 covers the Host
+    header, so URLs must be signed against the address the *browser/app*
+    will fetch them from (``public_endpoint``), not the daemon-local one.
+    Falls back to the regular endpoint when no public address is set."""
+    global _s3_presign_client_cached
+    public = settings.minio.public_endpoint.strip()
+    if not public or public == settings.minio.endpoint:
+        return _client()
+    if not settings.minio.enabled:
+        raise ArtifactError(
+            "client", "", "minio integration is disabled (CL_MINIO__ENABLED=false)"
+        )
+    if _s3_presign_client_cached is None:
+        _s3_presign_client_cached = _make_client(public)
+    return _s3_presign_client_cached
+
+
 def reset_client_for_tests() -> None:
-    """Drop the cached client; used by tests that override settings."""
-    global _s3_client_cached
+    """Drop the cached clients; used by tests that override settings."""
+    global _s3_client_cached, _s3_presign_client_cached
     _s3_client_cached = None
+    _s3_presign_client_cached = None
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +182,7 @@ def health() -> dict[str, Any]:
         return {
             "ok": True,
             "endpoint": settings.minio.endpoint,
+            "public_endpoint": settings.minio.public_endpoint or settings.minio.endpoint,
             "buckets": {
                 "vault": settings.minio.bucket_vault,
                 "artifacts": settings.minio.bucket_artifacts,
@@ -419,7 +444,7 @@ def presigned_put_url(bucket: str, key: str, *, expires_seconds: int = 3600) -> 
     real_bucket = _resolve_bucket(bucket)
     real_key = _full_key(key)
     try:
-        return _client().generate_presigned_url(
+        return _presign_client().generate_presigned_url(
             "put_object",
             Params={"Bucket": real_bucket, "Key": real_key},
             ExpiresIn=expires_seconds,
@@ -432,7 +457,7 @@ def presigned_get_url(bucket: str, key: str, *, expires_seconds: int = 3600) -> 
     real_bucket = _resolve_bucket(bucket)
     real_key = _full_key(key)
     try:
-        return _client().generate_presigned_url(
+        return _presign_client().generate_presigned_url(
             "get_object",
             Params={"Bucket": real_bucket, "Key": real_key},
             ExpiresIn=expires_seconds,
