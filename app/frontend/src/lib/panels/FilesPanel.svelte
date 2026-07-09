@@ -72,12 +72,11 @@
   let previewLoading = $state(false);
   let downloading = $state(false);
 
-  // The Files view follows the app's active profile: "all" (or none)
-  // shows every bucket unscoped; a specific profile shows only its
-  // buckets/slices, rooted at each bucket's scope_prefix.
-  let activeProfile = $derived(
-    profileState.active && profileState.active !== 'all' ? profileState.active : ''
-  );
+  // The Files view follows the app's active profile: null ("all") shows
+  // every bucket unscoped; a specific profile shows only its buckets/
+  // slices, rooted at each bucket's scope_prefix. profileState.active is
+  // a Profile object — the API wants the NAME string.
+  let activeProfile = $derived(profileState.active?.name ?? '');
 
   async function bootstrap() {
     const api = await getApi();
