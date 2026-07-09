@@ -212,9 +212,11 @@ WORKDIR /home/developer/workspace
 # release tarball; the bundled GPU libraries are server-side dead weight.
 # Placed late so the heavy toolchain layers above stay cached.
 USER root
-RUN ARCH=$(dpkg --print-architecture) \
-    && curl -fsSL "https://ollama.com/download/ollama-linux-${ARCH}.tgz" \
-       | tar -xz -C /usr/local bin/ollama \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends zstd \
+    && ARCH=$(dpkg --print-architecture) \
+    && curl -fsSL "https://github.com/ollama/ollama/releases/latest/download/ollama-linux-${ARCH}.tar.zst" \
+       | tar --zstd -x -C /usr/local --wildcards '*bin/ollama' \
     && chmod 755 /usr/local/bin/ollama \
     && /usr/local/bin/ollama --version
 USER developer
