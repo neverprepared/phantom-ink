@@ -114,6 +114,7 @@ export namespace brainbox {
 	    key: string;
 	    name: string;
 	    label: string;
+	    scope_prefix: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ArtifactBucket(source);
@@ -124,6 +125,7 @@ export namespace brainbox {
 	        this.key = source["key"];
 	        this.name = source["name"];
 	        this.label = source["label"];
+	        this.scope_prefix = source["scope_prefix"];
 	    }
 	}
 	export class ArtifactFile {

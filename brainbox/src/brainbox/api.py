@@ -4349,13 +4349,20 @@ async def api_artifacts_health():
 
 
 @app.get("/api/artifacts/buckets", dependencies=[Depends(require_api_key)])
-async def api_artifacts_list_buckets():
-    """Two-bucket catalog the file browser uses as its root entries."""
+async def api_artifacts_list_buckets(profile: str = ""):
+    """Live bucket catalog. ``profile`` scopes the view to the app's
+    active profile: <profile>-* buckets show whole, profile-structured
+    buckets get a <profile>/ scope_prefix, unrelated buckets are omitted.
+    Empty profile ("all") = every bucket, unscoped."""
     from . import artifacts
 
     if not artifacts.is_enabled():
         raise HTTPException(status_code=503, detail="minio integration is disabled")
-    return {"buckets": artifacts.known_buckets()}
+    try:
+        buckets = await asyncio.to_thread(artifacts.known_buckets, profile)
+    except artifacts.ArtifactError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"buckets": buckets}
 
 
 @app.get("/api/artifacts/{bucket}/list", dependencies=[Depends(require_api_key)])
@@ -4393,9 +4400,9 @@ async def api_artifacts_list_folder(bucket: str, prefix: str = ""):
 
 
 @app.get("/api/artifacts/{bucket}/search", dependencies=[Depends(require_api_key)])
-async def api_artifacts_search(bucket: str, q: str = "", limit: int = 200):
-    """Substring search over object keys in the profile namespace.
-    Whole-bucket (profile-scoped) — the file browser's find box."""
+async def api_artifacts_search(bucket: str, q: str = "", limit: int = 200, prefix: str = ""):
+    """Substring search over object keys under ``prefix`` (the bucket's
+    scope_prefix from /buckets; "" = whole bucket) — the find box."""
     from . import artifacts
 
     if not artifacts.is_enabled():
@@ -4405,7 +4412,9 @@ async def api_artifacts_search(bucket: str, q: str = "", limit: int = 200):
         raise HTTPException(status_code=400, detail="q must be non-empty")
     limit = max(1, min(limit, 500))
     try:
-        res = await asyncio.to_thread(artifacts.search_objects, bucket, q, limit=limit)
+        res = await asyncio.to_thread(
+            artifacts.search_objects, bucket, q, limit=limit, prefix=prefix
+        )
     except artifacts.ArtifactError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {

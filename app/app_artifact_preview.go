@@ -127,8 +127,9 @@ func (a *App) GetArtifactPreview(bucketKey, key string) (ArtifactPreview, error)
 }
 
 // SearchArtifactsFiles is the Wails binding for the Files search box.
-func (a *App) SearchArtifactsFiles(bucketKey, query string) (interface{}, error) {
-	return a.client.SearchArtifacts(bucketKey, query)
+// ``prefix`` is the bucket's scope_prefix for the active profile.
+func (a *App) SearchArtifactsFiles(bucketKey, query, prefix string) (interface{}, error) {
+	return a.client.SearchArtifacts(bucketKey, query, prefix)
 }
 
 // DownloadArtifactObject saves an object to a user-chosen local path via

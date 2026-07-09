@@ -14,9 +14,10 @@ func (a *App) GetArtifactsHealth() (brainbox.ArtifactsHealth, error) {
 	return a.client.GetArtifactsHealth()
 }
 
-// ListArtifactsBuckets returns the two-bucket catalog (vault, artifacts).
-func (a *App) ListArtifactsBuckets() ([]brainbox.ArtifactBucket, error) {
-	return a.client.ListArtifactsBuckets()
+// ListArtifactsBuckets returns the live bucket catalog scoped to the
+// given profile ("" = all buckets).
+func (a *App) ListArtifactsBuckets(profile string) ([]brainbox.ArtifactBucket, error) {
+	return a.client.ListArtifactsBuckets(profile)
 }
 
 // ListArtifactsFolder lists one prefix level — folders + files.
