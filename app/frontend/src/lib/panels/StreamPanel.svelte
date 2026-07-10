@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { timeAgo, formatClock } from '../utils/format';
   import { getApi, openInBrowser } from '../utils/api';
   import { featureFlags, profileState, currentPanel, attentionStore, streamFocus, playbookSeed } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
@@ -511,7 +512,7 @@
   }
   function fmtMs(ms: number): string {
     if (!ms) return '';
-    try { return new Date(ms).toLocaleTimeString(undefined, { hour12: false }); }
+    try { return formatClock(ms, { seconds: true }); }
     catch { return ''; }
   }
 
@@ -586,20 +587,13 @@
   // ── Formatters ─────────────────────────────────────────────────────────────
 
   function fmtAgo(ms: number): string {
-    if (!ms) return '';
-    const diff = Date.now() - ms;
-    if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
-    if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
-    if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
-    return `${Math.round(diff / 86_400_000)}d ago`;
+    return timeAgo(ms);
   }
 
   function fmtTime(iso: string): string {
     if (!iso) return '';
-    try {
-      const d = new Date(iso);
-      return d.toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    } catch { return iso; }
+    try { return formatClock(new Date(iso).getTime(), { seconds: true }); }
+    catch { return iso; }
   }
 
   function fmtDur(ms?: number): string {

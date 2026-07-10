@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { timeAgo } from '../utils/format';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -205,11 +206,7 @@
   // ---------------------------------------------------------------------------
 
   function fmtAge(updatedAt: number): string {
-    const ageMs = Date.now() - updatedAt;
-    if (ageMs < 60_000) return 'just now';
-    if (ageMs < 3_600_000) return `${Math.floor(ageMs / 60_000)}m ago`;
-    if (ageMs < 86_400_000) return `${Math.floor(ageMs / 3_600_000)}h ago`;
-    return `${Math.floor(ageMs / 86_400_000)}d ago`;
+    return timeAgo(updatedAt);
   }
 </script>
 

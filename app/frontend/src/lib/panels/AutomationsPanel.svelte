@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getApi } from '../utils/api';
+  import { timeAgoOrDate } from '../utils/format';
   import { onMount } from 'svelte';
   import { profileState, refreshTick } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
@@ -311,12 +312,7 @@
   }
 
   function fmtLastTriggered(rule: AutomationRule): string {
-    if (!rule.last_triggered_at) return 'never';
-    const diff = Date.now() - rule.last_triggered_at;
-    if (diff < 60_000)     return 'just now';
-    if (diff < 3_600_000)  return `${Math.floor(diff / 60_000)}m ago`;
-    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-    return new Date(rule.last_triggered_at).toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return timeAgoOrDate(rule.last_triggered_at);
   }
 
   onMount(() => { void load(); });

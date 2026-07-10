@@ -1,5 +1,6 @@
 <script lang="ts">
   import { brainboxEvents } from '../events.svelte';
+  import { formatClock } from '../utils/format';
   import EmptyState from '../components/EmptyState.svelte';
   import { getApi } from '../utils/api';
 
@@ -94,7 +95,7 @@
   });
 
   function formatTime(d: Date): string {
-    return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return formatClock(d.getTime(), { seconds: true });
   }
 
   function formatTs(ms: number): string {
