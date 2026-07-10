@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getApi } from '../utils/api';
+  import { getApi, safe } from '../utils/api';
   import { timeAgoOrDate } from '../utils/format';
   import { onCollectUpdate } from '../utils/collectEvents';
   import { onMount } from 'svelte';
@@ -95,9 +95,9 @@
     loading = true;
     try {
       const [j, p, c] = await Promise.all([
-        (a.ListCollectJobs as any)('').catch(() => []),
-        (a.ListPlaybooks as any)('').catch(() => []),
-        (a.ListSequences as any)().catch(() => []),
+        safe((a.ListCollectJobs as any)(''), [], 'ListCollectJobs'),
+        safe((a.ListPlaybooks as any)(''), [], 'ListPlaybooks'),
+        safe((a.ListSequences as any)(), [], 'ListSequences'),
       ]);
       jobs = (j ?? []) as CollectJob[];
       playbooks = ((p ?? []) as any[]).map((x: any) => ({

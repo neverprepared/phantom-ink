@@ -3,7 +3,7 @@
   import 'gridstack/dist/gridstack-extra.min.css';
   import { GridStack } from 'gridstack';
   import { mount, unmount, onMount } from 'svelte';
-  import { getApi } from '../utils/api';
+  import { getApi, safe } from '../utils/api';
   import { brainboxEvents } from '../events.svelte';
   import { profileState, dashboardState, dashboardDataStore, featureFlags, attentionStore, currentPanel } from '../stores.svelte';
   import { runnerQueueHistory } from '../metricsHistory.svelte';
@@ -560,7 +560,7 @@
       const a = await getApi();
       let layout: typeof dashboardState.layout = { version: 1, widgets: [...DEFAULT_LAYOUT.widgets] };
       if (a) {
-        const stored = await a.GetDashboardLayout(profileName).catch(() => '');
+        const stored = await safe(a.GetDashboardLayout(profileName), '', 'GetDashboardLayout');
         if (stored) {
           try {
             const parsed = JSON.parse(stored);
@@ -600,13 +600,13 @@
     if (!silent) loading = true; else refreshing = true;
     try {
       const [s, tasks, f, ts, ds, procs, rs] = await Promise.all([
-        (a.GetSessions(profileState.active?.name ?? '') as Promise<any>).catch(() => []),
-        (a.ListHubTasks('', profileState.active?.name ?? '') as Promise<any>).catch(() => []),
-        (a.ListUpcomingFires(5) as Promise<any>).catch(() => []),
-        (a.GetTaskStats(24) as Promise<any>).catch(() => null),
-        (a.GetDockerStats() as Promise<any>).catch(() => []),
-        (a.FindClaudeProcesses() as Promise<any>).catch(() => []),
-        (a.ListRunners() as Promise<any>).catch(() => []),
+        safe(a.GetSessions(profileState.active?.name ?? '') as Promise<any>, [], 'GetSessions'),
+        safe(a.ListHubTasks('', profileState.active?.name ?? '') as Promise<any>, [], 'ListHubTasks'),
+        safe(a.ListUpcomingFires(5) as Promise<any>, [], 'ListUpcomingFires'),
+        safe(a.GetTaskStats(24) as Promise<any>, null, 'GetTaskStats'),
+        safe(a.GetDockerStats() as Promise<any>, [], 'GetDockerStats'),
+        safe(a.FindClaudeProcesses() as Promise<any>, [], 'FindClaudeProcesses'),
+        safe(a.ListRunners() as Promise<any>, [], 'ListRunners'),
       ]);
       sessions    = s ?? [];
       hubTasks    = tasks ?? [];
@@ -668,7 +668,7 @@
     let layout = { version: 1 as const, widgets: [...DEFAULT_LAYOUT.widgets] };
 
     if (a) {
-      const stored = await a.GetDashboardLayout(profileState.active?.name ?? '').catch(() => '');
+      const stored = await safe(a.GetDashboardLayout(profileState.active?.name ?? ''), '', 'GetDashboardLayout');
       if (stored) {
         try {
           const parsed = JSON.parse(stored);

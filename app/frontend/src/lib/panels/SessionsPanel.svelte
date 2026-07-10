@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getApi, openInBrowser } from '../utils/api';
+  import { getApi, openInBrowser, safe } from '../utils/api';
   import { formatBytes as fmtBytes } from '../utils/format';
   import { onMount, onDestroy } from 'svelte';
   import { brainboxEvents } from '../events.svelte';
@@ -262,8 +262,8 @@
         a.GetSessions(profileState.active?.name ?? ''),
         a.GetHubState(),
         a.FindClaudeProcesses(),
-        a.GetContainerDiskUsage().catch(() => []),
-        a.GetDiskBreakdown().catch(() => null),
+        safe(a.GetContainerDiskUsage(), [], 'GetContainerDiskUsage'),
+        safe(a.GetDiskBreakdown(), null, 'GetDiskBreakdown'),
       ]);
       allSessions = sess ?? [];
       tasks = hubState?.tasks ?? [];
@@ -295,7 +295,7 @@
       const [sh, hist, diskStats] = await Promise.all([
         a.GetSessionsMetricsHistory(),
         a.GetMetricsHistory(),
-        a.GetContainerDiskUsage().catch(() => []),
+        safe(a.GetContainerDiskUsage(), [], 'GetContainerDiskUsage'),
       ]);
       sessionHistory = sh ?? {};
       history = hist ?? [];
