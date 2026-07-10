@@ -54,6 +54,18 @@ if [ -f "$HOME/.claude/.claude.json" ]; then
     cp -f "$HOME/.claude/.claude.json" "$HOME/.claude.json"
 fi
 
+# Decrypt Codex credentials (ChatGPT OAuth) if the image contains an encrypted
+# bundle. Codex reads ~/.codex/auth.json; without it a codex session aborts at
+# startup because ~/.codex does not exist. Create the dir and write the auth
+# file so codex is authenticated on first launch (tokens refresh in place).
+if [ -n "${PROFILE_ENV_KEY:-}" ] && [ -f "$HOME/.codex.enc" ]; then
+    mkdir -p "$HOME/.codex" && chmod 700 "$HOME/.codex"
+    openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -d \
+        -pass "pass:${PROFILE_ENV_KEY}" \
+        -in "$HOME/.codex.enc" \
+        -out "$HOME/.codex/auth.json" 2>/dev/null && chmod 600 "$HOME/.codex/auth.json"
+fi
+
 # Source the session env (non-hardened sessions deliver secrets + the
 # LLM_PROVIDER / CLAUDE_MODEL / gateway-contract vars via ~/.env). This MUST
 # run before the provider case below — otherwise LLM_PROVIDER is empty at

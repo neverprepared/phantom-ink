@@ -130,6 +130,12 @@ func Build(opts BuildOptions) (BuildResult, error) {
 		return BuildResult{}, fmt.Errorf("inject Claude credentials: %w", err)
 	}
 
+	// 5b. Inject Codex credentials (encrypted as .codex.enc).
+	opts.progress("Injecting Codex credentials…")
+	if err := injectCodexCredentials(containerName, opts, envKey); err != nil {
+		return BuildResult{}, fmt.Errorf("inject Codex credentials: %w", err)
+	}
+
 	// 6. Inject profile env vars encrypted as /home/developer/.env.enc.
 	opts.progress("Injecting profile environment…")
 	if err := injectEnvFile(containerName, opts, envKey); err != nil {
@@ -515,6 +521,41 @@ func injectClaudeCredentials(container string, opts BuildOptions, key string) er
 
 	if err := writeFileToContainer(container, "/home/developer/.claude.enc", ciphertext, "600"); err != nil {
 		return fmt.Errorf("write .claude.enc: %w", err)
+	}
+	return nil
+}
+
+// injectCodexCredentials bakes the profile's Codex ChatGPT OAuth credential
+// (~/.codex/auth.json) into the image, encrypted as /home/developer/.codex.enc.
+// ttyd-wrapper.sh decrypts it to ~/.codex/auth.json at container startup using
+// the same PROFILE_ENV_KEY.
+//
+// Codex, like Claude Code, authenticates via the operator's existing OAuth
+// tokens (auth.json "auth_mode": "chatgpt" + rotating tokens), not a per-service
+// API key — consistent with the "No API Keys for Agents" convention. Only
+// auth.json is baked; the host's config.toml is host-specific state (project
+// trust levels with Mac paths) that the container does not need — sessions run
+// codex with --sandbox off --ask-for-approval never and select the model via
+// --model $CODEX_MODEL.
+//
+// Skips silently when the profile has no Codex auth: that profile's Codex
+// sessions start unauthenticated (codex prompts for login), which is the same
+// graceful degradation as a missing Claude credential.
+func injectCodexCredentials(container string, opts BuildOptions, key string) error {
+	authPath := filepath.Join(opts.WorkspaceHome, ".codex", "auth.json")
+	data, err := os.ReadFile(authPath)
+	if err != nil {
+		opts.progress("warning: no Codex credentials found (" + authPath +
+			") — Codex sessions in the built image will be UNAUTHENTICATED")
+		return nil
+	}
+
+	ciphertext, err := encryptEnv(string(data), key)
+	if err != nil {
+		return fmt.Errorf("encrypt codex auth: %w", err)
+	}
+	if err := writeFileToContainer(container, "/home/developer/.codex.enc", ciphertext, "600"); err != nil {
+		return fmt.Errorf("write .codex.enc: %w", err)
 	}
 	return nil
 }
