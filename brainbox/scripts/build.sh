@@ -33,7 +33,11 @@ if [ "${NO_CACHE:-}" = "1" ]; then
 else
     echo "Building brainbox image..."
 fi
-docker build "${BUILD_ARGS[@]}" -t brainbox -f "$REPO_ROOT/docker/brainbox/Dockerfile" "$REPO_ROOT"
+# ${arr[@]+"${arr[@]}"} guards the empty-array expansion: under set -u,
+# bash 3.2 (macOS default) treats "${BUILD_ARGS[@]}" on an empty array as an
+# unbound variable and aborts. The +alternate form expands to nothing when the
+# array is empty and to the quoted elements otherwise.
+docker build ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} -t brainbox -f "$REPO_ROOT/docker/brainbox/Dockerfile" "$REPO_ROOT"
 
 if [ -n "${REGISTRY_URL:-}" ]; then
     REMOTE_TAG="${REGISTRY_URL%/}/brainbox:latest"
