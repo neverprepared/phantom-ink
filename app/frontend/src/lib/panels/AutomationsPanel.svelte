@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getApi } from '../utils/api';
+  import { getApi, safe } from '../utils/api';
   import { timeAgoOrDate } from '../utils/format';
   import { onMount } from 'svelte';
   import { profileState, refreshTick } from '../stores.svelte';
@@ -110,11 +110,11 @@
     if (!silent) loading = true;
     try {
       const [r, j, p, c, cfg] = await Promise.all([
-        (a.ListAutomationRules as any)('').catch(() => []),
-        (a.ListCollectJobs as any)('').catch(() => []),
-        (a.ListPlaybooks as any)('').catch(() => []),
-        (a.ListSequences as any)().catch(() => []),
-        (a.GetConfig as any)().catch(() => null),
+        safe((a.ListAutomationRules as any)(''), [], 'ListAutomationRules'),
+        safe((a.ListCollectJobs as any)(''), [], 'ListCollectJobs'),
+        safe((a.ListPlaybooks as any)(''), [], 'ListPlaybooks'),
+        safe((a.ListSequences as any)(), [], 'ListSequences'),
+        safe((a.GetConfig as any)(), null, 'GetConfig'),
       ]);
       rules     = (r ?? []) as AutomationRule[];
       jobs      = ((j ?? []) as any[]).map((x: any): JobItem      => ({ id: x.id, name: x.name, profile:           x.profile           ?? '' }));

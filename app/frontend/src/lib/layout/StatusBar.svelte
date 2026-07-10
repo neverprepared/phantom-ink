@@ -9,7 +9,7 @@
     dashboardDataStore,
   } from '../stores.svelte';
   import { brainboxEvents } from '../events.svelte';
-  import { getApi } from '../utils/api';
+  import { getApi, safe } from '../utils/api';
 
   let connected     = $derived(connectionState.connected);
   let activeProfile = $derived(profileState.active);
@@ -40,8 +40,8 @@
       if (!a) return;
       try {
         const [sessions, runners] = await Promise.all([
-          a.GetSessions(profileState.active?.name ?? '').catch(() => []),
-          a.ListRunners().catch(() => []),
+          safe(a.GetSessions(profileState.active?.name ?? ''), [], 'GetSessions'),
+          safe(a.ListRunners(), [], 'ListRunners'),
         ]);
         if (dashData == null) {
           activeSessions = ((sessions ?? []) as any[]).filter(s => s.active).length;

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getApi } from '../utils/api';
+  import { getApi, safe } from '../utils/api';
   import RulePatternEditor from './RulePatternEditor.svelte';
   import RuleActionsEditor from './RuleActionsEditor.svelte';
   import {
@@ -54,9 +54,9 @@
     const api = await getApi();
     if (!api) return;
     const [ag, pb, lt] = await Promise.all([
-      api.ListAgentRoles().catch(() => []),
-      api.ListPlaybooks('').catch(() => []),
-      api.ListLoopTemplates().catch(() => []),
+      safe(api.ListAgentRoles(), [], 'ListAgentRoles'),
+      safe(api.ListPlaybooks(''), [], 'ListPlaybooks'),
+      safe(api.ListLoopTemplates(), [], 'ListLoopTemplates'),
     ]);
     agents = ((ag ?? []) as any[]).map((a) => a.name).filter(Boolean);
     playbooks = ((pb ?? []) as any[]).map((p) => ({ id: p.id, name: p.name }));
