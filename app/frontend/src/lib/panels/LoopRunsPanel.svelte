@@ -340,9 +340,9 @@
     color: var(--color-text-muted);
   }
   .filter select {
-    background: var(--color-surface-2, #1a1a1a);
-    border: 1px solid var(--color-border, #333);
-    color: var(--color-text, #ddd);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-primary);
+    color: var(--color-text-primary);
     padding: 3px 6px;
     border-radius: 4px;
     font-size: 12px;
@@ -365,8 +365,8 @@
   }
 
   .loop-card {
-    background: var(--color-surface-1, #181818);
-    border: 1px solid var(--color-border, #2a2a2a);
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-primary);
     border-radius: 6px;
     padding: 10px 12px;
     display: flex;
@@ -390,15 +390,15 @@
     padding: 0;
   }
   .loop-card.selected {
-    border-color: var(--color-accent, #88c1ff);
+    border-color: var(--color-accent);
   }
   .diagram-drawer {
     display: flex;
     flex-direction: column;
     gap: 4px;
     padding: 8px 10px;
-    background: var(--color-surface-2, #1a1a1a);
-    border: 1px solid var(--color-border, #2a2a2a);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-primary);
     border-radius: 4px;
     max-height: 320px;
     overflow: auto;
@@ -411,7 +411,7 @@
   }
   .diagram-label {
     font-weight: 600;
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
@@ -511,7 +511,7 @@
   }
 
   .chart-block {
-    color: var(--color-accent, #88c1ff);
+    color: var(--color-accent);
   }
   .sparkline {
     display: block;
