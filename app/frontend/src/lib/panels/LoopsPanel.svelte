@@ -84,13 +84,33 @@
     return editorValue !== savedMarkdown;
   }
 
-  async function selectName(name: string) {
+  // Unsaved-changes guard. window.confirm is unreliable in some Wails
+  // webviews (the + New and Delete flows already route through the shared
+  // Modal), so the discard confirmations go through it too. Holds the pending
+  // action to run if the operator confirms the discard.
+  let discardConfirm = $state<null | { message: string; onConfirm: () => void }>(null);
+
+  function guardUnsaved(message: string, proceed: () => void) {
     if (isDirty()) {
-      const ok = window.confirm(
-        `${selectedName} has unsaved changes. Discard them?`,
-      );
-      if (!ok) return;
+      discardConfirm = { message, onConfirm: proceed };
+    } else {
+      proceed();
     }
+  }
+  function closeDiscardConfirm() {
+    discardConfirm = null;
+  }
+  function acceptDiscard() {
+    const action = discardConfirm?.onConfirm;
+    discardConfirm = null;
+    action?.();
+  }
+
+  function selectName(name: string) {
+    guardUnsaved(`${selectedName} has unsaved changes. Discard them?`, () => void openTemplate(name));
+  }
+
+  async function openTemplate(name: string) {
     selectedName = name;
     selectedTemplate = null;
     templateError = null;
@@ -216,15 +236,14 @@ Describe what the agent does each iteration.
   let newTemplateError = $state<string | null>(null);
 
   function openNewTemplateModal() {
-    if (isDirty()) {
-      const ok = window.confirm(
-        `${selectedName ?? 'Current template'} has unsaved changes. Discard them?`,
-      );
-      if (!ok) return;
-    }
-    newTemplateName = 'my-loop';
-    newTemplateError = null;
-    newTemplateModalOpen = true;
+    guardUnsaved(
+      `${selectedName ?? 'Current template'} has unsaved changes. Discard them?`,
+      () => {
+        newTemplateName = 'my-loop';
+        newTemplateError = null;
+        newTemplateModalOpen = true;
+      },
+    );
   }
 
   function closeNewTemplateModal() {
@@ -354,59 +373,74 @@ Describe what the agent does each iteration.
 
       if (mode === 'explain') {
         explanation = result.explanation;
+        assistPrompt = '';
       } else {
-        // Generate / Refine replace the editor doc. Confirm if dirty.
-        if (isDirty()) {
-          const ok = window.confirm('Editor has unsaved changes. Replace with AI output?');
-          if (!ok) return;
-        }
-        editorValue = result.yaml;
-        if (result.warnings && result.warnings.length > 0) {
-          notifications.error(
-            `AI output had ${result.warnings.length} validation warning(s) — review before saving`,
-          );
-        } else {
-          notifications.success(`${mode === 'generate' ? 'Generated' : 'Refined'} via ${result.model}`);
-        }
-
-        // Surface the server-side persist outcome so the operator
-        // knows whether their work is on disk regardless of what they
-        // do next.
-        if (mode === 'generate') {
-          if (result.saved_to) {
-            notifications.success(`Saved as ${result.saved_to}`);
-            savedMarkdown = result.yaml;
-            // Refresh sidebar so the new file appears immediately.
-            if (!templateNames.includes(result.saved_to)) {
-              await loadTemplateList();
-              selectedName = result.saved_to;
-            }
-            // selectedTemplate.hash is stale after a save — clear so
-            // the dirty-dot doesn't lie. Reload the template to pick
-            // up the new hash.
-            if (selectedTemplate) {
-              try {
-                const api2 = await getApi();
-                const reloaded = (await api2.GetLoopTemplate(result.saved_to)) as LoopTemplate;
-                selectedTemplate = reloaded;
-                savedMarkdown = reloaded.markdown;
-                editorValue = reloaded.markdown;
-              } catch {
-                // Best-effort reload; ignore.
-              }
-            }
-            void refreshDiagram(result.saved_to);
-          } else if (result.save_error) {
-            notifications.error(`Persist failed: ${result.save_error}`);
-          }
-        }
+        // Generate / Refine replace the editor doc. Confirm via the shared
+        // Modal if the editor has unsaved changes.
+        guardUnsaved(
+          'Editor has unsaved changes. Replace with AI output?',
+          () => void applyAiOutput(result, mode),
+        );
       }
-      assistPrompt = '';
     } catch (err) {
       assistError = err instanceof Error ? err.message : String(err);
     } finally {
       assistBusy = false;
     }
+  }
+
+  // Replace the editor doc with AI output and surface the server-side persist
+  // outcome. Deferred behind guardUnsaved so a dirty editor can confirm first;
+  // runs immediately when the editor is clean.
+  async function applyAiOutput(
+    result: {
+      yaml: string;
+      model: string;
+      warnings: { field: string | null; message: string }[];
+      saved_to: string;
+      save_error: string;
+    },
+    mode: 'generate' | 'refine',
+  ) {
+    editorValue = result.yaml;
+    if (result.warnings && result.warnings.length > 0) {
+      notifications.error(
+        `AI output had ${result.warnings.length} validation warning(s) — review before saving`,
+      );
+    } else {
+      notifications.success(`${mode === 'generate' ? 'Generated' : 'Refined'} via ${result.model}`);
+    }
+
+    // Surface the server-side persist outcome so the operator knows whether
+    // their work is on disk regardless of what they do next.
+    if (mode === 'generate') {
+      if (result.saved_to) {
+        notifications.success(`Saved as ${result.saved_to}`);
+        savedMarkdown = result.yaml;
+        // Refresh sidebar so the new file appears immediately.
+        if (!templateNames.includes(result.saved_to)) {
+          await loadTemplateList();
+          selectedName = result.saved_to;
+        }
+        // selectedTemplate.hash is stale after a save — reload to pick up the
+        // new hash so the dirty-dot doesn't lie.
+        if (selectedTemplate) {
+          try {
+            const api2 = await getApi();
+            const reloaded = (await api2.GetLoopTemplate(result.saved_to)) as LoopTemplate;
+            selectedTemplate = reloaded;
+            savedMarkdown = reloaded.markdown;
+            editorValue = reloaded.markdown;
+          } catch {
+            // Best-effort reload; ignore.
+          }
+        }
+        void refreshDiagram(result.saved_to);
+      } else if (result.save_error) {
+        notifications.error(`Persist failed: ${result.save_error}`);
+      }
+    }
+    assistPrompt = '';
   }
 
   function onAssistKeydown(ev: KeyboardEvent) {
@@ -973,6 +1007,19 @@ Describe what the agent does each iteration.
       <div class="modal-actions">
         <button class="btn-modal-cancel" onclick={closeNewTemplateModal}>Cancel</button>
         <button class="btn-modal-create" onclick={confirmNewTemplate}>Create</button>
+      </div>
+    </div>
+  </Modal>
+{/if}
+
+{#if discardConfirm}
+  <Modal onClose={closeDiscardConfirm} maxWidth="400px">
+    <div class="new-modal">
+      <h3>Unsaved changes</h3>
+      <p class="dim modal-help">{discardConfirm.message}</p>
+      <div class="modal-actions">
+        <button class="btn-modal-cancel" onclick={closeDiscardConfirm}>Keep editing</button>
+        <button class="btn-modal-create" onclick={acceptDiscard}>Discard</button>
       </div>
     </div>
   </Modal>
