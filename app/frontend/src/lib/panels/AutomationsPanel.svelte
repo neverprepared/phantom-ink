@@ -46,6 +46,7 @@
   let playbooks = $state<PlaybookItem[]>([]);
   let loops    = $state<SequenceItem[]>([]);
   let loading   = $state(false);
+  let loadError = $state<string | null>(null); // set when the initial rules fetch fails
   let editingId = $state<string | null>(null);
   let statusMsg = $state('');
   let baseURL   = $state('http://127.0.0.1:9999');
@@ -106,11 +107,14 @@
 
   async function load(silent = false) {
     const a = await getApi();
-    if (!a) return;
+    if (!a) { if (!silent) loadError = 'API bindings unavailable'; return; }
     if (!silent) loading = true;
     try {
+      // The rules list is the panel's primary data — let its failure surface.
+      // The job/playbook/sequence/config lists only feed the action picker, so
+      // a failure there degrades gracefully via safe().
       const [r, j, p, c, cfg] = await Promise.all([
-        safe((a.ListAutomationRules as any)(''), [], 'ListAutomationRules'),
+        (a.ListAutomationRules as any)(''),
         safe((a.ListCollectJobs as any)(''), [], 'ListCollectJobs'),
         safe((a.ListPlaybooks as any)(''), [], 'ListPlaybooks'),
         safe((a.ListSequences as any)(), [], 'ListSequences'),
@@ -121,6 +125,12 @@
       playbooks = ((p ?? []) as any[]).map((x: any): PlaybookItem => ({ id: x.id, name: x.name, workspace_profile: x.workspace_profile  ?? '' }));
       loops    = ((c ?? []) as any[]).map((x: any): SequenceItem    => ({ id: x.id, name: x.name }));
       if (cfg?.base_url) baseURL = cfg.base_url;
+      loadError = null;
+    } catch (err: any) {
+      console.warn('[AutomationsPanel] load failed:', err);
+      // Only blank the panel with an error on the visible (initial) load — a
+      // failed silent reload keeps the currently-shown rules.
+      if (!silent) { loadError = `${err?.message ?? err}`; rules = []; }
     } finally {
       loading = false;
     }
@@ -515,6 +525,8 @@
   <!-- Rule list -->
   {#if loading && rules.length === 0}
     <div class="empty">loading…</div>
+  {:else if loadError}
+    <EmptyState title="Failed to load automation rules" message={loadError} />
   {:else if rules.length === 0 && editingId !== 'new'}
     <EmptyState title="No automation rules" message="Create one to trigger actions from events." />
   {:else}
