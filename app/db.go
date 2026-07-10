@@ -721,12 +721,16 @@ func (db *DB) UpsertSequence(c SequenceRow) error {
 	return err
 }
 
-func (db *DB) GetSequence(id string) (SequenceRow, bool) {
+const sequenceCols = `id, name, description, steps_json, cwd, on_success_json, files_json, workspace_profile, created_at, updated_at`
+
+func scanSequence(s rowScanner) (SequenceRow, error) {
 	var r SequenceRow
-	err := db.conn.QueryRow(`
-		SELECT id, name, description, steps_json, cwd, on_success_json, files_json, workspace_profile, created_at, updated_at
-		FROM loops WHERE id = ?`, id).Scan(
-		&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.FilesJSON, &r.WorkspaceProfile, &r.CreatedAt, &r.UpdatedAt)
+	err := s.Scan(&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.FilesJSON, &r.WorkspaceProfile, &r.CreatedAt, &r.UpdatedAt)
+	return r, err
+}
+
+func (db *DB) GetSequence(id string) (SequenceRow, bool) {
+	r, err := scanSequence(db.conn.QueryRow(`SELECT `+sequenceCols+` FROM loops WHERE id = ?`, id))
 	if err != nil {
 		return r, false
 	}
@@ -736,28 +740,22 @@ func (db *DB) GetSequence(id string) (SequenceRow, bool) {
 // ListSequences returns loops visible for the given profile: profile-owned loops
 // plus global loops (workspace_profile=""). Pass "" to return all loops.
 func (db *DB) ListSequences(profile string) ([]SequenceRow, error) {
-	var (
-		rows *sql.Rows
-		err  error
-	)
-	if profile == "" {
-		rows, err = db.conn.Query(`
-			SELECT id, name, description, steps_json, cwd, on_success_json, files_json, workspace_profile, created_at, updated_at
-			FROM loops ORDER BY name`)
-	} else {
-		rows, err = db.conn.Query(`
-			SELECT id, name, description, steps_json, cwd, on_success_json, files_json, workspace_profile, created_at, updated_at
-			FROM loops WHERE workspace_profile = '' OR workspace_profile = ?
-			ORDER BY name`, profile)
+	q := `SELECT ` + sequenceCols + ` FROM loops`
+	var args []any
+	if profile != "" {
+		q += ` WHERE workspace_profile = '' OR workspace_profile = ?`
+		args = append(args, profile)
 	}
+	q += ` ORDER BY name`
+	rows, err := db.conn.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []SequenceRow
 	for rows.Next() {
-		var r SequenceRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.StepsJSON, &r.Cwd, &r.OnSuccessJSON, &r.FilesJSON, &r.WorkspaceProfile, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		r, err := scanSequence(rows)
+		if err != nil {
 			continue
 		}
 		out = append(out, r)
@@ -773,7 +771,7 @@ func (db *DB) DeleteSequence(id string) error {
 // SequenceRunRow is the persisted form of a single loop execution.
 type SequenceRunRow struct {
 	ID         string `json:"id"`
-	SequenceID    string `json:"loop_id"`
+	SequenceID string `json:"loop_id"`
 	StartedAt  string `json:"started_at"`
 	FinishedAt string `json:"finished_at"`
 	Status     string `json:"status"`
@@ -827,7 +825,7 @@ func (db *DB) ListSequenceRuns(loopID string, limit int) ([]SequenceRunRow, erro
 // under the right profile context — see feedback_profiles_foundational.md.
 type TaskRow struct {
 	ID               string `json:"id"`
-	SequenceID          string `json:"loop_id"`
+	SequenceID       string `json:"loop_id"`
 	Status           string `json:"status"`
 	Priority         int    `json:"priority"`
 	Input            string `json:"input"`
@@ -860,8 +858,29 @@ func (db *DB) InsertTask(t TaskRow) error {
 
 // ClaimNextTask atomically transitions the highest-priority eligible pending
 // task to "running" and returns it. Returns (TaskRow{}, false) when nothing
-// is ready. "Eligible" means status='pending' AND (scheduled_for='' OR
+// is ready. "Eligible" means status='pending' AND (scheduled_for=” OR
 // scheduled_for <= nowRFC3339).
+// rowScanner is satisfied by both *sql.Row and *sql.Rows, so one scan helper
+// serves single-row (QueryRow) and multi-row (Query) call sites.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// taskCols is the canonical tasks column list, kept in one place so the SELECT
+// and the Scan can't drift out of sync.
+const taskCols = `id, loop_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
+	enqueued_at, scheduled_for, started_at, finished_at,
+	attempts, max_attempts, last_error, result_run_id`
+
+func scanTask(s rowScanner) (TaskRow, error) {
+	var t TaskRow
+	err := s.Scan(
+		&t.ID, &t.SequenceID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
+		&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
+		&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID)
+	return t, err
+}
+
 func (db *DB) ClaimNextTask(nowRFC3339 string) (TaskRow, bool) {
 	tx, err := db.conn.Begin()
 	if err != nil {
@@ -869,19 +888,13 @@ func (db *DB) ClaimNextTask(nowRFC3339 string) (TaskRow, bool) {
 	}
 	defer tx.Rollback()
 
-	var t TaskRow
-	err = tx.QueryRow(`
-		SELECT id, loop_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
-		       enqueued_at, scheduled_for, started_at, finished_at,
-		       attempts, max_attempts, last_error, result_run_id
+	t, err := scanTask(tx.QueryRow(`
+		SELECT `+taskCols+`
 		FROM tasks
 		WHERE status = 'pending'
 		  AND (scheduled_for = '' OR scheduled_for <= ?)
 		ORDER BY priority DESC, enqueued_at ASC
-		LIMIT 1`, nowRFC3339).Scan(
-		&t.ID, &t.SequenceID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
-		&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
-		&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID)
+		LIMIT 1`, nowRFC3339))
 	if err != nil {
 		return TaskRow{}, false
 	}
@@ -958,15 +971,7 @@ func (db *DB) RetryTask(id string) error {
 }
 
 func (db *DB) GetTask(id string) (TaskRow, bool) {
-	var t TaskRow
-	err := db.conn.QueryRow(`
-		SELECT id, loop_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
-		       enqueued_at, scheduled_for, started_at, finished_at,
-		       attempts, max_attempts, last_error, result_run_id
-		FROM tasks WHERE id = ?`, id).Scan(
-		&t.ID, &t.SequenceID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
-		&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
-		&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID)
+	t, err := scanTask(db.conn.QueryRow(`SELECT `+taskCols+` FROM tasks WHERE id = ?`, id))
 	if err != nil {
 		return t, false
 	}
@@ -979,12 +984,9 @@ func (db *DB) ListTasks(status, workspace string, limit int) ([]TaskRow, error) 
 	if limit <= 0 || limit > 200 {
 		limit = 200
 	}
-	const selectCols = `id, loop_id, status, priority, input, cwd, trigger, parent_task_id, workspace_profile,
-	       enqueued_at, scheduled_for, started_at, finished_at,
-	       attempts, max_attempts, last_error, result_run_id`
 	var (
-		where  []string
-		args   []any
+		where []string
+		args  []any
 	)
 	if status != "" {
 		where = append(where, "status = ?")
@@ -994,7 +996,7 @@ func (db *DB) ListTasks(status, workspace string, limit int) ([]TaskRow, error) 
 		where = append(where, "workspace_profile = ?")
 		args = append(args, workspace)
 	}
-	q := "SELECT " + selectCols + " FROM tasks"
+	q := "SELECT " + taskCols + " FROM tasks"
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -1007,12 +1009,8 @@ func (db *DB) ListTasks(status, workspace string, limit int) ([]TaskRow, error) 
 	defer rows.Close()
 	var out []TaskRow
 	for rows.Next() {
-		var t TaskRow
-		if err := rows.Scan(
-			&t.ID, &t.SequenceID, &t.Status, &t.Priority, &t.Input, &t.Cwd, &t.Trigger, &t.ParentTaskID, &t.WorkspaceProfile,
-			&t.EnqueuedAt, &t.ScheduledFor, &t.StartedAt, &t.FinishedAt,
-			&t.Attempts, &t.MaxAttempts, &t.LastError, &t.ResultRunID,
-		); err != nil {
+		t, err := scanTask(rows)
+		if err != nil {
 			continue
 		}
 		out = append(out, t)
@@ -1080,7 +1078,7 @@ func (db *DB) TaskStatsCounted(since string) (pending, running, succeeded, faile
 
 type ScheduleRow struct {
 	ID               string `json:"id"`
-	SequenceID          string `json:"loop_id"`
+	SequenceID       string `json:"loop_id"`
 	CronExpr         string `json:"cron_expr"`
 	Input            string `json:"input"`
 	Cwd              string `json:"cwd"`
@@ -1112,46 +1110,44 @@ func (db *DB) UpsertSchedule(s ScheduleRow) error {
 	return err
 }
 
-func (db *DB) GetSchedule(id string) (ScheduleRow, bool) {
+const scheduleCols = `id, loop_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at`
+
+func scanSchedule(s rowScanner) (ScheduleRow, error) {
 	var r ScheduleRow
 	var enabled int
-	err := db.conn.QueryRow(`
-		SELECT id, loop_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
-		FROM schedules WHERE id = ?`, id).Scan(
-		&r.ID, &r.SequenceID, &r.CronExpr, &r.Input, &r.Cwd, &enabled, &r.WorkspaceProfile,
+	err := s.Scan(&r.ID, &r.SequenceID, &r.CronExpr, &r.Input, &r.Cwd, &enabled, &r.WorkspaceProfile,
 		&r.CreatedAt, &r.UpdatedAt, &r.LastFiredAt)
+	r.Enabled = enabled != 0
+	return r, err
+}
+
+func (db *DB) GetSchedule(id string) (ScheduleRow, bool) {
+	r, err := scanSchedule(db.conn.QueryRow(`SELECT `+scheduleCols+` FROM schedules WHERE id = ?`, id))
 	if err != nil {
 		return r, false
 	}
-	r.Enabled = enabled != 0
 	return r, true
 }
 
 func (db *DB) ListSchedules(loopID string) ([]ScheduleRow, error) {
-	var rows *sql.Rows
-	var err error
-	if loopID == "" {
-		rows, err = db.conn.Query(`
-			SELECT id, loop_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
-			FROM schedules ORDER BY created_at`)
-	} else {
-		rows, err = db.conn.Query(`
-			SELECT id, loop_id, cron_expr, input, cwd, enabled, workspace_profile, created_at, updated_at, last_fired_at
-			FROM schedules WHERE loop_id = ? ORDER BY created_at`, loopID)
+	q := `SELECT ` + scheduleCols + ` FROM schedules`
+	var args []any
+	if loopID != "" {
+		q += ` WHERE loop_id = ?`
+		args = append(args, loopID)
 	}
+	q += ` ORDER BY created_at`
+	rows, err := db.conn.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []ScheduleRow
 	for rows.Next() {
-		var r ScheduleRow
-		var enabled int
-		if err := rows.Scan(&r.ID, &r.SequenceID, &r.CronExpr, &r.Input, &r.Cwd, &enabled, &r.WorkspaceProfile,
-			&r.CreatedAt, &r.UpdatedAt, &r.LastFiredAt); err != nil {
+		r, err := scanSchedule(rows)
+		if err != nil {
 			continue
 		}
-		r.Enabled = enabled != 0
 		out = append(out, r)
 	}
 	return out, nil
@@ -1240,8 +1236,7 @@ func (db *DB) DeleteProfileImage(profile string) error {
 
 func (db *DB) ListEnabledAutomationRules(profile string) ([]AutomationRule, error) {
 	// Returns rules matching the given profile OR global rules (profile='').
-	q := `SELECT id, profile, name, description, enabled, trigger_type, trigger_config,
-	             action_type, action_config, created_at, last_triggered_at, trigger_count
+	q := `SELECT ` + automationRuleCols + `
 	      FROM automation_rules
 	      WHERE enabled = 1 AND (profile = '' OR profile = ?)
 	      ORDER BY name ASC`
@@ -1254,8 +1249,7 @@ func (db *DB) ListEnabledAutomationRules(profile string) ([]AutomationRule, erro
 }
 
 func (db *DB) ListAutomationRules(profile string) ([]AutomationRule, error) {
-	q := `SELECT id, profile, name, description, enabled, trigger_type, trigger_config,
-	             action_type, action_config, created_at, last_triggered_at, trigger_count
+	q := `SELECT ` + automationRuleCols + `
 	      FROM automation_rules`
 	args := []any{}
 	if profile != "" {
@@ -1272,22 +1266,9 @@ func (db *DB) ListAutomationRules(profile string) ([]AutomationRule, error) {
 }
 
 func (db *DB) GetAutomationRule(id string) (AutomationRule, bool) {
-	var r AutomationRule
-	var enabled int
-	var lastTriggered sql.NullInt64
-	err := db.conn.QueryRow(`
-		SELECT id, profile, name, description, enabled, trigger_type, trigger_config,
-		       action_type, action_config, created_at, last_triggered_at, trigger_count
-		FROM automation_rules WHERE id = ?`, id).
-		Scan(&r.ID, &r.Profile, &r.Name, &r.Description, &enabled,
-			&r.TriggerType, &r.TriggerConfig, &r.ActionType, &r.ActionConfig,
-			&r.CreatedAt, &lastTriggered, &r.TriggerCount)
+	r, err := scanAutomationRule(db.conn.QueryRow(`SELECT `+automationRuleCols+` FROM automation_rules WHERE id = ?`, id))
 	if err != nil {
 		return AutomationRule{}, false
-	}
-	r.Enabled = enabled != 0
-	if lastTriggered.Valid {
-		r.LastTriggeredAt = &lastTriggered.Int64
 	}
 	return r, true
 }
@@ -1332,20 +1313,29 @@ func (db *DB) RecordAutomationTrigger(id string) error {
 	return err
 }
 
+const automationRuleCols = `id, profile, name, description, enabled, trigger_type, trigger_config,
+	action_type, action_config, created_at, last_triggered_at, trigger_count`
+
+func scanAutomationRule(s rowScanner) (AutomationRule, error) {
+	var r AutomationRule
+	var enabled int
+	var lastTriggered sql.NullInt64
+	err := s.Scan(&r.ID, &r.Profile, &r.Name, &r.Description, &enabled,
+		&r.TriggerType, &r.TriggerConfig, &r.ActionType, &r.ActionConfig,
+		&r.CreatedAt, &lastTriggered, &r.TriggerCount)
+	r.Enabled = enabled != 0
+	if lastTriggered.Valid {
+		r.LastTriggeredAt = &lastTriggered.Int64
+	}
+	return r, err
+}
+
 func scanAutomationRules(rows *sql.Rows) ([]AutomationRule, error) {
 	var out []AutomationRule
 	for rows.Next() {
-		var r AutomationRule
-		var enabled int
-		var lastTriggered sql.NullInt64
-		if err := rows.Scan(&r.ID, &r.Profile, &r.Name, &r.Description, &enabled,
-			&r.TriggerType, &r.TriggerConfig, &r.ActionType, &r.ActionConfig,
-			&r.CreatedAt, &lastTriggered, &r.TriggerCount); err != nil {
+		r, err := scanAutomationRule(rows)
+		if err != nil {
 			return nil, err
-		}
-		r.Enabled = enabled != 0
-		if lastTriggered.Valid {
-			r.LastTriggeredAt = &lastTriggered.Int64
 		}
 		out = append(out, r)
 	}
