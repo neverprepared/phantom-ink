@@ -40,6 +40,7 @@
   let playbooks    = $state<NamedItem[]>([]);
   let loops       = $state<NamedItem[]>([]);
   let loading      = $state(false);
+  let saving       = $state(false); // in-flight guard for save() — prevents double-submit
   let editingId    = $state<string | null>(null); // null=none, 'new'=create, id=edit
   let runningId    = $state<string | null>(null);
   let statusMsg    = $state('');
@@ -114,6 +115,7 @@
   // ── CRUD ───────────────────────────────────────────────────────────────
 
   async function save() {
+    if (saving) return; // guard against double-submit (a new job has id:'' and would insert twice)
     const a = await getApi();
     if (!a || !draft.name.trim()) return;
     const isNew = editingId === 'new';
@@ -138,12 +140,15 @@
     if (draft.targetType === 'shell' && !payload.command) return;
     if ((draft.targetType === 'playbook' || draft.targetType === 'loop') && !payload.target_id) return;
     if (draft.targetType === 'runner' && !payload.target_prompt) return;
+    saving = true;
     try {
       await (a.SaveCollectJob as any)(payload);
       editingId = null;
       await load();
     } catch (e: any) {
       flash(`Error: ${e?.message ?? 'save failed'}`, true);
+    } finally {
+      saving = false;
     }
   }
 
@@ -390,7 +395,7 @@
       {/if}
 
       <div class="form-actions">
-        <button class="btn sm primary" onclick={save} disabled={!isFormValid()}>save</button>
+        <button class="btn sm primary" onclick={save} disabled={saving || !isFormValid()}>{saving ? 'saving…' : 'save'}</button>
         <button class="btn sm ghost" onclick={cancelEdit}>cancel</button>
       </div>
     </div>
@@ -486,7 +491,7 @@
               {/if}
 
               <div class="form-actions">
-                <button class="btn sm primary" onclick={save} disabled={!isFormValid()}>save</button>
+                <button class="btn sm primary" onclick={save} disabled={saving || !isFormValid()}>{saving ? 'saving…' : 'save'}</button>
                 <button class="btn sm ghost" onclick={cancelEdit}>cancel</button>
               </div>
             </div>
