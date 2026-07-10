@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { timeAgo, formatClock } from '../utils/format';
+  import { timeAgo } from '../utils/format';
   import { getApi, openInBrowser } from '../utils/api';
   import { featureFlags, profileState, currentPanel, attentionStore, streamFocus, playbookSeed } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
@@ -8,6 +8,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import ContextMenu from '../components/ContextMenu.svelte';
   import StreamLogsTab from '../components/StreamLogsTab.svelte';
+  import EnvelopeHistory from '../components/EnvelopeHistory.svelte';
 
   interface CtxMenuItem {
     label: string;
@@ -511,11 +512,6 @@
     if (!id) return '';
     return id.length > 40 ? id.slice(0, 39) + '…' : id;
   }
-  function fmtMs(ms: number): string {
-    if (!ms) return '';
-    try { return formatClock(ms, { seconds: true }); }
-    catch { return ''; }
-  }
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
@@ -749,29 +745,7 @@
                 </button>
               </div>
               {#if history[item.id]}
-                <div class="history-box">
-                  {#if historyLoading[item.id]}
-                    <div class="history-loading">loading audit log…</div>
-                  {:else if history[item.id].length === 0}
-                    <div class="history-loading">no audit entries yet</div>
-                  {:else}
-                    <ol class="history-list">
-                      {#each history[item.id] as ev (ev.seq)}
-                        <li class="history-row">
-                          <span class="history-time">{fmtMs(ev.ts)}</span>
-                          <span class="history-type">{ev.type}</span>
-                          {#if ev.status}<span class="history-status status-{ev.status}">{statusLabel(ev.status)}</span>{/if}
-                          {#if ev.envelope?.outcome}
-                            <span class="history-outcome" class:ok={ev.envelope.outcome.ok} class:bad={!ev.envelope.outcome.ok}>
-                              {ev.envelope.outcome.actor}{ev.envelope.outcome.ok ? ' · ok' : ' · failed'}
-                              {ev.envelope.outcome.duration_ms ? ' · ' + ev.envelope.outcome.duration_ms + 'ms' : ''}
-                            </span>
-                          {/if}
-                        </li>
-                      {/each}
-                    </ol>
-                  {/if}
-                </div>
+                <EnvelopeHistory entries={history[item.id]} loading={historyLoading[item.id]} />
               {/if}
             </li>
           {/each}
@@ -847,29 +821,7 @@
               </div>
 
               {#if history[item.id]}
-                <div class="history-box">
-                  {#if historyLoading[item.id]}
-                    <div class="history-loading">loading audit log…</div>
-                  {:else if history[item.id].length === 0}
-                    <div class="history-loading">no audit entries yet</div>
-                  {:else}
-                    <ol class="history-list">
-                      {#each history[item.id] as ev (ev.seq)}
-                        <li class="history-row">
-                          <span class="history-time">{fmtMs(ev.ts)}</span>
-                          <span class="history-type">{ev.type}</span>
-                          {#if ev.status}<span class="history-status status-{ev.status}">{statusLabel(ev.status)}</span>{/if}
-                          {#if ev.envelope?.outcome}
-                            <span class="history-outcome" class:ok={ev.envelope.outcome.ok} class:bad={!ev.envelope.outcome.ok}>
-                              {ev.envelope.outcome.actor}{ev.envelope.outcome.ok ? ' · ok' : ' · failed'}
-                              {ev.envelope.outcome.duration_ms ? ' · ' + ev.envelope.outcome.duration_ms + 'ms' : ''}
-                            </span>
-                          {/if}
-                        </li>
-                      {/each}
-                    </ol>
-                  {/if}
-                </div>
+                <EnvelopeHistory entries={history[item.id]} loading={historyLoading[item.id]} />
               {/if}
 
               {#if respondingId === item.id}
@@ -1028,52 +980,6 @@
     font-size: 10.5px;
   }
 
-  .history-box {
-    margin-top: 6px;
-    padding: 8px 10px;
-    background: var(--bg, var(--color-bg-primary));
-    border: 1px solid var(--border, var(--color-border-primary));
-    border-radius: var(--r-sm, var(--radius-sm));
-  }
-  .history-loading {
-    font-size: 12px;
-    color: var(--text-faint, var(--color-text-tertiary));
-    padding: 4px 0;
-  }
-  .history-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    font-family: var(--font-mono, ui-monospace, monospace);
-    font-size: 11.5px;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-  .history-row {
-    display: flex;
-    gap: 10px;
-    align-items: baseline;
-    color: var(--text-muted, var(--color-text-secondary));
-  }
-  .history-time { color: var(--text-faint, var(--color-text-tertiary)); }
-  .history-type { color: var(--text, var(--color-text-primary)); font-weight: 600; }
-  .history-status {
-    padding: 0 6px;
-    border-radius: var(--r-sm, var(--radius-sm));
-    font-size: 10.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-  }
-  .history-status.status-failed       { color: var(--color-status-error-text); background: var(--color-error-bg); }
-  .history-status.status-blocked      { color: var(--color-role-purple-text); background: var(--color-role-purple-bg); }
-  .history-status.status-needs_action { color: var(--color-status-warning-text); background: var(--color-warning-bg); }
-  .history-status.status-active       { color: var(--color-role-blue-text); background: var(--color-info-bg); }
-  .history-status.status-upcoming     { color: var(--color-text-tertiary); background: var(--color-muted-bg); }
-  .history-status.status-done         { color: var(--color-status-success-text); background: var(--color-success-bg); }
-  .history-outcome { margin-left: auto; font-size: 11px; }
-  .history-outcome.ok  { color: var(--color-status-success-text); }
-  .history-outcome.bad { color: var(--color-status-error-text); }
 
   .tab-body { flex: 1; min-height: 0; overflow-y: auto; }
 
