@@ -1105,15 +1105,15 @@
     font-weight: 700;
     text-transform: uppercase;
   }
-  .history-status.status-failed       { color: #b71c1c; background: rgba(244, 67, 54, 0.12); }
-  .history-status.status-blocked      { color: #6a1b9a; background: rgba(156, 39, 176, 0.12); }
-  .history-status.status-needs_action { color: #ef6c00; background: rgba(255, 152, 0, 0.14); }
-  .history-status.status-active       { color: #1565c0; background: rgba(33, 150, 243, 0.12); }
-  .history-status.status-upcoming     { color: #455a64; background: rgba(96, 125, 139, 0.12); }
-  .history-status.status-done         { color: #2e7d32; background: rgba(76, 175, 80, 0.12); }
+  .history-status.status-failed       { color: var(--color-status-error-text); background: var(--color-error-bg); }
+  .history-status.status-blocked      { color: var(--color-role-purple-text); background: var(--color-role-purple-bg); }
+  .history-status.status-needs_action { color: var(--color-status-warning-text); background: var(--color-warning-bg); }
+  .history-status.status-active       { color: var(--color-role-blue-text); background: var(--color-info-bg); }
+  .history-status.status-upcoming     { color: var(--color-text-tertiary); background: var(--color-muted-bg); }
+  .history-status.status-done         { color: var(--color-status-success-text); background: var(--color-success-bg); }
   .history-outcome { margin-left: auto; font-size: 11px; }
-  .history-outcome.ok  { color: #2e7d32; }
-  .history-outcome.bad { color: #b71c1c; }
+  .history-outcome.ok  { color: var(--color-status-success-text); }
+  .history-outcome.bad { color: var(--color-status-error-text); }
 
   .tab-body { flex: 1; min-height: 0; overflow-y: auto; }
 
@@ -1152,9 +1152,9 @@
     font-weight: 700;
     letter-spacing: 0.04em;
   }
-  .attn-status.status-failed       { color: #b71c1c; background: rgba(244, 67, 54, 0.12); }
-  .attn-status.status-blocked      { color: #6a1b9a; background: rgba(156, 39, 176, 0.12); }
-  .attn-status.status-needs_action { color: #ef6c00; background: rgba(255, 152, 0, 0.14); }
+  .attn-status.status-failed       { color: var(--color-status-error-text); background: var(--color-error-bg); }
+  .attn-status.status-blocked      { color: var(--color-role-purple-text); background: var(--color-role-purple-bg); }
+  .attn-status.status-needs_action { color: var(--color-status-warning-text); background: var(--color-warning-bg); }
   .attn-reason { color: var(--text-muted, var(--color-text-secondary)); }
   .attn-ws {
     padding: 1px 7px;
