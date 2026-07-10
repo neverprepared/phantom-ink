@@ -99,7 +99,7 @@
     <div class="drilldown ds-fade-up">
       <div class="drilldown-header">
         <span class="drilldown-meta">» {openBucket} · {list.length} items</span>
-        <button class="ds-btn ghost sm" onclick={() => openBucket = null}>collapse</button>
+        <button class="btn ghost sm" onclick={() => openBucket = null}>collapse</button>
       </div>
       {#if list.length}
         {#each list as task}

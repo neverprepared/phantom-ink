@@ -576,7 +576,6 @@
   .header-actions { display: flex; align-items: center; gap: 8px; }
 
   .spinning { animation: spin 0.8s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
 
   /* Disk overview */
   .disk-overview {
@@ -992,6 +991,5 @@
     word-break: break-all;
   }
 
-  @keyframes spin { to { transform: rotate(360deg); } }
   .spin { animation: spin 0.8s linear infinite; }
 </style>

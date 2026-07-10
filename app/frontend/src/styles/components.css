@@ -4,31 +4,6 @@
 
 /* --- Design-spec utility classes (from prototype style contract) --- */
 
-/* buttons */
-.ds-btn {
-  font-family: var(--font-sans);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  border-radius: var(--r-sm);
-  padding: 8px 14px;
-  border: 1px solid var(--border);
-  background: var(--bg-elev);
-  color: var(--text);
-  transition: border-color var(--dur), background var(--dur), color var(--dur);
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  white-space: nowrap;
-}
-.ds-btn:hover { border-color: var(--border-strong); background: var(--bg-hover); }
-.ds-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.ds-btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
-.ds-btn.soft { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
-.ds-btn.ghost { background: transparent; border-color: transparent; color: var(--text-muted); }
-.ds-btn.ghost:hover { background: var(--bg-hover); color: var(--text); }
-.ds-btn.sm { padding: 5px 10px; font-size: 12px; }
-.ds-btn.danger:hover { color: var(--fail); border-color: color-mix(in srgb, var(--fail) 40%, var(--border)); }
 
 /* inline tags & type badges */
 .ds-badge-type {
