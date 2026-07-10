@@ -160,6 +160,20 @@ func (a *App) startup(ctx context.Context) {
 		collectCtx, collectCancel := context.WithCancel(ctx)
 		a.collectStop = collectCancel
 		a.collectScheduler = newCollectScheduler(a)
+		// One-time heal for widget-owned collect jobs that accumulated from the
+		// auto-registration race and dashboard rebuilds:
+		//  1. collapse same-widget duplicates (keep the oldest), then
+		//  2. drop orphans whose owning widget is gone from the saved layout.
+		if n, err := a.db.DedupeWidgetJobs(); err != nil {
+			fmt.Fprintf(os.Stderr, "collect: dedupe widget jobs: %v\n", err)
+		} else if n > 0 {
+			fmt.Fprintf(os.Stderr, "collect: removed %d duplicate widget-owned job(s)\n", n)
+		}
+		if n, err := a.db.PruneOrphanWidgetJobs(); err != nil {
+			fmt.Fprintf(os.Stderr, "collect: prune orphan widget jobs: %v\n", err)
+		} else if n > 0 {
+			fmt.Fprintf(os.Stderr, "collect: removed %d orphan widget-owned job(s)\n", n)
+		}
 		a.collectScheduler.Start(collectCtx)
 
 		// Automation engine — evaluates event-driven rules and fires actions.

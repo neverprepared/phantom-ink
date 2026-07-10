@@ -102,6 +102,10 @@ export function DeleteCollectJob(arg1) {
   return window['go']['main']['App']['DeleteCollectJob'](arg1);
 }
 
+export function DeleteCollectJobsByOwner(arg1, arg2) {
+  return window['go']['main']['App']['DeleteCollectJobsByOwner'](arg1, arg2);
+}
+
 export function DeleteGatewayEnv(arg1) {
   return window['go']['main']['App']['DeleteGatewayEnv'](arg1);
 }

@@ -54,6 +54,8 @@ export function DeleteChannel(arg1:string):Promise<void>;
 
 export function DeleteCollectJob(arg1:string):Promise<void>;
 
+export function DeleteCollectJobsByOwner(arg1:string,arg2:string):Promise<number>;
+
 export function DeleteGatewayEnv(arg1:string):Promise<void>;
 
 export function DeleteLoopTemplate(arg1:string):Promise<void>;

@@ -534,10 +534,14 @@
     if (el) grid.removeWidget(el, true);
     dashboardState.updateWidgets(dashboardState.widgets.filter(w => w.id !== id));
     markDirty();
-    if (jobId) {
-      const a = await getApi();
-      try { await (a as any)?.DeleteCollectJob?.(jobId); } catch {}
-    }
+    const a = await getApi();
+    // Delete by jobId when the layout still carries it, but always also delete
+    // by owner (profile + widget id): the job link is no longer persisted in
+    // the layout, so owner is the reliable key. Without this the widget's job
+    // lingers and the scheduler keeps running it after removal.
+    if (jobId) { try { await (a as any)?.DeleteCollectJob?.(jobId); } catch {} }
+    const prof = profileState.active?.name ?? '';
+    try { await (a as any)?.DeleteCollectJobsByOwner?.(prof, id); } catch {}
   }
 
   async function reloadLayout(profileName: string): Promise<void> {
