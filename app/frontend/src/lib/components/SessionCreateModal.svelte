@@ -306,7 +306,7 @@
             </div>
           {/if}
           {#if !localRunnerActive}
-            <p class="hint warn-hint">local runner not enabled â configure in Settings</p>
+            <p class="hint warn-hint">local runner not enabled — configure in Settings</p>
           {:else}
             <p class="hint">runs as <code>claude --dangerously-skip-permissions</code> on this Mac via runner <strong>{localRunnerName}</strong></p>
           {/if}
@@ -320,7 +320,7 @@
             {#if preview}
               {#each preview.candidates as c (c.name)}
                 <option value={c.name} disabled={!c.online}>
-                  {c.name}{c.online ? '' : ' (offline)'}{c.tags.length ? ` Â· ${c.tags.join(',')}` : ''}
+                  {c.name}{c.online ? '' : ' (offline)'}{c.tags.length ? ` · ${c.tags.join(',')}` : ''}
                 </option>
               {/each}
             {/if}
@@ -331,10 +331,10 @@
               class:warn={preview.error === 'stale' || preview.error === 'missing_capability'}
               class:err={preview.error === 'not_registered'}
             >
-              â {preview.reason}
+              → {preview.reason}
             </p>
           {:else if previewError}
-            <p class="preview err">â preview failed: {previewError}</p>
+            <p class="preview err">→ preview failed: {previewError}</p>
           {/if}
         </div>
       {/if}
@@ -392,8 +392,8 @@
           {#if ollamaModels.length === 0}
             <p class="field-hint" style="color: var(--color-error, #c33); font-size: 11px; margin-top: 4px;">
               {ollamaModelError
-                ? `No models â ${ollamaModelError}`
-                : 'No models found. Pull one from Integrations â Ollama, or check the service is running.'}
+                ? `No models — ${ollamaModelError}`
+                : 'No models found. Pull one from Integrations → Ollama, or check the service is running.'}
             </p>
           {/if}
         </div>
@@ -414,7 +414,7 @@
         <div class="field">
           <label for="sclaudemodel">model</label>
           <select id="sclaudemodel" bind:value={newModel}>
-            <option value="">â default â</option>
+            <option value="">— default —</option>
             {#each CLAUDE_MODELS as m}
               <option value={m}>{m}</option>
             {/each}
@@ -454,12 +454,12 @@
       <div class="field">
         <label for="scontinue">continue from (optional)</label>
         <select id="scontinue" bind:value={continueFrom}>
-          <option value="">â none â</option>
+          <option value="">— none —</option>
           {#each handoffCandidates as s (s)}
             <option value={s}>{s}</option>
           {/each}
         </select>
-        <p class="hint">prepends that session's stored handoff into this task â fails if it never saved one</p>
+        <p class="hint">prepends that session's stored handoff into this task — fails if it never saved one</p>
       </div>
 
       <div class="modal-actions">

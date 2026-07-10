@@ -19,7 +19,7 @@
   let tasks = $state<any[]>([]);
   let agents = $state<any[]>([]);
   let localProcesses = $state<any[]>([]);
-  let diskUsageMap = $state<Record<string, string>>({}); // container name â writable size
+  let diskUsageMap = $state<Record<string, string>>({}); // container name → writable size
   let diskBreakdown = $state<any | null>(null);
   let sessionHistory = $state<Record<string, any[]>>({});
   let history = $state<any[]>([]);
@@ -47,7 +47,7 @@
     const parts = p.split('/');
     // Keep last 2 segments visible
     const tail = parts.slice(-2).join('/');
-    return tail.length + 4 >= max ? 'â¦/' + parts[parts.length - 1] : 'â¦/' + tail;
+    return tail.length + 4 >= max ? '…/' + parts[parts.length - 1] : '…/' + tail;
   }
 
   function toggleMounts(name: string) {
@@ -87,7 +87,7 @@
   let localRunnerActive = $state(false);
 
   // Continue-from: seed the task with a prior session's stored handoff
-  // (session-store handoff.md â cross-machine session handoff). Candidates
+  // (session-store handoff.md — cross-machine session handoff). Candidates
   // = active sessions + history, both already loaded by refresh().
   const handoffCandidates = $derived([...new Set([
     ...allSessions.map((s: any) => s.session_name ?? s.name),
@@ -117,7 +117,7 @@
     return localProcesses.filter(p => p.workspace_profile?.toLowerCase() === activeProfile.name.toLowerCase());
   });
 
-  // Map session name â running task, and agent name â agent def
+  // Map session name → running task, and agent name → agent def
   let taskBySession = $derived(
     new Map(tasks.filter(t => t.session_name).map((t: any) => [t.session_name, t]))
   );
@@ -163,7 +163,7 @@
     const a = await getApi();
     if (!a) return;
 
-    // Metrics fetch â must not be blocked by local process scan
+    // Metrics fetch — must not be blocked by local process scan
     try {
       const [sh, hist, diskStats] = await Promise.all([
         a.GetSessionsMetricsHistory(),
@@ -183,7 +183,7 @@
       diskHistoryStore.pruneKeys(diskKeys);
     } catch { /* non-critical */ }
 
-    // Local process history + combined aggregate â isolated so failures don't affect metrics
+    // Local process history + combined aggregate — isolated so failures don't affect metrics
     try {
       const procs = await a.FindClaudeProcesses();
       const now = Date.now();
@@ -522,7 +522,7 @@
                     <div class="mount-row">
                       <svg class="mount-icon" xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
                       <span class="mount-host" title={mount.host}>{truncatePath(mount.host)}</span>
-                      <span class="mount-arrow">â</span>
+                      <span class="mount-arrow">→</span>
                       <span class="mount-container">{mount.container}</span>
                       <span class="mount-mode" class:mount-mode-ro={mount.mode === 'ro'}>{mount.mode}</span>
                     </div>
@@ -659,7 +659,7 @@
         <iframe
           class="terminal-frame"
           src={terminalUrl}
-          title="Terminal â {terminalSession.session_name ?? terminalSession.name}"
+          title="Terminal — {terminalSession.session_name ?? terminalSession.name}"
         ></iframe>
       {:else}
         <div class="terminal-loading">connecting...</div>
