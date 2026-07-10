@@ -29,6 +29,10 @@
     updated_at: number;
   }
 
+  // embedded=true when rendered inside the Loops panel's Runs tab — suppresses
+  // this component's own page header so the tab doesn't show a second title.
+  let { embedded = false }: { embedded?: boolean } = $props();
+
   let loops = $state<LoopRun[]>([]);
   let loading = $state(true);
   let pollHandle: ReturnType<typeof setInterval> | null = null;
@@ -211,10 +215,12 @@
 
 <div class="panel">
   <header class="panel-header">
-    <div class="header-left">
-      <h2>Loop Runs</h2>
-      <span class="subtitle">live view of loop-runner instances driven by brainbox</span>
-    </div>
+    {#if !embedded}
+      <div class="header-left">
+        <h1 class="page-title">loop runs</h1>
+        <span class="subtitle">live view of loop-runner instances driven by brainbox</span>
+      </div>
+    {/if}
     <div class="header-right">
       <label class="filter">
         Status
@@ -341,8 +347,8 @@
         />
       </label>
       <div class="modal-actions">
-        <button class="btn-cancel-keep" onclick={closeCancel}>Keep running</button>
-        <button class="btn-cancel-confirm" onclick={confirmCancel}>Cancel loop</button>
+        <button class="btn-cancel-keep" onclick={closeCancel}>keep running</button>
+        <button class="btn-cancel-confirm" onclick={confirmCancel}>cancel loop</button>
       </div>
     </div>
   </Modal>
@@ -522,20 +528,22 @@
     font-weight: 600;
     border-radius: 10px;
     letter-spacing: 0.5px;
-    background: #333;
-    color: #ddd;
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-secondary);
   }
+  /* running = --run (green) to match the in-flight count badge in the Loops
+     tab; converged = --task (teal, settled); terminal = --fail (red). */
   .pill-running {
-    background: #1f3a5f;
-    color: #88c1ff;
+    background: var(--run-soft);
+    color: var(--run);
   }
   .pill-good {
-    background: #1f4a2a;
-    color: #95e0a8;
+    background: var(--task-soft);
+    color: var(--task);
   }
   .pill-bad {
-    background: #4a2a2a;
-    color: #ff9a9a;
+    background: var(--fail-soft);
+    color: var(--fail);
   }
 
   .card-body {

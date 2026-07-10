@@ -668,21 +668,21 @@ Describe what the agent does each iteration.
 
 <div class="panel">
   <header class="panel-header">
-    <h2>Loops</h2>
+    <h1 class="page-title">loops</h1>
     <nav class="tabs">
       <button
         class="tab"
         class:active={activeTab === 'templates'}
         onclick={() => (activeTab = 'templates')}
       >
-        Templates
+        templates
       </button>
       <button
         class="tab"
         class:active={activeTab === 'runs'}
         onclick={() => (activeTab = 'runs')}
       >
-        Runs
+        runs
         {#if runningLoopCount > 0}
           <span class="running-badge" title="{runningLoopCount} loop{runningLoopCount === 1 ? '' : 's'} in flight">
             {runningLoopCount}
@@ -694,7 +694,7 @@ Describe what the agent does each iteration.
         class:active={activeTab === 'trigger'}
         onclick={() => (activeTab = 'trigger')}
       >
-        Trigger
+        trigger
       </button>
     </nav>
   </header>
@@ -703,9 +703,9 @@ Describe what the agent does each iteration.
     <div class="templates-tab">
       <aside class="template-list">
         <div class="template-list-head">
-          <span class="template-list-label">Templates</span>
+          <span class="template-list-label">templates</span>
           <button class="btn-new" onclick={openNewTemplateModal} title="Create a new loop template">
-            + New
+            + new
           </button>
         </div>
         {#if templatesLoading}
@@ -756,14 +756,14 @@ Describe what the agent does each iteration.
               class:active={detailTab === 'diagram'}
               onclick={() => (detailTab = 'diagram')}
             >
-              Diagram
+              diagram
             </button>
             <button
               class="sub-tab"
               class:active={detailTab === 'markdown'}
               onclick={() => (detailTab = 'markdown')}
             >
-              Markdown
+              markdown
               {#if isDirty()}<span class="dirty-dot inline" title="Unsaved changes"></span>{/if}
             </button>
             <button
@@ -771,7 +771,7 @@ Describe what the agent does each iteration.
               class:active={detailTab === 'assist'}
               onclick={() => (detailTab = 'assist')}
             >
-              AI Assist
+              ai assist
               {#if assistBusy}<span class="dim sub-tab-hint">…</span>{/if}
             </button>
           </nav>
@@ -779,7 +779,7 @@ Describe what the agent does each iteration.
           {#if detailTab === 'diagram'}
             <div class="diagram-section">
               <div class="diagram-head">
-                <span class="diagram-label">Diagram</span>
+                <span class="diagram-label">diagram</span>
                 {#if diagramBusy}<span class="dim">rendering…</span>{/if}
               </div>
               {#if diagramError}
@@ -800,7 +800,7 @@ Describe what the agent does each iteration.
           {:else if detailTab === 'assist'}
             <div class="assist-box">
               <div class="assist-head">
-                <span class="assist-label">AI Assist</span>
+                <span class="assist-label">ai assist</span>
                 <span class="assist-meta">
                   {#if assistModel}<span class="assist-model">{assistModel}</span>{/if}
                   {#if sessionCost > 0}<span class="assist-cost">Cost: {fmtCost(sessionCost)}</span>{/if}
@@ -820,7 +820,7 @@ Describe what the agent does each iteration.
                   onclick={() => runAssist('generate')}
                   disabled={assistBusy || !assistPrompt.trim()}
                 >
-                  {assistBusy ? '…' : '✨ Generate'}
+                  {assistBusy ? '…' : '✨ generate'}
                 </button>
                 <button
                   class="btn-refine"
@@ -828,14 +828,14 @@ Describe what the agent does each iteration.
                   disabled={assistBusy || !assistPrompt.trim() || editorSelection.isEmpty}
                   title={editorSelection.isEmpty ? 'Highlight a markdown range in the Markdown tab first' : ''}
                 >
-                  Refine selection
+                  refine selection
                 </button>
                 <button
                   class="btn-explain"
                   onclick={() => runAssist('explain')}
                   disabled={assistBusy || !assistPrompt.trim()}
                 >
-                  Explain
+                  explain
                 </button>
               </div>
               {#if assistError}
@@ -844,8 +844,8 @@ Describe what the agent does each iteration.
               {#if explanation}
                 <div class="explanation">
                   <div class="explanation-head">
-                    <span>Explanation</span>
-                    <button class="explanation-close" onclick={() => (explanation = null)}>×</button>
+                    <span>explanation</span>
+                    <button class="explanation-close" onclick={() => (explanation = null)} aria-label="Close explanation" title="Close explanation">×</button>
                   </div>
                   <div class="explanation-body">{explanation}</div>
                 </div>
@@ -867,14 +867,14 @@ Describe what the agent does each iteration.
                 onclick={saveTemplate}
                 disabled={templateBusy || !isDirty()}
               >
-                {templateBusy ? 'Saving…' : 'Save'}
+                {templateBusy ? 'saving…' : 'save'}
               </button>
               <button
                 class="btn-delete"
                 onclick={openDeleteModal}
                 disabled={templateBusy}
               >
-                Delete
+                delete
               </button>
             {:else}
               <button
@@ -882,7 +882,7 @@ Describe what the agent does each iteration.
                 onclick={forkTemplate}
                 disabled={templateBusy}
               >
-                {templateBusy ? 'Forking…' : 'Fork to user'}
+                {templateBusy ? 'forking…' : 'fork to user'}
               </button>
               <span class="dim">Built-in templates are read-only. Fork to make changes.</span>
             {/if}
@@ -894,7 +894,7 @@ Describe what the agent does each iteration.
     </div>
   {:else if activeTab === 'runs'}
     <div class="runs-tab">
-      <LoopRunsPanel />
+      <LoopRunsPanel embedded />
     </div>
   {:else if activeTab === 'trigger'}
     <div class="trigger-tab">
@@ -944,7 +944,7 @@ Describe what the agent does each iteration.
             disabled={!triggerTemplateName || triggerStarting}
             onclick={startTrigger}
           >
-            {triggerStarting ? 'Starting…' : 'Start loop'}
+            {triggerStarting ? 'starting…' : 'start loop'}
           </button>
         </div>
       </div>
@@ -968,13 +968,13 @@ Describe what the agent does each iteration.
           class="btn-modal-cancel"
           onclick={closeDeleteModal}
           disabled={deleteBusy}
-        >Cancel</button>
+        >cancel</button>
         <button
           class="btn-modal-delete"
           onclick={confirmDeleteTemplate}
           disabled={deleteBusy}
         >
-          {deleteBusy ? 'Deleting…' : 'Delete'}
+          {deleteBusy ? 'deleting…' : 'delete'}
         </button>
       </div>
     </div>
@@ -1005,8 +1005,8 @@ Describe what the agent does each iteration.
         <div class="modal-error">{newTemplateError}</div>
       {/if}
       <div class="modal-actions">
-        <button class="btn-modal-cancel" onclick={closeNewTemplateModal}>Cancel</button>
-        <button class="btn-modal-create" onclick={confirmNewTemplate}>Create</button>
+        <button class="btn-modal-cancel" onclick={closeNewTemplateModal}>cancel</button>
+        <button class="btn-modal-create" onclick={confirmNewTemplate}>create</button>
       </div>
     </div>
   </Modal>
@@ -1018,8 +1018,8 @@ Describe what the agent does each iteration.
       <h3>Unsaved changes</h3>
       <p class="dim modal-help">{discardConfirm.message}</p>
       <div class="modal-actions">
-        <button class="btn-modal-cancel" onclick={closeDiscardConfirm}>Keep editing</button>
-        <button class="btn-modal-create" onclick={acceptDiscard}>Discard</button>
+        <button class="btn-modal-cancel" onclick={closeDiscardConfirm}>keep editing</button>
+        <button class="btn-modal-create" onclick={acceptDiscard}>discard</button>
       </div>
     </div>
   </Modal>
@@ -1185,19 +1185,19 @@ Describe what the agent does each iteration.
     font-size: 10px;
     padding: 1px 6px;
     border-radius: 8px;
-    background: #2a2a2a;
-    color: #aaa;
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-muted);
     letter-spacing: 0.5px;
     text-transform: uppercase;
     font-weight: 600;
   }
   .badge-built {
-    background: #2a2f4a;
-    color: #b8c0e0;
+    background: var(--task-soft);
+    color: var(--task);
   }
   .badge-user {
-    background: #1f3a2a;
-    color: #95e0a8;
+    background: var(--run-soft);
+    color: var(--run);
   }
   .dim {
     color: var(--color-text-muted);
@@ -1556,11 +1556,11 @@ Describe what the agent does each iteration.
     justify-content: center;
   }
   .error {
-    color: #ff9a9a;
+    color: var(--fail);
     font-size: 12px;
     padding: 6px 10px;
-    background: rgba(255, 0, 0, 0.05);
-    border-left: 2px solid #ff9a9a;
+    background: var(--fail-soft);
+    border-left: 2px solid var(--fail);
   }
 
   /* New-template modal */
