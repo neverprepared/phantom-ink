@@ -170,6 +170,142 @@ func (db *DB) DeleteCollectJob(id string) error {
 	return err
 }
 
+// GetCollectJobByOwner returns the job owned by a specific dashboard widget
+// (profile + owner_widget_id). Used to make widget registration idempotent so
+// a widget re-registering on remount reuses its job instead of creating a dup.
+// When multiple exist (from a past race), the oldest wins for stability.
+func (db *DB) GetCollectJobByOwner(profile, ownerWidgetID string) (CollectJob, bool) {
+	if ownerWidgetID == "" {
+		return CollectJob{}, false
+	}
+	var id string
+	err := db.conn.QueryRow(
+		`SELECT id FROM collect_jobs
+		 WHERE profile = ? AND owner_widget_id = ?
+		 ORDER BY created_at ASC, id ASC LIMIT 1`,
+		profile, ownerWidgetID).Scan(&id)
+	if err != nil {
+		return CollectJob{}, false
+	}
+	return db.GetCollectJob(id)
+}
+
+// DeleteCollectJobsByOwner removes every job owned by a widget (profile +
+// owner_widget_id). Called when a widget is removed so its job doesn't linger
+// as an orphan that keeps running on the scheduler.
+func (db *DB) DeleteCollectJobsByOwner(profile, ownerWidgetID string) (int, error) {
+	if ownerWidgetID == "" {
+		return 0, nil
+	}
+	res, err := db.conn.Exec(
+		"DELETE FROM collect_jobs WHERE profile = ? AND owner_widget_id = ?",
+		profile, ownerWidgetID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// DedupeWidgetJobs collapses duplicate widget-owned jobs to one per
+// (profile, owner_widget_id), keeping the oldest. Concurrent auto-registration
+// (a widget's fetch firing several times before the first create committed)
+// previously created several rows for the same widget; this heals that state.
+// Returns the number of rows removed.
+func (db *DB) DedupeWidgetJobs() (int, error) {
+	res, err := db.conn.Exec(`
+		DELETE FROM collect_jobs
+		WHERE owner_widget_id != ''
+		  AND id NOT IN (
+		    SELECT id FROM (
+		      SELECT id, ROW_NUMBER() OVER (
+		        PARTITION BY profile, owner_widget_id
+		        ORDER BY created_at ASC, id ASC
+		      ) AS rn
+		      FROM collect_jobs
+		      WHERE owner_widget_id != ''
+		    ) WHERE rn = 1
+		  )`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// PruneOrphanWidgetJobs deletes widget-owned collect jobs whose owning widget
+// no longer exists in that profile's saved dashboard layout. Rebuilding a
+// dashboard (and the earlier cross-profile layout clone) left jobs bound to
+// widget ids that are gone; they keep running on the scheduler and pile up as
+// duplicates in the Jobs pane. Deleting them from the pane didn't stick because
+// nothing re-links an orphan — but nothing removed it either.
+//
+// Only profiles that HAVE a saved layout are pruned: a missing layout can't be
+// distinguished from "not loaded yet". Runs once at startup, when the saved
+// layout is authoritative (no in-memory unsaved widgets exist yet). Returns the
+// number of rows removed.
+func (db *DB) PruneOrphanWidgetJobs() (int, error) {
+	rows, err := db.conn.Query(`SELECT key, value FROM settings WHERE key LIKE 'dashboard_layout:%'`)
+	if err != nil {
+		return 0, err
+	}
+	type layoutT struct {
+		Widgets []struct {
+			ID string `json:"id"`
+		} `json:"widgets"`
+	}
+	profileIDs := map[string]map[string]bool{}
+	for rows.Next() {
+		var key, val string
+		if err := rows.Scan(&key, &val); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		profile := strings.TrimPrefix(key, "dashboard_layout:")
+		var lay layoutT
+		if json.Unmarshal([]byte(val), &lay) != nil {
+			continue
+		}
+		ids := map[string]bool{}
+		for _, w := range lay.Widgets {
+			if w.ID != "" {
+				ids[w.ID] = true
+			}
+		}
+		profileIDs[profile] = ids
+	}
+	rows.Close()
+
+	total := 0
+	for profile, ids := range profileIDs {
+		jr, err := db.conn.Query(
+			`SELECT id, owner_widget_id FROM collect_jobs WHERE profile = ? AND owner_widget_id != ''`,
+			profile)
+		if err != nil {
+			return total, err
+		}
+		var toDelete []string
+		for jr.Next() {
+			var id, owner string
+			if err := jr.Scan(&id, &owner); err != nil {
+				jr.Close()
+				return total, err
+			}
+			if !ids[owner] {
+				toDelete = append(toDelete, id)
+			}
+		}
+		jr.Close()
+		for _, id := range toDelete {
+			if _, err := db.conn.Exec(`DELETE FROM collect_jobs WHERE id = ?`, id); err != nil {
+				return total, err
+			}
+			total++
+		}
+	}
+	return total, nil
+}
+
 func (db *DB) markCollectJobRun(id string, ranAt int64, runErr string) error {
 	_, err := db.conn.Exec(
 		"UPDATE collect_jobs SET last_run_at = ?, last_error = ? WHERE id = ?",
@@ -558,10 +694,30 @@ func (a *App) ListCollectJobs(profile string) ([]CollectJob, error) {
 	return a.db.ListCollectJobs(profile)
 }
 
+// collectJobSaveMu serialises the find-or-create in SaveCollectJob so two
+// concurrent widget registrations for the same (profile, owner_widget_id)
+// resolve to a single row instead of racing to insert duplicates.
+var collectJobSaveMu sync.Mutex
+
 func (a *App) SaveCollectJob(job CollectJob) (CollectJob, error) {
 	if a.db == nil {
 		return CollectJob{}, fmt.Errorf("db not ready")
 	}
+
+	// Idempotent registration for widget-owned jobs: if this is a create
+	// (no id) for a widget that already has a job, reuse that job's id so we
+	// update it in place rather than spawn a duplicate. The mutex makes the
+	// lookup+insert atomic against concurrent registrations from the same
+	// widget (a metric widget's fetch can fire several times at once).
+	if job.ID == "" && job.OwnerWidgetID != "" {
+		collectJobSaveMu.Lock()
+		defer collectJobSaveMu.Unlock()
+		if existing, ok := a.db.GetCollectJobByOwner(job.Profile, job.OwnerWidgetID); ok {
+			job.ID = existing.ID
+			job.CreatedAt = existing.CreatedAt
+		}
+	}
+
 	if job.ID == "" {
 		job.ID = newCollectJobID()
 		job.CreatedAt = time.Now().UnixMilli()
@@ -576,6 +732,16 @@ func (a *App) SaveCollectJob(job CollectJob) (CollectJob, error) {
 		return CollectJob{}, err
 	}
 	return job, nil
+}
+
+// DeleteCollectJobsByOwner removes the job(s) a dashboard widget owns. Called
+// when the widget is removed so its collect job stops running. Safe to call
+// with an empty owner (no-op).
+func (a *App) DeleteCollectJobsByOwner(profile, ownerWidgetID string) (int, error) {
+	if a.db == nil {
+		return 0, fmt.Errorf("db not ready")
+	}
+	return a.db.DeleteCollectJobsByOwner(profile, ownerWidgetID)
 }
 
 func (a *App) DeleteCollectJob(id string) error {

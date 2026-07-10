@@ -36,17 +36,22 @@
     (config.path ? ` | jq -r '.${config.path}'` : '')
   );
 
+  // Resolved collect-job id for THIS instance — cached locally so later ticks
+  // read from the store instead of re-registering (which spawned dup jobs).
+  let resolvedJobId = $state<string | null>(config.jobId ?? null);
+  let registering = false;
+
   async function fetchValue() {
     const a = await getApi();
     if (!a) return;
 
-    if (config.jobId) {
+    if (resolvedJobId) {
       try {
-        const entry = await a.GetLatestCollectedEntry(config.jobId, config.label);
+        const entry = await a.GetLatestCollectedEntry(resolvedJobId, config.label);
         if (entry) {
           value = entry.value || null;
           error = false;
-          if (value != null) valueCache.set(config.jobId, value);
+          if (value != null) valueCache.set(resolvedJobId, value);
         }
       } catch {
         error = true;
@@ -56,49 +61,50 @@
       return;
     }
 
-    // Live fetch + auto-register
+    // Live fetch + register once (guarded; server dedupes per owner too).
+    if (registering) { loading = false; return; }
+    registering = true;
     try {
       value = await a.FetchMetricUrl(profile, config.url, config.path ?? '', config.header ?? '');
       error = false;
-      if (onConfigUpdate) {
-        try {
-          const all: any[] = (await (a as any).ListCollectJobs(profile)) ?? [];
-          let existing = widgetId ? all.find(j => j.owner_widget_id === widgetId) : null;
-          if (!existing) {
-            existing = all.find(j => j.name === config.label && j.command === syntheticCommand);
-          }
-          if (existing) {
-            onConfigUpdate({ jobId: existing.id });
-            const needsBackfill = !existing.source || (widgetId && existing.owner_widget_id !== widgetId);
-            if (needsBackfill) {
-              try { await (a as any).SaveCollectJob({ ...existing, source: 'widget', owner_widget_id: widgetId ?? '' }); } catch {}
-            }
-          } else {
-            const job = await a.SaveCollectJob({
-              id: '', profile, name: config.label, command: syntheticCommand,
-              interval_s: config.interval ?? 60, enabled: true,
-              default_actions: '[]', last_error: '', created_at: 0,
-              source: 'widget', owner_widget_id: widgetId ?? '',
-            } as any);
-            onConfigUpdate({ jobId: job.id });
-          }
-        } catch { /* non-fatal */ }
+      const all: any[] = (await (a as any).ListCollectJobs(profile)) ?? [];
+      let existing = widgetId ? all.find(j => j.owner_widget_id === widgetId) : null;
+      if (!existing) {
+        existing = all.find(j => j.name === config.label && j.command === syntheticCommand);
+      }
+      if (existing) {
+        resolvedJobId = existing.id;
+        onConfigUpdate?.({ jobId: existing.id });
+        const needsBackfill = !existing.source || (widgetId && existing.owner_widget_id !== widgetId);
+        if (needsBackfill) {
+          try { await (a as any).SaveCollectJob({ ...existing, source: 'widget', owner_widget_id: widgetId ?? '' }); } catch {}
+        }
+      } else {
+        const job = await a.SaveCollectJob({
+          id: '', profile, name: config.label, command: syntheticCommand,
+          interval_s: config.interval ?? 60, enabled: true,
+          default_actions: '[]', last_error: '', created_at: 0,
+          source: 'widget', owner_widget_id: widgetId ?? '',
+        } as any);
+        resolvedJobId = job.id;
+        onConfigUpdate?.({ jobId: job.id });
       }
     } catch {
       error = true;
     } finally {
+      registering = false;
       loading = false;
     }
   }
 
   async function triggerJobIfStale() {
-    if (!config.jobId) return;
+    if (!resolvedJobId) return;
     const now = Date.now();
-    const last = lastTriggeredMs.get(config.jobId) ?? 0;
+    const last = lastTriggeredMs.get(resolvedJobId) ?? 0;
     if (now - last < TRIGGER_DEBOUNCE_MS) return;
-    lastTriggeredMs.set(config.jobId, now);
+    lastTriggeredMs.set(resolvedJobId, now);
     const a = await getApi();
-    try { await (a as any)?.RunCollectJobNow?.(config.jobId); } catch {}
+    try { await (a as any)?.RunCollectJobNow?.(resolvedJobId); } catch {}
   }
 
   onMount(() => {
@@ -130,7 +136,7 @@
   {/if}
   <span class="stat-sub">
     {config.url.replace(/^https?:\/\//, '').slice(0, 24)}{config.url.length > 31 ? '…' : ''}
-    · {config.interval ?? 60}s{config.jobId ? ' · ●' : ''}
+    · {config.interval ?? 60}s{resolvedJobId ? ' · ●' : ''}
   </span>
 </div>
 

@@ -35,18 +35,27 @@
   const isString = $derived(config.valueType === 'string');
   const profile  = $derived(profileState.active?.name ?? '');
 
+  // The resolved collect-job id for THIS widget instance. Seeded from config,
+  // then filled the first time we find/register our job and cached locally so
+  // later ticks read from the store instead of re-registering — re-registering
+  // on every tick (with no local memory) is what spawned duplicate jobs.
+  let resolvedJobId = $state<string | null>(config.jobId ?? null);
+  // Guards the register path so concurrent fetches (interval + collect:update)
+  // don't each create a job for this widget.
+  let registering = false;
+
   async function fetchValue() {
     const a = await getApi();
     if (!a) { error = 'no api'; loading = false; return; }
 
-    // If we have a jobId, read from the store
-    if (config.jobId) {
+    // Once we know our job, always read from the store.
+    if (resolvedJobId) {
       try {
-        const entry = await a.GetLatestCollectedEntry(config.jobId, config.label);
+        const entry = await a.GetLatestCollectedEntry(resolvedJobId, config.label);
         if (entry) {
           value = entry.value || null;
           error = null;
-          if (value != null) valueCache.set(config.jobId, value);
+          if (value != null) valueCache.set(resolvedJobId, value);
         }
       } catch (e: any) {
         error = e?.message ?? String(e);
@@ -56,40 +65,40 @@
       return;
     }
 
-    // No jobId yet — run live and auto-register as a collect job
+    // No job yet — run live once and register. Guarded so overlapping fetches
+    // don't each create a job; server-side registration is also idempotent per
+    // (profile, owner_widget_id).
+    if (registering || !config.command) { loading = false; return; }
+    registering = true;
     try {
       value = await a.RunMetricScript(profile, config.command);
       error = null;
-      // Auto-register so future renders read from store. Prefer matching
-      // by owner_widget_id (stable across renames); fall back to legacy
-      // (name+command) fingerprint and backfill the link.
-      if (config.command && onConfigUpdate) {
-        try {
-          const all: any[] = (await (a as any).ListCollectJobs(profile)) ?? [];
-          let existing = widgetId ? all.find(j => j.owner_widget_id === widgetId) : null;
-          if (!existing) {
-            existing = all.find(j => j.name === config.label && j.command === config.command);
-          }
-          if (existing) {
-            onConfigUpdate({ jobId: existing.id });
-            const needsBackfill = !existing.source || (widgetId && existing.owner_widget_id !== widgetId);
-            if (needsBackfill) {
-              try { await (a as any).SaveCollectJob({ ...existing, source: 'widget', owner_widget_id: widgetId ?? '' }); } catch {}
-            }
-          } else {
-            const job = await a.SaveCollectJob({
-              id: '', profile, name: config.label, command: config.command,
-              interval_s: config.interval ?? 60, enabled: true,
-              default_actions: '[]', last_error: '', created_at: 0,
-              source: 'widget', owner_widget_id: widgetId ?? '',
-            } as any);
-            onConfigUpdate({ jobId: job.id });
-          }
-        } catch { /* non-fatal */ }
+      const all: any[] = (await (a as any).ListCollectJobs(profile)) ?? [];
+      let existing = widgetId ? all.find(j => j.owner_widget_id === widgetId) : null;
+      if (!existing) {
+        existing = all.find(j => j.name === config.label && j.command === config.command);
+      }
+      if (existing) {
+        resolvedJobId = existing.id;
+        onConfigUpdate?.({ jobId: existing.id });
+        const needsBackfill = !existing.source || (widgetId && existing.owner_widget_id !== widgetId);
+        if (needsBackfill) {
+          try { await (a as any).SaveCollectJob({ ...existing, source: 'widget', owner_widget_id: widgetId ?? '' }); } catch {}
+        }
+      } else {
+        const job = await a.SaveCollectJob({
+          id: '', profile, name: config.label, command: config.command,
+          interval_s: config.interval ?? 60, enabled: true,
+          default_actions: '[]', last_error: '', created_at: 0,
+          source: 'widget', owner_widget_id: widgetId ?? '',
+        } as any);
+        resolvedJobId = job.id;
+        onConfigUpdate?.({ jobId: job.id });
       }
     } catch (e: any) {
       error = e?.message ?? String(e);
     } finally {
+      registering = false;
       loading = false;
     }
   }
@@ -97,13 +106,13 @@
   // Fire the underlying collect job so the widget shows fresh data shortly
   // after mount. Debounced so quick panel-switching doesn't trigger storms.
   async function triggerJobIfStale() {
-    if (!config.jobId) return;
+    if (!resolvedJobId) return;
     const now = Date.now();
-    const last = lastTriggeredMs.get(config.jobId) ?? 0;
+    const last = lastTriggeredMs.get(resolvedJobId) ?? 0;
     if (now - last < TRIGGER_DEBOUNCE_MS) return;
-    lastTriggeredMs.set(config.jobId, now);
+    lastTriggeredMs.set(resolvedJobId, now);
     const a = await getApi();
-    try { await (a as any)?.RunCollectJobNow?.(config.jobId); } catch {}
+    try { await (a as any)?.RunCollectJobNow?.(resolvedJobId); } catch {}
   }
 
   onMount(() => {
@@ -135,7 +144,7 @@
   {:else}
     <span class="stat-value" style={config.color ? `color: ${config.color}` : ''}>{value}</span>
   {/if}
-  <span class="stat-sub">script · {config.interval ?? 60}s{config.jobId ? ' · ●' : ''}</span>
+  <span class="stat-sub">script · {config.interval ?? 60}s{resolvedJobId ? ' · ●' : ''}</span>
 </div>
 
 <style>
