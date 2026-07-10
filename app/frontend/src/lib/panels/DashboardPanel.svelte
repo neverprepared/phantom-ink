@@ -748,16 +748,16 @@
     {#if dirty}
       <span class="unsaved" title="This dashboard has uncommitted changes">● unsaved</span>
       <button
-        class="ds-btn sm primary"
+        class="btn sm primary"
         disabled={saving}
         onclick={commitLayout}
       >{saving ? 'saving…' : 'save'}</button>
     {/if}
     {#if arrangeMode}
-      <button class="ds-btn sm" onclick={() => drawerOpen = true}>+ widget</button>
+      <button class="btn sm" onclick={() => drawerOpen = true}>+ widget</button>
     {/if}
     <button
-      class="ds-btn sm {arrangeMode ? 'primary' : ''}"
+      class="btn sm {arrangeMode ? 'primary' : ''}"
       onclick={() => { arrangeMode = !arrangeMode; if (!arrangeMode) drawerOpen = false; }}
     >{arrangeMode ? 'done' : 'arrange'}</button>
   </div>
