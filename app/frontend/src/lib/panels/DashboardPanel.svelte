@@ -244,15 +244,39 @@
   let gridEl: HTMLElement;
   let grid: GridStack | null = null;
   const mountedWidgets = new Map<string, any>();
-  let saveTimer: ReturnType<typeof setTimeout> | null = null;
   // Set to true while we are programmatically (re)mounting widgets so the
-  // grid 'change' handler doesn't capture transient reflow positions and
-  // save them as the canonical layout.
+  // grid 'change' handler doesn't mark the layout dirty for transient reflow.
   let suppressSave = false;
+  // The layout is committed EXPLICITLY via the Save button, never on a timer.
+  // Debounced auto-saves raced with profile switches and cloned one profile's
+  // layout onto another; an explicit commit makes the write a deliberate,
+  // single-profile action. `dirty` tracks uncommitted edits.
+  let dirty = $state(false);
+  let saving = $state(false);
   let drawerOpen = $state(false);
   let editTarget = $state<WidgetInstance | null>(null);
 
   let arrangeMode = $state(false);
+
+  // Mark the layout as having uncommitted changes (ignored during the
+  // programmatic remount window). Replaces every former debounced save.
+  function markDirty(): void {
+    if (suppressSave) return;
+    dirty = true;
+  }
+
+  // Commit the current layout for the active profile. saveLayout captures its
+  // target profile synchronously, so this is always a single-profile write.
+  async function commitLayout(): Promise<void> {
+    if (saving) return;
+    saving = true;
+    try {
+      await saveLayout();
+      dirty = false;
+    } finally {
+      saving = false;
+    }
+  }
 
   function visibleWidgets(): WidgetInstance[] {
     return dashboardState.widgets;
@@ -279,8 +303,10 @@
       existing.id === id ? { ...existing, config: { ...existing.config, ...patch } } : existing
     );
     dashboardState.updateWidgets(updated);
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveLayout, 800);
+    // In-memory only: this is internal bookkeeping (a widget resolving its own
+    // collect-job id at mount), not a user edit. It re-resolves on the next
+    // mount via owner_widget_id, so it need not be persisted here — and must
+    // not silently commit the layout. It rides along the next explicit save.
   }
 
   function mountWidget(w: WidgetInstance): void {
@@ -434,8 +460,7 @@
       if (titleEl) titleEl.textContent = ((w.config as any).label?.trim()) || KIND_TITLES[w.kind];
     }
 
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveLayout, 800);
+    markDirty();
   }
 
   function handleAddWidget(w: WidgetInstance): void {
@@ -452,8 +477,7 @@
     mountWidget(placed);
     // Drawer stays open so the user can add multiple widgets in one session.
     // Backdrop click / close button still dismisses it.
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveLayout, 800);
+    markDirty();
   }
 
   async function pruneDuplicateMetricJobs(widgets: WidgetInstance[]): Promise<void> {
@@ -509,8 +533,7 @@
     const el = gridEl.querySelector(`[gs-id="${id}"]`) as HTMLElement | null;
     if (el) grid.removeWidget(el, true);
     dashboardState.updateWidgets(dashboardState.widgets.filter(w => w.id !== id));
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveLayout, 800);
+    markDirty();
     if (jobId) {
       const a = await getApi();
       try { await (a as any)?.DeleteCollectJob?.(jobId); } catch {}
@@ -519,12 +542,12 @@
 
   async function reloadLayout(profileName: string): Promise<void> {
     if (!grid) return;
-    // Suppress save BEFORE we tear the grid down — removeAll() fires
-    // 'change' events that would otherwise schedule a save against a
-    // transiently-empty grid and persist widgets: [] (which falls back
-    // to DEFAULT_LAYOUT on the next load).
+    // Suppress dirty-marking BEFORE we tear the grid down — removeAll() fires
+    // 'change' events that would otherwise mark a transiently-empty grid dirty.
     suppressSave = true;
-    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    // Loading a profile's stored layout discards any uncommitted edits from the
+    // previous view — the Save button is the only commit point.
+    dirty = false;
     try {
       for (const [, inst] of mountedWidgets) unmount(inst);
       mountedWidgets.clear();
@@ -563,8 +586,7 @@
     dashboardState.layout = layout;
     for (const w of layout.widgets) mountWidget(w);
     drawerOpen = false;
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveLayout, 800);
+    markDirty();
   }
 
   // --- Data loading ---
@@ -609,18 +631,14 @@
   }
 
   // Reload layout and data when profile changes (after initial mount).
-  // Crucially: flush any pending save under the OLD profile name FIRST
-  // so unsaved changes don't bleed into the new profile's key.
+  // No auto-save on switch: layout commits are explicit (the Save button), so
+  // switching profiles simply loads the target's stored layout and discards
+  // any uncommitted edits (reloadLayout resets `dirty`). This removes the
+  // save/switch race that could clone one profile's layout onto another.
   let _trackedProfile = '';
   $effect(() => {
     const name = profileState.active?.name ?? '';
     if (name !== _trackedProfile && grid) {
-      const prev = _trackedProfile;
-      if (saveTimer) {
-        clearTimeout(saveTimer);
-        saveTimer = null;
-        void saveLayout(prev);
-      }
       _trackedProfile = name;
       saveProfile = name;
       void reloadLayout(name);
@@ -689,14 +707,12 @@
     // and 'dragstop' as well — in some GridStack versions a resize that
     // ends at the same grid-cell boundary it started near does not emit a
     // 'change', causing the new (smaller) size to be lost.
-    const scheduleSave = () => {
-      if (suppressSave) return;
-      if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(saveLayout, 800);
-    };
-    grid.on('change', scheduleSave);
-    grid.on('resizestop', scheduleSave);
-    grid.on('dragstop', scheduleSave);
+    // Drag / resize / add / remove mark the layout dirty; the user commits
+    // explicitly. resizestop/dragstop are covered too — some GridStack
+    // versions don't emit 'change' for a resize that ends near its start.
+    grid.on('change', markDirty);
+    grid.on('resizestop', markDirty);
+    grid.on('dragstop', markDirty);
 
     void load();
 
@@ -706,7 +722,6 @@
     }, 10_000);
 
     return () => {
-      if (saveTimer) clearTimeout(saveTimer);
       for (const [, inst] of mountedWidgets) unmount(inst);
       mountedWidgets.clear();
       grid?.destroy(false);
@@ -726,6 +741,14 @@
   </div>
 
   <div class="dashboard-actions">
+    {#if dirty}
+      <span class="unsaved" title="This dashboard has uncommitted changes">● unsaved</span>
+      <button
+        class="ds-btn sm primary"
+        disabled={saving}
+        onclick={commitLayout}
+      >{saving ? 'saving…' : 'save'}</button>
+    {/if}
     {#if arrangeMode}
       <button class="ds-btn sm" onclick={() => drawerOpen = true}>+ widget</button>
     {/if}
@@ -816,6 +839,15 @@
     border-bottom: 1px solid var(--border, var(--color-border-primary));
     flex-shrink: 0;
     justify-content: flex-end;
+  }
+
+  .unsaved {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    color: var(--color-warning, var(--color-accent));
+    margin-right: 2px;
+    white-space: nowrap;
   }
 
   .grid-wrap {
