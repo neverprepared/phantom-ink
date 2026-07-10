@@ -118,6 +118,79 @@ func profileEnv(name string) []string {
 	return merged
 }
 
+// resolveProfileEnv builds the environment for a profile-scoped job
+// deterministically from files on disk — no direnv. direnv keeps its .envrc
+// approvals in a per-profile store ($XDG_DATA_HOME/direnv/allow); the app runs
+// under a single profile and therefore cannot satisfy approvals for OTHER
+// profiles' .envrc files, so "direnv exec <other-profile>" fails closed with
+// "is blocked" until each .envrc is manually re-approved from a shell in the
+// app's own profile — and re-breaks on every .envrc edit. We sidestep that
+// entirely by replicating what a shell-profiler .envrc does for env purposes:
+// export the profile identity, prepend {home}/bin to PATH, and layer the
+// dotenv files ({home}/.env then {home}/.envrc.local) that hold the profile's
+// vars and secrets.
+//
+// All bundled profiles are static-dotenv only (no `op read` / dynamic
+// resolution), so the on-disk .env is the complete, authoritative source —
+// unlike the volatile shell-profiler cache profileEnv reads, which is written
+// only on `cd` and is frequently absent. Falls back to that cache only when the
+// workspace home can't be located on disk.
+func (a *App) resolveProfileEnv(profile string) []string {
+	base := os.Environ()
+	if profile == "" {
+		return base
+	}
+	wh := a.profileWorkspaceHome(profile)
+	if wh == "" {
+		return profileEnv(profile)
+	}
+
+	overrides := map[string]string{
+		"WORKSPACE_PROFILE": profile,
+		"WORKSPACE_HOME":    wh,
+	}
+	// dotenv files in .envrc order (.env, then .envrc.local); later wins.
+	for _, name := range []string{".env", ".envrc.local"} {
+		if data, err := os.ReadFile(filepath.Join(wh, name)); err == nil {
+			for k, v := range parseEnvFile(data) {
+				overrides[k] = v
+			}
+		}
+	}
+
+	merged := make([]string, len(base))
+	copy(merged, base)
+	index := make(map[string]int, len(base))
+	for i, kv := range base {
+		if k, _, ok := strings.Cut(kv, "="); ok {
+			index[k] = i
+		}
+	}
+	setVar := func(k, v string) {
+		entry := k + "=" + v
+		if i, ok := index[k]; ok {
+			merged[i] = entry
+		} else {
+			index[k] = len(merged)
+			merged = append(merged, entry)
+		}
+	}
+	for k, v := range overrides {
+		setVar(k, v)
+	}
+	// PATH_add bin: prepend {home}/bin so jobs can call profile-local scripts.
+	if binDir := filepath.Join(wh, "bin"); dirExists(binDir) {
+		setVar("PATH", binDir+string(os.PathListSeparator)+envLookup(merged, "PATH"))
+	}
+	return merged
+}
+
+// dirExists reports whether path exists and is a directory.
+func dirExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
+}
+
 // parseEnvFile parses a KEY=VALUE env file, ignoring comments and blank lines.
 // Lines may optionally start with "export ".
 func parseEnvFile(data []byte) map[string]string {
@@ -152,11 +225,10 @@ func expandEnvVars(s string, env map[string]string) string {
 }
 
 // RunMetricScript executes a shell command and returns its trimmed stdout.
-// When a profile is set and direnv is available, the command runs via
-// "direnv exec <workspace_home>" so the full activated environment
-// (including 1Password-sourced secrets) is available. workspace_home is
-// derived from the configured WorkspacesRoot, not the volatile cache.
-// A 30-second timeout is enforced.
+// When a profile is set, the command runs with that profile's environment
+// resolved deterministically from disk (see resolveProfileEnv): the profile
+// identity plus its dotenv files ({home}/.env, .envrc.local). A 30-second
+// timeout is enforced.
 func (a *App) RunMetricScript(profile, command string) (string, error) {
 	if strings.TrimSpace(command) == "" {
 		return "", fmt.Errorf("no command configured")
@@ -164,19 +236,8 @@ func (a *App) RunMetricScript(profile, command string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	var cmd *exec.Cmd
-	if profile != "" {
-		if workspaceHome := a.profileWorkspaceHome(profile); workspaceHome != "" {
-			if direnvBin := findDirenv(); direnvBin != "" {
-				cmd = exec.CommandContext(ctx, direnvBin, "exec", workspaceHome, "/bin/sh", "-c", command)
-				cmd.Env = os.Environ()
-			}
-		}
-	}
-	if cmd == nil {
-		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", command)
-		cmd.Env = profileEnv(profile)
-	}
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+	cmd.Env = a.resolveProfileEnv(profile)
 
 	out, err := cmd.Output()
 	if err != nil {
@@ -205,20 +266,6 @@ func (a *App) profileWorkspaceHome(profile string) string {
 	return envLookup(profileEnv(profile), "WORKSPACE_HOME")
 }
 
-// findDirenv returns the path to the direnv binary, checking PATH and common
-// Homebrew locations. Returns "" if not found.
-func findDirenv() string {
-	if p, err := exec.LookPath("direnv"); err == nil {
-		return p
-	}
-	for _, candidate := range []string{"/opt/homebrew/bin/direnv", "/usr/local/bin/direnv"} {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	return ""
-}
-
 // envLookup returns the value of key in an env slice (KEY=VALUE format).
 func envLookup(env []string, key string) string {
 	prefix := key + "="
@@ -239,7 +286,7 @@ func (a *App) FetchMetricUrl(profile, url, path, header string) (string, error) 
 		return "", fmt.Errorf("no URL configured")
 	}
 	if profile != "" {
-		envSlice := profileEnv(profile)
+		envSlice := a.resolveProfileEnv(profile)
 		envMap := make(map[string]string, len(envSlice))
 		for _, kv := range envSlice {
 			if k, v, ok := strings.Cut(kv, "="); ok {

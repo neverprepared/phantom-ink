@@ -459,19 +459,8 @@ func (a *App) runWidgetCommand(job CollectJob) ([]CollectedEntry, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	var cmd *exec.Cmd
-	if job.Profile != "" {
-		if wh := a.profileWorkspaceHome(job.Profile); wh != "" {
-			if direnvBin := findDirenv(); direnvBin != "" {
-				cmd = exec.CommandContext(ctx, direnvBin, "exec", wh, "/bin/sh", "-c", job.Command)
-				cmd.Env = os.Environ()
-			}
-		}
-	}
-	if cmd == nil {
-		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", job.Command)
-		cmd.Env = profileEnv(job.Profile)
-	}
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", job.Command)
+	cmd.Env = a.resolveProfileEnv(job.Profile)
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -502,19 +491,8 @@ func (a *App) runCollectCommand(job CollectJob) ([]CollectedEntry, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	var cmd *exec.Cmd
-	if job.Profile != "" {
-		if wh := a.profileWorkspaceHome(job.Profile); wh != "" {
-			if direnvBin := findDirenv(); direnvBin != "" {
-				cmd = exec.CommandContext(ctx, direnvBin, "exec", wh, "/bin/sh", "-c", job.Command)
-				cmd.Env = os.Environ()
-			}
-		}
-	}
-	if cmd == nil {
-		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", job.Command)
-		cmd.Env = profileEnv(job.Profile)
-	}
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", job.Command)
+	cmd.Env = a.resolveProfileEnv(job.Profile)
 
 	out, err := cmd.Output()
 	if err != nil {
