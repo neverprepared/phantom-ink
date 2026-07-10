@@ -11,7 +11,7 @@
   import Badge from '../components/Badge.svelte';
   import Modal from '../components/Modal.svelte';
   import ProfilePicker from '../components/ProfilePicker.svelte';
-  import MetricsChart from '../components/MetricsChart.svelte';
+  import SessionMetricsBar from '../components/SessionMetricsBar.svelte';
   import Spinner from '../components/Spinner.svelte';
 
 
@@ -25,7 +25,6 @@
   let history = $state<any[]>([]);
   let pastSessions = $state<any[]>([]);
   let showPastSessions = $state(false);
-  let aggregateHoverIdx = $state<number | null>(null);
   let loading = $state(true);
   let showNewModal = $state(false);
   let terminalSession = $state<any | null>(null);
@@ -282,9 +281,6 @@
     }
   }
 
-  function formatBytes(bytes: number): string {
-    return bytes ? fmtBytes(bytes) : "–";
-  }
 
   async function refreshMetrics() {
     const a = await getApi();
@@ -361,12 +357,6 @@
     return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   }
 
-  let agentData  = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.agent_count })));
-  let cpuData    = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.total_cpu })));
-  let memData    = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.total_mem })));
-  let latestAgents = $derived(combinedHistoryStore.value.length ? String(combinedHistoryStore.value[combinedHistoryStore.value.length - 1].agent_count) : 'â');
-  let latestCPU    = $derived(combinedHistoryStore.value.length ? `${combinedHistoryStore.value[combinedHistoryStore.value.length - 1].total_cpu.toFixed(1)}%` : 'â');
-  let latestMem    = $derived(combinedHistoryStore.value.length ? formatBytes(combinedHistoryStore.value[combinedHistoryStore.value.length - 1].total_mem) : 'â');
 
   async function handleFocusTab(tty: string) {
     const a = await getApi();
@@ -671,40 +661,7 @@
     </div>
   {/if}
 
-  {#if combinedHistoryStore.value.length >= 2}
-    <div class="charts-row">
-      <MetricsChart
-        data={agentData}
-        label="agents"
-        current={latestAgents}
-        color="var(--color-accent)"
-        formatY={(v) => String(Math.round(v))}
-        hoverIdx={aggregateHoverIdx}
-        onHover={(idx) => aggregateHoverIdx = idx}
-        onHoverEnd={() => aggregateHoverIdx = null}
-      />
-      <MetricsChart
-        data={cpuData}
-        label="total cpu"
-        current={latestCPU}
-        color="var(--color-info)"
-        formatY={(v) => `${v.toFixed(1)}%`}
-        hoverIdx={aggregateHoverIdx}
-        onHover={(idx) => aggregateHoverIdx = idx}
-        onHoverEnd={() => aggregateHoverIdx = null}
-      />
-      <MetricsChart
-        data={memData}
-        label="total memory"
-        current={latestMem}
-        color="var(--color-success)"
-        formatY={formatBytes}
-        hoverIdx={aggregateHoverIdx}
-        onHover={(idx) => aggregateHoverIdx = idx}
-        onHoverEnd={() => aggregateHoverIdx = null}
-      />
-    </div>
-  {/if}
+  <SessionMetricsBar />
 
   {#if loading}
     <div class="loading"><Spinner size={20} /></div>
@@ -1179,11 +1136,6 @@
 
   .header-actions { display: flex; gap: 8px; align-items: center; }
 
-  .charts-row {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 20px;
-  }
 
 
 
