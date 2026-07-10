@@ -41,6 +41,7 @@
   let playbooks    = $state<NamedItem[]>([]);
   let loops       = $state<NamedItem[]>([]);
   let loading      = $state(false);
+  let loadError    = $state<string | null>(null); // set when the jobs fetch fails, so the panel shows an error not a false "no jobs"
   let saving       = $state(false); // in-flight guard for save() — prevents double-submit
   let editingId    = $state<string | null>(null); // null=none, 'new'=create, id=edit
   let runningId    = $state<string | null>(null);
@@ -91,11 +92,14 @@
 
   async function load() {
     const a = await getApi();
-    if (!a) return;
+    if (!a) { loadError = 'API bindings unavailable'; loading = false; return; }
     loading = true;
     try {
+      // The jobs list is the panel's primary data — let its failure surface as
+      // an error state. The playbook/sequence lists only feed the target picker,
+      // so a failure there degrades gracefully (empty picker) via safe().
       const [j, p, c] = await Promise.all([
-        safe((a.ListCollectJobs as any)(''), [], 'ListCollectJobs'),
+        (a.ListCollectJobs as any)(''),
         safe((a.ListPlaybooks as any)(''), [], 'ListPlaybooks'),
         safe((a.ListSequences as any)(), [], 'ListSequences'),
       ]);
@@ -108,6 +112,10 @@
         id: x.id, name: x.name,
         workspace_profile: x.workspace_profile ?? '',
       }));
+      loadError = null;
+    } catch (err: any) {
+      loadError = `${err?.message ?? err}`;
+      jobs = [];
     } finally {
       loading = false;
     }
@@ -400,6 +408,8 @@
   <!-- Job list -->
   {#if loading && jobs.length === 0}
     <div class="empty">loading…</div>
+  {:else if loadError}
+    <EmptyState title="Failed to load jobs" message={loadError} />
   {:else if jobs.length === 0 && editingId !== 'new'}
     <EmptyState title="No jobs yet" message="Create one to schedule recurring work." />
   {:else if visible.length === 0 && editingId !== 'new'}
