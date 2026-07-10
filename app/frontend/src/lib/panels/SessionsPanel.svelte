@@ -12,8 +12,8 @@
   import Modal from '../components/Modal.svelte';
   import ProfilePicker from '../components/ProfilePicker.svelte';
   import SessionMetricsBar from '../components/SessionMetricsBar.svelte';
+  import SessionCreateModal from '../components/SessionCreateModal.svelte';
   import Spinner from '../components/Spinner.svelte';
-
 
   let allSessions = $state<any[]>([]);
   let tasks = $state<any[]>([]);
@@ -57,8 +57,6 @@
     expandedMounts = next;
   }
 
-
-
   // Defer iframe src to let the panel render first, avoids blank frame on first open
   $effect(() => {
     if (terminalSession?.url) {
@@ -84,137 +82,17 @@
     }
   }
 
-  // New session form
-  let newName = $state('');
-  let newRole = $state('assistant');
-  let newLLM = $state('claude');
-  let newModel = $state('');
-
-  const CODEX_MODELS = [
-    'gpt-5.4',
-    'gpt-5.2-codex',
-    'gpt-5.1-codex-max',
-    'gpt-5.4-mini',
-    'gpt-5.3-codex',
-    'gpt-5.2',
-    'gpt-5.1-codex-mini',
-  ];
-
-  const CLAUDE_MODELS = [
-    'claude-opus-4-7',
-    'claude-opus-4-6',
-    'claude-sonnet-4-6',
-    'claude-haiku-4-5-20251001',
-  ];
-
-  let ollamaModels = $state<string[]>([]);
-  let newBackend = $state('docker');
-  let newVMTemplate = $state('');
-  let newGuestOS = $state('linux');
-  let newProfile = $state('');
-  let newRunner = $state(''); // '' = in-process; otherwise a runner name
-  let isCreating = $state(false);
-
-  // Volume mounts (browse-based)
-  let mountPaths = $state<string[]>([]);
-
   // Local runner
   let localRunnerName = $state('');
   let localRunnerActive = $state(false);
-  let localWorkDir = $state('');
-  let localWorkDirTouched = $state(false);
-  let localRecentDirs = $state<string[]>([]);
-
-  function loadLocalRecents() {
-    try {
-      const raw = localStorage.getItem('local_runner_recent_dirs');
-      localRecentDirs = raw ? JSON.parse(raw) : [];
-    } catch { localRecentDirs = []; }
-  }
-
-  function saveLocalRecent(dir: string) {
-    if (!dir) return;
-    const next = [dir, ...localRecentDirs.filter(d => d !== dir)].slice(0, 5);
-    localRecentDirs = next;
-    try { localStorage.setItem('local_runner_recent_dirs', JSON.stringify(next)); } catch {}
-  }
-
-  async function browseLocalWorkDir() {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const dir = await a.BrowseFolder();
-      if (dir) { localWorkDir = dir; localWorkDirTouched = true; }
-    } catch {}
-  }
-
-  // Track when the user customizes the working dir so we stop auto-syncing
-  // it to the selected profile's workspace_home.
-  function markWorkDirTouched() { localWorkDirTouched = true; }
-
-  // Keep localWorkDir in sync with the selected profile's workspace_home
-  // while the modal is open and the user hasn't typed their own value.
-  $effect(() => {
-    if (!showNewModal || localWorkDirTouched) return;
-    const p = profiles.find(pp => pp.name === newProfile);
-    const home = p?.workspace_home ?? '';
-    if (home && home !== localWorkDir) localWorkDir = home;
-  });
-
-  // Task (optional â runs after session starts)
-  let newTask = $state('');
 
   // Continue-from: seed the task with a prior session's stored handoff
   // (session-store handoff.md â cross-machine session handoff). Candidates
   // = active sessions + history, both already loaded by refresh().
-  let continueFrom = $state('');
   const handoffCandidates = $derived([...new Set([
     ...allSessions.map((s: any) => s.session_name ?? s.name),
     ...pastSessions.map((h: any) => h.session_name),
   ].filter(Boolean))] as string[]);
-
-  // Dispatch preview â reactively asks the API where this session will land.
-  interface DispatchCandidate {
-    name: string;
-    online: boolean;
-    tags: string[];
-    version: string;
-    supports_backend: boolean;
-  }
-  interface DispatchPreview {
-    selected_runner: string | null;
-    in_process: boolean;
-    reason: string;
-    candidates: DispatchCandidate[];
-    error?: string;
-  }
-  let preview = $state<DispatchPreview | null>(null);
-  let previewError = $state<string | null>(null);
-
-  async function refreshPreview() {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const dispatchBackend = newBackend === 'local' ? 'docker' : newBackend;
-      const dispatchRunner = newBackend === 'local' ? localRunnerName : newRunner;
-      preview = (await a.PreviewDispatch({
-        backend: dispatchBackend,
-        runner: dispatchRunner,
-      })) as DispatchPreview;
-      previewError = null;
-    } catch (err: any) {
-      previewError = `${err?.message ?? err}`;
-      preview = null;
-    }
-  }
-
-  // Re-preview whenever the user changes backend or runner inside the modal.
-  // Skip when the modal is closed â no point hitting the API.
-  $effect(() => {
-    if (!showNewModal) return;
-    void newBackend; void newRunner;
-    void refreshPreview();
-  });
 
   let activeProfile = $derived(profileState.active);
   let profiles = $derived(profileState.profiles);
@@ -280,7 +158,6 @@
       loading = false;
     }
   }
-
 
   async function refreshMetrics() {
     const a = await getApi();
@@ -357,7 +234,6 @@
     return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   }
 
-
   async function handleFocusTab(tty: string) {
     const a = await getApi();
     if (!a) return;
@@ -365,20 +241,6 @@
       await a.FocusTerminalTab(tty);
     } catch (err: any) {
       notifications.error(`Could not find terminal tab: ${err}`);
-    }
-  }
-
-  let ollamaModelError = $state('');
-  async function loadOllamaModels() {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const models = (await a.ListOllamaModels()) ?? [];
-      ollamaModels = models.map((m: any) => m.name ?? m);
-      ollamaModelError = '';
-    } catch (err: any) {
-      ollamaModels = [];
-      ollamaModelError = `${err?.message ?? err}`;
     }
   }
 
@@ -390,8 +252,6 @@
     refresh();
     refreshMetrics();
     loadRoles();
-    loadOllamaModels();
-    loadLocalRecents();
     metricsTimer = setInterval(refreshMetrics, 10_000);
     const a = await getApi();
     if (a) {
@@ -493,116 +353,6 @@
       notifications.error(`Failed to cancel: ${err}`);
     }
   }
-
-  function openCreateModal() {
-    newProfile = activeProfile?.name ?? profiles[0]?.name ?? '';
-    mountPaths = [];
-    newTask = '';
-    // Reset the working-dir override so the $effect picks the chosen
-    // profile's workspace_home on open.
-    localWorkDirTouched = false;
-    localWorkDir = '';
-    // Refresh ollama models in case the integration was just started.
-    loadOllamaModels();
-    showNewModal = true;
-  }
-
-  async function browseAndAddMount() {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const path = await a.BrowseFolder();
-      if (path && !mountPaths.includes(path)) {
-        mountPaths = [...mountPaths, path];
-      }
-    } catch {}
-  }
-
-  function removeMount(path: string) {
-    mountPaths = mountPaths.filter(p => p !== path);
-  }
-
-  // Set a sensible default model when switching LLM provider.
-  // Uses $state so the previous-value comparison is tracked reactively.
-  let prevLLM = $state('');
-  $effect(() => {
-    if (newLLM !== prevLLM) {
-      prevLLM = newLLM;
-      if (newLLM === 'codex') newModel = 'gpt-5.4';
-      else if (newLLM === 'ollama') {
-        // Always re-fetch when switching to ollama â the user may have just
-        // started the service or pulled a new model.
-        loadOllamaModels().then(() => { newModel = ollamaModels[0] ?? ''; });
-      }
-      else newModel = CLAUDE_MODELS[0] ?? '';
-    }
-  });
-
-  async function handleCreate() {
-    if (!newProfile) return;
-    if (newBackend !== 'local' && !newName.trim()) return;
-    isCreating = true;
-    const a = await getApi();
-    if (!a) { isCreating = false; return; }
-
-    // Local backend: open iTerm2 directly â no brainbox session created.
-    // The process surfaces naturally in the local section via ps detection.
-    if (newBackend === 'local') {
-      try {
-        const profile = profiles.find(p => p.name === newProfile);
-        const dir = localWorkDir || profile?.workspace_home || '';
-        await a.OpenLocalSession(dir);
-        saveLocalRecent(dir);
-        notifications.success('Local session opened');
-        showNewModal = false;
-        localWorkDir = '';
-      } catch (err: any) {
-        notifications.error(`Failed to open local session: ${err}`);
-      } finally {
-        isCreating = false;
-      }
-      return;
-    }
-
-    try {
-      const profile = profiles.find(p => p.name === newProfile);
-      const wsHome = profile?.workspace_home ?? '';
-      const volumes = mountPaths.map(p => {
-        const name = p.split('/').pop() || p;
-        return `${p}:/home/developer/${name}`;
-      });
-      const req: Record<string, any> = {
-        name: newName.trim().replace(/\s+/g, '-').toLowerCase(),
-        role: newRole,
-        llm_provider: newLLM,
-        llm_model: newLLM === 'ollama' || newLLM === 'codex' ? newModel : '',
-        workspace_profile: newProfile,
-        workspace_home: wsHome,
-        task: newTask.trim() || undefined,
-        continue_from: continueFrom || undefined,
-        backend: newBackend,
-        runner: newRunner || undefined,
-        volumes: volumes.length > 0 ? volumes : undefined,
-      };
-      if (newBackend === 'utm') {
-        req.vm_template = newVMTemplate;
-        req.guest_os = newGuestOS;
-      }
-      const resp = await a.CreateSession(req);
-      if (resp.success ?? resp.Success) {
-        notifications.success(`Created session: ${newName}`);
-        showNewModal = false;
-        newName = ''; newVMTemplate = ''; mountPaths = []; newTask = ''; continueFrom = '';
-        refresh();
-      } else {
-        notifications.error(resp.error ?? resp.Error ?? 'Failed to create session');
-      }
-    } catch (err: any) {
-      notifications.error(`Failed to create: ${err}`);
-    } finally {
-      isCreating = false;
-    }
-  }
 </script>
 
 <div class="panel" aria-busy={loading}>
@@ -610,7 +360,7 @@
     <h1 class="page-title">sessions</h1>
     <div class="header-actions">
       {#if loading}<Spinner />{/if}
-      <button class="btn primary" onclick={openCreateModal}>+ new session</button>
+      <button class="btn primary" onclick={() => showNewModal = true}>+ new session</button>
     </div>
   </header>
 
@@ -919,225 +669,22 @@
 {/if}
 
 {#if showNewModal}
-  <Modal onClose={() => showNewModal = false}>
-    {#snippet children()}
-      <h2>new session</h2>
-      <p class="modal-sub">create an isolated environment for agentic work</p>
-
-      {#if newBackend !== 'local'}
-        <div class="field">
-          <label for="sname">name</label>
-          <input id="sname" type="text" bind:value={newName} placeholder="my-session" />
-        </div>
-      {/if}
-
-      <!-- Backend -->
-      <div class="field">
-        <label for="sbackend">backend</label>
-        <div class="toggle-group" id="sbackend">
-          <button class="toggle-opt" class:active={newBackend === 'docker'} onclick={() => newBackend = 'docker'}>
-            <span class="toggle-icon">&#x1f4e6;</span> container
-          </button>
-          <button class="toggle-opt" class:active={newBackend === 'utm'} onclick={() => newBackend = 'utm'}>
-            <span class="toggle-icon">&#x1f5a5;</span> vm
-          </button>
-          <button class="toggle-opt" class:active={newBackend === 'local'} onclick={() => newBackend = 'local'}>
-            <span class="toggle-icon">&#x1f4bb;</span> local
-          </button>
-        </div>
-      </div>
-
-      {#if newBackend === 'local'}
-        <!-- Local working directory -->
-        <div class="field">
-          <label for="slocaldir">working directory</label>
-          <div class="input-row">
-            <input id="slocaldir" type="text" bind:value={localWorkDir} oninput={markWorkDirTouched} placeholder="~/workspaces/profiles/personal" />
-            <button class="btn-browse" onclick={browseLocalWorkDir}>browse</button>
-          </div>
-          {#if localRecentDirs.length > 0}
-            <div class="recent-dirs">
-              {#each localRecentDirs as dir (dir)}
-                <button class="recent-dir" onclick={() => { localWorkDir = dir; localWorkDirTouched = true; }} title={dir}>
-                  {truncatePath(dir, 40)}
-                </button>
-              {/each}
-            </div>
-          {/if}
-          {#if !localRunnerActive}
-            <p class="hint warn-hint">local runner not enabled â configure in Settings</p>
-          {:else}
-            <p class="hint">runs as <code>claude --dangerously-skip-permissions</code> on this Mac via runner <strong>{localRunnerName}</strong></p>
-          {/if}
-        </div>
-      {:else}
-        <!-- Dispatch (runner picker + preview) -->
-        <div class="field">
-          <label for="srunner">dispatch to</label>
-          <select id="srunner" bind:value={newRunner}>
-            <option value="">in-process (API host)</option>
-            {#if preview}
-              {#each preview.candidates as c (c.name)}
-                <option value={c.name} disabled={!c.online}>
-                  {c.name}{c.online ? '' : ' (offline)'}{c.tags.length ? ` Â· ${c.tags.join(',')}` : ''}
-                </option>
-              {/each}
-            {/if}
-          </select>
-          {#if preview}
-            <p
-              class="preview"
-              class:warn={preview.error === 'stale' || preview.error === 'missing_capability'}
-              class:err={preview.error === 'not_registered'}
-            >
-              â {preview.reason}
-            </p>
-          {:else if previewError}
-            <p class="preview err">â preview failed: {previewError}</p>
-          {/if}
-        </div>
-      {/if}
-
-      {#if newBackend === 'utm'}
-        <div class="field">
-          <label for="svmtpl">vm template</label>
-          <input id="svmtpl" type="text" bind:value={newVMTemplate} placeholder="ubuntu-24.04-brainbox" />
-          <p class="hint">name of the UTM template VM to clone</p>
-        </div>
-        <div class="field">
-          <label for="sguestos">guest os</label>
-          <select id="sguestos" bind:value={newGuestOS}>
-            <option value="linux">linux</option>
-            <option value="macos">macos</option>
-            <option value="windows">windows</option>
-          </select>
-        </div>
-      {/if}
-
-      <!-- Profile -->
-      <ProfilePicker bind:selected={newProfile} />
-
-      <div class="field">
-        <label for="srole">role</label>
-        <select id="srole" bind:value={newRole}>
-          {#each availableRoles as role (role)}
-            <option value={role}>{role}</option>
-          {/each}
-        </select>
-      </div>
-
-      <div class="field">
-        <label for="sllm">llm provider</label>
-        <select id="sllm" bind:value={newLLM}>
-          <option value="claude">claude (anthropic)</option>
-          <option value="codex">codex (openai)</option>
-          {#if featureFlags.isEnabled('ollama')}
-            <option value="ollama">ollama (local)</option>
-          {/if}
-        </select>
-      </div>
-
-      {#if newLLM === 'ollama'}
-        <div class="field">
-          <label for="smodel">model</label>
-          <select id="smodel" bind:value={newModel}>
-            {#each ollamaModels as m}
-              <option value={m}>{m}</option>
-            {/each}
-            {#if newModel && !ollamaModels.includes(newModel)}
-              <option value={newModel}>{newModel}</option>
-            {/if}
-          </select>
-          {#if ollamaModels.length === 0}
-            <p class="field-hint" style="color: var(--color-error, #c33); font-size: 11px; margin-top: 4px;">
-              {ollamaModelError
-                ? `No models â ${ollamaModelError}`
-                : 'No models found. Pull one from Integrations â Ollama, or check the service is running.'}
-            </p>
-          {/if}
-        </div>
-      {/if}
-
-      {#if newLLM === 'codex'}
-        <div class="field">
-          <label for="scodexmodel">model</label>
-          <select id="scodexmodel" bind:value={newModel}>
-            {#each CODEX_MODELS as m}
-              <option value={m}>{m}</option>
-            {/each}
-          </select>
-        </div>
-      {/if}
-
-      {#if newLLM === 'claude'}
-        <div class="field">
-          <label for="sclaudemodel">model</label>
-          <select id="sclaudemodel" bind:value={newModel}>
-            <option value="">â default â</option>
-            {#each CLAUDE_MODELS as m}
-              <option value={m}>{m}</option>
-            {/each}
-          </select>
-        </div>
-      {/if}
-
-      {#if newBackend === 'docker'}
-        <div class="field">
-          <label for="smounts">mounts</label>
-          <div class="mount-list" id="smounts">
-            {#each mountPaths as path (path)}
-              <div class="mount-row">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
-                <span class="mount-path" title={path}>{truncatePath(path, 40)}</span>
-                <button class="mount-remove" onclick={() => removeMount(path)} title="Remove mount" aria-label="Remove {path}">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-              </div>
-            {/each}
-            <button class="mount-add" onclick={browseAndAddMount}>
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-              add folder
-            </button>
-          </div>
-        </div>
-      {/if}
-
-      <!-- Optional task -->
-      <div class="field">
-        <label for="stask">task (optional)</label>
-        <textarea id="stask" bind:value={newTask} rows="3" placeholder="Describe what the agent should do after starting..."></textarea>
-        <p class="hint">if provided, the agent will start working on this immediately</p>
-      </div>
-
-      <!-- Continue from a prior session's handoff -->
-      <div class="field">
-        <label for="scontinue">continue from (optional)</label>
-        <select id="scontinue" bind:value={continueFrom}>
-          <option value="">â none â</option>
-          {#each handoffCandidates as s (s)}
-            <option value={s}>{s}</option>
-          {/each}
-        </select>
-        <p class="hint">prepends that session's stored handoff into this task â fails if it never saved one</p>
-      </div>
-
-      <div class="modal-actions">
-        <button class="btn-cancel" onclick={() => showNewModal = false} disabled={isCreating}>cancel</button>
-        <button class="btn-submit" onclick={handleCreate} disabled={isCreating || (newBackend !== 'local' && !newName.trim()) || !newProfile}>
-          {isCreating ? 'creating...' : 'create'}
-        </button>
-      </div>
-    {/snippet}
-  </Modal>
+  <SessionCreateModal
+    {profiles}
+    defaultProfile={activeProfile?.name ?? profiles[0]?.name ?? ''}
+    {availableRoles}
+    {handoffCandidates}
+    {localRunnerName}
+    {localRunnerActive}
+    onClose={() => showNewModal = false}
+    onCreated={() => { showNewModal = false; refresh(); }}
+  />
 {/if}
 
 <style>
   .panel { padding: var(--panel-padding); }
 
   .header-actions { display: flex; gap: 8px; align-items: center; }
-
-
-
 
   .stats-row {
     display: flex;
@@ -1548,181 +1095,7 @@
   }
   .btn-start:hover { background: rgba(16, 185, 129, 0.2); border-color: var(--color-success); }
 
-  /* Modal */
   h2 { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
-  .modal-sub { font-size: 12px; color: var(--color-text-muted); margin-bottom: 20px; }
-  .field { margin-bottom: 14px; }
-
-  .hint {
-    font-size: 11px;
-    color: var(--color-text-tertiary);
-    margin-top: 4px;
-  }
-  .warn-hint { color: var(--color-warning, #e0a64a); }
-
-  /* Local backend */
-  .input-row {
-    display: flex;
-    gap: 8px;
-  }
-  .input-row input { flex: 1; }
-  .btn-browse {
-    background: transparent;
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    color: var(--color-text-secondary);
-    padding: 6px 10px;
-    font-size: 12px;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .btn-browse:hover { border-color: var(--color-accent); color: var(--color-accent); }
-
-  .recent-dirs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-top: 6px;
-  }
-  .recent-dir {
-    background: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-sm);
-    color: var(--color-text-tertiary);
-    font-size: 11px;
-    font-family: var(--font-mono);
-    padding: 2px 8px;
-    cursor: pointer;
-    max-width: 220px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .recent-dir:hover { color: var(--color-accent); border-color: var(--color-accent); }
-
-  .preview {
-    font-size: 11px;
-    color: var(--color-text-secondary);
-    margin-top: 6px;
-    line-height: 1.4;
-  }
-  .preview.warn { color: var(--color-warning, #e0a64a); }
-  .preview.err  { color: var(--color-danger, #e54); }
-
-  /* Backend toggle */
-  .toggle-group {
-    display: flex;
-    gap: 8px;
-  }
-
-  .toggle-opt {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    background: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    color: var(--color-text-tertiary);
-    padding: 8px 12px;
-    font-size: 13px;
-    transition: all 0.15s;
-  }
-  .toggle-opt:hover {
-    color: var(--color-text-secondary);
-    border-color: var(--color-text-tertiary);
-  }
-  .toggle-opt.active {
-    background: rgba(59, 130, 246, 0.1);
-    border-color: rgba(59, 130, 246, 0.4);
-    color: var(--color-info);
-    font-weight: 500;
-  }
-
-  .toggle-icon { font-size: 16px; }
-
-  /* Mount list */
-  .mount-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .mount-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
-    background: var(--color-bg-primary);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-sm);
-    color: var(--color-text-tertiary);
-  }
-
-  .mount-path {
-    flex: 1;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--color-text-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .mount-remove {
-    background: transparent;
-    border: none;
-    color: var(--color-text-tertiary);
-    padding: 2px;
-    display: flex;
-    border-radius: var(--radius-sm);
-    transition: all 0.15s;
-  }
-  .mount-remove:hover { color: var(--color-error); }
-
-  .mount-add {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 6px;
-    background: transparent;
-    border: 1px dashed var(--color-border-secondary);
-    border-radius: var(--radius-sm);
-    color: var(--color-text-tertiary);
-    font-size: 12px;
-    transition: all 0.15s;
-  }
-  .mount-add:hover {
-    border-color: var(--color-text-tertiary);
-    color: var(--color-text-secondary);
-    background: rgba(255, 255, 255, 0.02);
-  }
-
-  /* Profile picker */
-  .btn-cancel {
-    background: none;
-    border: 1px solid var(--color-border-secondary);
-    color: var(--color-text-secondary);
-    padding: 7px 16px;
-    border-radius: var(--radius-md);
-    font-size: 13px;
-    transition: all 0.15s;
-  }
-  .btn-cancel:hover { background: rgba(255,255,255,0.05); }
-
-  .btn-submit {
-    background: rgba(59, 130, 246, 0.1);
-    border: 1px solid rgba(59, 130, 246, 0.3);
-    color: var(--color-info);
-    padding: 7px 16px;
-    border-radius: var(--radius-md);
-    font-size: 13px;
-    font-weight: 500;
-    transition: all 0.15s;
-  }
-  .btn-submit:hover { background: rgba(59, 130, 246, 0.2); border-color: var(--color-info); }
 
   /* === Local agents === */
   .local-section {
@@ -1757,7 +1130,6 @@
     align-items: center;
     gap: 10px;
   }
-
 
   .local-stats-text {
     font-size: 11px;
