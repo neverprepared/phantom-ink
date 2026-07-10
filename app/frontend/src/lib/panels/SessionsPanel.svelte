@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getApi, openInBrowser } from '../utils/api';
+  import { formatBytes as fmtBytes } from '../utils/format';
   import { onMount, onDestroy } from 'svelte';
   import { brainboxEvents } from '../events.svelte';
   import { notifications } from '../notifications.svelte';
@@ -18,7 +19,7 @@
   let tasks = $state<any[]>([]);
   let agents = $state<any[]>([]);
   let localProcesses = $state<any[]>([]);
-  let diskUsageMap = $state<Record<string, string>>({}); // container name → writable size
+  let diskUsageMap = $state<Record<string, string>>({}); // container name â writable size
   let diskBreakdown = $state<any | null>(null);
   let sessionHistory = $state<Record<string, any[]>>({});
   let history = $state<any[]>([]);
@@ -47,7 +48,7 @@
     const parts = p.split('/');
     // Keep last 2 segments visible
     const tail = parts.slice(-2).join('/');
-    return tail.length + 4 >= max ? '…/' + parts[parts.length - 1] : '…/' + tail;
+    return tail.length + 4 >= max ? 'â¦/' + parts[parts.length - 1] : 'â¦/' + tail;
   }
 
   function toggleMounts(name: string) {
@@ -161,11 +162,11 @@
     if (home && home !== localWorkDir) localWorkDir = home;
   });
 
-  // Task (optional — runs after session starts)
+  // Task (optional â runs after session starts)
   let newTask = $state('');
 
   // Continue-from: seed the task with a prior session's stored handoff
-  // (session-store handoff.md — cross-machine session handoff). Candidates
+  // (session-store handoff.md â cross-machine session handoff). Candidates
   // = active sessions + history, both already loaded by refresh().
   let continueFrom = $state('');
   const handoffCandidates = $derived([...new Set([
@@ -173,7 +174,7 @@
     ...pastSessions.map((h: any) => h.session_name),
   ].filter(Boolean))] as string[]);
 
-  // Dispatch preview — reactively asks the API where this session will land.
+  // Dispatch preview â reactively asks the API where this session will land.
   interface DispatchCandidate {
     name: string;
     online: boolean;
@@ -209,7 +210,7 @@
   }
 
   // Re-preview whenever the user changes backend or runner inside the modal.
-  // Skip when the modal is closed — no point hitting the API.
+  // Skip when the modal is closed â no point hitting the API.
   $effect(() => {
     if (!showNewModal) return;
     void newBackend; void newRunner;
@@ -239,7 +240,7 @@
     return localProcesses.filter(p => p.workspace_profile?.toLowerCase() === activeProfile.name.toLowerCase());
   });
 
-  // Map session name → running task, and agent name → agent def
+  // Map session name â running task, and agent name â agent def
   let taskBySession = $derived(
     new Map(tasks.filter(t => t.session_name).map((t: any) => [t.session_name, t]))
   );
@@ -282,16 +283,14 @@
   }
 
   function formatBytes(bytes: number): string {
-    if (!bytes) return '–';
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+    return bytes ? fmtBytes(bytes) : "–";
   }
 
   async function refreshMetrics() {
     const a = await getApi();
     if (!a) return;
 
-    // Metrics fetch — must not be blocked by local process scan
+    // Metrics fetch â must not be blocked by local process scan
     try {
       const [sh, hist, diskStats] = await Promise.all([
         a.GetSessionsMetricsHistory(),
@@ -311,7 +310,7 @@
       diskHistoryStore.pruneKeys(diskKeys);
     } catch { /* non-critical */ }
 
-    // Local process history + combined aggregate — isolated so failures don't affect metrics
+    // Local process history + combined aggregate â isolated so failures don't affect metrics
     try {
       const procs = await a.FindClaudeProcesses();
       const now = Date.now();
@@ -365,9 +364,9 @@
   let agentData  = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.agent_count })));
   let cpuData    = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.total_cpu })));
   let memData    = $derived(combinedHistoryStore.value.map(s => ({ ts: s.ts, value: s.total_mem })));
-  let latestAgents = $derived(combinedHistoryStore.value.length ? String(combinedHistoryStore.value[combinedHistoryStore.value.length - 1].agent_count) : '–');
-  let latestCPU    = $derived(combinedHistoryStore.value.length ? `${combinedHistoryStore.value[combinedHistoryStore.value.length - 1].total_cpu.toFixed(1)}%` : '–');
-  let latestMem    = $derived(combinedHistoryStore.value.length ? formatBytes(combinedHistoryStore.value[combinedHistoryStore.value.length - 1].total_mem) : '–');
+  let latestAgents = $derived(combinedHistoryStore.value.length ? String(combinedHistoryStore.value[combinedHistoryStore.value.length - 1].agent_count) : 'â');
+  let latestCPU    = $derived(combinedHistoryStore.value.length ? `${combinedHistoryStore.value[combinedHistoryStore.value.length - 1].total_cpu.toFixed(1)}%` : 'â');
+  let latestMem    = $derived(combinedHistoryStore.value.length ? formatBytes(combinedHistoryStore.value[combinedHistoryStore.value.length - 1].total_mem) : 'â');
 
   async function handleFocusTab(tty: string) {
     const a = await getApi();
@@ -541,7 +540,7 @@
       prevLLM = newLLM;
       if (newLLM === 'codex') newModel = 'gpt-5.4';
       else if (newLLM === 'ollama') {
-        // Always re-fetch when switching to ollama — the user may have just
+        // Always re-fetch when switching to ollama â the user may have just
         // started the service or pulled a new model.
         loadOllamaModels().then(() => { newModel = ollamaModels[0] ?? ''; });
       }
@@ -556,7 +555,7 @@
     const a = await getApi();
     if (!a) { isCreating = false; return; }
 
-    // Local backend: open iTerm2 directly — no brainbox session created.
+    // Local backend: open iTerm2 directly â no brainbox session created.
     // The process surfaces naturally in the local section via ps detection.
     if (newBackend === 'local') {
       try {
@@ -736,7 +735,7 @@
             {#if active}
               {@const sname = session.session_name ?? session.name}
               {@const hist = sessionHistory[sname] ?? []}
-              {@const latestMem = hist.length ? (() => { const v = hist[hist.length-1].mem_usage; return v < 1024*1024 ? `${(v/1024).toFixed(0)} KB` : `${(v/1024/1024).toFixed(1)} MB`; })() : ''}
+              {@const latestMem = hist.length ? fmtBytes(hist[hist.length-1].mem_usage) : ''}
               {@const latestCPU = hist.length ? `${hist[hist.length-1].cpu_percent.toFixed(1)}%` : ''}
               {#if latestCPU}
                 <span class="meta-metric" title="CPU usage">
@@ -816,7 +815,7 @@
                     <div class="mount-row">
                       <svg class="mount-icon" xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
                       <span class="mount-host" title={mount.host}>{truncatePath(mount.host)}</span>
-                      <span class="mount-arrow">→</span>
+                      <span class="mount-arrow">â</span>
                       <span class="mount-container">{mount.container}</span>
                       <span class="mount-mode" class:mount-mode-ro={mount.mode === 'ro'}>{mount.mode}</span>
                     </div>
@@ -953,7 +952,7 @@
         <iframe
           class="terminal-frame"
           src={terminalUrl}
-          title="Terminal — {terminalSession.session_name ?? terminalSession.name}"
+          title="Terminal â {terminalSession.session_name ?? terminalSession.name}"
         ></iframe>
       {:else}
         <div class="terminal-loading">connecting...</div>
@@ -1009,7 +1008,7 @@
             </div>
           {/if}
           {#if !localRunnerActive}
-            <p class="hint warn-hint">local runner not enabled — configure in Settings</p>
+            <p class="hint warn-hint">local runner not enabled â configure in Settings</p>
           {:else}
             <p class="hint">runs as <code>claude --dangerously-skip-permissions</code> on this Mac via runner <strong>{localRunnerName}</strong></p>
           {/if}
@@ -1023,7 +1022,7 @@
             {#if preview}
               {#each preview.candidates as c (c.name)}
                 <option value={c.name} disabled={!c.online}>
-                  {c.name}{c.online ? '' : ' (offline)'}{c.tags.length ? ` · ${c.tags.join(',')}` : ''}
+                  {c.name}{c.online ? '' : ' (offline)'}{c.tags.length ? ` Â· ${c.tags.join(',')}` : ''}
                 </option>
               {/each}
             {/if}
@@ -1034,10 +1033,10 @@
               class:warn={preview.error === 'stale' || preview.error === 'missing_capability'}
               class:err={preview.error === 'not_registered'}
             >
-              → {preview.reason}
+              â {preview.reason}
             </p>
           {:else if previewError}
-            <p class="preview err">→ preview failed: {previewError}</p>
+            <p class="preview err">â preview failed: {previewError}</p>
           {/if}
         </div>
       {/if}
@@ -1095,8 +1094,8 @@
           {#if ollamaModels.length === 0}
             <p class="field-hint" style="color: var(--color-error, #c33); font-size: 11px; margin-top: 4px;">
               {ollamaModelError
-                ? `No models — ${ollamaModelError}`
-                : 'No models found. Pull one from Integrations → Ollama, or check the service is running.'}
+                ? `No models â ${ollamaModelError}`
+                : 'No models found. Pull one from Integrations â Ollama, or check the service is running.'}
             </p>
           {/if}
         </div>
@@ -1117,7 +1116,7 @@
         <div class="field">
           <label for="sclaudemodel">model</label>
           <select id="sclaudemodel" bind:value={newModel}>
-            <option value="">— default —</option>
+            <option value="">â default â</option>
             {#each CLAUDE_MODELS as m}
               <option value={m}>{m}</option>
             {/each}
@@ -1157,12 +1156,12 @@
       <div class="field">
         <label for="scontinue">continue from (optional)</label>
         <select id="scontinue" bind:value={continueFrom}>
-          <option value="">— none —</option>
+          <option value="">â none â</option>
           {#each handoffCandidates as s (s)}
             <option value={s}>{s}</option>
           {/each}
         </select>
-        <p class="hint">prepends that session's stored handoff into this task — fails if it never saved one</p>
+        <p class="hint">prepends that session's stored handoff into this task â fails if it never saved one</p>
       </div>
 
       <div class="modal-actions">

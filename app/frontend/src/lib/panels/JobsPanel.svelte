@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getApi } from '../utils/api';
+  import { timeAgoOrDate } from '../utils/format';
   import { onCollectUpdate } from '../utils/collectEvents';
   import { onMount } from 'svelte';
   import { profileState, dashboardState } from '../stores.svelte';
@@ -246,12 +247,7 @@
   }
 
   function fmtLastRun(job: CollectJob): string {
-    if (!job.last_run_at) return 'never';
-    const diff = Date.now() - job.last_run_at;
-    if (diff < 60_000)     return 'just now';
-    if (diff < 3_600_000)  return `${Math.floor(diff / 60_000)}m ago`;
-    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-    return new Date(job.last_run_at).toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return timeAgoOrDate(job.last_run_at);
   }
 
   function targetLabel(job: CollectJob): string {

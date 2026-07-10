@@ -1,5 +1,6 @@
 <script lang="ts">
   import { dashboardDataStore } from '../stores.svelte';
+  import { formatMem } from '../utils/format';
   import Icon from '../components/Icon.svelte';
 
   let data = $derived(dashboardDataStore.value);
@@ -25,7 +26,7 @@
   let sysMemPct  = $derived(sysMemMiB > 0 ? (totalMem / sysMemMiB) * 100 : 0);
 
   function fmtMem(mib: number): string {
-    return mib >= 1024 ? `${(mib / 1024).toFixed(1)} GiB` : `${mib.toFixed(0)} MiB`;
+    return formatMem(mib);
   }
 </script>
 

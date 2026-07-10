@@ -11,6 +11,7 @@
    * state for each.
    */
   import { onMount } from 'svelte';
+  import { formatBytes } from '../utils/format';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
   import { profileState } from '../stores.svelte';
@@ -282,10 +283,7 @@
   );
 
   function fmtSize(b: number): string {
-    if (b < 1024) return `${b} B`;
-    if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-    if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)} MB`;
-    return `${(b / 1024 / 1024 / 1024).toFixed(2)} GB`;
+    return formatBytes(b);
   }
 
   function fmtTime(ms: number): string {

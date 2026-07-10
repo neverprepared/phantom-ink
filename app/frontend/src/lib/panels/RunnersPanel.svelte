@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { timeAgo } from '../utils/format';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
   import PairRunnerModal from '../components/PairRunnerModal.svelte';
@@ -111,12 +112,7 @@
   }
 
   function relativeTime(epochMs: number): string {
-    const diff = Math.max(0, now - epochMs);
-    if (diff < 5_000) return 'just now';
-    if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
-    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-    return `${Math.floor(diff / 86_400_000)}d ago`;
+    return timeAgo(epochMs, now);
   }
 
   function capabilities(r: Runner): string[] {

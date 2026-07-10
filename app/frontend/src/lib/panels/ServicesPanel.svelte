@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getApi, openInBrowser } from '../utils/api';
+  import { formatBytes as fmtBytes } from '../utils/format';
   import { onMount } from 'svelte';
   import { notifications } from '../notifications.svelte';
   import { featureFlags, profileState } from '../stores.svelte';
@@ -233,9 +234,7 @@
   }
 
   function formatBytes(bytes: number): string {
-    if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`;
-    if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(0)} MB`;
-    return `${bytes} B`;
+    return fmtBytes(bytes);
   }
 </script>
 
