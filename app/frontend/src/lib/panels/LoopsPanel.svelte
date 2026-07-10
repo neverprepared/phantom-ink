@@ -1001,12 +1001,12 @@ Describe what the agent does each iteration.
   .tabs {
     display: flex;
     gap: 4px;
-    border-bottom: 1px solid var(--color-border, #2a2a2a);
+    border-bottom: 1px solid var(--color-border-primary);
   }
   .tab {
     background: transparent;
     border: none;
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
     padding: 8px 12px;
     cursor: pointer;
     font-size: 13px;
@@ -1014,11 +1014,11 @@ Describe what the agent does each iteration.
     transition: color 0.15s, border-color 0.15s;
   }
   .tab:hover {
-    color: var(--color-text, #ddd);
+    color: var(--color-text-primary);
   }
   .tab.active {
-    color: var(--color-text, #ddd);
-    border-bottom-color: var(--color-accent, #88c1ff);
+    color: var(--color-text-primary);
+    border-bottom-color: var(--color-accent);
   }
 
   /* Templates tab — split view */
@@ -1070,7 +1070,7 @@ Describe what the agent does each iteration.
   .template-item {
     background: transparent;
     border: 1px solid transparent;
-    color: var(--color-text, #ddd);
+    color: var(--color-text-primary);
     text-align: left;
     padding: 6px 10px;
     border-radius: 4px;
@@ -1105,11 +1105,11 @@ Describe what the agent does each iteration.
     margin-left: 0;
   }
   .template-item:hover {
-    background: var(--color-surface-2, #1a1a1a);
+    background: var(--color-bg-secondary);
   }
   .template-item.active {
-    background: var(--color-surface-2, #1a1a1a);
-    border-color: var(--color-border, #2a2a2a);
+    background: var(--color-bg-secondary);
+    border-color: var(--color-border-primary);
   }
   .template-name {
     font-family: var(--font-mono, monospace);
@@ -1153,13 +1153,13 @@ Describe what the agent does each iteration.
     color: #95e0a8;
   }
   .dim {
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
     font-size: 12px;
   }
   .hash {
     font-family: var(--font-mono, monospace);
     font-size: 11px;
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
   }
   .diagram-section {
     /* Dominant visual — claims the largest share of the detail pane.
@@ -1258,18 +1258,18 @@ Describe what the agent does each iteration.
   .btn-save,
   .btn-fork,
   .btn-delete {
-    border: 1px solid var(--color-border, #2a2a2a);
-    background: var(--color-surface-2, #1a1a1a);
-    color: var(--color-text, #ddd);
+    border: 1px solid var(--color-border-primary);
+    background: var(--color-bg-secondary);
+    color: var(--color-text-primary);
     padding: 5px 14px;
     font-size: 12px;
     border-radius: 4px;
     cursor: pointer;
   }
   .btn-save {
-    background: var(--color-accent, #88c1ff);
+    background: var(--color-accent);
     color: #111;
-    border-color: var(--color-accent, #88c1ff);
+    border-color: var(--color-accent);
     font-weight: 600;
   }
   .btn-fork {
@@ -1303,8 +1303,8 @@ Describe what the agent does each iteration.
     flex-direction: column;
     gap: 8px;
     padding: 10px 12px;
-    background: var(--color-surface-1, #181818);
-    border: 1px solid var(--color-border, #2a2a2a);
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-primary);
     border-radius: 4px;
   }
   .assist-head {
@@ -1315,7 +1315,7 @@ Describe what the agent does each iteration.
   }
   .assist-label {
     font-weight: 600;
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
@@ -1325,16 +1325,16 @@ Describe what the agent does each iteration.
     align-items: center;
   }
   .assist-model {
-    color: var(--color-accent, #88c1ff);
+    color: var(--color-accent);
     font-family: var(--font-mono, monospace);
   }
   .assist-cost {
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
   }
   .assist-prompt {
-    background: var(--color-surface-2, #1a1a1a);
-    border: 1px solid var(--color-border, #2a2a2a);
-    color: var(--color-text, #ddd);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-primary);
+    color: var(--color-text-primary);
     padding: 6px 10px;
     border-radius: 4px;
     font-size: 12px;
@@ -1343,7 +1343,7 @@ Describe what the agent does each iteration.
     min-height: 38px;
   }
   .assist-prompt:focus {
-    outline: 1px solid var(--color-accent, #88c1ff);
+    outline: 1px solid var(--color-accent);
     outline-offset: -1px;
   }
   .assist-actions {
@@ -1353,18 +1353,18 @@ Describe what the agent does each iteration.
   .btn-generate,
   .btn-refine,
   .btn-explain {
-    background: var(--color-surface-2, #1a1a1a);
-    border: 1px solid var(--color-border, #2a2a2a);
-    color: var(--color-text, #ddd);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-primary);
+    color: var(--color-text-primary);
     padding: 4px 10px;
     font-size: 11px;
     border-radius: 3px;
     cursor: pointer;
   }
   .btn-generate {
-    background: var(--color-accent, #88c1ff);
+    background: var(--color-accent);
     color: #111;
-    border-color: var(--color-accent, #88c1ff);
+    border-color: var(--color-accent);
     font-weight: 600;
   }
   .btn-generate:disabled,
@@ -1374,8 +1374,8 @@ Describe what the agent does each iteration.
     cursor: not-allowed;
   }
   .explanation {
-    background: var(--color-surface-2, #1a1a1a);
-    border: 1px solid var(--color-accent, #88c1ff);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-accent);
     border-radius: 4px;
     padding: 8px 10px;
   }
@@ -1386,20 +1386,20 @@ Describe what the agent does each iteration.
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
     margin-bottom: 4px;
   }
   .explanation-close {
     background: transparent;
     border: none;
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
     cursor: pointer;
     font-size: 14px;
     padding: 0 4px;
   }
   .explanation-body {
     font-size: 12px;
-    color: var(--color-text, #ddd);
+    color: var(--color-text-primary);
     white-space: pre-wrap;
     line-height: 1.5;
   }
@@ -1429,13 +1429,13 @@ Describe what the agent does each iteration.
     flex-direction: column;
     gap: 4px;
     font-size: 12px;
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
   }
   .field select,
   .field input {
-    background: var(--color-surface-2, #1a1a1a);
-    border: 1px solid var(--color-border, #2a2a2a);
-    color: var(--color-text, #ddd);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-primary);
+    color: var(--color-text-primary);
     padding: 6px 10px;
     border-radius: 4px;
     font-size: 13px;
@@ -1445,13 +1445,13 @@ Describe what the agent does each iteration.
     flex-direction: column;
     gap: 12px;
     padding: 12px;
-    background: var(--color-surface-1, #181818);
-    border: 1px solid var(--color-border, #2a2a2a);
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-primary);
     border-radius: 4px;
   }
   .refs-heading {
     font-size: 11px;
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     font-weight: 600;
@@ -1460,7 +1460,7 @@ Describe what the agent does each iteration.
     display: flex;
     align-items: center;
     gap: 6px;
-    color: var(--color-text, #ddd);
+    color: var(--color-text-primary);
     font-size: 12px;
     font-family: var(--font-mono, monospace);
   }
@@ -1479,7 +1479,7 @@ Describe what the agent does each iteration.
   }
   .ref-description {
     font-size: 11px;
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
     font-family: var(--font-sans, sans-serif);
   }
   .actions {
@@ -1488,7 +1488,7 @@ Describe what the agent does each iteration.
     margin-top: 4px;
   }
   .btn-start {
-    background: var(--color-accent, #88c1ff);
+    background: var(--color-accent);
     color: #111;
     border: none;
     padding: 8px 18px;

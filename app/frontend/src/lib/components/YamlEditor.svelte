@@ -98,7 +98,7 @@
         '&.cm-focused': { outline: 'none' },
         '.cm-gutters': {
           backgroundColor: 'transparent',
-          color: 'var(--color-text-muted, #888)',
+          color: 'var(--color-text-muted)',
           border: 'none',
         },
         '.cm-activeLine': { backgroundColor: 'rgba(255,255,255,0.03)' },
@@ -165,9 +165,9 @@
   .editor {
     height: 100%;
     min-height: 0;
-    border: 1px solid var(--color-border, #2a2a2a);
+    border: 1px solid var(--color-border-primary);
     border-radius: 4px;
-    background: var(--color-surface-1, #181818);
+    background: var(--color-bg-tertiary);
     overflow: hidden;
   }
   /* The cm-editor lives inside .editor; CodeMirror applies its own
