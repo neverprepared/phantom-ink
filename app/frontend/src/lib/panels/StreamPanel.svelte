@@ -2,7 +2,8 @@
   import { onMount, onDestroy } from 'svelte';
   import { timeAgo } from '../utils/format';
   import { getApi, openInBrowser } from '../utils/api';
-  import { featureFlags, profileState, currentPanel, attentionStore, streamFocus, playbookSeed } from '../stores.svelte';
+  import { featureFlags, profileState, currentPanel, attentionStore, streamFocus } from '../stores.svelte';
+  import { streamLive, STATUS_OPTIONS } from '../stores/streamLive.svelte';
   import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -50,40 +51,6 @@
     duration_ms?: number;
   }
 
-  // Bus envelope (mirrors brainbox.AgentStateItem). Used in Live tab and
-  // History drill-down.
-  interface AgentStateItem {
-    id: string;
-    kind: string;
-    source: string;
-    type: string;
-    status: string;
-    title: string;
-    subtitle: string;
-    workspace: string;
-    parent_id: string;
-    url: string;
-    start_at: number | null;
-    end_at: number | null;
-    tags: string[];
-    metadata: Record<string, any>;
-    actions: Record<string, any>[];
-    outcome: Record<string, any> | null;
-    created_at: number;
-    updated_at: number;
-  }
-
-  interface AgentEventEntry {
-    seq: number;
-    id: string;
-    source: string;
-    type: string;
-    status: string;
-    parent_id: string;
-    ts: number;
-    envelope: Record<string, any>;
-  }
-
   type Tab = 'live' | 'attention' | 'logs';
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -94,7 +61,6 @@
   // duplicating polls.
   let attention = $derived<AttentionItem[]>(attentionStore.items as unknown as AttentionItem[]);
   let attentionLoading = $derived(!attentionStore.loaded);
-  let live = $state<AgentStateItem[]>([]);
   let logs = $state<LogEntry[]>([]);
   // Optional sort key for the logs tab. Set via cross-panel streamFocus signal
   // (e.g. the OpenSearch cost widget jumps in with sortBy='cost').
@@ -104,20 +70,13 @@
     const key = logsSortBy === 'duration' ? 'duration_ms' : logsSortBy;
     return [...logs].sort((a, b) => ((b as any)[key] ?? 0) - ((a as any)[key] ?? 0));
   });
-  let liveLoading = $state(true);
   let logsLoading = $state(false);
   let attentionError = $state<string | null>(null);
-  let liveError = $state<string | null>(null);
   let logsError = $state<string | null>(null);
 
   // Inline respond expander state
   let respondingId = $state<string | null>(null);
   let respondText = $state('');
-
-  // History drill-down state — keyed by envelope id, holds the fetched event
-  // sequence. Card is expanded when its id is in this map.
-  let history = $state<Record<string, AgentEventEntry[]>>({});
-  let historyLoading = $state<Record<string, boolean>>({});
 
   // Outbox pending indicator, polled separately from list refresh.
   let outboxPending = $state(0);
@@ -131,9 +90,6 @@
   const LOGS_POLL_MS = 3_000;
   const OUTBOX_POLL_MS = 5_000;
   const LOGS_LIMIT = 1000;
-
-  // Active-state statuses queried for the Live tab.
-  const LIVE_STATUSES = 'upcoming,active,blocked,needs_action';
 
   let opensearchActive = $derived(featureFlags.isActive('opensearch'));
   let activeProfile    = $derived(profileState.active);
@@ -175,140 +131,6 @@
     }
   }
 
-  // ── Live tab filters + presets ─────────────────────────────────────────────
-  // Multi-select chip filters: a row matches when each non-empty bucket has at
-  // least one chip matching the envelope (AND across buckets, OR within).
-  // Persisted client-side so the same operator view survives a reload.
-
-  interface LiveFilters {
-    sources: string[];   // e.g. ['task','hub']
-    statuses: string[];  // 'upcoming' | 'active' | 'blocked' | 'needs_action'
-    tags: string[];
-  }
-  interface LivePreset {
-    name: string;
-    filters: LiveFilters;
-  }
-
-  const FILTERS_KEY = 'pi-stream-filters-v1';
-  const PRESETS_KEY = 'pi-stream-presets-v1';
-  const STATUS_OPTIONS = ['upcoming', 'active', 'blocked', 'needs_action'];
-
-  function loadFilters(): LiveFilters {
-    try {
-      const raw = localStorage.getItem(FILTERS_KEY);
-      if (raw) return JSON.parse(raw) as LiveFilters;
-    } catch {}
-    return { sources: [], statuses: [], tags: [] };
-  }
-  function loadPresets(): LivePreset[] {
-    try {
-      const raw = localStorage.getItem(PRESETS_KEY);
-      if (raw) return JSON.parse(raw) as LivePreset[];
-    } catch {}
-    return [];
-  }
-
-  let liveFilters = $state<LiveFilters>(loadFilters());
-  let presets = $state<LivePreset[]>(loadPresets());
-
-  $effect(() => {
-    try { localStorage.setItem(FILTERS_KEY, JSON.stringify(liveFilters)); } catch {}
-  });
-
-  function toggleFilter(bucket: keyof LiveFilters, value: string): void {
-    const cur = liveFilters[bucket];
-    liveFilters = {
-      ...liveFilters,
-      [bucket]: cur.includes(value) ? cur.filter(v => v !== value) : [...cur, value],
-    };
-  }
-  function clearFilters(): void {
-    liveFilters = { sources: [], statuses: [], tags: [] };
-  }
-  let activeFilterCount = $derived(
-    liveFilters.sources.length + liveFilters.statuses.length + liveFilters.tags.length
-  );
-
-  // Tag chip universe = every tag we've seen on a live envelope, plus filter
-  // tags so removed-then-readded chips stick around.
-  let availableTags = $derived.by(() => {
-    const set = new Set<string>(liveFilters.tags);
-    for (const item of live) for (const t of item.tags ?? []) set.add(t);
-    return Array.from(set).sort();
-  });
-  let availableSources = $derived.by(() => {
-    const set = new Set<string>(['task', 'loop', 'entry', 'hub', 'bus']);
-    for (const item of live) if (item.source) set.add(item.source);
-    return Array.from(set).sort();
-  });
-
-  function passesFilters(it: AgentStateItem): boolean {
-    if (liveFilters.sources.length && !liveFilters.sources.includes(it.source)) return false;
-    if (liveFilters.statuses.length && !liveFilters.statuses.includes(it.status)) return false;
-    if (liveFilters.tags.length) {
-      const itemTags = new Set(it.tags ?? []);
-      if (!liveFilters.tags.some(t => itemTags.has(t))) return false;
-    }
-    return true;
-  }
-
-  let filteredLive = $derived(live.filter(passesFilters));
-
-  function savePreset(): void {
-    const name = window.prompt('Name this preset (e.g. "blocked-only"):');
-    if (!name?.trim()) return;
-    const next = [
-      { name: name.trim(), filters: { ...liveFilters, sources: [...liveFilters.sources], statuses: [...liveFilters.statuses], tags: [...liveFilters.tags] } },
-      ...presets.filter(p => p.name !== name.trim()),
-    ].slice(0, 9);
-    presets = next;
-    try { localStorage.setItem(PRESETS_KEY, JSON.stringify(next)); } catch {}
-  }
-  function applyPreset(p: LivePreset): void {
-    liveFilters = {
-      sources: [...p.filters.sources],
-      statuses: [...p.filters.statuses],
-      tags: [...p.filters.tags],
-    };
-  }
-  function deletePreset(name: string): void {
-    const next = presets.filter(p => p.name !== name);
-    presets = next;
-    try { localStorage.setItem(PRESETS_KEY, JSON.stringify(next)); } catch {}
-  }
-
-  // ── Live-tab selection mode (drives Save-as-playbook) ──────────────────────
-  let selectMode = $state(false);
-  let selected = $state<Set<string>>(new Set());
-
-  function toggleSelect(id: string): void {
-    const next = new Set(selected);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    selected = next;
-  }
-  function clearSelection(): void { selected = new Set(); }
-  function exitSelectMode(): void { selectMode = false; clearSelection(); }
-
-  function saveAsPlaybook(): void {
-    if (selected.size === 0) return;
-    // Preserve the user's visible order so the playbook reads top-to-bottom.
-    const picked = filteredLive.filter(it => selected.has(it.id));
-    if (picked.length === 0) return;
-    const lines = picked.map(it => {
-      const title = (it.title || it.source || it.type || 'step').replace(/\s+/g, ' ').trim();
-      const sub = (it.subtitle ?? '').trim();
-      return sub ? `- [ ] ${title} — ${sub}` : `- [ ] ${title}`;
-    });
-    const seedName = `from-stream-${new Date().toISOString().slice(0, 10)}`;
-    playbookSeed.seed({
-      name: seedName,
-      markdown: lines.join('\n'),
-      scope: workspaceFilter ? 'profile' : 'global',
-    });
-    exitSelectMode();
-  }
-
   $effect(() => {
     if (tab === 'logs' && !opensearchActive) tab = 'attention';
   });
@@ -327,25 +149,6 @@
 
   async function refreshAttention() {
     await attentionStore.refresh();
-  }
-
-  async function refreshLive() {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      live = ((await a.ListAgentState({
-        status: LIVE_STATUSES,
-        workspace: workspaceFilter,
-        source: '',
-        parent_id: '',
-        limit: 200,
-      })) ?? []) as AgentStateItem[];
-      liveError = null;
-    } catch (err: any) {
-      liveError = `${err?.message ?? err}`;
-    } finally {
-      liveLoading = false;
-    }
   }
 
   async function refreshOutbox() {
@@ -373,78 +176,6 @@
     }
   }
 
-  // Apply one bus envelope delta into the live list without a full reload.
-  // Matches the brainbox upsert semantics: same id mutates in place; new ids
-  // append; terminal/done statuses drop off the live view.
-  function applyAgentEvent(env: any) {
-    if (!env || typeof env !== 'object') return;
-    if (env.workspace && workspaceFilter && env.workspace !== workspaceFilter) return;
-
-    const activeStatuses = ['upcoming', 'active', 'blocked', 'needs_action'];
-    const isActive = activeStatuses.includes(env.status);
-
-    // Always nudge attention — it might be a failed/blocked/needs_action delta.
-    void refreshAttention();
-
-    const idx = live.findIndex(i => i.id === env.id);
-    if (!isActive) {
-      if (idx >= 0) live = live.filter((_, i) => i !== idx);
-      return;
-    }
-
-    // ListAgentState returns rows enriched by brainbox (created_at, updated_at,
-    // full metadata maps). The SSE payload is the envelope itself; merge the
-    // fields we need for display and re-sort by updated_at desc.
-    const merged: AgentStateItem = {
-      id: env.id,
-      kind: env.kind ?? 'event',
-      source: env.source ?? '',
-      type: env.type ?? '',
-      status: env.status ?? '',
-      title: env.title ?? '',
-      subtitle: env.subtitle ?? '',
-      workspace: env.workspace ?? '',
-      parent_id: env.parent_id ?? '',
-      url: env.url ?? '',
-      start_at: env.start_at ?? null,
-      end_at: env.end_at ?? null,
-      tags: env.tags ?? [],
-      metadata: env.metadata ?? {},
-      actions: env.actions ?? [],
-      outcome: env.outcome ?? null,
-      created_at: idx >= 0 ? live[idx].created_at : Date.now(),
-      updated_at: Date.now(),
-    };
-    if (idx >= 0) {
-      const next = [...live];
-      next[idx] = merged;
-      live = next.sort((a, b) => b.updated_at - a.updated_at);
-    } else {
-      live = [merged, ...live];
-    }
-  }
-
-  // Lazy-load the audit log for one envelope when the user expands a card.
-  async function toggleHistory(id: string) {
-    if (history[id]) {
-      const next = { ...history };
-      delete next[id];
-      history = next;
-      return;
-    }
-    historyLoading = { ...historyLoading, [id]: true };
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const events = ((await a.ListAgentEvents(id, '', 200)) ?? []) as AgentEventEntry[];
-      history = { ...history, [id]: events };
-    } catch (err: any) {
-      notifications.error(`Failed to load history: ${err?.message ?? err}`);
-    } finally {
-      historyLoading = { ...historyLoading, [id]: false };
-    }
-  }
-
   onMount(() => {
     // Consume any cross-panel focus signal first so other tabs can land us
     // here on the right tab (e.g. an OpenSearch metric widget jumping to logs).
@@ -452,15 +183,15 @@
     if (f?.tab) tab = f.tab;
     if (f?.sortBy) logsSortBy = f.sortBy;
 
-    void refreshLive();
+    void streamLive.refreshLive();
     void refreshOutbox();
-    livePoll      = window.setInterval(refreshLive, LIVE_POLL_MS);
+    livePoll      = window.setInterval(() => streamLive.refreshLive(), LIVE_POLL_MS);
     outboxPoll    = window.setInterval(refreshOutbox, OUTBOX_POLL_MS);
 
     // SSE-driven instant updates. agent:event is the typed envelope stream we
     // emit in app.go from the brainbox /api/events SSE wrapper.
     const offAgent = (window as any).runtime?.EventsOn?.('agent:event', (env: any) => {
-      applyAgentEvent(env);
+      streamLive.applyAgentEvent(env);
     });
     if (typeof offAgent === 'function') sseCleanup.push(offAgent);
 
@@ -470,7 +201,7 @@
     for (const ev of legacy) {
       const off = (window as any).runtime?.EventsOn?.(ev, () => {
         void refreshAttention();
-        void refreshLive();
+        void streamLive.refreshLive();
       });
       if (typeof off === 'function') sseCleanup.push(off);
     }
@@ -500,7 +231,7 @@
     if (workspaceFilter !== lastFilter) {
       lastFilter = workspaceFilter;
       void refreshAttention();
-      void refreshLive();
+      void streamLive.refreshLive();
       if (tab === 'logs') void refreshLogs();
     }
   });
@@ -611,8 +342,8 @@
       class:active={tab === 'live'}
       onclick={() => (tab = 'live')}>
       live
-      {#if live.length > 0}
-        <span class="badge badge-mute">{live.length}</span>
+      {#if streamLive.live.length > 0}
+        <span class="badge badge-mute">{streamLive.live.length}</span>
       {/if}
     </button>
     <button
@@ -645,11 +376,11 @@
         <div class="filter-buckets">
           <div class="filter-bucket">
             <span class="bucket-label">source</span>
-            {#each availableSources as src (src)}
+            {#each streamLive.availableSources as src (src)}
               <button
                 class="filter-chip"
-                class:on={liveFilters.sources.includes(src)}
-                onclick={() => toggleFilter('sources', src)}>{src}</button>
+                class:on={streamLive.liveFilters.sources.includes(src)}
+                onclick={() => streamLive.toggleFilter('sources', src)}>{src}</button>
             {/each}
           </div>
           <div class="filter-bucket">
@@ -657,73 +388,73 @@
             {#each STATUS_OPTIONS as s (s)}
               <button
                 class="filter-chip"
-                class:on={liveFilters.statuses.includes(s)}
-                onclick={() => toggleFilter('statuses', s)}>{s.replace('_', ' ')}</button>
+                class:on={streamLive.liveFilters.statuses.includes(s)}
+                onclick={() => streamLive.toggleFilter('statuses', s)}>{s.replace('_', ' ')}</button>
             {/each}
           </div>
-          {#if availableTags.length > 0}
+          {#if streamLive.availableTags.length > 0}
             <div class="filter-bucket">
               <span class="bucket-label">tag</span>
-              {#each availableTags as t (t)}
+              {#each streamLive.availableTags as t (t)}
                 <button
                   class="filter-chip"
-                  class:on={liveFilters.tags.includes(t)}
-                  onclick={() => toggleFilter('tags', t)}>{t}</button>
+                  class:on={streamLive.liveFilters.tags.includes(t)}
+                  onclick={() => streamLive.toggleFilter('tags', t)}>{t}</button>
               {/each}
             </div>
           {/if}
         </div>
         <div class="filter-actions">
-          {#if activeFilterCount > 0}
-            <button class="btn ghost small" onclick={clearFilters} title="Clear all filters">clear ({activeFilterCount})</button>
-            <button class="btn ghost small" onclick={savePreset} title="Save current filters as a preset">save preset</button>
+          {#if streamLive.activeFilterCount > 0}
+            <button class="btn ghost small" onclick={() => streamLive.clearFilters()} title="Clear all filters">clear ({streamLive.activeFilterCount})</button>
+            <button class="btn ghost small" onclick={() => streamLive.savePreset()} title="Save current filters as a preset">save preset</button>
           {/if}
           <button
             class="btn ghost small"
-            class:active={selectMode}
-            onclick={() => { selectMode = !selectMode; if (!selectMode) clearSelection(); }}>{selectMode ? 'cancel select' : 'select'}</button>
-          {#if selectMode && selected.size > 0}
-            <button class="btn ghost small accent" onclick={saveAsPlaybook}>
-              save as playbook ({selected.size})
+            class:active={streamLive.selectMode}
+            onclick={() => streamLive.toggleSelectMode()}>{streamLive.selectMode ? 'cancel select' : 'select'}</button>
+          {#if streamLive.selectMode && streamLive.selected.size > 0}
+            <button class="btn ghost small accent" onclick={() => streamLive.saveAsPlaybook()}>
+              save as playbook ({streamLive.selected.size})
             </button>
           {/if}
         </div>
       </div>
 
-      {#if presets.length > 0}
+      {#if streamLive.presets.length > 0}
         <div class="preset-strip" title="Click to apply a saved view">
-          {#each presets as p (p.name)}
+          {#each streamLive.presets as p (p.name)}
             <span class="preset-chip-wrap">
-              <button class="preset-chip" onclick={() => applyPreset(p)}>{p.name}</button>
-              <button class="preset-x" onclick={() => deletePreset(p.name)} title="Delete preset">×</button>
+              <button class="preset-chip" onclick={() => streamLive.applyPreset(p)}>{p.name}</button>
+              <button class="preset-x" onclick={() => streamLive.deletePreset(p.name)} title="Delete preset">×</button>
             </span>
           {/each}
         </div>
       {/if}
 
-      {#if liveError}
-        <EmptyState title="Failed to load live state" message={liveError} />
-      {:else if liveLoading && live.length === 0}
+      {#if streamLive.liveError}
+        <EmptyState title="Failed to load live state" message={streamLive.liveError} />
+      {:else if streamLive.liveLoading && streamLive.live.length === 0}
         <div class="empty">loading…</div>
-      {:else if live.length === 0}
+      {:else if streamLive.live.length === 0}
         <EmptyState
           title="Nothing currently running"
           message="Live shows envelopes whose status is upcoming, active, blocked, or needs_action across every machine." />
-      {:else if filteredLive.length === 0}
+      {:else if streamLive.filteredLive.length === 0}
         <EmptyState
           title="No envelopes match your filters"
-          message="{live.length} envelope{live.length === 1 ? '' : 's'} hidden by active filters. Clear filters above to see them." />
+          message="{streamLive.live.length} envelope{streamLive.live.length === 1 ? '' : 's'} hidden by active filters. Clear filters above to see them." />
       {:else}
         <ul class="attn-list">
-          {#each filteredLive as item (item.id)}
-            <li class="attn-row src-bus" class:selected={selected.has(item.id)}>
+          {#each streamLive.filteredLive as item (item.id)}
+            <li class="attn-row src-bus" class:selected={streamLive.selected.has(item.id)}>
               <div class="attn-meta">
-                {#if selectMode}
+                {#if streamLive.selectMode}
                   <input
                     type="checkbox"
                     class="select-box"
-                    checked={selected.has(item.id)}
-                    onchange={() => toggleSelect(item.id)}
+                    checked={streamLive.selected.has(item.id)}
+                    onchange={() => streamLive.toggleSelect(item.id)}
                     aria-label="Select for playbook"
                   />
                 {/if}
@@ -740,12 +471,12 @@
                 <div class="attn-sub">{item.subtitle}</div>
               {/if}
               <div class="attn-actions">
-                <button class="btn ghost small" onclick={() => toggleHistory(item.id)}>
-                  {history[item.id] ? 'hide history' : 'history'}
+                <button class="btn ghost small" onclick={() => streamLive.toggleHistory(item.id)}>
+                  {streamLive.history[item.id] ? 'hide history' : 'history'}
                 </button>
               </div>
-              {#if history[item.id]}
-                <EnvelopeHistory entries={history[item.id]} loading={historyLoading[item.id]} />
+              {#if streamLive.history[item.id]}
+                <EnvelopeHistory entries={streamLive.history[item.id]} loading={streamLive.historyLoading[item.id]} />
               {/if}
             </li>
           {/each}
@@ -814,14 +545,14 @@
                   {/if}
                 {/each}
                 {#if item.source === 'bus'}
-                  <button class="btn ghost small" onclick={() => toggleHistory(item.id)}>
-                    {history[item.id] ? 'hide history' : 'history'}
+                  <button class="btn ghost small" onclick={() => streamLive.toggleHistory(item.id)}>
+                    {streamLive.history[item.id] ? 'hide history' : 'history'}
                   </button>
                 {/if}
               </div>
 
-              {#if history[item.id]}
-                <EnvelopeHistory entries={history[item.id]} loading={historyLoading[item.id]} />
+              {#if streamLive.history[item.id]}
+                <EnvelopeHistory entries={streamLive.history[item.id]} loading={streamLive.historyLoading[item.id]} />
               {/if}
 
               {#if respondingId === item.id}
