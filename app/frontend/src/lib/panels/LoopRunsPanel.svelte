@@ -4,6 +4,7 @@
   import { notifications } from '../notifications.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import Modal from '../components/Modal.svelte';
   import MermaidDiagram from '../components/MermaidDiagram.svelte';
   import { linearScale, monotonePath, extent } from '../components/chartMath';
 
@@ -134,10 +135,26 @@
   // Cancel
   // ---------------------------------------------------------------------------
 
-  async function cancelLoop(loop: LoopRun) {
+  // Cancel confirmation. window.prompt is unreliable in some Wails webviews,
+  // so collect the optional reason through the shared Modal.
+  let cancelTarget = $state<LoopRun | null>(null);
+  let cancelReason = $state('');
+
+  function askCancel(loop: LoopRun) {
     if (!ACTIVE.has(loop.status)) return;
-    const reason = window.prompt(`Cancel loop ${loop.name} (iter ${loop.iteration})?\n\nOptional reason:`, '');
-    if (reason === null) return;
+    cancelReason = '';
+    cancelTarget = loop;
+  }
+
+  function closeCancel() {
+    cancelTarget = null;
+  }
+
+  async function confirmCancel() {
+    const loop = cancelTarget;
+    const reason = cancelReason.trim();
+    cancelTarget = null;
+    if (!loop) return;
     cancellingIds.add(loop.id);
     cancellingIds = cancellingIds;
     try {
@@ -271,7 +288,7 @@
               {#if ACTIVE.has(loop.status)}
                 <button
                   class="btn-cancel"
-                  onclick={() => cancelLoop(loop)}
+                  onclick={() => askCancel(loop)}
                   disabled={cancellingIds.has(loop.id)}
                 >
                   {cancellingIds.has(loop.id) ? 'cancelling…' : 'Cancel'}
@@ -305,7 +322,75 @@
   {/if}
 </div>
 
+{#if cancelTarget}
+  <Modal onClose={closeCancel} maxWidth="420px">
+    <div class="cancel-modal">
+      <h3>Cancel loop</h3>
+      <p class="cancel-help">
+        Cancel <strong>{cancelTarget.name}</strong> (iteration {cancelTarget.iteration})?
+      </p>
+      <label class="cancel-label">
+        Reason <span class="dim">(optional)</span>
+        <input
+          type="text"
+          class="cancel-input"
+          bind:value={cancelReason}
+          placeholder="operator cancelled"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-cancel-keep" onclick={closeCancel}>Keep running</button>
+        <button class="btn-cancel-confirm" onclick={confirmCancel}>Cancel loop</button>
+      </div>
+    </div>
+  </Modal>
+{/if}
+
 <style>
+  .cancel-modal { display: flex; flex-direction: column; gap: 12px; }
+  .cancel-modal h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-text-primary);
+  }
+  .cancel-help { margin: 0; font-size: 13px; color: var(--color-text-secondary); }
+  .cancel-label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--color-text-secondary);
+  }
+  .cancel-label .dim { color: var(--color-text-muted); }
+  .cancel-input {
+    padding: 8px 10px;
+    border: 1px solid var(--color-border-primary);
+    border-radius: 6px;
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
+    font-size: 13px;
+  }
+  .cancel-input:focus { outline: none; border-color: var(--color-accent); }
+  .btn-cancel-keep,
+  .btn-cancel-confirm {
+    padding: 7px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    border: 1px solid var(--color-border-primary);
+  }
+  .btn-cancel-keep { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
+  .btn-cancel-keep:hover { background: var(--color-surface-hover); }
+  .btn-cancel-confirm {
+    background: var(--fail-soft);
+    border-color: var(--fail);
+    color: var(--fail);
+  }
+  .btn-cancel-confirm:hover { background: var(--fail); color: #fff; }
+
   .panel {
     padding: 16px 20px;
     display: flex;
