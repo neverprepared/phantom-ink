@@ -360,6 +360,13 @@
 
   async function saveLayout(profileNameOverride?: string): Promise<void> {
     if (!grid) return;
+    // Capture the target profile SYNCHRONOUSLY, before any await. The widget
+    // set below is read from the live DOM synchronously too, so target and
+    // widgets are a consistent pair. Reading saveProfile after an await would
+    // let a profile switch mid-save write THIS profile's widgets under the
+    // NEXT profile's key — that is how a dashboard layout gets cloned onto
+    // another profile (cross-profile data leak).
+    const target = profileNameOverride ?? saveProfile;
     const current = dashboardState.widgets;
     // Read positions from the DOM directly — more reliable than
     // grid.save() which historically drops ids in some scenarios.
@@ -391,7 +398,7 @@
     if (a) {
       try {
         await a.SaveDashboardLayout(
-          profileNameOverride ?? saveProfile,
+          target,
           JSON.stringify({
             version: 1,
             widgets: updated,
