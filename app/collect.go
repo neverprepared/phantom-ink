@@ -23,8 +23,8 @@ type CollectJob struct {
 	ID             string `json:"id"`
 	Profile        string `json:"profile"`
 	Name           string `json:"name"`
-	Command        string `json:"command"`       // shell target only
-	IntervalS      int    `json:"interval_s"`    // interval scheduling
+	Command        string `json:"command"`    // shell target only
+	IntervalS      int    `json:"interval_s"` // interval scheduling
 	Enabled        bool   `json:"enabled"`
 	DefaultActions string `json:"default_actions"` // raw JSON array
 	LastRunAt      *int64 `json:"last_run_at"`
@@ -36,7 +36,7 @@ type CollectJob struct {
 	TargetPrompt string `json:"target_prompt"` // prompt text for runner target
 	// time-of-day scheduling (overrides interval_s when set)
 	RunAt string `json:"run_at"` // "HH:MM", e.g. "08:30"
-	Days  string `json:"days"`  // "daily" | "weekdays"
+	Days  string `json:"days"`   // "daily" | "weekdays"
 	// Source identifies where the job was created. "widget" means it is
 	// owned by a dashboard widget; "" means user-created via the Jobs panel.
 	Source string `json:"source"`
@@ -81,11 +81,24 @@ type scriptEntry struct {
 
 // ── DB helpers ─────────────────────────────────────────────────────────────
 
+const collectJobCols = `id, profile, name, command, interval_s, enabled, default_actions,
+	last_run_at, last_error, created_at,
+	target_type, target_id, target_prompt, run_at, days, source, owner_widget_id`
+
+func scanCollectJob(s rowScanner) (CollectJob, error) {
+	var j CollectJob
+	var lastRunAt sql.NullInt64
+	err := s.Scan(&j.ID, &j.Profile, &j.Name, &j.Command, &j.IntervalS,
+		&j.Enabled, &j.DefaultActions, &lastRunAt, &j.LastError, &j.CreatedAt,
+		&j.TargetType, &j.TargetID, &j.TargetPrompt, &j.RunAt, &j.Days, &j.Source, &j.OwnerWidgetID)
+	if lastRunAt.Valid {
+		j.LastRunAt = &lastRunAt.Int64
+	}
+	return j, err
+}
+
 func (db *DB) ListCollectJobs(profile string) ([]CollectJob, error) {
-	q := `SELECT id, profile, name, command, interval_s, enabled, default_actions,
-	             last_run_at, last_error, created_at,
-	             target_type, target_id, target_prompt, run_at, days, source, owner_widget_id
-	      FROM collect_jobs`
+	q := `SELECT ` + collectJobCols + ` FROM collect_jobs`
 	args := []any{}
 	if profile != "" {
 		q += " WHERE profile = ?"
@@ -99,15 +112,9 @@ func (db *DB) ListCollectJobs(profile string) ([]CollectJob, error) {
 	defer rows.Close()
 	var jobs []CollectJob
 	for rows.Next() {
-		var j CollectJob
-		var lastRunAt sql.NullInt64
-		if err := rows.Scan(&j.ID, &j.Profile, &j.Name, &j.Command, &j.IntervalS,
-			&j.Enabled, &j.DefaultActions, &lastRunAt, &j.LastError, &j.CreatedAt,
-			&j.TargetType, &j.TargetID, &j.TargetPrompt, &j.RunAt, &j.Days, &j.Source, &j.OwnerWidgetID); err != nil {
+		j, err := scanCollectJob(rows)
+		if err != nil {
 			return nil, err
-		}
-		if lastRunAt.Valid {
-			j.LastRunAt = &lastRunAt.Int64
 		}
 		jobs = append(jobs, j)
 	}
@@ -115,20 +122,9 @@ func (db *DB) ListCollectJobs(profile string) ([]CollectJob, error) {
 }
 
 func (db *DB) GetCollectJob(id string) (CollectJob, bool) {
-	var j CollectJob
-	var lastRunAt sql.NullInt64
-	err := db.conn.QueryRow(`SELECT id, profile, name, command, interval_s, enabled,
-		default_actions, last_run_at, last_error, created_at,
-		target_type, target_id, target_prompt, run_at, days, source, owner_widget_id
-		FROM collect_jobs WHERE id = ?`, id).
-		Scan(&j.ID, &j.Profile, &j.Name, &j.Command, &j.IntervalS, &j.Enabled,
-			&j.DefaultActions, &lastRunAt, &j.LastError, &j.CreatedAt,
-			&j.TargetType, &j.TargetID, &j.TargetPrompt, &j.RunAt, &j.Days, &j.Source, &j.OwnerWidgetID)
+	j, err := scanCollectJob(db.conn.QueryRow(`SELECT `+collectJobCols+` FROM collect_jobs WHERE id = ?`, id))
 	if err != nil {
 		return CollectJob{}, false
-	}
-	if lastRunAt.Valid {
-		j.LastRunAt = &lastRunAt.Int64
 	}
 	return j, true
 }
