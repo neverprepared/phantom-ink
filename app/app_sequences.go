@@ -36,7 +36,7 @@ const sequenceRunEvent = "loop:run:event"
 // active, all loops are returned.
 func (a *App) ListSequences() ([]Sequence, error) {
 	if a.db == nil {
-		return []Sequence{}, fmt.Errorf("database not initialized")
+		return []Sequence{}, errNoDB
 	}
 	rawRows, err := a.db.ListSequences(a.activeProfileName())
 	if err != nil {
@@ -67,7 +67,7 @@ func (a *App) ListSequences() ([]Sequence, error) {
 // Names must be non-empty; steps may be empty (allowing draft loops).
 func (a *App) SaveSequence(c Sequence) (Sequence, error) {
 	if a.db == nil {
-		return Sequence{}, fmt.Errorf("database not initialized")
+		return Sequence{}, errNoDB
 	}
 	if strings.TrimSpace(c.Name) == "" {
 		return Sequence{}, fmt.Errorf("loop name is required")
@@ -132,8 +132,8 @@ func (a *App) SaveSequence(c Sequence) (Sequence, error) {
 // DeleteSequence removes a loop by ID. Past runs in loop_runs are kept so
 // users can still browse history; orphaned runs are filtered out in the UI.
 func (a *App) DeleteSequence(id string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not initialized")
+	if err := a.requireDB(); err != nil {
+		return err
 	}
 	return a.db.DeleteSequence(id)
 }
@@ -141,7 +141,7 @@ func (a *App) DeleteSequence(id string) error {
 // ListSequenceRuns returns the most recent runs for a loop, newest first.
 func (a *App) ListSequenceRuns(loopID string, limit int) ([]SequenceRunRow, error) {
 	if a.db == nil {
-		return []SequenceRunRow{}, fmt.Errorf("database not initialized")
+		return []SequenceRunRow{}, errNoDB
 	}
 	return a.db.ListSequenceRuns(loopID, limit)
 }
@@ -160,7 +160,7 @@ func (a *App) ListSequenceRuns(loopID string, limit int) ([]SequenceRunRow, erro
 // silently run later after that agent disappears.
 func (a *App) RunSequence(id, input, cwdOverride string) (string, error) {
 	if a.db == nil {
-		return "", fmt.Errorf("database not initialized")
+		return "", errNoDB
 	}
 	row, ok := a.db.GetSequence(id)
 	if !ok {
@@ -407,7 +407,7 @@ func (a *App) enqueueFollowups(parentSequenceID, lastOutput, parentProfile strin
 // profile is a hard error — loops never run "globally."
 func (a *App) runSequenceForTask(ctx context.Context, task TaskRow) (string, error) {
 	if a.db == nil {
-		return "", fmt.Errorf("database not initialized")
+		return "", errNoDB
 	}
 	row, ok := a.db.GetSequence(task.SequenceID)
 	if !ok {

@@ -21,8 +21,8 @@ func (a *App) ListAutomationRules(profile string) ([]AutomationRule, error) {
 
 // SaveAutomationRule creates or updates an automation rule.
 func (a *App) SaveAutomationRule(rule AutomationRule) error {
-	if a.db == nil {
-		return fmt.Errorf("database not initialized")
+	if err := a.requireDB(); err != nil {
+		return err
 	}
 	if rule.Name == "" {
 		return fmt.Errorf("rule name is required")
@@ -44,8 +44,8 @@ func (a *App) SaveAutomationRule(rule AutomationRule) error {
 
 // DeleteAutomationRule removes an automation rule by ID.
 func (a *App) DeleteAutomationRule(id string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not initialized")
+	if err := a.requireDB(); err != nil {
+		return err
 	}
 	return a.db.DeleteAutomationRule(id)
 }
@@ -79,8 +79,8 @@ func (a *App) GetMatchingRules(jobID, entryID string) ([]AutomationRule, error) 
 
 // TriggerRule manually fires a rule against a specific collected entry.
 func (a *App) TriggerRule(ruleID, jobID, entryID string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not initialized")
+	if err := a.requireDB(); err != nil {
+		return err
 	}
 	rule, ok := a.db.GetAutomationRule(ruleID)
 	if !ok {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -44,6 +45,24 @@ type App struct {
 // NewApp creates a new App instance.
 func NewApp() *App {
 	return &App{}
+}
+
+// errNoDB is the single error returned when a DB-backed method is called before
+// the store is ready. Previously the same condition returned three different
+// messages ("database not initialized" / "database not available" /
+// "db unavailable"); this is the one sentinel, so callers/tests can errors.Is
+// against it.
+var errNoDB = errors.New("database not initialized")
+
+// requireDB reports whether the store is ready, returning errNoDB otherwise —
+// the guard for error-only DB methods (if err := a.requireDB(); err != nil {
+// return err }). Methods that must also return a value use errNoDB directly:
+// return X{}, errNoDB.
+func (a *App) requireDB() error {
+	if a.db == nil {
+		return errNoDB
+	}
+	return nil
 }
 
 // startup is called by Wails when the app starts.

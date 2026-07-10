@@ -31,7 +31,7 @@ type EnqueueTaskRequest struct {
 // task ID. The in-app worker will pick it up on the next tick.
 func (a *App) EnqueueTask(req EnqueueTaskRequest) (string, error) {
 	if a.db == nil {
-		return "", fmt.Errorf("database not initialized")
+		return "", errNoDB
 	}
 	if strings.TrimSpace(req.SequenceID) == "" {
 		return "", fmt.Errorf("loop_id is required")
@@ -87,7 +87,7 @@ func (a *App) EnqueueTask(req EnqueueTaskRequest) (string, error) {
 // statuses; empty workspace returns all workspaces.
 func (a *App) ListTasks(status, workspace string, limit int) ([]TaskRow, error) {
 	if a.db == nil {
-		return []TaskRow{}, fmt.Errorf("database not initialized")
+		return []TaskRow{}, errNoDB
 	}
 	rows, err := a.db.ListTasks(status, workspace, limit)
 	if err != nil {
@@ -102,7 +102,7 @@ func (a *App) ListTasks(status, workspace string, limit int) ([]TaskRow, error) 
 // GetTask returns a single task by ID, or an error if not found.
 func (a *App) GetTask(id string) (TaskRow, error) {
 	if a.db == nil {
-		return TaskRow{}, fmt.Errorf("database not initialized")
+		return TaskRow{}, errNoDB
 	}
 	t, ok := a.db.GetTask(id)
 	if !ok {
@@ -116,8 +116,8 @@ func (a *App) GetTask(id string) (TaskRow, error) {
 // outcome but the user-visible state stays "cancelled". Future: hard-kill via
 // shared context cancellation.
 func (a *App) CancelTask(id string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not initialized")
+	if err := a.requireDB(); err != nil {
+		return err
 	}
 	if err := a.db.CancelTask(id); err != nil {
 		return err
@@ -131,8 +131,8 @@ func (a *App) CancelTask(id string) error {
 // RetryTask resets a failed or cancelled task back to pending so the worker
 // picks it up again. Attempts counter is zeroed so retry-budget restarts.
 func (a *App) RetryTask(id string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not initialized")
+	if err := a.requireDB(); err != nil {
+		return err
 	}
 	if err := a.db.RetryTask(id); err != nil {
 		return err

@@ -21,7 +21,7 @@ type Schedule = ScheduleRow
 // rather than silently in the scheduler tick.
 func (a *App) SaveSchedule(s Schedule) (Schedule, error) {
 	if a.db == nil {
-		return Schedule{}, fmt.Errorf("database not initialized")
+		return Schedule{}, errNoDB
 	}
 	if strings.TrimSpace(s.SequenceID) == "" {
 		return Schedule{}, fmt.Errorf("loop_id is required")
@@ -60,7 +60,7 @@ func (a *App) SaveSchedule(s Schedule) (Schedule, error) {
 // its own cron parser.
 func (a *App) ListSchedules(loopID string) ([]Schedule, error) {
 	if a.db == nil {
-		return []Schedule{}, fmt.Errorf("database not initialized")
+		return []Schedule{}, errNoDB
 	}
 	rows, err := a.db.ListSchedules(loopID)
 	if err != nil {
@@ -91,7 +91,7 @@ type UpcomingFire struct {
 // Dashboard overview.
 func (a *App) ListUpcomingFires(limit int) ([]UpcomingFire, error) {
 	if a.db == nil {
-		return []UpcomingFire{}, fmt.Errorf("database not initialized")
+		return []UpcomingFire{}, errNoDB
 	}
 	if limit <= 0 {
 		limit = 10
@@ -145,7 +145,7 @@ type TaskStats struct {
 // Cancelled are scoped to finished_at within the window.
 func (a *App) GetTaskStats(windowHours int) (TaskStats, error) {
 	if a.db == nil {
-		return TaskStats{}, fmt.Errorf("database not initialized")
+		return TaskStats{}, errNoDB
 	}
 	if windowHours <= 0 {
 		windowHours = 24
@@ -176,8 +176,8 @@ func nextFireFor(s Schedule, now time.Time) string {
 
 // DeleteSchedule removes a schedule by ID.
 func (a *App) DeleteSchedule(id string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not initialized")
+	if err := a.requireDB(); err != nil {
+		return err
 	}
 	return a.db.DeleteSchedule(id)
 }
