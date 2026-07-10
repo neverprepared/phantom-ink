@@ -7,6 +7,7 @@
   import Modal from '../components/Modal.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import ConversationCreateModal from '../components/ConversationCreateModal.svelte';
 
   interface Participant {
     name: string;
@@ -76,16 +77,9 @@
   let showAddParticipantModal = $state(false);
   let addParticipantCandidates = $state<any[]>([]);
   let addParticipantSelection = $state<string>(''); // session name to add
-  let newChannelName = $state('');
-  let availableSessions = $state<any[]>([]);
-  let participantRows = $state<Array<{
-    name: string;
-    type: 'session' | 'ollama';
-    session_name: string;
-    ollama_model: string;
-    system_prompt: string;
-  }>>([]);
-  let isCreating = $state(false);
+  // Session names to pre-seed the create modal's participant roster with
+  // (from panelFocus.startConversationWith). Empty = seed from all running.
+  let createSeed = $state<string[]>([]);
 
   // --- SSE subscription ---
   $effect(() => {
@@ -180,46 +174,8 @@
   // rather than build the list from scratch. Falls back to a single empty row
   // when there are no running sessions to seed from.
   function openCreateModal(seedSessions: string[] = []) {
-    newChannelName = '';
-    participantRows = [];
+    createSeed = seedSessions;
     showCreateModal = true;
-    loadSessionsForModal(seedSessions);
-  }
-
-  async function loadSessionsForModal(seedSessions: string[] = []) {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const all = ((await a.GetSessions(profileState.active?.name ?? '')) ?? []) as any[];
-      const activeProfile = profileState.active?.name?.toLowerCase() ?? '';
-      availableSessions = all.filter((s: any) => {
-        if (!s.active) return false;
-        if (!activeProfile) return true;
-        return (s.workspace_profile ?? '').toLowerCase() === activeProfile;
-      });
-      // Seed participantRows. Explicit seedSessions (from "start conversation
-      // from Sessions panel") wins; otherwise every running session is included.
-      const namesToSeed = seedSessions.length > 0
-        ? availableSessions.filter(s => seedSessions.includes(s.name))
-        : availableSessions;
-      participantRows = namesToSeed.length > 0
-        ? namesToSeed.map((s: any) => ({
-            name: s.name,
-            type: 'session' as const,
-            session_name: s.name,
-            ollama_model: '',
-            system_prompt: '',
-          }))
-        : [{ name: '', type: 'session' as const, session_name: '', ollama_model: '', system_prompt: '' }];
-    } catch { /* ignore */ }
-  }
-
-  function addParticipantRow() {
-    participantRows = [...participantRows, { name: '', type: 'session', session_name: '', ollama_model: '', system_prompt: '' }];
-  }
-
-  function removeParticipantRow(i: number) {
-    participantRows = participantRows.filter((_, idx) => idx !== i);
   }
 
   // --- Live participant management (post-creation) ---
@@ -280,38 +236,10 @@
     }
   }
 
-  async function handleCreate() {
-    if (!newChannelName.trim() || participantRows.length === 0) return;
-    const valid = participantRows.filter(p => p.name.trim() && (
-      (p.type === 'session' && p.session_name) ||
-      (p.type === 'ollama' && p.ollama_model)
-    ));
-    if (valid.length === 0) return;
-
-    isCreating = true;
-    const a = await getApi();
-    if (!a) { isCreating = false; return; }
-    try {
-      const channel = await a.CreateChannel({
-        name: newChannelName,
-        participants: valid.map(p => ({
-          name: p.name,
-          type: p.type,
-          session_name: p.type === 'session' ? p.session_name : undefined,
-          ollama_model: p.type === 'ollama' ? p.ollama_model : undefined,
-          system_prompt: p.system_prompt || undefined,
-        })),
-        workspace_profile: profileState.active?.name ?? undefined,
-      });
-      notifications.success(`Conversation "${newChannelName}" created`);
-      showCreateModal = false;
-      await loadChannels();
-      await selectChannel(channel);
-    } catch (err: any) {
-      notifications.error(`Failed to create channel: ${err}`);
-    } finally {
-      isCreating = false;
-    }
+  async function handleCreated(channel: any) {
+    showCreateModal = false;
+    await loadChannels();
+    await selectChannel(channel);
   }
 
   // --- Send message ---
@@ -638,45 +566,11 @@
 
 <!-- Create channel modal -->
 {#if showCreateModal}
-  <Modal onClose={() => showCreateModal = false} maxWidth="680px">
-    <div class="modal-body">
-      <label class="field-label" for="ch-name">Conversation name</label>
-      <input id="ch-name" class="field-input" bind:value={newChannelName} placeholder="e.g. architecture-debate" />
-
-      <div class="participants-section">
-        <div class="section-label">Participants</div>
-        {#each participantRows as row, i}
-          <div class="participant-row">
-            <input class="p-name" bind:value={row.name} placeholder="Display name" />
-            <select class="p-type" bind:value={row.type}>
-              <option value="session">Session</option>
-              <option value="ollama">Ollama</option>
-            </select>
-            {#if row.type === 'session'}
-              <select class="p-detail" bind:value={row.session_name}>
-                <option value="">— session —</option>
-                {#each availableSessions as s}
-                  <option value={s.name}>{s.name}</option>
-                {/each}
-              </select>
-            {:else}
-              <input class="p-detail" bind:value={row.ollama_model} placeholder="Model (e.g. llama3)" />
-            {/if}
-            <input class="p-prompt" bind:value={row.system_prompt} placeholder="Role / system prompt (optional)" />
-            <button class="btn-remove" onclick={() => removeParticipantRow(i)} disabled={participantRows.length <= 1}>✕</button>
-          </div>
-        {/each}
-        <button class="btn-add-participant" onclick={addParticipantRow}>+ Add participant</button>
-      </div>
-
-      <div class="modal-footer">
-        <button class="btn-cancel" onclick={() => showCreateModal = false}>Cancel</button>
-        <button class="btn-primary" onclick={handleCreate} disabled={isCreating || !newChannelName.trim()}>
-          {isCreating ? 'Creating…' : 'Create Channel'}
-        </button>
-      </div>
-    </div>
-  </Modal>
+  <ConversationCreateModal
+    seed={createSeed}
+    onClose={() => showCreateModal = false}
+    onCreated={handleCreated}
+  />
 {/if}
 
 {#if showAddParticipantModal}
@@ -1194,72 +1088,6 @@
     border-radius: var(--radius-md);
     color: var(--color-text-primary);
     box-sizing: border-box;
-  }
-
-  .participants-section {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .section-label {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-  }
-
-  .participant-row {
-    display: grid;
-    grid-template-columns: minmax(100px,140px) minmax(80px,100px) minmax(120px,1fr) minmax(120px,1fr) auto;
-    gap: 6px;
-    align-items: center;
-  }
-
-  .p-name, .p-type, .p-detail, .p-prompt {
-    padding: 6px 8px;
-    font-size: 12px;
-    background: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-sm);
-    color: var(--color-text-primary);
-    font-family: inherit;
-  }
-
-  .btn-remove {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--color-text-tertiary);
-    font-size: 12px;
-    padding: 4px 6px;
-  }
-
-  .btn-remove:hover:not(:disabled) {
-    color: var(--fail, #ef4444);
-  }
-
-  .btn-add-participant {
-    background: none;
-    border: 1px dashed var(--color-border-primary);
-    border-radius: var(--radius-sm);
-    color: var(--color-text-tertiary);
-    font-size: 12px;
-    padding: 6px 12px;
-    cursor: pointer;
-    font-family: inherit;
-    align-self: flex-start;
-  }
-
-  .btn-add-participant:hover {
-    border-color: var(--color-info);
-    color: var(--color-info);
-  }
-
-  .modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    margin-top: 4px;
   }
 
   .btn-cancel {
