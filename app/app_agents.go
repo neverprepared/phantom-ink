@@ -17,7 +17,7 @@ import (
 // so we re-hydrate it from knownAgents before returning.
 func (a *App) ListAgents() ([]DetectedAgent, error) {
 	if a.db == nil {
-		return []DetectedAgent{}, fmt.Errorf("database not initialized")
+		return []DetectedAgent{}, errNoDB
 	}
 	rows, err := a.db.ListAgents()
 	if err != nil {
@@ -88,8 +88,8 @@ func (a *App) RescanAgents() ([]DetectedAgent, error) {
 
 // SetAgentEnabled flips the persisted enabled flag for a single agent.
 func (a *App) SetAgentEnabled(id string, enabled bool) error {
-	if a.db == nil {
-		return fmt.Errorf("database not initialized")
+	if err := a.requireDB(); err != nil {
+		return err
 	}
 	return a.db.SetAgentEnabled(id, enabled)
 }

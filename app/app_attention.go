@@ -46,7 +46,7 @@ type OpenTarget struct {
 // dismissals and user replies.
 func (a *App) ListAttention(workspace string) ([]AttentionItem, error) {
 	if a.db == nil {
-		return nil, fmt.Errorf("database not available")
+		return nil, errNoDB
 	}
 	if a.client == nil {
 		return nil, nil // brainbox unreachable — no bus, no attention
@@ -168,8 +168,8 @@ func busActions(it brainbox.AgentStateItem) []string {
 // resolve path is gone.
 func (a *App) DismissAttention(id string) error {
 	return a.recordAction(id, "dismiss", ActorUser, func() error {
-		if a.db == nil {
-			return fmt.Errorf("database not available")
+		if err := a.requireDB(); err != nil {
+			return err
 		}
 		return a.db.DismissAttentionRow(id)
 	})
@@ -178,8 +178,8 @@ func (a *App) DismissAttention(id string) error {
 // RestoreAttention removes a dismissal — used by an "undo" UI.
 func (a *App) RestoreAttention(id string) error {
 	return a.recordAction(id, "restore", ActorUser, func() error {
-		if a.db == nil {
-			return fmt.Errorf("database not available")
+		if err := a.requireDB(); err != nil {
+			return err
 		}
 		return a.db.UndismissAttentionRow(id)
 	})
@@ -248,8 +248,8 @@ func (a *App) AttentionRetry(id string) error {
 // envelope id; the bus envelope itself is not mutated.
 func (a *App) AttentionRespond(id, text string) error {
 	return a.recordAction(id, "respond", ActorUser, func() error {
-		if a.db == nil {
-			return fmt.Errorf("database not available")
+		if err := a.requireDB(); err != nil {
+			return err
 		}
 		if err := a.db.SetAttentionReply(id, text); err != nil {
 			return err

@@ -37,8 +37,8 @@ func (a *App) GetHiddenProfiles() []string {
 // SetHiddenProfiles replaces the hidden-profiles list with the provided one.
 // Pass an empty slice to clear all overrides.
 func (a *App) SetHiddenProfiles(names []string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not initialized")
+	if err := a.requireDB(); err != nil {
+		return err
 	}
 	if names == nil {
 		names = []string{}

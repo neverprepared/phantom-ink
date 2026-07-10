@@ -26,8 +26,8 @@ func (a *App) GetDashboardLayout(profile string) string {
 
 // SaveDashboardLayout persists the JSON layout string for a profile.
 func (a *App) SaveDashboardLayout(profile, layout string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not initialized")
+	if err := a.requireDB(); err != nil {
+		return err
 	}
 	key := "dashboard_layout:" + strings.TrimSpace(profile)
 	return a.db.SetSetting(key, layout)

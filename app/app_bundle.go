@@ -73,8 +73,8 @@ func (a *App) ListBundleSources(profileName string) ([]BundleSourceView, error) 
 
 // SetBundleSourceEnabled flips one catalog source's toggle for a profile.
 func (a *App) SetBundleSourceEnabled(profileName, source string, enabled bool) error {
-	if a.db == nil {
-		return fmt.Errorf("db unavailable")
+	if err := a.requireDB(); err != nil {
+		return err
 	}
 	if _, ok := profileimage.CatalogSource(source); !ok {
 		// Custom rows keep their definition — flip enabled in place.
@@ -94,8 +94,8 @@ func (a *App) SetBundleSourceEnabled(profileName, source string, enabled bool) e
 // SaveCustomBundleSource creates or updates a custom source definition.
 // definitionJSON is {globs: [...], audience: "...", env_map: {...}}.
 func (a *App) SaveCustomBundleSource(profileName, name, definitionJSON string) error {
-	if a.db == nil {
-		return fmt.Errorf("db unavailable")
+	if err := a.requireDB(); err != nil {
+		return err
 	}
 	var def profileimage.CustomSourceDef
 	if err := json.Unmarshal([]byte(definitionJSON), &def); err != nil {
@@ -118,8 +118,8 @@ func (a *App) SaveCustomBundleSource(profileName, name, definitionJSON string) e
 
 // DeleteBundleSource removes a source row (custom, or a catalog toggle).
 func (a *App) DeleteBundleSource(profileName, name string) error {
-	if a.db == nil {
-		return fmt.Errorf("db unavailable")
+	if err := a.requireDB(); err != nil {
+		return err
 	}
 	return a.db.DeleteBundleSource(profileName, name)
 }
@@ -154,7 +154,7 @@ func (a *App) syncProfileBundle(profileName, workspaceHome string, progress func
 		}
 	}
 	if a.db == nil {
-		return brainbox.BundlePutResult{}, fmt.Errorf("db unavailable")
+		return brainbox.BundlePutResult{}, errNoDB
 	}
 	var sources []profileimage.ResolvedSource
 	customEnv := map[string]map[string]string{}

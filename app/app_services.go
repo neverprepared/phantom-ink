@@ -98,5 +98,5 @@ func (a *App) SetServiceConfig(name string, enabled bool, localURL string, remot
 			RemoteURL: remoteURL,
 		})
 	}
-	return fmt.Errorf("database not available")
+	return errNoDB
 }
