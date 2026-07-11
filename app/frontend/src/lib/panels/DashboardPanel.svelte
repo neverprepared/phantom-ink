@@ -650,8 +650,27 @@
     }
   });
 
-  let _lastEvent = $derived(brainboxEvents.last);
-  $effect(() => { if (_lastEvent) void load(true); });
+  // Reload dashboard cards on SSE — but only for events that actually change
+  // what the dashboard shows (docker lifecycle + hub deltas), and throttled.
+  // load(true) fans out 7 backend calls including GetDockerStats (spawns a
+  // ~1-2s `docker stats` subprocess) and FindClaudeProcesses (bash+ps+greps);
+  // firing it ungated on every raw SSE frame stacked overlapping subprocesses.
+  // Leading-gate + trailing-fire coalesces a burst into one reload; the 10s
+  // dockerInterval backstops anything missed.
+  const DASHBOARD_EVENTS = ['create', 'start', 'stop', 'die', 'destroy'];
+  let _reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    const ev = brainboxEvents.last;
+    if (!ev) return;
+    const relevant = DASHBOARD_EVENTS.includes(ev.raw ?? '') || (ev.data && (ev.data as any).hub);
+    if (!relevant) return;
+    if (_reloadTimer !== null) return; // a trailing reload is already scheduled
+    _reloadTimer = setTimeout(() => {
+      _reloadTimer = null;
+      if (!refreshing) void load(true); // skip if a load is mid-flight; poll backstops
+    }, 1500);
+  });
+  $effect(() => () => { if (_reloadTimer !== null) clearTimeout(_reloadTimer); });
 
   let now = $state(new Date());
   const _tick = setInterval(() => { now = new Date(); }, 60_000);
