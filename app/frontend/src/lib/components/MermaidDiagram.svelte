@@ -10,7 +10,6 @@
    * Used by LoopsPanel and LoopRunsPanel.
    */
   import { onMount } from 'svelte';
-  import mermaid from 'mermaid';
 
   interface Props {
     source: string;
@@ -71,16 +70,15 @@
     }
   }
 
-  function ensureInit() {
-    if (initialized) return;
-    // 'default' is mermaid's stock palette — colored node fills, the
-    // operator gets the standard graph-engineering visual language
-    // (pink decisions, blue boxes, green terminals) rather than a
-    // washed-out black/white render. Works across phantom-ink themes
-    // because the SVG carries its own fills and never inherits from
-    // the page.
-    mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
-    initialized = true;
+  // mermaid + its transitive d3/cytoscape/katex/dagre payload (~1MB — the bulk
+  // of the app's main JS chunk) is imported lazily on first render rather than
+  // statically at module load. A diagram only appears when the operator opens
+  // Loops and expands a run, so this keeps ~1MB out of the cold-start
+  // parse/eval path. Cached after the first dynamic import; init is idempotent.
+  let mermaidMod: any = null;
+  async function loadMermaid() {
+    if (!mermaidMod) mermaidMod = (await import('mermaid')).default;
+    return mermaidMod;
   }
 
   async function render() {
@@ -91,7 +89,17 @@
       errorMessage = null;
       return;
     }
-    ensureInit();
+    const mermaid = await loadMermaid();
+    if (!initialized) {
+      // 'default' is mermaid's stock palette — colored node fills, the
+      // operator gets the standard graph-engineering visual language
+      // (pink decisions, blue boxes, green terminals) rather than a
+      // washed-out black/white render. Works across phantom-ink themes
+      // because the SVG carries its own fills and never inherits from
+      // the page.
+      mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+      initialized = true;
+    }
     renderCounter += 1;
     const id = `mermaid-diagram-${Date.now()}-${renderCounter}`;
     try {
