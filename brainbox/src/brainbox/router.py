@@ -140,40 +140,6 @@ async def submit_task(
     return task
 
 
-def register_ci_ratchet_task(
-    description: str,
-    repo_url: str,
-    session_name: str,
-) -> tuple[Task, Any]:
-    """Register a ci-ratchet worker as a hub task and issue its auth token.
-
-    Wires complete.sh → hub message → complete_task() → recycle() so the
-    container is automatically cleaned up when the worker signals completion.
-    Unlike submit_task(), this does NOT launch a container — the caller
-    (api_create_session) passes the returned token to run_pipeline() directly.
-    """
-    task_id = str(uuid.uuid4())
-    now = _now_ms()
-    token = issue_token("worker", task_id, ttl=settings.hub.token_ttl)
-    task = Task(
-        id=task_id,
-        description=description,
-        agent_name="worker",
-        status=TaskStatus.RUNNING,
-        created_at=now,
-        updated_at=now,
-        repo_url=repo_url,
-        token_id=token.token_id,
-        session_name=session_name,
-    )
-    _tasks[task_id] = task
-    log.info(
-        "router.ci_ratchet_task_registered",
-        metadata={"task_id": task_id, "session": session_name, "repo": repo_url},
-    )
-    return task, token
-
-
 def get_task(task_id: str) -> Task | None:
     return _tasks.get(task_id)
 

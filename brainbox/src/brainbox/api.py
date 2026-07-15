@@ -43,7 +43,7 @@ from .validation import (
     ValidationError,
 )
 from .log import get_logger, setup_logging
-from .models import TaskCreate, Token
+from .models import RatchetRequest, TaskCreate, Token
 from .models_api import (
     CompleteChannelRequest,
     CreateAgentRequest,
@@ -2116,12 +2116,13 @@ async def api_create_session(
         docker_host (str, optional):
             Docker daemon URL (e.g. ``tcp://remote:2376``).  ``None`` means
             the local socket.
-        repo (RepoConfig, optional):
-            Repository access configuration.  Supports ``worktree-mount``
-            (host path mounted read-write), ``clone`` (shallow clone),
-            ``clone-worktree`` (clone into a worktree), and ``ci-ratchet``
-            (full multiclaude ratchet workflow — clones repo, runs task,
-            opens PR).
+
+    Note:
+        There is no ``repo`` field. Repo delivery / the autonomous
+        clone→task→PR ("ci-ratchet") flow lives at ``POST /api/ratchet``
+        (a worker task with ``repo_url``); the worker clones agentically via
+        ``BRAINBOX_REPO_URL``. The old ``repo``/worktrees subsystem was
+        removed — do not send a ``repo`` object here; it is ignored.
 
     Returns:
         Docker backend: ``{"success": true, "backend": "docker",
@@ -2141,10 +2142,7 @@ async def api_create_session(
           "name": "my-task",
           "role": "worker",
           "volumes": ["/home/user/code:/workspace"],
-          "task": "Fix the failing tests in tests/",
-          "repo": {"url": "https://github.com/org/repo",
-                   "mode": "ci-ratchet",
-                   "task": "Fix the failing tests in tests/"}
+          "task": "Fix the failing tests in tests/"
         }
     """
     try:
@@ -3081,6 +3079,79 @@ async def hub_submit_task(
         return task.model_dump()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/ratchet", status_code=201)
+@limiter.limit("10/minute")
+async def api_ratchet(
+    request: Request, body: RatchetRequest, _key=Depends(require_api_key)
+):
+    """Fire an autonomous ci-ratchet worker (thin convenience over submit_task).
+
+    Provisions a single ``worker`` session whose role prompt clones
+    ``repo_url`` (delivered as ``BRAINBOX_REPO_URL``), implements ``task``,
+    opens a PR, watches GitHub CI, fixes failures until green, then stops with
+    the PR open. There is **no auto-merge** — the clean stop point (open PR,
+    green CI) is the handoff for downstream merge orchestration (an event rule
+    or a human).
+
+    This is the replacement for the removed ``repo``/ci-ratchet block on
+    ``/api/create``: the worker clones *agentically* using the mounted profile
+    credentials, so there is no daemon-side clone and no repos/worktrees
+    subsystem to reintroduce. It is a semantic alias over ``POST
+    /api/hub/tasks`` with ``agent_name="worker"``.
+
+    Request body (``RatchetRequest``):
+        repo_url (str): Git remote the worker clones (HTTPS or SSH).
+        task (str): What the worker should accomplish.
+        branch (str, optional): PR branch hint; the worker picks a unique
+            branch when omitted.
+        workspace_profile, workspace_home, backend, runner, runner_tags,
+        priority, max_attempts, deadline_ms, model_target: forwarded to the
+        hub task verbatim.
+
+    Returns:
+        ``{"success": true, "job_id": <str>, "task_id": <str>,
+        "repo_url": <str>}``. The task is PENDING; the scheduler dispatches it
+        to a container within seconds. Poll ``/api/hub/tasks/{task_id}`` for
+        status and the assigned session name.
+
+    Raises:
+        400 if ``repo_url`` or ``task`` is empty, or task assignment is denied.
+    """
+    repo_url = body.repo_url.strip()
+    task_text = body.task.strip()
+    if not repo_url:
+        raise HTTPException(status_code=400, detail="repo_url is required")
+    if not task_text:
+        raise HTTPException(status_code=400, detail="task is required")
+    if body.branch:
+        task_text = f"{task_text}\n\nOpen the PR from a branch named `{body.branch}`."
+    try:
+        task = await submit_task(
+            task_text,
+            "worker",
+            repo_url=repo_url,
+            workspace_profile=body.workspace_profile,
+            workspace_home=body.workspace_home,
+            runner=body.runner,
+            runner_tags=body.runner_tags,
+            backend=body.backend,
+            priority=body.priority,
+            max_attempts=body.max_attempts,
+            deadline_ms=body.deadline_ms,
+            model_target=body.model_target,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _audit_log(request, "session.ratchet", session_name=task.session_name, success=True)
+    _broadcast_sse(json.dumps({"action": "task.submit", "agent": "worker", "repo": repo_url}))
+    return {
+        "success": True,
+        "job_id": task.job_id,
+        "task_id": task.id,
+        "repo_url": repo_url,
+    }
 
 
 @app.get("/api/hub/tasks")

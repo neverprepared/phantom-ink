@@ -192,6 +192,31 @@ class TaskCreate(BaseModel):
     model_target: ModelTarget | None = None                # per-task LLM provider/model/effort
 
 
+class RatchetRequest(BaseModel):
+    """Request model for POST /api/ratchet.
+
+    A thin convenience over ``submit_task``: fires a single autonomous
+    ``worker`` session whose role prompt clones ``repo_url`` (delivered as
+    ``BRAINBOX_REPO_URL``), implements ``task``, opens a PR, watches GitHub
+    CI, fixes failures until green, then stops with the PR open. Merging is
+    intentionally out of scope — the clean stop point (open PR, green CI) is
+    the handoff for downstream merge orchestration (event rule or human).
+    """
+
+    repo_url: str  # git remote the worker clones (HTTPS or SSH)
+    task: str  # what the worker should accomplish
+    branch: str | None = None  # optional PR branch hint; worker picks a unique one otherwise
+    workspace_profile: str | None = None
+    workspace_home: str | None = None
+    backend: str = "docker"
+    runner: str | None = None                              # explicit runner name; None = auto-select
+    runner_tags: list[str] = Field(default_factory=list)  # preferred tags for auto-selection
+    priority: int = 0
+    max_attempts: int = 1
+    deadline_ms: int | None = None
+    model_target: ModelTarget | None = None                # per-task LLM provider/model/effort
+
+
 class Task(BaseModel):
     id: str
     description: str
