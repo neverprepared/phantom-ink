@@ -69,10 +69,10 @@ docker run -it --rm brainbox:latest brainbox --help
 
 ### Agent-injected env vars
 
-`BRAINBOX_TASK_ID`, `BRAINBOX_JOB_ID`, and `BRAINBOX_REPO_URL` are injected by the container lifecycle when a task is submitted through the hub. Agents can use these to:
+`BRAINBOX_TASK_ID`, `BRAINBOX_JOB_ID`, and `BRAINBOX_REPO_URL` are injected by the container lifecycle when a task is submitted through the hub (`POST /api/hub/tasks`, or the `POST /api/ratchet` convenience endpoint that queues a single `worker` task with `repo_url`). Agents can use these to:
 
 - Build unique branch names: `ratchet/${BRAINBOX_JOB_ID}-${BRAINBOX_TASK_ID}`
-- Identify the repo to clone and target for PRs
+- Identify the repo to clone (agentically — no daemon-side clone) and target for PRs
 - Report results back to the hub with the correct task context
 
 ## Volumes

@@ -417,9 +417,9 @@ async def _with_assist_session(
             # cost: assist sessions don't appear as hub tasks. Operator
             # still sees the session in the Sessions panel during the
             # ~30-60s the assist runs; for explicit hub-task tracking
-            # we'd need register_ci_ratchet_task-style manual hub
-            # registration AFTER session creation, which is a separate
-            # feature.
+            # we'd need to route this through submit_task (a hub task with
+            # its own token) instead of a bare /api/create session, which is
+            # a separate feature.
             create_body = {"name": session_name}
             resp = await client.post("/api/create", json=create_body)
             resp.raise_for_status()

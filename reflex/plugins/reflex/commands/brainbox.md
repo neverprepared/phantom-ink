@@ -19,7 +19,7 @@ Brainbox supports three distinct session modes. Each has a first-class command a
 | **Orchestrator** | `orchestrate` | UTM (default) or Docker | Project duration | No — explicit | Yes |
 
 - **Interactive** — user-facing terminal session; user stays connected; manual lifecycle.
-- **Brownian Ratchet** — fire-and-forget autonomous task: agent explores, commits progress forward (the ratchet), spawns sub-agents as needed via Claude Teams, auto-deletes when task completes.
+- **Brownian Ratchet** — fire-and-forget autonomous task: the worker clones the repo, implements the task, opens a PR, and drives GitHub CI to green (fixing failures on the same branch), then stops with the PR open. Progress only moves forward — every increment is CI-gated (the ratchet). Merging is out of scope (orchestrate it downstream). Auto-cleans on completion.
 - **Orchestrator** — long-running supervisor that manages a fleet; spawns ratchet workers for subtasks; lives across many task cycles; explicit teardown.
 
 Claude Teams (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`) is automatically enabled for `ratchet` and `orchestrate` modes.
@@ -135,7 +135,7 @@ fi
 
 Create a new sandboxed container. Auto-detects the caller's workspace profile and home from environment variables (`WORKSPACE_PROFILE`, `WORKSPACE_HOME`).
 
-Supports agent role selection via `--role`, additional volume mounts via `--mount`, and repo access configuration via `--repo`, `--repo-mode`, and `--branch` flags.
+Supports agent role selection via `--role` and additional volume mounts via `--mount`. To run an autonomous repo task (clone → task → PR → fix CI), use `/reflex:brainbox ratchet` instead.
 
 **If `$ARG` is empty (no arguments provided), run the interactive wizard** — ask each question in sequence using `AskUserQuestion`, then proceed to the payload section with the gathered values.
 
@@ -166,55 +166,13 @@ Enter choice (1–6) [1]:
 ```
 Map answer to role name (`developer`, `supervisor`, etc.). Default: `developer`.
 
-**Step 3 — Repo**
+> **Note — attaching a repo.** `create` makes an interactive session; it does
+> not clone repos (the repo/worktrees subsystem was removed). To make a host
+> repo available, mount it with `--mount /host/repo:/container/path`. For an
+> **autonomous** clone→task→PR→fix-CI flow, use `/reflex:brainbox ratchet`
+> instead — the worker clones the repo itself, no host checkout needed.
 
-Ask:
-```
-Attach a repo? Enter a local path or git remote URL, or leave blank to skip.
-```
-If blank, skip steps 4–7 and continue to step 8.
-
-**Step 4 — Repo mode** (only if repo provided)
-
-Ask:
-```
-Repo access mode for <repo>?
-
-  1) worktree-mount   — Create a git worktree on your machine and mount it in.
-                        Edits are immediately visible on the host branch.
-  2) clone            — Clone fresh inside the container. No host paths modified.
-  3) clone-worktree   — Clone fresh, then create an inner worktree for the branch.
-  4) ci-ratchet       — Autonomous worker: clones, does task, opens PR. CI merges it.
-                        Repo does NOT need to exist locally.
-
-Enter choice (1–4):
-```
-
-**Step 5 — Branch** (modes 1–3 only)
-
-Ask:
-```
-Branch name? [brainbox/<container-name>]
-```
-Default: `brainbox/<name>`.
-
-**Step 6 — Task** (ci-ratchet only)
-
-Ask:
-```
-Task for this worker (what should the agent accomplish?):
-```
-(Required — re-prompt if blank.)
-
-**Step 7 — Merge queue** (ci-ratchet only)
-
-Ask:
-```
-Auto-start a merge-queue agent to merge passing PRs? [Y/n]
-```
-Default: yes.
-
-**Step 8 — Extra volume mounts**
+**Step 3 — Extra volume mounts**
 
 Ask:
 ```
@@ -223,7 +181,7 @@ Leave blank and press Enter when done.
 ```
 Collect until a blank line is entered.
 
-**Step 9 — Confirm**
+**Step 4 — Confirm**
 
 Display a summary of all collected values and ask:
 ```
@@ -246,22 +204,10 @@ Parse the `$ARG` from the user's argument:
   - `reviewer` — Transient PR reviewer: reads code, posts comments, flags blocking issues
   - `merge-queue` — Persistent merge gatekeeper: auto-merges PRs that pass CI
   - `pr-shepherd` — Persistent PR monitor: nudges stalled PRs, pings reviewers and authors
-- `--mount /host/path:/container/path[:mode]` — Additional volume mounts (can be specified multiple times)
-- `--repo <path-or-url>` — Local path or git remote URL to make available inside the container
-- `--repo-mode worktree-mount|clone|clone-worktree|ci-ratchet` — How the repo is delivered:
-  - `worktree-mount` — Create a git worktree on the host and mount it in (isolated branch, edits visible on host)
-  - `clone` — Clone fresh inside the container, no host mount (fully isolated)
-  - `clone-worktree` — Clone fresh then create an inner worktree for the branch (fully isolated, extra worktree isolation)
-  - `ci-ratchet` — Autonomous worker: clones repo, completes task, opens PR; CI merges it. Repo does NOT need to exist on this machine. (Brownian ratchet concept from [multiclaude](https://github.com/dlorenc/multiclaude) by Dan Lorenc et al.)
-- `--branch <name>` — Branch to create/checkout (defaults to `brainbox/<session-name>` for non-ci-ratchet; `work/<session-name>` for ci-ratchet)
-- `--container-path <path>` — Where to mount/clone inside the container (default: `/home/developer/workspace/repo`)
-- `--task <description>` — Task for the worker agent (required for `ci-ratchet` mode)
-- `--no-merge-queue` — Skip auto-starting the merge-queue agent (ci-ratchet only; default: start it)
+- `--mount /host/path:/container/path[:mode]` — Additional volume mounts (can be specified multiple times). To make a host repo available in the session, mount it here.
 - `--backend docker|utm` — Execution backend (default: `docker`). Use `utm` for macOS/Windows guest OS or long-running workloads that need a full VM.
 - `--vm-template <name>` — UTM VM template to clone (required when `--backend utm`; e.g. `brainbox-macos-template`)
 - `--guest-os macos|linux|windows` — Guest OS for UTM VMs (default: `linux`)
-
-**If `--repo` is provided but `--repo-mode` is not specified**, ask the user before proceeding (same mode menu as wizard step 4 above), then ask for branch / task / merge-queue as needed.
 
 ---
 
@@ -289,12 +235,6 @@ fi
 
 ROLE=$(echo "$ARG" | grep -oE -- '--role [^ ]+' | sed 's/--role //' | head -1)
 ROLE="${ROLE:-developer}"
-REPO_URL=$(echo "$ARG" | grep -oE -- '--repo [^ ]+' | sed 's/--repo //' | head -1)
-REPO_MODE=$(echo "$ARG" | grep -oE -- '--repo-mode [^ ]+' | sed 's/--repo-mode //' | head -1)
-BRANCH=$(echo "$ARG" | grep -oE -- '--branch [^ ]+' | sed 's/--branch //' | head -1)
-CONTAINER_PATH=$(echo "$ARG" | grep -oE -- '--container-path [^ ]+' | sed 's/--container-path //' | head -1)
-TASK=$(echo "$ARG" | grep -oE -- '--task [^ ]+.*' | sed 's/--task //' | head -1)
-NO_MERGE_QUEUE=$(echo "$ARG" | grep -c -- '--no-merge-queue' || true)
 BACKEND=$(echo "$ARG" | grep -oE -- '--backend [^ ]+' | sed 's/--backend //' | head -1)
 BACKEND="${BACKEND:-docker}"
 VM_TEMPLATE=$(echo "$ARG" | grep -oE -- '--vm-template [^ ]+' | sed 's/--vm-template //' | head -1)
@@ -325,33 +265,6 @@ if [ -n "$VOLUMES" ] && [ "$VOLUMES" != "[]" ]; then
   PAYLOAD=$(echo "$PAYLOAD" | jq --argjson vols "$VOLUMES" '. + {volumes: $vols}')
 fi
 
-if [ -n "$REPO_URL" ]; then
-  CONTAINER_PATH="${CONTAINER_PATH:-/home/developer/workspace/repo}"
-  if [ "$REPO_MODE" = "ci-ratchet" ]; then
-    # ci-ratchet: branch defaults server-side to work/<name>; task and start_merge_queue included
-    START_MQ="true"
-    [ "$NO_MERGE_QUEUE" -gt 0 ] && START_MQ="false"
-    REPO_OBJ=$(jq -n \
-      --arg url "$REPO_URL" \
-      --arg mode "$REPO_MODE" \
-      --arg branch "$BRANCH" \
-      --arg cpath "$CONTAINER_PATH" \
-      --arg task "$TASK" \
-      --argjson smq "$START_MQ" \
-      '{url: $url, mode: $mode, container_path: $cpath, task: $task, start_merge_queue: $smq} +
-       (if $branch != "" then {branch: $branch} else {} end)')
-  else
-    BRANCH="${BRANCH:-brainbox/${NAME}}"
-    REPO_OBJ=$(jq -n \
-      --arg url "$REPO_URL" \
-      --arg mode "$REPO_MODE" \
-      --arg branch "$BRANCH" \
-      --arg cpath "$CONTAINER_PATH" \
-      '{url: $url, mode: $mode, branch: $branch, container_path: $cpath}')
-  fi
-  PAYLOAD=$(echo "$PAYLOAD" | jq --argjson repo "$REPO_OBJ" '. + {repo: $repo}')
-fi
-
 API_KEY=$(curl -sf "${URL}/api/auth/key" --max-time 3 2>/dev/null | jq -r '.key // empty' 2>/dev/null || true)
 
 RESULT=$(curl -sf -X POST "${URL}/api/create" \
@@ -362,13 +275,7 @@ RESULT=$(curl -sf -X POST "${URL}/api/create" \
 echo "$RESULT"
 ```
 
-Show the result: on success report the container URL, detected profile, and (if a repo was configured) the mode and branch used. For `worktree-mount`, note where the worktree was created on the host. For `ci-ratchet`, report:
-- Container URL (for observation via ttyd)
-- Branch: `work/<name>`
-- Merge-queue started: yes/no
-- "Watch CI at: https://github.com/<owner>/<repo>/actions"
-
-On failure show the error.
+Show the result: on success report the container URL and detected profile. On failure show the error.
 
 **Examples:**
 ```bash
@@ -380,36 +287,14 @@ On failure show the error.
 
 # Create with a specific role
 /reflex:brainbox create orchestrator --role supervisor
-/reflex:brainbox create pr-guard --role merge-queue
 /reflex:brainbox create task-1 --role worker
 
-# Create with additional volume mounts
-/reflex:brainbox create myproject --mount /data:/workspace/data:ro
+# Create with additional volume mounts (e.g. make a host repo available)
+/reflex:brainbox create myproject --mount /path/to/ink-bunny:/home/developer/workspace/repo
 
-# Create with repo (prompts for mode if not specified)
-/reflex:brainbox create myproject --repo /path/to/ink-bunny
-
-# Create with explicit worktree-mount mode
-/reflex:brainbox create myproject --repo /path/to/ink-bunny --repo-mode worktree-mount --branch fix/my-changes
-
-# Create with fresh clone
-/reflex:brainbox create myproject --repo git@github.com:neverprepared/ink-bunny --repo-mode clone --branch feature/new-thing
-
-# Create with clone + inner worktree
-/reflex:brainbox create myproject --repo git@github.com:neverprepared/ink-bunny --repo-mode clone-worktree --branch feature/new-thing
-
-# Create ci-ratchet worker (autonomous: clones, completes task, opens PR; CI merges it)
-/reflex:brainbox create fix-highs \
-  --repo git@github.com:neverprepared/ink-bunny \
-  --repo-mode ci-ratchet \
-  --task "Fix BB-H4, BB-H7, BB-H9 from tasks/code-review.md"
-
-# ci-ratchet without auto-starting merge-queue
-/reflex:brainbox create fix-highs \
-  --repo git@github.com:neverprepared/ink-bunny \
-  --repo-mode ci-ratchet \
-  --task "Fix the HIGH-priority items from tasks/code-review.md" \
-  --no-merge-queue
+# For an autonomous clone → task → PR → fix-CI flow, use ratchet instead:
+/reflex:brainbox ratchet --task "Fix HIGH items from tasks/code-review.md" \
+  --repo git@github.com:neverprepared/ink-bunny
 ```
 
 ### `/reflex:brainbox query`
@@ -468,28 +353,24 @@ Show the result to the user. On success, display the container's response. On ti
 
 ### `/reflex:brainbox ratchet`
 
-Launch a **Brownian Ratchet** session: a fire-and-forget autonomous task that runs to completion and then auto-deletes itself. Claude Teams is enabled automatically so the agent can spawn sub-agents in parallel.
+Launch a **ci-ratchet worker**: a fire-and-forget autonomous task. The worker clones the repo (which does **not** need to exist on this machine), implements the task, opens a PR, watches GitHub CI, and **fixes failures until CI is green — then stops with the PR open.**
 
-The ratchet metaphor: the agent explores the problem space freely (Brownian motion), but progress only moves forward — completed work is committed to git and cannot be undone (the ratchet clicks). Failed branches are discarded. The session self-destructs when the task is done.
+The ratchet metaphor (from [multiclaude](https://github.com/dlorenc/multiclaude) by Dan Lorenc et al.): the agent explores freely, but progress only moves forward — every increment is gated by CI, so nothing regresses. **Merging is intentionally not part of the ratchet** — the clean stop point (open PR, green CI) is the handoff for whatever merges downstream (an event rule, a human, or a separate orchestration).
+
+This posts to `POST /api/ratchet`, a thin convenience over the hub task API: it queues one `worker` task with `repo_url`. The worker clones agentically via `$BRAINBOX_REPO_URL` using the mounted profile credentials — there is no daemon-side clone and no `repo` object on `/api/create` (that subsystem was removed).
 
 **Flags:**
 - First non-flag argument — task description (required; re-prompt if blank)
-- `--name <name>` — Session name (default: `ratchet-<timestamp>`)
-- `--repo <url-or-path>` — Repo to work in (required)
-- `--branch <name>` — Working branch (default: `work/<name>`)
+- `--repo <url>` — Git remote the worker clones, HTTPS or SSH (required)
+- `--branch <name>` — PR branch hint (optional; the worker picks a unique branch otherwise)
 - `--backend docker|utm` — Execution backend (default: `docker`)
-- `--vm-template <name>` — UTM template (required if `--backend utm`)
-- `--guest-os macos|linux|windows` — Guest OS for UTM (default: `linux`)
-- `--no-merge-queue` — Skip auto-starting merge-queue agent
+- `--runner <name>` — Pin to a specific runner (optional; auto-selected otherwise)
 
 **If `$ARG` is empty**, run the interactive wizard:
 1. Ask for task description (required)
-2. Ask for repo URL or path (required)
-3. Ask for session name (default: `ratchet-<timestamp>`)
-4. Ask: `Backend? docker (fast, default) / utm (full VM)`
-5. If utm: ask for vm-template
-6. Ask: `Auto-start merge-queue to merge passing PRs? [Y/n]`
-7. Confirm and proceed
+2. Ask for repo URL (required)
+3. Ask: `Backend? docker (fast, default) / utm (full VM)`
+4. Confirm and proceed
 
 ```bash
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
@@ -504,49 +385,37 @@ fi
 URL=$(cat "$URL_FILE")
 PROFILE="${WORKSPACE_PROFILE:-}"
 WS_HOME="${WORKSPACE_HOME:-}"
-TIMESTAMP=$(date +%s)
 
 # Parse flags
 TASK=$(echo "$ARG" | sed -E 's/--[a-z-]+ [^ ]+//g' | xargs)
-NAME=$(echo "$ARG" | grep -oE -- '--name [^ ]+' | sed 's/--name //' | head -1)
-NAME="${NAME:-ratchet-${TIMESTAMP}}"
 REPO_URL=$(echo "$ARG" | grep -oE -- '--repo [^ ]+' | sed 's/--repo //' | head -1)
 BRANCH=$(echo "$ARG" | grep -oE -- '--branch [^ ]+' | sed 's/--branch //' | head -1)
 BACKEND=$(echo "$ARG" | grep -oE -- '--backend [^ ]+' | sed 's/--backend //' | head -1)
 BACKEND="${BACKEND:-docker}"
-VM_TEMPLATE=$(echo "$ARG" | grep -oE -- '--vm-template [^ ]+' | sed 's/--vm-template //' | head -1)
-GUEST_OS=$(echo "$ARG" | grep -oE -- '--guest-os [^ ]+' | sed 's/--guest-os //' | head -1)
-GUEST_OS="${GUEST_OS:-linux}"
-NO_MERGE_QUEUE=$(echo "$ARG" | grep -c -- '--no-merge-queue' || true)
-START_MQ="true"
-[ "$NO_MERGE_QUEUE" -gt 0 ] && START_MQ="false"
+RUNNER=$(echo "$ARG" | grep -oE -- '--runner [^ ]+' | sed 's/--runner //' | head -1)
+
+if [ -z "$REPO_URL" ]; then
+  echo "A repo is required. Pass --repo <git-url>."
+  exit 1
+fi
 
 API_KEY=$(curl -sf "${URL}/api/auth/key" --max-time 3 2>/dev/null | jq -r '.key // empty' 2>/dev/null || true)
 
-# Build repo object
-REPO_OBJ=$(jq -n \
-  --arg url "$REPO_URL" \
-  --arg branch "$BRANCH" \
-  --arg task "$TASK" \
-  --argjson smq "$START_MQ" \
-  '{url: $url, mode: "ci-ratchet", container_path: "/home/developer/workspace/repo", task: $task, start_merge_queue: $smq} +
-   (if $branch != "" then {branch: $branch} else {} end)')
-
 PAYLOAD=$(jq -n \
-  --arg name "$NAME" \
+  --arg repo "$REPO_URL" \
+  --arg task "$TASK" \
+  --arg branch "$BRANCH" \
   --arg profile "$PROFILE" \
   --arg ws_home "$WS_HOME" \
   --arg backend "$BACKEND" \
-  --arg vm_template "$VM_TEMPLATE" \
-  --arg guest_os "$GUEST_OS" \
-  --argjson repo "$REPO_OBJ" \
-  '{name: $name, role: "worker", backend: $backend, repo: $repo} +
+  --arg runner "$RUNNER" \
+  '{repo_url: $repo, task: $task, backend: $backend} +
+   (if $branch != "" then {branch: $branch} else {} end) +
    (if $profile != "" then {workspace_profile: $profile} else {} end) +
    (if $ws_home != "" then {workspace_home: $ws_home} else {} end) +
-   (if $vm_template != "" then {vm_template: $vm_template} else {} end) +
-   (if $backend == "utm" then {guest_os: $guest_os} else {} end)')
+   (if $runner != "" then {runner: $runner} else {} end)')
 
-RESULT=$(curl -sf -X POST "${URL}/api/create" \
+RESULT=$(curl -sf -X POST "${URL}/api/ratchet" \
   -H 'Content-Type: application/json' \
   -H "X-API-Key: ${API_KEY}" \
   -d "$PAYLOAD" --max-time 60 2>&1)
@@ -554,14 +423,12 @@ RESULT=$(curl -sf -X POST "${URL}/api/create" \
 echo "$RESULT"
 ```
 
-On success, report:
-- Session name and backend
+The response is `{"success": true, "job_id": ..., "task_id": ..., "repo_url": ...}`. The task starts **PENDING**; the scheduler dispatches it to a container within seconds. On success, report:
+- Task ID and job ID
 - Task description (truncated to 80 chars if long)
-- Branch: `work/<name>` (or custom)
-- Merge-queue: started / skipped
-- "Session will auto-delete when the task completes."
-- For Docker: container URL for observation (ttyd)
-- For UTM: SSH port
+- Repo and (if given) branch hint
+- "The worker will open a PR and drive it until CI is green, then stop. Merge it yourself or via downstream orchestration."
+- "Track it: `/reflex:brainbox query` or poll `GET /api/hub/tasks/<task_id>` for status and the assigned session (for ttyd observation)."
 
 **Examples:**
 ```bash
@@ -570,13 +437,12 @@ On success, report:
 
 # Fully specified
 /reflex:brainbox ratchet --task "Fix all HIGH-priority items from tasks/code-review.md" \
-  --repo git@github.com:neverprepared/ink-bunny \
-  --name fix-highs
+  --repo git@github.com:neverprepared/ink-bunny
 
-# UTM macOS ratchet
+# UTM macOS ratchet, pinned to a runner
 /reflex:brainbox ratchet --task "Port the auth middleware to Swift" \
   --repo git@github.com:myorg/myapp \
-  --backend utm --vm-template brainbox-macos-template --guest-os macos
+  --backend utm --runner mac-studio
 ```
 
 ---
@@ -632,6 +498,17 @@ GUEST_OS="${GUEST_OS:-linux}"
 
 API_KEY=$(curl -sf "${URL}/api/auth/key" --max-time 3 2>/dev/null | jq -r '.key // empty' 2>/dev/null || true)
 
+# Fold the repo into the supervisor's goal. /api/create has no repo object
+# (the repo/worktrees subsystem was removed); the supervisor reads the repo
+# from its task and hands it to each worker it spawns as repo_url.
+if [ -n "$REPO_URL" ]; then
+  if [ -n "$TASK" ]; then
+    TASK="Repository: ${REPO_URL}"$'\n\n'"${TASK}"
+  else
+    TASK="Manage and drive work on the repository: ${REPO_URL}"
+  fi
+fi
+
 PAYLOAD=$(jq -n \
   --arg name "$NAME" \
   --arg role "supervisor" \
@@ -647,11 +524,6 @@ PAYLOAD=$(jq -n \
    (if $vm_template != "" then {vm_template: $vm_template} else {} end) +
    (if $backend == "utm" then {guest_os: $guest_os} else {} end) +
    (if $task != "" then {task: $task} else {} end)')
-
-if [ -n "$REPO_URL" ]; then
-  REPO_OBJ=$(jq -n --arg url "$REPO_URL" '{url: $url, mode: "clone", container_path: "/home/developer/workspace/repo"}')
-  PAYLOAD=$(echo "$PAYLOAD" | jq --argjson repo "$REPO_OBJ" '. + {repo: $repo}')
-fi
 
 RESULT=$(curl -sf -X POST "${URL}/api/create" \
   -H 'Content-Type: application/json' \
@@ -821,9 +693,10 @@ Manage the brainbox API for sandboxed dev environments (Docker containers and UT
 Session modes:
   create       Interactive session — user-facing, manual lifecycle
                Syntax: create [name] [--role <role>] [--backend docker|utm] [--vm-template <t>]
-                              [--mount /host:/container[:mode]] [--repo <url>] [--repo-mode <mode>]
-  ratchet      Brownian Ratchet — fire-and-forget autonomous task, auto-deletes on completion
-               Syntax: ratchet [--task <desc>] [--repo <url>] [--name <n>] [--backend docker|utm]
+                              [--mount /host:/container[:mode]]
+  ratchet      ci-ratchet worker — fire-and-forget: clones repo, does task, opens PR,
+               drives CI to green, then stops with the PR open (no auto-merge)
+               Syntax: ratchet <task> --repo <url> [--branch <n>] [--backend docker|utm] [--runner <n>]
   orchestrate  Long-running Orchestrator — persistent supervisor that spawns ratchet workers
                Syntax: orchestrate [name] [--repo <url>] [--task <goal>] [--backend utm|docker]
   delete       Delete a session (Docker: stop+rm; UTM: stop+delete VM)
@@ -839,8 +712,7 @@ Management:
   health     Check observability services (LangFuse)
   config     Show/set configuration (url, autostart)
 
-Roles (for create): developer (default), supervisor, worker, reviewer, merge-queue, pr-shepherd
-Repo modes (for create): worktree-mount, clone, clone-worktree, ci-ratchet
+Roles (for create): developer (default), supervisor, worker, reviewer
 Backends: docker (default for interactive/ratchet), utm (default for orchestrate)
 
 Claude Teams is automatically enabled for ratchet and orchestrate modes.

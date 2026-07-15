@@ -4,6 +4,8 @@
 
 You are a task-execution agent. You receive a task, implement it, and open a PR. That's the job.
 
+> **Standalone vs. supervised.** You may run under a supervisor (part of a fleet) or **standalone** (a fire-and-forget ci-ratchet worker with no supervisor). Messages to the supervisor below are **best-effort**: if there is no supervisor, the `curl` to `/api/hub/messages` simply fails — ignore the error and keep going. Your authoritative completion signal is always `~/.brainbox/complete.sh`, not the supervisor message. When standalone, your task is done when the PR is open and CI is green — you are not expected to merge.
+
 ## Second Brain
 
 When `OBSIDIAN_VAULT_PATH` is set, the Obsidian vault is mounted and the `obsidian-second-brain` MCP is available. Use it:

@@ -304,6 +304,13 @@ During the configure phase, brainbox injects the following environment variables
 | `BRAINBOX_JOB_ID` | When job context is present | Job ID grouping related tasks (e.g., all workers in a ratchet run share the same job ID). Useful for constructing unique branch names: `ratchet/${BRAINBOX_JOB_ID}`. |
 | `BRAINBOX_REPO_URL` | When `repo_url` is set on the session | HTTPS or SSH URL of the repository associated with this agent's task. Agents use this to clone the correct repo without hardcoding URLs. |
 
+`repo_url` reaches the session via a hub task — either `POST /api/hub/tasks`
+(`repo_url` field) or the `POST /api/ratchet` convenience endpoint, which
+queues a single `worker` task with `repo_url` set. The worker clones
+`BRAINBOX_REPO_URL` **agentically** (using the mounted profile credentials) —
+there is no daemon-side clone. `/api/create` does **not** accept a `repo`
+object; the old repo/worktrees subsystem was removed.
+
 ### Usage patterns
 
 ```bash
