@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.28.0](https://github.com/neverprepared/ink-bunny/compare/reflex-v1.27.0...reflex-v1.28.0) (2026-07-15)
+
+
+### Features
+
+* **brainbox:** point the `ratchet` command at the new `/api/ratchet` endpoint; drop the dead `--repo-mode` variants from `create` and fix `orchestrate` repo delivery ([#253](https://github.com/neverprepared/phantom-ink/pull/253))
+
+
+### Miscellaneous
+
+* reconcile `VERSION`, `plugin.json`, and the release-please manifest, which had drifted apart (1.13.0 / 1.26.0 / 1.27.0) → all now 1.28.0
+
 ## [1.26.0](https://github.com/neverprepared/ink-bunny/compare/reflex-v1.25.1...reflex-v1.26.0) (2026-04-05)
 
 
