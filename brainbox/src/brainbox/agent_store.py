@@ -23,7 +23,7 @@ import time
 from enum import Enum
 from typing import Any, Callable, Iterable
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .store import _conn
 
@@ -117,6 +117,40 @@ class AgentEnvelope(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     actions: list[dict[str, Any]] = Field(default_factory=list)
     outcome: ActionOutcome | None = None
+
+
+class AgentEventBatch(BaseModel):
+    """Wire shape for POST /api/agent_events, matching the Go client's
+    `AgentEventBatch` (`{events: [envelope, ...]}`).
+
+    Typing the ingest body as this model is what puts `AgentEnvelope` into
+    `/openapi.json` (`components.schemas`) and makes FastAPI validate every
+    envelope on ingest — a malformed envelope 422s at the boundary instead of
+    reaching `agent_state`. Consumers generate their bindings from that schema
+    (see T3), so the model here is the single source of truth for the shape.
+    """
+
+    events: list[AgentEnvelope] = Field(
+        default_factory=list,
+        description="Batch of envelopes to upsert. Empty is accepted (no-op).",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_bare_shapes(cls, data: Any) -> Any:
+        """Back-compat: also accept a bare single envelope (`{id, title, ...}`)
+        or a bare list of envelopes, coercing both into `{events: [...]}`.
+
+        The canonical wire shape is `{events: [...]}` (the Go client only ever
+        sends that), but existing producers post a single envelope object or a
+        raw array. Normalize here so one typed body serves all three without a
+        polymorphic union muddying the published schema.
+        """
+        if isinstance(data, list):
+            return {"events": data}
+        if isinstance(data, dict) and "events" not in data:
+            return {"events": [data]}
+        return data
 
 
 # ---------------------------------------------------------------------------
