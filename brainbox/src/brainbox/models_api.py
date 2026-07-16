@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .validation import (
@@ -264,3 +266,31 @@ class UpdateAgentRequest(BaseModel):
     claude_effort: str | None = None  # empty string = clear
     codex_model: str | None = None   # empty string = clear
     ollama_model: str | None = None  # empty string = clear
+
+
+class MintProfileTokenRequest(BaseModel):
+    """Request model for POST /api/tokens (T11 profile token minting).
+
+    ``workspace_profile`` is free-text (brainbox has no authoritative profiles
+    registry — the dashboard offers the gateway-secrets profile list as a
+    convenience dropdown but the operator may name any profile), so it is
+    validated to a safe charset rather than checked against an allow-list.
+    ``capabilities`` is validated against the catalog server-side.
+    """
+
+    workspace_profile: str = Field(..., description="Profile this token is bound to")
+    capabilities: list[str] = Field(default_factory=list)
+    label: str = Field("", max_length=200, description="Human-readable note")
+
+    @field_validator("workspace_profile")
+    @classmethod
+    def validate_profile(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("workspace_profile is required")
+        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$", stripped):
+            raise ValueError(
+                "workspace_profile must start alphanumeric and contain only "
+                "letters, numbers, '.', '_', or '-'"
+            )
+        return stripped

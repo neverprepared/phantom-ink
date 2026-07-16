@@ -6,7 +6,9 @@ Extended to support markdown role prompts absorbed from multiclaude
 
 from __future__ import annotations
 
+import hashlib
 import json
+import secrets
 import stat
 import time
 import uuid
@@ -16,6 +18,18 @@ from .log import get_logger
 from .models import AgentDefinition, Token
 
 log = get_logger()
+
+# ---------------------------------------------------------------------------
+# Capability catalog (T11)
+# ---------------------------------------------------------------------------
+# The small, closed set of capabilities a profile token may be granted. The
+# dashboard reads this to render its multi-select; ``issue_profile_token``
+# validates against it so a typo'd capability can never be minted. Keep this
+# minimal — add entries only as routes are moved onto ``require_capability``.
+CAPABILITY_CATALOG: tuple[str, ...] = (
+    "agent_events:write",
+    "agent_events:read",
+)
 
 # ---------------------------------------------------------------------------
 # State
@@ -418,15 +432,119 @@ def load_persisted_gateway_tokens() -> int:
     return count
 
 
-def validate_token(token_id: str) -> Token | None:
-    token = _tokens.get(token_id)
-    if not token:
+# ---------------------------------------------------------------------------
+# Profile tokens (T11) — persistent, revocable, per-profile service tokens
+# ---------------------------------------------------------------------------
+
+# Profile tokens never expire (long-lived until revoked). validate_token builds
+# a Token with this sentinel expiry so the in-memory expiry check is a no-op.
+_NO_EXPIRY: int = 1 << 62
+
+
+def _hash_token(raw: str) -> str:
+    """sha256 hex digest of a raw bearer value — what we persist and look up."""
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def issue_profile_token(
+    workspace_profile: str,
+    capabilities: list[str],
+    label: str = "",
+) -> tuple[str, Token]:
+    """Mint a persistent, revocable profile-bound token (T11, Tier-0).
+
+    Generates a high-entropy bearer secret (``secrets.token_hex(32)`` — NOT a
+    bare uuid), persists ``sha256(raw)`` plus metadata in ``profile_tokens``,
+    and returns ``(raw, Token)``. The raw value is returned ONCE and never
+    stored; callers must surface it to the human immediately. The Token has no
+    task binding and no expiry (works until revoked).
+    """
+    if not workspace_profile or not workspace_profile.strip():
+        raise ValueError("workspace_profile is required")
+    unknown = [c for c in capabilities if c not in CAPABILITY_CATALOG]
+    if unknown:
+        raise ValueError(f"Unknown capabilities: {unknown}")
+
+    from . import store
+
+    raw = secrets.token_hex(32)
+    token_id = str(uuid.uuid4())
+    now = int(time.time() * 1000)
+    caps = list(dict.fromkeys(capabilities))  # dedupe, preserve order
+
+    store.insert_profile_token(
+        token_id=token_id,
+        token_hash=_hash_token(raw),
+        workspace_profile=workspace_profile,
+        capabilities=caps,
+        scope=[],
+        label=label,
+        issued=now,
+    )
+    token = Token(
+        token_id=token_id,
+        agent_name="profile",
+        task_id="",
+        capabilities=caps,
+        issued=now,
+        expiry=_NO_EXPIRY,
+        workspace_profile=workspace_profile,
+    )
+    log.info(
+        "registry.profile_token_issued",
+        metadata={
+            "token_id": token_id,
+            "workspace_profile": workspace_profile,
+            "capabilities": caps,
+            "label": label,
+        },
+    )
+    return raw, token
+
+
+def _validate_profile_token(presented: str) -> Token | None:
+    """Hashed-lookup fallback for validate_token: resolve a raw bearer value
+    against ``profile_tokens``. Rejects revoked tokens; stamps last_used."""
+    try:
+        from . import store
+
+        row = store.find_profile_token_by_hash(_hash_token(presented))
+    except Exception as exc:  # pragma: no cover - DB unavailable is best-effort
+        log.warning("registry.profile_token_lookup_failed", metadata={"reason": str(exc)})
+        return None
+    if row is None or row["revoked"]:
         return None
     now = int(time.time() * 1000)
-    if now > token.expiry:
-        _tokens.pop(token_id, None)
-        return None
-    return token
+    try:
+        store.touch_profile_token_last_used(row["token_id"], now)
+    except Exception:  # pragma: no cover - best-effort telemetry
+        pass
+    return Token(
+        token_id=row["token_id"],
+        agent_name="profile",
+        task_id="",
+        capabilities=list(row["capabilities"]),
+        issued=row["issued"],
+        expiry=_NO_EXPIRY,
+        workspace_profile=row["workspace_profile"],
+        scope=list(row["scope"]),
+    )
+
+
+def validate_token(token_id: str) -> Token | None:
+    # 1. Legacy in-memory path (gateway/session/task tokens keyed by uuid).
+    token = _tokens.get(token_id)
+    if token:
+        now = int(time.time() * 1000)
+        if now > token.expiry:
+            _tokens.pop(token_id, None)
+            return None
+        return token
+    # 2. Persistent profile-token fallback (hashed lookup). Reached only when
+    #    the presented value isn't a known in-memory token id — a profile token's
+    #    bearer value is a 64-char hex secret, not a registered uuid, so the two
+    #    namespaces never collide.
+    return _validate_profile_token(token_id)
 
 
 def revoke_token(token_id: str) -> bool:
