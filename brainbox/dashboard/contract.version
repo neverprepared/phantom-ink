@@ -1,0 +1,11 @@
+# Pinned phantom-contracts ref for the timeline-entry envelope schema.
+# The dashboard's TS types (src/lib/contract/timeline-entry.ts) and the ajv
+# runtime schema (src/lib/contract/timeline-entry.schema.json) are GENERATED
+# from this ref by scripts/gen-types.mjs — never hand-edit the generated files.
+#
+# Bump = change TAG here, re-run `npm run gen:types`, commit the regenerated
+# output. The SHA is recorded for provenance; TAG is what the codegen fetches.
+TAG=timeline-entry/v2.1
+SHA=0440c1a161f48196054c7ee6e33406f5c5d0c9e3
+REPO=git@github.com:neverprepared/phantom-contracts.git
+SCHEMA_PATH=schema/timeline-entry.schema.json

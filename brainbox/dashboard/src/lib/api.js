@@ -1,5 +1,7 @@
 /** API client for brainbox backend. */
 
+import { assertEmittable, readEnvelope } from './contract/envelope.js';
+
 let _apiKey = null;
 
 /**
@@ -167,6 +169,42 @@ export async function cancelPipelineRun(runId) {
   return fetchJSON(`/api/pipelines/runs/${encodeURIComponent(runId)}/cancel`, {
     method: 'POST',
     headers: protectedHeaders(),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Agent events (timeline-entry contract)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read agent-state envelopes from the bus. Envelopes are passed through
+ * readEnvelope(), which tolerates unknown/additive fields so a v2.x schema
+ * change never breaks the read path.
+ *
+ * @param {AbortSignal | null} signal
+ * @returns {Promise<import('./contract/envelope.js').AgentEnvelope[]>}
+ */
+export async function fetchAgentState(signal = null) {
+  const opts = signal ? { signal, headers: readHeaders() } : { headers: readHeaders() };
+  const data = await fetchJSON('/api/agent_state', opts);
+  const rows = Array.isArray(data) ? data : (data.envelopes || data.items || []);
+  return rows.map(readEnvelope);
+}
+
+/**
+ * Emit an envelope back to the bus. The payload is ajv-validated against the
+ * pinned timeline-entry schema before send; a non-conforming envelope throws
+ * and never reaches the network. This is the only sanctioned UI emit path — any
+ * future POST of an envelope must route through here (or assertEmittable).
+ *
+ * @param {unknown} envelope
+ */
+export async function emitAgentEvent(envelope) {
+  const validated = assertEmittable(envelope);
+  return fetchJSON('/api/agent_events', {
+    method: 'POST',
+    headers: protectedHeaders(),
+    body: JSON.stringify(validated),
   });
 }
 
