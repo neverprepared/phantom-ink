@@ -216,7 +216,7 @@
         </thead>
         <tbody>
           {#each tokens as t (t.token_id)}
-            <tr class:revoked={t.revoked}>
+            <tr>
               <td class="mono">{t.workspace_profile}</td>
               <td>
                 {#if t.capabilities?.length}
@@ -233,20 +233,14 @@
               <td class="muted">{fmtTime(t.issued)}</td>
               <td class="muted">{fmtTime(t.last_used)}</td>
               <td>
-                {#if t.revoked}
-                  <span class="status status-revoked">revoked</span>
-                {:else}
-                  <span class="status status-active">active</span>
-                {/if}
+                <span class="status status-active">active</span>
               </td>
               <td>
-                {#if !t.revoked}
-                  <button
-                    class="btn-revoke"
-                    onclick={() => handleRevoke(t.token_id)}
-                    aria-label={`Revoke token for ${t.workspace_profile}`}
-                  >Revoke</button>
-                {/if}
+                <button
+                  class="btn-revoke"
+                  onclick={() => handleRevoke(t.token_id)}
+                  aria-label={`Revoke token for ${t.workspace_profile}`}
+                >Revoke</button>
               </td>
             </tr>
           {/each}
@@ -451,7 +445,6 @@
     color: #cbd5e1;
     vertical-align: top;
   }
-  .token-table tr.revoked td { opacity: 0.5; }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; }
   .muted { color: #64748b; }
 
@@ -476,7 +469,6 @@
     border-radius: 10px;
   }
   .status-active { background: rgba(16, 185, 129, 0.12); color: #6ee7b7; }
-  .status-revoked { background: rgba(100, 116, 139, 0.15); color: #94a3b8; }
 
   .btn-revoke {
     background: rgba(239, 68, 68, 0.1);

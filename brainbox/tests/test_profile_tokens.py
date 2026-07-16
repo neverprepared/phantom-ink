@@ -80,11 +80,16 @@ class TestValidateProfileToken:
         reg_module.validate_token(raw)
         assert store.list_profile_tokens()[0]["last_used"] is not None
 
-    def test_revoked_token_fails_validation(self):
+    def test_revoked_token_is_deleted_and_fails_validation(self):
         raw, token = reg_module.issue_profile_token("personal", ["agent_events:write"])
         assert reg_module.validate_token(raw) is not None
-        assert store.revoke_profile_token(token.token_id, 1) is True
+        # Revoke hard-deletes the row: it fails validation (unknown → None) and
+        # drops out of the listing entirely — no soft-flagged row lingers.
+        assert store.revoke_profile_token(token.token_id) is True
         assert reg_module.validate_token(raw) is None
+        assert store.list_profile_tokens() == []
+        # A second revoke of the now-gone id removes nothing.
+        assert store.revoke_profile_token(token.token_id) is False
 
     def test_unknown_bearer_returns_none(self):
         assert reg_module.validate_token("00" * 32) is None
@@ -147,7 +152,7 @@ class TestAdminEndpoints:
         assert "token" not in rows[0]
 
     @pytest.mark.asyncio
-    async def test_revoke_endpoint(self, client):
+    async def test_revoke_endpoint_deletes_row(self, client):
         async with client as c:
             mint = await c.post(
                 "/api/tokens",
@@ -156,8 +161,14 @@ class TestAdminEndpoints:
             token_id = mint.json()["token_id"]
             raw = mint.json()["token"]
             revoke = await c.delete(f"/api/tokens/{token_id}")
+            listing = await c.get("/api/tokens")
+            # A second DELETE of the now-deleted id 404s: the row is gone.
+            revoke_again = await c.delete(f"/api/tokens/{token_id}")
         assert revoke.status_code == 200
         assert reg_module.validate_token(raw) is None
+        # The revoked token has disappeared from the listing (hard delete).
+        assert listing.json()["tokens"] == []
+        assert revoke_again.status_code == 404
 
     @pytest.mark.asyncio
     async def test_revoke_unknown_is_404(self, client):
@@ -251,9 +262,10 @@ class TestIngestBackCompat:
 
     @pytest.mark.asyncio
     async def test_revoked_token_is_401(self, client, monkeypatch):
+        """A revoked (hard-deleted) token is unknown on the next validate → 401."""
         _real_capability_auth(monkeypatch, "server-key")
         raw, tok = reg_module.issue_profile_token("personal", ["agent_events:write"])
-        store.revoke_profile_token(tok.token_id, 1)
+        store.revoke_profile_token(tok.token_id)
         async with client as c:
             resp = await c.post(
                 "/api/agent_events",
