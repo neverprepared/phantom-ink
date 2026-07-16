@@ -1086,6 +1086,30 @@ async def sse_events(
 # ---------------------------------------------------------------------------
 
 
+@app.get("/.well-known/phantom-events.json", include_in_schema=False)
+async def phantom_events_discovery() -> dict[str, Any]:
+    """Public discovery for the agent event contract.
+
+    Unauthenticated, mirroring the A2A agent-card discovery
+    (`/a2a/{agent}/.well-known/agent-card.json`): an agent finds the schema by
+    convention, without needing a key. Returns the LIVE timeline-entry schema
+    inline (straight off `AgentEnvelope.model_json_schema()`, never a cached
+    copy) alongside a pointer to the same schema in `/openapi.json`, so a
+    consumer can either read the shape directly here or resolve the OpenAPI ref.
+
+    Inline (not pointer-only) is deliberate: it matches the agent-card pattern
+    (the card returns its full body, not a link) and hands an agent the current
+    contract in one hop, while the `$ref` keeps the OpenAPI linkage discoverable.
+    """
+    return {
+        "contract": "phantom-events/timeline-entry",
+        "version": "2.1",
+        "schema": agent_store.AgentEnvelope.model_json_schema(),
+        "schema_ref": "/openapi.json#/components/schemas/AgentEnvelope",
+        "ingest": "/api/agent_events",
+    }
+
+
 @app.post("/api/agent_events")
 async def agent_events_ingest(
     batch: agent_store.AgentEventBatch,
