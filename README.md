@@ -93,3 +93,5 @@ The app persists configuration and profile state in a local SQLite database (`~/
 ## Contributing
 
 Pull requests welcome. See `shell-profiler/CLAUDE.md` for development guidelines on the CLI tool.
+
+Emitting or consuming bus events? See [docs/event-bus-conformance.md](docs/event-bus-conformance.md).
