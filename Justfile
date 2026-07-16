@@ -5,6 +5,12 @@ default:
 
 # === App (Wails desktop, Go + Svelte) ===
 
+# Regenerate the timeline-entry Go bindings + committed schema from the pinned
+# phantom-contracts tag (app/internal/contract/CONTRACT_TAG). Needs SSH access to
+# neverprepared/phantom-contracts. A re-run must produce no git diff.
+app-contract-gen:
+    cd app && go generate ./internal/contract
+
 app-dev:
     cd app && $(shell which wails 2>/dev/null || echo $(HOME)/go/bin/wails) dev
 
@@ -109,7 +115,24 @@ test-all: bb-test sp-test
 lint-all: bb-lint sp-lint
 
 # Validate a collection script's output against the timeline entry contract.
+# The item shape comes from the SAME schema the Go codegen fetches
+# (app/internal/contract/timeline-entry.schema.json, from the pinned
+# phantom-contracts tag — run `just app-contract-gen` to refresh it);
+# contracts/collection-output.schema.json only adds the array framing scripts
+# emit and $refs that fetched schema by $id. ajv-cli reads its data from a file
+# (-d), not stdin, so the script output is captured to a temp file first.
 # Usage: just validate-output ./path/to/script.sh
 # Requires: npm install -g ajv-cli
 validate-output script:
-    {{script}} | ajv validate -s contracts/timeline-entry.schema.json --errors=text
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # ajv-cli infers the data format from the file extension, so the temp file
+    # must end in .json or it is not parsed as JSON ("data must be array").
+    out="$(mktemp).json"
+    trap 'rm -f "$out"' EXIT
+    {{script}} > "$out"
+    ajv validate \
+        -s contracts/collection-output.schema.json \
+        -r app/internal/contract/timeline-entry.schema.json \
+        -d "$out" \
+        --errors=text

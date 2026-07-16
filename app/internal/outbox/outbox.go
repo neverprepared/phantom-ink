@@ -16,36 +16,19 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"phantom-ink/internal/contract"
 )
 
-// Envelope mirrors brainbox/src/brainbox/agent_store.py:AgentEnvelope.
-// JSON tags use snake_case to match the wire format.
-type Envelope struct {
-	ID        string                 `json:"id"`
-	Kind      string                 `json:"kind"` // "metric" | "event"
-	Title     string                 `json:"title"`
-	Source    string                 `json:"source,omitempty"`
-	Type      string                 `json:"type,omitempty"`
-	Status    string                 `json:"status,omitempty"`
-	Subtitle  string                 `json:"subtitle,omitempty"`
-	Workspace string                 `json:"workspace,omitempty"`
-	ParentID  string                 `json:"parent_id,omitempty"`
-	URL       string                 `json:"url,omitempty"`
-	StartAt   *int64                 `json:"start_at,omitempty"`
-	EndAt     *int64                 `json:"end_at,omitempty"`
-	Tags      []string               `json:"tags,omitempty"`
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
-	Actions   []map[string]any       `json:"actions,omitempty"`
-	Outcome   *Outcome               `json:"outcome,omitempty"`
-}
+// Envelope is the timeline-entry contract type, GENERATED from
+// neverprepared/phantom-contracts (see internal/contract). It is aliased here so
+// producers keep referring to outbox.Envelope, but the shape can no longer be
+// hand-edited into drift — edit the brainbox model and regenerate. Outcome is
+// the action-result sub-object.
+type Envelope = contract.AgentEnvelope
 
-// Outcome populates when an envelope IS an action result.
-type Outcome struct {
-	OK         bool   `json:"ok"`
-	Actor      string `json:"actor"`
-	Error      string `json:"error,omitempty"`
-	DurationMs *int64 `json:"duration_ms,omitempty"`
-}
+// Outcome populates when an envelope IS an action result (type="action.*").
+type Outcome = contract.ActionOutcome
 
 // Deliverer ships a batch of envelopes upstream. Returns nil on success; a
 // non-nil error keeps the rows in the queue for retry. Implementations should

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"phantom-ink/internal/contract"
 )
 
 // schemaSQL mirrors db.go migration v22 — kept inline here so package tests
@@ -43,14 +45,17 @@ func newTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
+func p[T any](v T) *T { return &v }
+
 func testEnvelope(id string) Envelope {
+	active := contract.EnvelopeStatusActive
 	return Envelope{
 		ID:     id,
 		Kind:   "event",
 		Title:  "test " + id,
-		Source: "test@unit",
-		Type:   "test.event",
-		Status: "active",
+		Source: p("test@unit"),
+		Type:   p("test.event"),
+		Status: &active,
 	}
 }
 

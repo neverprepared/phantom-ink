@@ -10,28 +10,29 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"phantom-ink/brainbox"
+	"phantom-ink/internal/contract"
 )
 
 // AttentionItem is one card in the Stream panel's "Attention" tab. It comes
 // from a variety of backend sources and gets a stable composite ID so
 // dismissals and resolutions persist across app restarts.
 type AttentionItem struct {
-	ID          string   `json:"id"`        // "<source>:<sourceID>"
-	Source      string   `json:"source"`    // "task" | "loop" | "entry" | "hub" | "bus"
-	SourceID    string   `json:"source_id"` // raw id within the source
-	Status      string   `json:"status"`    // "failed" | "blocked" | "needs_action" — drives badge
-	Title       string   `json:"title"`
-	Subtitle    string   `json:"subtitle"`
-	Reason      string   `json:"reason"`    // why this needs attention (often the error message)
-	Workspace   string   `json:"workspace"` // for profile filter
-	Time        int64    `json:"time"`      // epoch ms (sort key, newest first)
-	URL         string   `json:"url,omitempty"`
-	Actions     []string `json:"actions"`   // ["retry","open","respond","dismiss"]
-	UserReply   string   `json:"user_reply,omitempty"`
+	ID        string   `json:"id"`        // "<source>:<sourceID>"
+	Source    string   `json:"source"`    // "task" | "loop" | "entry" | "hub" | "bus"
+	SourceID  string   `json:"source_id"` // raw id within the source
+	Status    string   `json:"status"`    // "failed" | "blocked" | "needs_action" — drives badge
+	Title     string   `json:"title"`
+	Subtitle  string   `json:"subtitle"`
+	Reason    string   `json:"reason"`    // why this needs attention (often the error message)
+	Workspace string   `json:"workspace"` // for profile filter
+	Time      int64    `json:"time"`      // epoch ms (sort key, newest first)
+	URL       string   `json:"url,omitempty"`
+	Actions   []string `json:"actions"` // ["retry","open","respond","dismiss"]
+	UserReply string   `json:"user_reply,omitempty"`
 	// Owning resources extracted from envelope metadata so the UI can show
 	// session / runner chips without forcing an extra round-trip per row.
-	SessionName string   `json:"session_name,omitempty"`
-	RunnerName  string   `json:"runner_name,omitempty"`
+	SessionName string `json:"session_name,omitempty"`
+	RunnerName  string `json:"runner_name,omitempty"`
 }
 
 // OpenTarget tells the frontend which panel to navigate to for an attention item.
@@ -128,19 +129,19 @@ func busReason(it brainbox.AgentStateItem) string {
 }
 
 // entryStatusToAttention maps a collected_entries status string into one of
-// the three attention-eligible statuses. Anything we don't recognise is
-// surfaced as "needs_action" (the most neutral catch-all for entries with
-// pending actions).
-func entryStatusToAttention(s string) string {
+// the three attention-eligible statuses in the generated envelope enum
+// (contract.EnvelopeStatus). Anything we don't recognise is surfaced as
+// needs_action (the most neutral catch-all for entries with pending actions).
+func entryStatusToAttention(s string) contract.EnvelopeStatus {
 	switch strings.ToLower(s) {
 	case "failed", "error":
-		return "failed"
+		return contract.EnvelopeStatusFailed
 	case "blocked":
-		return "blocked"
+		return contract.EnvelopeStatusBlocked
 	case "action_needed", "action-needed":
-		return "needs_action"
+		return contract.EnvelopeStatusNeedsAction
 	}
-	return "needs_action"
+	return contract.EnvelopeStatusNeedsAction
 }
 
 // busActions returns the action slugs surfaced on a bus card. We keep the
@@ -222,7 +223,7 @@ func (a *App) AttentionRetry(id string) error {
 				return fmt.Errorf("loop envelope missing loop_id metadata")
 			}
 			if _, err := a.EnqueueTask(EnqueueTaskRequest{
-				SequenceID:          loopID,
+				SequenceID:       loopID,
 				Input:            input,
 				Cwd:              cwd,
 				Trigger:          TriggerManual,

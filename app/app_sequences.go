@@ -13,6 +13,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"phantom-ink/internal/contract"
 	"phantom-ink/internal/outbox"
 )
 
@@ -385,7 +386,7 @@ func (a *App) enqueueFollowups(parentSequenceID, lastOutput, parentProfile strin
 			fmt.Fprintf(os.Stderr, "warning: on_success[%d]: unknown input_from %q, defaulting to stdout\n", i, f.InputFrom)
 		}
 		if _, err := a.EnqueueTask(EnqueueTaskRequest{
-			SequenceID:          f.SequenceID,
+			SequenceID:       f.SequenceID,
 			Input:            input,
 			Cwd:              f.Cwd,
 			Trigger:          TriggerFollowup,
@@ -508,9 +509,9 @@ func (a *App) emitTaskEnvelope(taskID, loopID, status string, attempts int, errM
 		return
 	}
 	var (
-		title     = fmt.Sprintf("Task %s", status)
-		subtitle  = sequenceNameOrID(a.db, loopID)
-		workspace string
+		title       = fmt.Sprintf("Task %s", status)
+		subtitle    = sequenceNameOrID(a.db, loopID)
+		workspace   string
 		maxAttempts = 1
 	)
 	if row, ok := a.db.GetTask(taskID); ok {
@@ -526,28 +527,28 @@ func (a *App) emitTaskEnvelope(taskID, loopID, status string, attempts int, errM
 	}
 	meta := map[string]interface{}{
 		"loop_id":      loopID,
-		"attempts":      attempts,
-		"max_attempts":  maxAttempts,
+		"attempts":     attempts,
+		"max_attempts": maxAttempts,
 	}
 	if errMsg != "" {
 		meta["last_error"] = errMsg
 	}
 	envStatus := taskEnvelopeStatus(status)
 	now := time.Now().UnixMilli()
-	var endAt *int64
-	if envStatus == "done" || envStatus == "failed" {
-		endAt = &now
+	var endAt *int
+	if envStatus == contract.EnvelopeStatusDone || envStatus == contract.EnvelopeStatusFailed {
+		endAt = atMillis(now)
 	}
 	a.emitEnvelope(outbox.Envelope{
 		ID:        "task:" + taskID,
 		Kind:      "event",
-		Source:    envelopeSource,
-		Type:      taskEnvelopeType(status),
-		Status:    envStatus,
+		Source:    ptr(envelopeSource),
+		Type:      ptr(taskEnvelopeType(status)),
+		Status:    statusPtr(envStatus),
 		Title:     title,
-		Subtitle:  subtitle,
-		Workspace: workspace,
-		ParentID:  "loop:" + loopID,
+		Subtitle:  optStr(subtitle),
+		Workspace: optStr(workspace),
+		ParentID:  ptr("loop:" + loopID),
 		Tags:      []string{"task"},
 		Metadata:  meta,
 		EndAt:     endAt,
