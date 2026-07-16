@@ -14,6 +14,21 @@
   let loading = $state(true);
   let error = $state(null);
 
+  // Profile filter. '' == "All profiles" (default). The known-profiles set is the
+  // union of the fetched catalog and the distinct workspace_profile values on the
+  // current tokens, so a profile that only exists via a free-text mint is filterable.
+  let selectedProfile = $state('');
+  const knownProfiles = $derived(
+    [...new Set([...profiles, ...tokens.map((t) => t.workspace_profile)])]
+      .filter(Boolean)
+      .sort(),
+  );
+  const filteredTokens = $derived(
+    selectedProfile
+      ? tokens.filter((t) => t.workspace_profile === selectedProfile)
+      : tokens,
+  );
+
   // Mint form state
   let profileInput = $state('');
   let selectedCaps = $state(new Set());
@@ -44,7 +59,9 @@
   }
 
   async function handleMint() {
-    const profile = profileInput.trim();
+    // When a specific profile is selected the mint is scoped to it; otherwise the
+    // operator types a free-text profile (which may be brand-new).
+    const profile = selectedProfile || profileInput.trim();
     if (!profile) {
       error = 'A workspace profile is required.';
       return;
@@ -150,18 +167,23 @@
   <form class="mint-form" onsubmit={(e) => { e.preventDefault(); handleMint(); }}>
     <label>
       <span>Workspace Profile</span>
-      <input
-        type="text"
-        list="profile-options"
-        bind:value={profileInput}
-        placeholder="e.g. personal"
-        required
-      />
-      <datalist id="profile-options">
-        {#each profiles as p}
-          <option value={p}></option>
-        {/each}
-      </datalist>
+      {#if selectedProfile}
+        <!-- Scoped to the selected profile: lock the mint target to the filter. -->
+        <input type="text" value={selectedProfile} readonly disabled />
+      {:else}
+        <input
+          type="text"
+          list="profile-options"
+          bind:value={profileInput}
+          placeholder="e.g. personal"
+          required
+        />
+        <datalist id="profile-options">
+          {#each profiles as p}
+            <option value={p}></option>
+          {/each}
+        </datalist>
+      {/if}
     </label>
 
     <div class="caps">
@@ -189,17 +211,30 @@
       <input type="text" bind:value={label} placeholder="what/where this token is used" />
     </label>
 
-    <button type="submit" class="btn-mint" disabled={minting || !profileInput.trim()}>
+    <button type="submit" class="btn-mint" disabled={minting || !(selectedProfile || profileInput.trim())}>
       {minting ? 'Minting…' : 'Mint Token'}
     </button>
   </form>
 
-  <h3 class="section-title">Active Tokens</h3>
+  <div class="section-head">
+    <h3 class="section-title">Active Tokens</h3>
+    <label class="profile-filter">
+      <span>Profile</span>
+      <select bind:value={selectedProfile}>
+        <option value="">All profiles</option>
+        {#each knownProfiles as p}
+          <option value={p}>{p}</option>
+        {/each}
+      </select>
+    </label>
+  </div>
 
   {#if loading}
     <div class="loading">Loading tokens…</div>
-  {:else if tokens.length === 0}
-    <div class="empty">No tokens minted yet.</div>
+  {:else if filteredTokens.length === 0}
+    <div class="empty">
+      {selectedProfile ? `No tokens for ${selectedProfile}.` : 'No tokens minted yet.'}
+    </div>
   {:else}
     <div class="table-scroll">
       <table class="token-table">
@@ -215,7 +250,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each tokens as t (t.token_id)}
+          {#each filteredTokens as t (t.token_id)}
             <tr>
               <td class="mono">{t.workspace_profile}</td>
               <td>
@@ -415,11 +450,37 @@
   }
   .btn-mint:disabled { opacity: 0.5; cursor: not-allowed; }
 
+  .section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 12px;
+  }
   .section-title {
     font-size: 14px;
     font-weight: 600;
     color: #e2e8f0;
-    margin: 0 0 12px;
+    margin: 0;
+  }
+  .profile-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .profile-filter > span {
+    font-size: 12px;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .profile-filter select {
+    background: #0f172a;
+    border: 1px solid #334155;
+    color: #e2e8f0;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 13px;
   }
   .loading, .empty { color: #64748b; padding: 24px 0; }
 
