@@ -17,6 +17,12 @@
   let profiles = $state<string[]>([]);
   let loading = $state(true);
 
+  // Inline revoke confirmation. Native window.confirm() is an unreliable no-op in
+  // the Wails webview (it returns undefined, so a `!confirm()` guard bails silently
+  // and "nothing happens"), so we confirm with a two-step inline button instead —
+  // matching the pattern used by ConversationsPanel.
+  let confirmRevokeId = $state<string | null>(null);
+
   // Mint form state
   let profileInput = $state('');
   let selectedCaps = $state<Set<string>>(new Set());
@@ -98,7 +104,7 @@
   }
 
   async function handleRevoke(tokenId: string, profile: string) {
-    if (!confirm('Revoke this token? Any client using it will immediately 401.')) return;
+    confirmRevokeId = null;
     const a = await getApi();
     if (!a) return;
     try {
@@ -250,11 +256,23 @@
               </td>
               <td>
                 {#if !t.revoked}
-                  <button
-                    class="btn-revoke"
-                    onclick={() => handleRevoke(t.token_id, t.workspace_profile)}
-                    aria-label={`Revoke token for ${t.workspace_profile}`}
-                  >Revoke</button>
+                  {#if confirmRevokeId === t.token_id}
+                    <button
+                      class="btn-revoke"
+                      onclick={() => handleRevoke(t.token_id, t.workspace_profile)}
+                      aria-label={`Confirm revoke token for ${t.workspace_profile}`}
+                    >Confirm?</button>
+                    <button
+                      class="btn-cancel-revoke"
+                      onclick={() => (confirmRevokeId = null)}
+                    >Cancel</button>
+                  {:else}
+                    <button
+                      class="btn-revoke"
+                      onclick={() => (confirmRevokeId = t.token_id)}
+                      aria-label={`Revoke token for ${t.workspace_profile}`}
+                    >Revoke</button>
+                  {/if}
                 {/if}
               </td>
             </tr>
@@ -390,4 +408,9 @@
     color: var(--color-status-error-text); padding: 0.25rem 0.75rem; border-radius: 6px; cursor: pointer; font-size: 0.72rem;
   }
   .btn-revoke:hover { filter: brightness(1.15); }
+  .btn-cancel-revoke {
+    background: transparent; border: 1px solid var(--color-border);
+    color: var(--color-text-muted); padding: 0.25rem 0.6rem; border-radius: 6px; cursor: pointer; font-size: 0.72rem; margin-left: 0.35rem;
+  }
+  .btn-cancel-revoke:hover { filter: brightness(1.15); }
 </style>
