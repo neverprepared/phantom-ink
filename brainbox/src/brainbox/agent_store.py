@@ -6,8 +6,9 @@ Two storage layers behind one ingest call:
 - `agent_events`: append-only. Every envelope received is written here with an
   auto-increment `seq`. Audit log; supports history drill-down and replay.
 
-Envelopes conform to `contracts/timeline-entry.schema.json` (v2). The envelope is
-shared with collection-script output, but for agent-bus use the `source` and
+`AgentEnvelope` below is the canonical v2.1 model: `contracts/timeline-entry.schema.json`
+and the Go/JS bindings are generated from it (see T3), not the other way around. The
+envelope is shared with collection-script output, but for agent-bus use the `source` and
 `type` fields are required and `parent_id` / `outcome` are commonly populated.
 
 All functions are synchronous (matching `store.py`); async wrappers run them via
@@ -19,19 +20,57 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from enum import Enum
 from typing import Any, Callable, Iterable
 
 from pydantic import BaseModel, Field
 
 from .store import _conn
 
-# Statuses that the attention aggregator surfaces. Producers can use any status
-# in the schema; only these three pull a card into the user's face.
-ATTENTION_STATUSES: tuple[str, ...] = ("failed", "blocked", "needs_action")
+# ---------------------------------------------------------------------------
+# Canonical envelope model (v2.1)
+#
+# This is the single source of truth for the timeline-entry contract. The JSON
+# Schema (`contracts/timeline-entry.schema.json`) and the Go/JS bindings are
+# GENERATED from this model (see T3); do not hand-edit those to add fields —
+# edit here and regenerate.
+# ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Pydantic envelope (mirrors timeline-entry.schema.json v2)
-# ---------------------------------------------------------------------------
+
+class EnvelopeStatus(str, Enum):
+    """The six display/attention statuses an envelope may carry.
+
+    Distinct from `models.TaskStatus` (the internal task lifecycle, which has
+    additional non-display states like `pending`/`running`/`cancelled`).
+    Producers map their own lifecycle onto these six; consumers render and
+    surface off them. Single source for the enum — no bare status literals.
+
+    - upcoming     — future / queued.
+    - active       — in progress.
+    - done         — completed (terminal, not attention-worthy).
+    - failed       — terminal error (attention-eligible).
+    - blocked      — waiting on a dependency or an offline runner
+                     (attention-eligible). Producer-emittable: the hub maps
+                     `TaskStatus.BLOCKED` here (see `_TASK_STATUS_MAP`).
+    - needs_action — waiting on human input (attention-eligible).
+    """
+
+    UPCOMING = "upcoming"
+    ACTIVE = "active"
+    DONE = "done"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+    NEEDS_ACTION = "needs_action"
+
+
+# Statuses that the attention aggregator surfaces. Producers can use any status
+# above; only these pull a card into the user's face. Derived from the enum so
+# the set can never drift from a stray string literal.
+ATTENTION_STATUSES: tuple[str, ...] = (
+    EnvelopeStatus.FAILED.value,
+    EnvelopeStatus.BLOCKED.value,
+    EnvelopeStatus.NEEDS_ACTION.value,
+)
 
 
 class ActionOutcome(BaseModel):
@@ -47,10 +86,29 @@ class AgentEnvelope(BaseModel):
     title: str
     source: str | None = None
     type: str | None = None
-    status: str | None = None
-    subtitle: str | None = None
-    description: str | None = None
-    workspace: str | None = None
+    status: EnvelopeStatus | None = None
+    subtitle: str | None = Field(
+        default=None,
+        description=(
+            "Display-only secondary label, one short line rendered under the "
+            "title (e.g. 'developer · session-3'). Never routed or filtered on."
+        ),
+    )
+    description: str | None = Field(
+        default=None,
+        description=(
+            "Display-only supporting detail — longer free text than `subtitle`; "
+            "URLs found here render as clickable links. Not routed or filtered on."
+        ),
+    )
+    workspace: str | None = Field(
+        default=None,
+        description=(
+            "Tenancy / routing key — the workspace profile this envelope belongs "
+            "to. Routable, not display: it is a column on `agent_state` and a "
+            "filter in `/api/agent_events/search`. None means unscoped/global."
+        ),
+    )
     parent_id: str | None = None
     url: str | None = None
     start_at: int | None = None
@@ -95,6 +153,9 @@ def ingest(envelope: AgentEnvelope | dict[str, Any]) -> AgentEnvelope:
     env = envelope if isinstance(envelope, AgentEnvelope) else AgentEnvelope(**envelope)
     now = int(time.time() * 1000)
     raw_json = env.model_dump_json(exclude_none=False)
+    # Persist status as its plain string value so the `status` columns stay
+    # queryable by literal (list_state / search_events compare against str).
+    status = env.status.value if env.status is not None else None
 
     # State upsert + event append must land together — an explicit transaction
     # keeps them atomic even on the autocommit pool connection.
@@ -130,7 +191,7 @@ def ingest(envelope: AgentEnvelope | dict[str, Any]) -> AgentEnvelope:
                 env.kind,
                 env.source,
                 env.type,
-                env.status,
+                status,
                 env.title,
                 env.subtitle,
                 env.workspace,
@@ -151,7 +212,7 @@ def ingest(envelope: AgentEnvelope | dict[str, Any]) -> AgentEnvelope:
             INSERT INTO agent_events (id, source, type, status, parent_id, ts, envelope)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
-            (env.id, env.source, env.type, env.status, env.parent_id, now, raw_json),
+            (env.id, env.source, env.type, status, env.parent_id, now, raw_json),
         )
 
     _fanout(env)
