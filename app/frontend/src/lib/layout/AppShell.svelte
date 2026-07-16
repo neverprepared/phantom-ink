@@ -16,6 +16,7 @@
   import AutomationsPanel from '../panels/AutomationsPanel.svelte';
   import ProfilesPanel from '../panels/ProfilesPanel.svelte';
   import GatewayPanel from '../panels/GatewayPanel.svelte';
+  import TokensPanel from '../panels/TokensPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
   import DashboardPanel from '../panels/DashboardPanel.svelte';
   import StreamPanel from '../panels/StreamPanel.svelte';
@@ -96,6 +97,8 @@
         <ProfilesPanel />
       {:else if currentPanel.value === 'gateway'}
         <GatewayPanel />
+      {:else if currentPanel.value === 'tokens'}
+        <TokensPanel />
       {:else if currentPanel.value === 'settings'}
         <SettingsPanel />
       {:else if currentPanel.value === 'event-log'}

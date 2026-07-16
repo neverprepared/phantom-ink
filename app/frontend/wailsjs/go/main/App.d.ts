@@ -268,6 +268,8 @@ export function ListProfileDirs(arg1:string):Promise<Array<string>>;
 
 export function ListProfileImages():Promise<Array<main.ProfileImageRow>>;
 
+export function ListProfileTokens():Promise<Array<brainbox.ProfileTokenInfo>>;
+
 export function ListRuleExecutions(arg1:string,arg2:string,arg3:number,arg4:number):Promise<Array<brainbox.RuleExecution>>;
 
 export function ListRules(arg1:string):Promise<Array<brainbox.Rule>>;
@@ -290,6 +292,8 @@ export function MinioIntegrationEnabled():Promise<boolean>;
 
 export function MintGatewayToken(arg1:string,arg2:Array<string>,arg3:number,arg4:string):Promise<brainbox.GatewayToken>;
 
+export function MintProfileToken(arg1:string,arg2:Array<string>,arg3:string):Promise<brainbox.ProfileToken>;
+
 export function OpenLocalSession(arg1:string):Promise<void>;
 
 export function OutboxPending():Promise<number>;
@@ -301,6 +305,10 @@ export function PresignArtifactURL(arg1:string,arg2:string,arg3:string,arg4:numb
 export function PreviewDispatch(arg1:brainbox.DispatchPreviewRequest):Promise<brainbox.DispatchPreview>;
 
 export function PreviewPlan(arg1:string,arg2:string,arg3:Array<string>,arg4:Array<string>):Promise<brainbox.StepPlanResult>;
+
+export function ProfileTokenCapabilities():Promise<Array<string>>;
+
+export function ProfileTokenProfiles():Promise<Array<string>>;
 
 export function PullOllamaModel(arg1:string):Promise<string>;
 
@@ -323,6 +331,8 @@ export function RestoreProfile(arg1:string):Promise<void>;
 export function RetryRuleExecution(arg1:number):Promise<brainbox.RuleExecution>;
 
 export function RetryTask(arg1:string):Promise<void>;
+
+export function RevokeProfileToken(arg1:string):Promise<void>;
 
 export function RunCollectJobNow(arg1:string):Promise<void>;
 
