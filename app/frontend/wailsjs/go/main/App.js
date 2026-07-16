@@ -530,6 +530,10 @@ export function ListProfileImages() {
   return window['go']['main']['App']['ListProfileImages']();
 }
 
+export function ListProfileTokens() {
+  return window['go']['main']['App']['ListProfileTokens']();
+}
+
 export function ListRuleExecutions(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ListRuleExecutions'](arg1, arg2, arg3, arg4);
 }
@@ -574,6 +578,10 @@ export function MintGatewayToken(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['MintGatewayToken'](arg1, arg2, arg3, arg4);
 }
 
+export function MintProfileToken(arg1, arg2, arg3) {
+  return window['go']['main']['App']['MintProfileToken'](arg1, arg2, arg3);
+}
+
 export function OpenLocalSession(arg1) {
   return window['go']['main']['App']['OpenLocalSession'](arg1);
 }
@@ -596,6 +604,14 @@ export function PreviewDispatch(arg1) {
 
 export function PreviewPlan(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['PreviewPlan'](arg1, arg2, arg3, arg4);
+}
+
+export function ProfileTokenCapabilities() {
+  return window['go']['main']['App']['ProfileTokenCapabilities']();
+}
+
+export function ProfileTokenProfiles() {
+  return window['go']['main']['App']['ProfileTokenProfiles']();
 }
 
 export function PullOllamaModel(arg1) {
@@ -640,6 +656,10 @@ export function RetryRuleExecution(arg1) {
 
 export function RetryTask(arg1) {
   return window['go']['main']['App']['RetryTask'](arg1);
+}
+
+export function RevokeProfileToken(arg1) {
+  return window['go']['main']['App']['RevokeProfileToken'](arg1);
 }
 
 export function RunCollectJobNow(arg1) {

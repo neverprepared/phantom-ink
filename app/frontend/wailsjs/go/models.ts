@@ -1275,6 +1275,54 @@ export namespace brainbox {
 	        this.effective = source["effective"];
 	    }
 	}
+	export class ProfileToken {
+	    token_id: string;
+	    token: string;
+	    workspace_profile: string;
+	    capabilities: string[];
+	    label: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProfileToken(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.token_id = source["token_id"];
+	        this.token = source["token"];
+	        this.workspace_profile = source["workspace_profile"];
+	        this.capabilities = source["capabilities"];
+	        this.label = source["label"];
+	    }
+	}
+	export class ProfileTokenInfo {
+	    token_id: string;
+	    workspace_profile: string;
+	    capabilities: string[];
+	    scope: string[];
+	    label: string;
+	    issued: number;
+	    revoked: boolean;
+	    revoked_at: number;
+	    last_used: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProfileTokenInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.token_id = source["token_id"];
+	        this.workspace_profile = source["workspace_profile"];
+	        this.capabilities = source["capabilities"];
+	        this.scope = source["scope"];
+	        this.label = source["label"];
+	        this.issued = source["issued"];
+	        this.revoked = source["revoked"];
+	        this.revoked_at = source["revoked_at"];
+	        this.last_used = source["last_used"];
+	    }
+	}
 	
 	export class Rule {
 	    id: string;
