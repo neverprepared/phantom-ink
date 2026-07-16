@@ -1,0 +1,191 @@
+name: Contract freshness gate
+
+# Catches a STALE contract, not just a wrong shape. Discovery + conformance tests
+# (T5/T6) prove committed bindings match their pinned schema's *shape*; this gate
+# proves the pins are honoured and surfaces when a newer contract exists (T7).
+#
+# Three checks (DECISIONS.md D1/D2):
+#   1. app-freshness / dashboard-freshness — regenerate each consumer's bindings
+#      from ITS pinned phantom-contracts tag and HARD FAIL if the committed output
+#      differs (bindings out of sync with their own pin).
+#   2. Same jobs — compare each pin against the LATEST phantom-contracts tag and
+#      WARN (never fail) when the consumer is pinned behind, with the version diff.
+#   3. brainbox-loop — regenerate the schema from the canonical AgentEnvelope model
+#      and HARD FAIL if it disagrees with the published phantom-contracts schema the
+#      model's version points at (closes the model<->contract loop).
+#
+# CREDENTIAL: every check git-fetches neverprepared/phantom-contracts, which is
+# PRIVATE. The default GITHUB_TOKEN cannot read it, so the fetch is authenticated
+# with the repo secret PHANTOM_CONTRACTS_READ_TOKEN (a token with contents:read on
+# phantom-contracts). The gen scripts hardcode the SSH URL
+# (git@github.com:neverprepared/phantom-contracts.git); the `git config insteadOf`
+# preflight rewrites that to an HTTPS+token URL so no application code changes.
+#
+# GRACEFUL DEGRADATION: if PHANTOM_CONTRACTS_READ_TOKEN is absent the gate cannot
+# fetch, so each job emits a loud "freshness gate INACTIVE" ::warning:: and skips
+# rather than hard-failing. This keeps CI green on the current tree BEFORE the
+# secret is provisioned; the gate begins enforcing the moment the secret exists.
+# The skip is always visible in the log — it never silently no-ops.
+
+on:
+  push:
+    paths:
+      - 'app/internal/contract/**'
+      - 'brainbox/dashboard/contract.version'
+      - 'brainbox/dashboard/src/lib/contract/**'
+      - 'brainbox/dashboard/scripts/gen-types.mjs'
+      - 'brainbox/src/brainbox/agent_store.py'
+      - 'brainbox/scripts/export_contract.py'
+      - '.github/workflows/contract-freshness.yml'
+  pull_request:
+    paths:
+      - 'app/internal/contract/**'
+      - 'brainbox/dashboard/contract.version'
+      - 'brainbox/dashboard/src/lib/contract/**'
+      - 'brainbox/dashboard/scripts/gen-types.mjs'
+      - 'brainbox/src/brainbox/agent_store.py'
+      - 'brainbox/scripts/export_contract.py'
+      - '.github/workflows/contract-freshness.yml'
+  workflow_dispatch:
+
+jobs:
+  # Preflight: is the private-repo read token provisioned? Every downstream job
+  # gates on this so the "gate INACTIVE" warning is emitted exactly once and the
+  # jobs skip cleanly (a skipped job is neutral — CI stays green).
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      have_token: ${{ steps.cred.outputs.have_token }}
+    steps:
+      - name: Check phantom-contracts read credential
+        id: cred
+        run: |
+          if [ -n "${{ secrets.PHANTOM_CONTRACTS_READ_TOKEN }}" ]; then
+            echo "have_token=true" >> "$GITHUB_OUTPUT"
+            echo "phantom-contracts read token present — freshness gate ACTIVE."
+          else
+            echo "have_token=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Freshness gate INACTIVE::PHANTOM_CONTRACTS_READ_TOKEN not provisioned — contract freshness checks are SKIPPED (not enforced). Provision the secret (contents:read on neverprepared/phantom-contracts) to activate the gate."
+          fi
+
+  # Check 1 (Go, hard fail) + Check 2 (Go, warn): the app's bindings must match
+  # app/internal/contract/CONTRACT_TAG; warn if that tag is behind latest.
+  app-freshness:
+    needs: preflight
+    if: needs.preflight.outputs.have_token == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      # Rewrite the SSH remote the codegen hardcodes to an HTTPS+token URL so the
+      # git clone inside `go generate` can read the private phantom-contracts repo.
+      - name: Authenticate phantom-contracts fetch
+        run: |
+          git config --global \
+            url."https://x-access-token:${{ secrets.PHANTOM_CONTRACTS_READ_TOKEN }}@github.com/".insteadOf \
+            "git@github.com:"
+
+      # Check 1: regenerate from the pinned tag; committed output must be identical.
+      - name: Regenerate Go bindings from pinned tag and assert no drift
+        working-directory: app
+        run: |
+          set -euo pipefail
+          go generate ./internal/contract
+          if ! git diff --exit-code -- internal/contract/timeline-entry.schema.json internal/contract/envelope.gen.go; then
+            echo "::error title=Go bindings stale::app/internal/contract bindings differ from CONTRACT_TAG ($(cat internal/contract/CONTRACT_TAG)). Run 'just app-contract-gen' and commit the result."
+            exit 1
+          fi
+          echo "Go bindings are in sync with $(cat internal/contract/CONTRACT_TAG)."
+
+      # Check 2: is the pin behind the latest published tag? Warn only.
+      - name: Warn if pinned behind latest contract tag
+        run: .github/scripts/warn-if-behind.sh app/internal/contract/CONTRACT_TAG "Go app"
+
+  # Check 1 (dashboard, hard fail) + Check 2 (dashboard, warn): TS types + ajv
+  # schema must match brainbox/dashboard/contract.version; warn if behind latest.
+  dashboard-freshness:
+    needs: preflight
+    if: needs.preflight.outputs.have_token == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: brainbox/dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: brainbox/dashboard/package-lock.json
+
+      - run: npm ci
+
+      - name: Authenticate phantom-contracts fetch
+        run: |
+          git config --global \
+            url."https://x-access-token:${{ secrets.PHANTOM_CONTRACTS_READ_TOKEN }}@github.com/".insteadOf \
+            "git@github.com:"
+
+      # Check 1: gen:types:check regenerates and runs `git diff --exit-code` itself.
+      - name: Regenerate TS bindings from pinned tag and assert no drift
+        run: |
+          if ! npm run gen:types:check; then
+            echo "::error title=Dashboard bindings stale::src/lib/contract bindings differ from contract.version. Run 'npm run gen:types' in brainbox/dashboard and commit the result."
+            exit 1
+          fi
+
+      # Check 2: extract TAG= from contract.version, warn if behind latest.
+      - name: Warn if pinned behind latest contract tag
+        working-directory: ${{ github.workspace }}
+        run: |
+          TAG="$(grep -E '^TAG=' brainbox/dashboard/contract.version | cut -d= -f2)"
+          printf '%s\n' "$TAG" > /tmp/dashboard-pin
+          .github/scripts/warn-if-behind.sh /tmp/dashboard-pin "dashboard"
+
+  # Check 3 (brainbox, hard fail): the schema regenerated from the canonical model
+  # must equal the published phantom-contracts schema at the tag the model points
+  # at — closes the model<->contract loop.
+  brainbox-loop:
+    needs: preflight
+    if: needs.preflight.outputs.have_token == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: brainbox
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Sync deps
+        run: uv sync
+
+      - name: Assert model matches published schema at its version tag
+        env:
+          GH_TOKEN: ${{ secrets.PHANTOM_CONTRACTS_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The model owns the version; the matching published tag is timeline-entry/vX.Y.
+          VERSION="$(uv run python scripts/export_contract.py --print-version)"
+          TAG="timeline-entry/${VERSION}"
+          echo "Model version ${VERSION} -> published tag ${TAG}"
+
+          WORK="$(mktemp -d)"
+          trap 'rm -rf "$WORK"' EXIT
+          git clone --depth 1 --branch "$TAG" \
+            "https://x-access-token:${GH_TOKEN}@github.com/neverprepared/phantom-contracts.git" \
+            "$WORK/pc"
+
+          # --check exits 1 when the on-disk (published) schema differs from what the
+          # model generates: the model and the published contract have diverged.
+          if ! uv run python scripts/export_contract.py --out "$WORK/pc" --check; then
+            echo "::error title=Model/contract loop broken::AgentEnvelope regenerates a schema that differs from published ${TAG}. Re-run the export pipeline and re-tag phantom-contracts, or reconcile the model."
+            exit 1
+          fi
+          echo "Model matches published ${TAG}."
