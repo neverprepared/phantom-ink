@@ -1,0 +1,7 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "phantom-ink:collection-output/v2.1",
+  "$comment": "Array framing for collection-script stdout. Carries NO envelope fields of its own — the item shape is the single fetched timeline-entry contract, referenced by $id. Collection scripts emit an ARRAY of timeline entries; the bus emits envelopes one at a time (the object schema). This wrapper is the only difference between the two, so there is still one source for the envelope shape (app/internal/contract/timeline-entry.schema.json, fetched from phantom-contracts at the pinned tag). Validated via `just validate-output`, which loads that fetched schema with `ajv -r`.",
+  "type": "array",
+  "items": { "$ref": "phantom-ink:timeline-entry/v2.1" }
+}

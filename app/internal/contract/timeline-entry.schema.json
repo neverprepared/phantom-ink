@@ -1,0 +1,236 @@
+{
+  "$comment": "DO NOT EDIT — generated from phantom-ink AgentEnvelope (brainbox/src/brainbox/agent_store.py) by brainbox/scripts/export_contract.py. Edit the model and regenerate; never hand-edit this file.",
+  "$defs": {
+    "ActionOutcome": {
+      "properties": {
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "actor"
+      ],
+      "title": "ActionOutcome",
+      "type": "object"
+    },
+    "EnvelopeStatus": {
+      "description": "The six display/attention statuses an envelope may carry.\n\nDistinct from `models.TaskStatus` (the internal task lifecycle, which has\nadditional non-display states like `pending`/`running`/`cancelled`).\nProducers map their own lifecycle onto these six; consumers render and\nsurface off them. Single source for the enum — no bare status literals.\n\n- upcoming     — future / queued.\n- active       — in progress.\n- done         — completed (terminal, not attention-worthy).\n- failed       — terminal error (attention-eligible).\n- blocked      — waiting on a dependency or an offline runner\n                 (attention-eligible). Producer-emittable: the hub maps\n                 `TaskStatus.BLOCKED` here (see `_TASK_STATUS_MAP`).\n- needs_action — waiting on human input (attention-eligible).",
+      "enum": [
+        "upcoming",
+        "active",
+        "done",
+        "failed",
+        "blocked",
+        "needs_action"
+      ],
+      "title": "EnvelopeStatus",
+      "type": "string"
+    }
+  },
+  "$id": "phantom-ink:timeline-entry/v2.1",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "actions": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Actions",
+      "type": "array"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Display-only supporting detail — longer free text than `subtitle`; URLs found here render as clickable links. Not routed or filtered on.",
+      "title": "Description"
+    },
+    "end_at": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "End At"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "default": "event",
+      "title": "Kind",
+      "type": "string"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
+    },
+    "outcome": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActionOutcome"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "parent_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parent Id"
+    },
+    "source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source"
+    },
+    "start_at": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Start At"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EnvelopeStatus"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "subtitle": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Display-only secondary label, one short line rendered under the title (e.g. 'developer · session-3'). Never routed or filtered on.",
+      "title": "Subtitle"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "type": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Type"
+    },
+    "url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Url"
+    },
+    "workspace": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Tenancy / routing key — the workspace profile this envelope belongs to. Routable, not display: it is a column on `agent_state` and a filter in `/api/agent_events/search`. None means unscoped/global.",
+      "title": "Workspace"
+    }
+  },
+  "required": [
+    "id",
+    "title"
+  ],
+  "title": "AgentEnvelope",
+  "type": "object"
+}

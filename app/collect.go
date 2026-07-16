@@ -63,7 +63,16 @@ type CollectedEntry struct {
 	CollectedAt int64           `json:"collected_at"`
 }
 
-// scriptEntry mirrors the JSON contract in contracts/timeline-entry.schema.json.
+// scriptEntry is the local decode shape for a collection script's stdout — an
+// array of these, one per timeline row. It is NOT the timeline-entry bus
+// envelope (contract.AgentEnvelope): it carries a `value` field (for
+// kind=metric) that the canonical envelope model dropped in v2.1, and it omits
+// the bus-only fields (source, type, parent_id, outcome, subtitle, workspace).
+// So it is generated from nothing and validated against nothing here — the
+// script output is validated separately by the `just validate-output` ajv
+// recipe against the fetched contract, and only the fields that overlap are
+// copied into CollectedEntry below. Keep this struct hand-maintained; do not
+// re-point it at the generated bindings.
 type scriptEntry struct {
 	ID          string          `json:"id"`
 	Kind        string          `json:"kind"`

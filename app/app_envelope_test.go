@@ -101,11 +101,11 @@ func TestRecordActionWritesSuccessEnvelope(t *testing.T) {
 		t.Fatalf("envelopes = %d, want 1", len(envs))
 	}
 	e := envs[0]
-	if e.Type != "action.retry" {
-		t.Errorf("type = %q", e.Type)
+	if e.Type == nil || *e.Type != "action.retry" {
+		t.Errorf("type = %v", e.Type)
 	}
-	if e.ParentID != "task:t1" {
-		t.Errorf("parent_id = %q", e.ParentID)
+	if e.ParentID == nil || *e.ParentID != "task:t1" {
+		t.Errorf("parent_id = %v", e.ParentID)
 	}
 	if e.Outcome == nil || !e.Outcome.OK {
 		t.Errorf("outcome not OK: %+v", e.Outcome)
@@ -134,8 +134,8 @@ func TestRecordActionCapturesFailure(t *testing.T) {
 	if e.Outcome == nil || e.Outcome.OK {
 		t.Errorf("expected outcome.ok=false, got %+v", e.Outcome)
 	}
-	if e.Outcome.Error != "boom" {
-		t.Errorf("outcome.error = %q", e.Outcome.Error)
+	if e.Outcome.Error == nil || *e.Outcome.Error != "boom" {
+		t.Errorf("outcome.error = %v", e.Outcome.Error)
 	}
 }
 
