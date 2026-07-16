@@ -363,6 +363,9 @@ _SCHEMA: tuple[str, ...] = (
     # We store ONLY sha256(raw) — never the bearer value — and no expiry column:
     # these are long-lived until explicitly revoked. capabilities/scope are JSON
     # TEXT for parity with the rest of the store's JSON-blob discipline.
+    # NOTE: revoke is now a HARD DELETE (no audit retention — user decision), so
+    # the revoked/revoked_at columns are vestigial: kept only to avoid a
+    # destructive migration on existing DBs. No row will ever carry revoked=1.
     """
     CREATE TABLE IF NOT EXISTS profile_tokens (
         token_id          TEXT   PRIMARY KEY,
@@ -688,27 +691,27 @@ def touch_profile_token_last_used(token_id: str, when_ms: int) -> None:
         )
 
 
-def list_profile_tokens(include_revoked: bool = True) -> list[dict]:
+def list_profile_tokens() -> list[dict]:
     """List profile tokens as masked rows (never the raw token or its hash)."""
     with _conn() as c:
-        if include_revoked:
-            rows = c.execute(
-                "SELECT * FROM profile_tokens ORDER BY issued DESC"
-            ).fetchall()
-        else:
-            rows = c.execute(
-                "SELECT * FROM profile_tokens WHERE revoked = 0 ORDER BY issued DESC"
-            ).fetchall()
+        rows = c.execute(
+            "SELECT * FROM profile_tokens ORDER BY issued DESC"
+        ).fetchall()
     return [_profile_token_from_row(r) for r in rows]
 
 
-def revoke_profile_token(token_id: str, when_ms: int) -> bool:
-    """Mark a profile token revoked. Returns True if a live row was flipped."""
+def revoke_profile_token(token_id: str) -> bool:
+    """Hard-delete a profile token. Returns True if a row was removed.
+
+    Revocation removes the row outright — there is no soft-flag or audit
+    retention (user decision). A deleted token then fails validation as
+    unknown (find_profile_token_by_hash returns None → 401), and drops out
+    of list_profile_tokens entirely.
+    """
     with _conn() as c:
         cur = c.execute(
-            "UPDATE profile_tokens SET revoked = 1, revoked_at = %s "
-            "WHERE token_id = %s AND revoked = 0",
-            (when_ms, token_id),
+            "DELETE FROM profile_tokens WHERE token_id = %s",
+            (token_id,),
         )
         return cur.rowcount > 0
 

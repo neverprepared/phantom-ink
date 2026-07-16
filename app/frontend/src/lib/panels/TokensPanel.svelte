@@ -231,7 +231,7 @@
         </thead>
         <tbody>
           {#each tokens as t (t.token_id)}
-            <tr class:revoked={t.revoked}>
+            <tr>
               <td class="mono">{t.workspace_profile}</td>
               <td>
                 {#if t.capabilities?.length}
@@ -248,31 +248,25 @@
               <td class="muted">{fmtTime(t.issued)}</td>
               <td class="muted">{fmtTime(t.last_used)}</td>
               <td>
-                {#if t.revoked}
-                  <span class="status status-revoked">revoked</span>
-                {:else}
-                  <span class="status status-active">active</span>
-                {/if}
+                <span class="status status-active">active</span>
               </td>
               <td>
-                {#if !t.revoked}
-                  {#if confirmRevokeId === t.token_id}
-                    <button
-                      class="btn-revoke"
-                      onclick={() => handleRevoke(t.token_id, t.workspace_profile)}
-                      aria-label={`Confirm revoke token for ${t.workspace_profile}`}
-                    >Confirm?</button>
-                    <button
-                      class="btn-cancel-revoke"
-                      onclick={() => (confirmRevokeId = null)}
-                    >Cancel</button>
-                  {:else}
-                    <button
-                      class="btn-revoke"
-                      onclick={() => (confirmRevokeId = t.token_id)}
-                      aria-label={`Revoke token for ${t.workspace_profile}`}
-                    >Revoke</button>
-                  {/if}
+                {#if confirmRevokeId === t.token_id}
+                  <button
+                    class="btn-revoke"
+                    onclick={() => handleRevoke(t.token_id, t.workspace_profile)}
+                    aria-label={`Confirm revoke token for ${t.workspace_profile}`}
+                  >Confirm?</button>
+                  <button
+                    class="btn-cancel-revoke"
+                    onclick={() => (confirmRevokeId = null)}
+                  >Cancel</button>
+                {:else}
+                  <button
+                    class="btn-revoke"
+                    onclick={() => (confirmRevokeId = t.token_id)}
+                    aria-label={`Revoke token for ${t.workspace_profile}`}
+                  >Revoke</button>
                 {/if}
               </td>
             </tr>
@@ -385,7 +379,6 @@
     padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border);
     color: var(--text); vertical-align: top;
   }
-  .token-table tr.revoked td { opacity: 0.5; }
   .mono { font-family: var(--font-mono, ui-monospace, monospace); }
   .muted { color: var(--text-muted); }
 
@@ -401,7 +394,6 @@
     font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 10px;
   }
   .status-active { background: var(--color-success-bg); color: var(--color-status-success-text); }
-  .status-revoked { background: var(--bg-elev); color: var(--text-muted); }
 
   .btn-revoke {
     background: var(--color-error-bg); border: 1px solid var(--color-error-border);

@@ -3542,18 +3542,16 @@ async def profile_tokens_mint(body: MintProfileTokenRequest):
 
 @app.delete("/api/tokens/{token_id}", dependencies=[Depends(require_api_key)])
 async def profile_tokens_revoke(token_id: str):
-    """Revoke a profile token (idempotent: 404 only if the id is unknown)."""
+    """Revoke a profile token by hard-deleting its row (404 if id is unknown).
+
+    Revocation removes the row outright — no soft-flag, no audit retention.
+    A second DELETE of the same id therefore 404s (the row is already gone).
+    """
     from . import store
 
-    now = int(time.time() * 1000)
-    revoked = await asyncio.to_thread(store.revoke_profile_token, token_id, now)
-    if not revoked:
-        # Distinguish unknown id from already-revoked: a second DELETE on a
-        # revoked token flips nothing but the token genuinely exists, so treat
-        # "no live row" as success only if the row exists at all.
-        existing = await asyncio.to_thread(store.list_profile_tokens)
-        if not any(t["token_id"] == token_id for t in existing):
-            raise HTTPException(status_code=404, detail="Token not found")
+    deleted = await asyncio.to_thread(store.revoke_profile_token, token_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Token not found")
     return {"token_id": token_id, "revoked": True}
 
 
