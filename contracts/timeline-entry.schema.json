@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "phantom-ink:timeline-entry/v2",
+  "$id": "phantom-ink:timeline-entry/v2.1",
   "description": "Unified envelope for phantom-ink collection scripts AND the cross-machine agent event bus. Collection scripts emit an array of these to stdout (upserted by (job_id, id)). Agents emit them individually to POST /api/events (upserted by id, also appended to the audit log). Stable id means reruns / state transitions mutate the existing row rather than inserting a duplicate.",
   "type": "array",
   "items": {

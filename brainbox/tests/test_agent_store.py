@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from brainbox import agent_store
-from brainbox.agent_store import AgentEnvelope
+from brainbox.agent_store import AgentEnvelope, EnvelopeStatus
 
 
 @pytest.fixture(autouse=True)
@@ -148,3 +149,68 @@ def test_envelope_from_hub_task_blocked_passes_through():
     env = agent_store.envelope_from_hub_task("task.signal", task)
     assert env.status == "blocked"
     assert env.end_at is None  # not terminal
+
+
+# ---------------------------------------------------------------------------
+# Canonical v2.1 model: workspace, subtitle/description, status enum
+# ---------------------------------------------------------------------------
+
+
+def test_envelope_workspace_and_subtitle_are_first_class():
+    """workspace (routable) and subtitle (display) validate and round-trip
+    through serialize -> parse without loss."""
+    env = AgentEnvelope(
+        id="task:rt",
+        title="Ship it",
+        source="wails-queue@laptop",
+        type="task.queued",
+        status="active",
+        workspace="personal",
+        subtitle="developer · session-3",
+        description="Longer supporting detail with a link https://example.com",
+    )
+    parsed = AgentEnvelope.model_validate_json(env.model_dump_json())
+    assert parsed.workspace == "personal"
+    assert parsed.subtitle == "developer · session-3"
+    # subtitle and description are distinct fields, not aliases of each other.
+    assert parsed.description == "Longer supporting detail with a link https://example.com"
+    assert parsed.subtitle != parsed.description
+    assert parsed == env
+
+
+def test_envelope_workspace_subtitle_survive_ingest_round_trip():
+    agent_store.ingest(
+        _env(id="task:store-rt", workspace="work", subtitle="reviewer · s1")
+    )
+    state = agent_store.get_state("task:store-rt")
+    assert state["workspace"] == "work"
+    assert state["subtitle"] == "reviewer · s1"
+
+
+@pytest.mark.parametrize("status", [s.value for s in EnvelopeStatus])
+def test_every_status_enum_value_is_accepted(status):
+    env = AgentEnvelope(id=f"s:{status}", title="x", status=status)
+    assert env.status == EnvelopeStatus(status)
+    # The enum coerces from and serializes back to the plain string value.
+    assert env.model_dump()["status"] == status
+    agent_store.ingest(env)
+    assert agent_store.get_state(f"s:{status}")["status"] == status
+
+
+def test_status_enum_has_exactly_the_six_v2_1_members():
+    assert {s.value for s in EnvelopeStatus} == {
+        "upcoming", "active", "done", "failed", "blocked", "needs_action",
+    }
+
+
+def test_attention_statuses_derive_from_the_enum():
+    assert set(agent_store.ATTENTION_STATUSES) == {
+        EnvelopeStatus.FAILED.value,
+        EnvelopeStatus.BLOCKED.value,
+        EnvelopeStatus.NEEDS_ACTION.value,
+    }
+
+
+def test_off_spec_status_is_rejected():
+    with pytest.raises(ValidationError):
+        AgentEnvelope(id="s:bad", title="x", status="in_progress")
