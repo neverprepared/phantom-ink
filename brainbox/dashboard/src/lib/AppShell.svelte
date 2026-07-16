@@ -6,6 +6,7 @@
   import ReposPanel from './ReposPanel.svelte';
   import ObservabilityPanel from './ObservabilityPanel.svelte';
   import PipelinesPanel from './PipelinesPanel.svelte';
+  import TokensPanel from './TokensPanel.svelte';
 </script>
 
 <div class="shell">
@@ -21,6 +22,8 @@
       <PipelinesPanel />
     {:else if currentPanel.value === 'observability'}
       <ObservabilityPanel />
+    {:else if currentPanel.value === 'tokens'}
+      <TokensPanel />
     {:else}
       <ContainersPanel />
     {/if}

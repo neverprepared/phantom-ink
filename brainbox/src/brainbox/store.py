@@ -359,6 +359,26 @@ _SCHEMA: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_session_store_task ON session_store(task_id)",
     "CREATE INDEX IF NOT EXISTS idx_session_store_token ON session_store(token_id)",
+    # Profile tokens (T11): persistent, revocable, per-profile service tokens.
+    # We store ONLY sha256(raw) — never the bearer value — and no expiry column:
+    # these are long-lived until explicitly revoked. capabilities/scope are JSON
+    # TEXT for parity with the rest of the store's JSON-blob discipline.
+    """
+    CREATE TABLE IF NOT EXISTS profile_tokens (
+        token_id          TEXT   PRIMARY KEY,
+        token_hash        TEXT   NOT NULL,
+        workspace_profile TEXT   NOT NULL,
+        capabilities_json TEXT   NOT NULL DEFAULT '[]',
+        scope_json        TEXT   NOT NULL DEFAULT '[]',
+        label             TEXT   NOT NULL DEFAULT '',
+        issued            BIGINT NOT NULL,
+        revoked           BIGINT NOT NULL DEFAULT 0,
+        revoked_at        BIGINT,
+        last_used         BIGINT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_profile_tokens_hash ON profile_tokens(token_hash)",
+    "CREATE INDEX IF NOT EXISTS idx_profile_tokens_profile ON profile_tokens(workspace_profile)",
 )
 
 
@@ -597,6 +617,100 @@ def load_gateway_tokens() -> list[dict]:
         }
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Profile tokens (T11) — persistent, revocable, per-profile service tokens
+# ---------------------------------------------------------------------------
+
+
+def insert_profile_token(
+    *,
+    token_id: str,
+    token_hash: str,
+    workspace_profile: str,
+    capabilities: list[str],
+    scope: list[str],
+    label: str,
+    issued: int,
+) -> None:
+    """Persist a newly minted profile token. Only the hash is stored."""
+    with _conn() as c:
+        c.execute(
+            """
+            INSERT INTO profile_tokens
+                (token_id, token_hash, workspace_profile, capabilities_json,
+                 scope_json, label, issued)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                token_id,
+                token_hash,
+                workspace_profile,
+                json.dumps(capabilities),
+                json.dumps(scope),
+                label,
+                issued,
+            ),
+        )
+
+
+def _profile_token_from_row(row: dict) -> dict:
+    return {
+        "token_id": row["token_id"],
+        "workspace_profile": row["workspace_profile"],
+        "capabilities": json.loads(row["capabilities_json"]),
+        "scope": json.loads(row["scope_json"]),
+        "label": row["label"],
+        "issued": row["issued"],
+        "revoked": bool(row["revoked"]),
+        "revoked_at": row["revoked_at"],
+        "last_used": row["last_used"],
+    }
+
+
+def find_profile_token_by_hash(token_hash: str) -> dict | None:
+    """Look up a profile token by sha256(raw). Returns the full row (including
+    ``revoked``) so the caller can distinguish revoked (401) from unknown."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT * FROM profile_tokens WHERE token_hash = %s", (token_hash,)
+        ).fetchone()
+    return _profile_token_from_row(row) if row else None
+
+
+def touch_profile_token_last_used(token_id: str, when_ms: int) -> None:
+    """Record the most recent successful validation timestamp (best-effort)."""
+    with _conn() as c:
+        c.execute(
+            "UPDATE profile_tokens SET last_used = %s WHERE token_id = %s",
+            (when_ms, token_id),
+        )
+
+
+def list_profile_tokens(include_revoked: bool = True) -> list[dict]:
+    """List profile tokens as masked rows (never the raw token or its hash)."""
+    with _conn() as c:
+        if include_revoked:
+            rows = c.execute(
+                "SELECT * FROM profile_tokens ORDER BY issued DESC"
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT * FROM profile_tokens WHERE revoked = 0 ORDER BY issued DESC"
+            ).fetchall()
+    return [_profile_token_from_row(r) for r in rows]
+
+
+def revoke_profile_token(token_id: str, when_ms: int) -> bool:
+    """Mark a profile token revoked. Returns True if a live row was flipped."""
+    with _conn() as c:
+        cur = c.execute(
+            "UPDATE profile_tokens SET revoked = 1, revoked_at = %s "
+            "WHERE token_id = %s AND revoked = 0",
+            (when_ms, token_id),
+        )
+        return cur.rowcount > 0
 
 
 # ---------------------------------------------------------------------------

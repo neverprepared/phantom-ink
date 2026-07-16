@@ -51,6 +51,7 @@ from .models_api import (
     CreateSessionRequest,
     DeleteSessionRequest,
     ExecSessionRequest,
+    MintProfileTokenRequest,
     PostChannelMessageRequest,
     QuerySessionRequest,
     StartSessionRequest,
@@ -58,10 +59,12 @@ from .models_api import (
     UpdateAgentRequest,
 )
 from .registry import (
+    CAPABILITY_CATALOG,
     create_agent,
     delete_agent,
     get_agent,
     issue_gateway_token,
+    issue_profile_token,
     list_agents,
     list_tokens,
     revoke_token,
@@ -1110,12 +1113,24 @@ async def phantom_events_discovery() -> dict[str, Any]:
     }
 
 
+# The ingest capability guard is bound to a named object (not an inline
+# ``Depends(require_capability(...))``) so the test suite can override this exact
+# dependency to restore the pre-T11 open-in-tests posture for this one route,
+# without disturbing other capability-gated routes. See tests/conftest.py.
+_require_agent_events_write = require_capability("agent_events:write")
+
+
 @app.post("/api/agent_events")
 async def agent_events_ingest(
     batch: agent_store.AgentEventBatch,
-    _key=Depends(require_api_key),
+    _auth=Depends(_require_agent_events_write),
 ):
     """Ingest one or more envelopes into the cross-machine agent event bus.
+
+    Auth (T11): guarded by ``require_capability("agent_events:write")``. This is
+    backward-compatible — the shared X-API-Key still authenticates as full trust,
+    AND a minted profile token carrying ``agent_events:write`` is now also
+    accepted. A bearer token without that capability gets 403; a revoked one 401.
 
     Body forms (all validated against the `AgentEnvelope` schema):
         - batch:           { "events": [ {...}, {...} ] }   ← canonical wire shape
@@ -3467,6 +3482,79 @@ async def hub_get_messages(token: Token = Depends(require_token)):
 @app.get("/api/hub/tokens")
 async def hub_list_tokens(_key=Depends(require_api_key)):
     return [t.model_dump() for t in list_tokens()]
+
+
+# --- Profile tokens (T11): persistent, revocable, per-profile service tokens ---
+# All three routes are admin-only (require_api_key / full trust). GET returns
+# masked rows (never the raw token or its hash); POST returns the raw token
+# exactly once; DELETE revokes.
+
+
+@app.get("/api/tokens/capabilities", dependencies=[Depends(require_api_key)])
+async def profile_tokens_capabilities():
+    """The capability catalog the mint UI offers as a multi-select."""
+    return {"capabilities": list(CAPABILITY_CATALOG)}
+
+
+@app.get("/api/tokens/profiles", dependencies=[Depends(require_api_key)])
+async def profile_tokens_profiles():
+    """Convenience list of known workspace profiles for the mint dropdown.
+
+    Sourced from the gateway-secrets store (profiles with a stored env blob).
+    This is NOT an authoritative registry — the operator may mint a token for
+    any free-text profile name; this only pre-populates the dropdown.
+    """
+    from . import gateway_secrets
+
+    return {"profiles": gateway_secrets.list_profiles()}
+
+
+@app.get("/api/tokens", dependencies=[Depends(require_api_key)])
+async def profile_tokens_list():
+    """List profile tokens (masked). Never returns the raw token or its hash."""
+    from . import store
+
+    rows = await asyncio.to_thread(store.list_profile_tokens)
+    return {"tokens": rows}
+
+
+@app.post("/api/tokens", dependencies=[Depends(require_api_key)])
+async def profile_tokens_mint(body: MintProfileTokenRequest):
+    """Mint a profile token. The raw bearer value is returned exactly ONCE and
+    is never persisted — the operator must copy it into 1Password immediately."""
+    try:
+        raw, token = await asyncio.to_thread(
+            issue_profile_token,
+            body.workspace_profile,
+            body.capabilities,
+            body.label,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "token_id": token.token_id,
+        "token": raw,  # shown once, never stored
+        "workspace_profile": token.workspace_profile,
+        "capabilities": token.capabilities,
+        "label": body.label,
+    }
+
+
+@app.delete("/api/tokens/{token_id}", dependencies=[Depends(require_api_key)])
+async def profile_tokens_revoke(token_id: str):
+    """Revoke a profile token (idempotent: 404 only if the id is unknown)."""
+    from . import store
+
+    now = int(time.time() * 1000)
+    revoked = await asyncio.to_thread(store.revoke_profile_token, token_id, now)
+    if not revoked:
+        # Distinguish unknown id from already-revoked: a second DELETE on a
+        # revoked token flips nothing but the token genuinely exists, so treat
+        # "no live row" as success only if the row exists at all.
+        existing = await asyncio.to_thread(store.list_profile_tokens)
+        if not any(t["token_id"] == token_id for t in existing):
+            raise HTTPException(status_code=404, detail="Token not found")
+    return {"token_id": token_id, "revoked": True}
 
 
 # --- State ---

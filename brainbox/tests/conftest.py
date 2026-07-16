@@ -66,14 +66,22 @@ def _override_api_key_auth():
 
     Individual test modules (like test_auth.py) can remove this override
     to test actual auth behavior.
+
+    Also neutralizes the ``agent_events:write`` capability guard on the ingest
+    route (T11 moved it off ``require_api_key`` onto ``require_capability``), so
+    the many existing ingest tests that send no auth keep passing — restoring the
+    pre-T11 open-in-tests posture for that one route only. Tests that need the
+    real capability path (test_profile_tokens) pop this override explicitly.
     """
     try:
-        from brainbox.api import app
+        from brainbox.api import app, _require_agent_events_write
         from brainbox.auth import require_api_key
 
         app.dependency_overrides[require_api_key] = lambda: None
+        app.dependency_overrides[_require_agent_events_write] = lambda: None
         yield
         app.dependency_overrides.pop(require_api_key, None)
+        app.dependency_overrides.pop(_require_agent_events_write, None)
     except ImportError:
         # If brainbox.api can't be imported (e.g., missing optional deps),
         # skip the override — tests that don't import app won't need it

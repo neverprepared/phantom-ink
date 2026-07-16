@@ -173,6 +173,45 @@ export async function cancelPipelineRun(runId) {
 }
 
 // ---------------------------------------------------------------------------
+// Profile tokens (T11) — persistent, revocable, per-profile service tokens
+// ---------------------------------------------------------------------------
+
+/** The capability catalog the mint form offers. */
+export async function fetchTokenCapabilities() {
+  const data = await fetchJSON('/api/tokens/capabilities', { headers: readHeaders() });
+  return data.capabilities || [];
+}
+
+/** Known workspace profiles (convenience dropdown; free-text is also allowed). */
+export async function fetchTokenProfiles() {
+  const data = await fetchJSON('/api/tokens/profiles', { headers: readHeaders() });
+  return data.profiles || [];
+}
+
+/** List minted profile tokens (masked — never the raw token or its hash). */
+export async function fetchProfileTokens() {
+  const data = await fetchJSON('/api/tokens', { headers: readHeaders() });
+  return data.tokens || [];
+}
+
+/** Mint a token. The returned `token` is the raw secret, shown exactly once. */
+export async function mintProfileToken({ workspace_profile, capabilities, label }) {
+  return fetchJSON('/api/tokens', {
+    method: 'POST',
+    headers: protectedHeaders(),
+    body: JSON.stringify({ workspace_profile, capabilities, label }),
+  });
+}
+
+/** Revoke a token by id. */
+export async function revokeProfileToken(tokenId) {
+  return fetchJSON(`/api/tokens/${encodeURIComponent(tokenId)}`, {
+    method: 'DELETE',
+    headers: protectedHeaders(),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Agent events (timeline-entry contract)
 // ---------------------------------------------------------------------------
 
