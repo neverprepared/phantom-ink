@@ -1087,48 +1087,34 @@ async def sse_events(
 
 
 @app.post("/api/agent_events")
-async def agent_events_ingest(request: Request, _key=Depends(require_api_key)):
+async def agent_events_ingest(
+    batch: agent_store.AgentEventBatch,
+    _key=Depends(require_api_key),
+):
     """Ingest one or more envelopes into the cross-machine agent event bus.
 
-    Body forms:
-        - single envelope: { id, kind, title, ... }
-        - batch:           { "events": [ {...}, {...} ] }
+    Body forms (all validated against the `AgentEnvelope` schema):
+        - batch:           { "events": [ {...}, {...} ] }   ← canonical wire shape
+        - single envelope: { id, kind, title, ... }         ← back-compat
+        - bare list:       [ {...}, {...} ]                  ← back-compat
 
-    Each envelope is upserted into `agent_state` (mutates current snapshot) and
-    appended to `agent_events` (audit log). Successful ingest fans out to the
-    SSE bus as a unified `agent.event` message.
+    Typing the body as `AgentEventBatch` makes this route the contract's
+    enforcement chokepoint: FastAPI validates every envelope on ingest, so a
+    malformed one is **rejected** with a 422 field-error report and never lands
+    in `agent_state`/`agent_events`. The batch is all-or-nothing — a single bad
+    envelope fails the whole POST, matching the Go client's atomic batch semantics
+    (it wraps this in a retrying outbox, so a hard reject is the honest signal).
+    Publishing the model here also exposes `components.schemas.AgentEnvelope` in
+    `/openapi.json`, which consumers generate their bindings from (T3/T4).
+
+    Each valid envelope is upserted into `agent_state` (mutates current snapshot)
+    and appended to `agent_events` (audit log), idempotent by `id`. Successful
+    ingest fans out to the SSE bus as a unified `agent.event` message.
 
     Returns: { ingested: N, ids: [...] }
     """
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
-
-    if isinstance(body, dict) and "events" in body:
-        items = body["events"]
-        if not isinstance(items, list):
-            raise HTTPException(status_code=400, detail="'events' must be an array")
-    elif isinstance(body, dict):
-        items = [body]
-    elif isinstance(body, list):
-        items = body
-    else:
-        raise HTTPException(status_code=400, detail="Body must be an envelope or {events: [...]}")
-
-    # Validate up front so schema errors become 422, not 500.
-    # NB: ValidationError imported above is brainbox.validation; envelope validation
-    # uses pydantic's ValidationError instead.
-    from pydantic import ValidationError as _PydanticValidationError
-    validated: list[agent_store.AgentEnvelope] = []
-    for raw in items:
-        try:
-            validated.append(agent_store.AgentEnvelope(**raw) if isinstance(raw, dict) else raw)
-        except _PydanticValidationError as exc:
-            raise HTTPException(status_code=422, detail=f"Envelope validation: {exc}")
-
     results = []
-    for env in validated:
+    for env in batch.events:
         try:
             stored = await agent_store.async_ingest(env)
             results.append(stored.id)
