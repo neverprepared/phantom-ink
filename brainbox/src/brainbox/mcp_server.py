@@ -755,6 +755,55 @@ def cancel_playbook(playbook_id: str) -> dict[str, Any]:
     return _request("POST", f"/api/hub/playbooks/{playbook_id}/cancel", {})
 
 
+# ---------------------------------------------------------------------------
+# Event contract discovery
+#
+# Agents shouldn't have to be told where the timeline-entry schema lives. Expose
+# the LIVE schema straight off the pydantic model (never a cached copy), so it
+# can never lag the model — the same source `/openapi.json` and the ingest
+# validator derive from. Offered as both a resource (for clients that read
+# resources) and a tool (for clients that only call tools).
+# ---------------------------------------------------------------------------
+
+
+def _timeline_entry_schema() -> dict[str, Any]:
+    """Return the live JSON Schema for the timeline-entry (AgentEnvelope) contract.
+
+    Imported lazily so the MCP adapter — which is otherwise a pure HTTP client —
+    doesn't pull the FastAPI/DB stack in at import time. `model_json_schema()` is
+    computed fresh on every call, so the schema tracks the model with no cache to
+    invalidate.
+    """
+    from .agent_store import AgentEnvelope
+
+    return AgentEnvelope.model_json_schema()
+
+
+@mcp.resource("contract://events/timeline-entry")
+def timeline_entry_schema() -> dict[str, Any]:
+    """Live JSON Schema for a timeline-entry envelope (the agent event contract).
+
+    This is the canonical v2.1 `AgentEnvelope` shape — the same schema
+    `/openapi.json` publishes at `components.schemas.AgentEnvelope` and the
+    ingest route (`POST /api/agent_events`) validates against. Generated fresh
+    from the pydantic model on every read, so it never lags the model.
+    """
+    return _timeline_entry_schema()
+
+
+@mcp.tool()
+def get_event_schema() -> dict[str, Any]:
+    """Get the live JSON Schema for a timeline-entry event envelope.
+
+    Returns the canonical v2.1 `AgentEnvelope` contract — the shape every
+    envelope POSTed to `/api/agent_events` must conform to. Identical to the
+    `contract://events/timeline-entry` MCP resource and to
+    `/openapi.json#/components/schemas/AgentEnvelope`. Computed from the live
+    pydantic model, so it always reflects the current contract.
+    """
+    return _timeline_entry_schema()
+
+
 def run() -> None:
     """Run the MCP server on stdio transport."""
     mcp.run(transport="stdio")
