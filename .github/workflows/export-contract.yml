@@ -1,0 +1,91 @@
+name: Export timeline-entry contract
+
+# Regenerates schema/timeline-entry.schema.json from the canonical AgentEnvelope
+# model and, when the model has changed, pushes the regenerated schema to
+# neverprepared/phantom-contracts and tags the version. phantom-contracts is the
+# single home for the generated schema (DECISIONS.md D2) — this job never writes a
+# second copy back into phantom-ink.
+#
+# CREDENTIAL: the cross-repo push needs a secret `PHANTOM_CONTRACTS_PUSH_TOKEN`
+# with write access to neverprepared/phantom-contracts (see the PR body). Until
+# that secret is provisioned, the push step is skipped (the job still verifies the
+# schema regenerates cleanly, so PRs stay green).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'brainbox/src/brainbox/agent_store.py'
+      - 'brainbox/scripts/export_contract.py'
+      - '.github/workflows/export-contract.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: export-contract
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: brainbox
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Sync deps
+        run: uv sync
+
+      - name: Regenerate schema from the model
+        run: |
+          uv run python scripts/export_contract.py > /tmp/timeline-entry.schema.json
+          echo "Regenerated schema:"
+          head -n 5 /tmp/timeline-entry.schema.json
+          # Derive the version tag from the schema $id (.../vMAJOR.MINOR). The
+          # export script prints the $id line so we avoid quoting a '$' literal.
+          VERSION="$(uv run python scripts/export_contract.py --print-version)"
+          echo "version=$VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Check push credential
+        id: cred
+        run: |
+          if [ -n "${{ secrets.PHANTOM_CONTRACTS_PUSH_TOKEN }}" ]; then
+            echo "have_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_token=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::PHANTOM_CONTRACTS_PUSH_TOKEN not set — skipping push to phantom-contracts. Provision the secret to enable cross-repo publishing."
+          fi
+
+      - name: Push to phantom-contracts + tag on change
+        if: steps.cred.outputs.have_token == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PHANTOM_CONTRACTS_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/neverprepared/phantom-contracts.git" /tmp/phantom-contracts
+          cd /tmp/phantom-contracts
+          mkdir -p schema
+          cp /tmp/timeline-entry.schema.json schema/timeline-entry.schema.json
+
+          if git diff --quiet -- schema/timeline-entry.schema.json; then
+            echo "Schema unchanged — nothing to publish."
+            exit 0
+          fi
+
+          git config user.name  "phantom-ink-ci"
+          git config user.email "ci@neverprepared.dev"
+          git add schema/timeline-entry.schema.json
+          git commit -m "Regenerate timeline-entry schema from phantom-ink AgentEnvelope (${GITHUB_SHA::7})"
+          git push origin HEAD:main
+
+          TAG="timeline-entry/${VERSION}"
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::notice::Tag ${TAG} already exists. Schema changed within the same version — bump the model \$id (minor for additive, major for breaking) per evolution-policy.md."
+          else
+            git tag -a "${TAG}" -m "timeline-entry contract ${VERSION} (from phantom-ink ${GITHUB_SHA::7})"
+            git push origin "${TAG}"
+            echo "Published ${TAG}."
+          fi
