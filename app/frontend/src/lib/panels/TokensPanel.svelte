@@ -17,6 +17,21 @@
   let profiles = $state<string[]>([]);
   let loading = $state(true);
 
+  // Profile filter. '' == "All profiles" (default). The known-profiles set is the
+  // union of the fetched catalog and the distinct workspace_profile values on the
+  // current tokens, so a profile that only exists via a free-text mint is filterable.
+  let selectedProfile = $state('');
+  const knownProfiles = $derived(
+    [...new Set([...profiles, ...tokens.map((t) => t.workspace_profile)])]
+      .filter(Boolean)
+      .sort(),
+  );
+  const filteredTokens = $derived(
+    selectedProfile
+      ? tokens.filter((t) => t.workspace_profile === selectedProfile)
+      : tokens,
+  );
+
   // Inline revoke confirmation. Native window.confirm() is an unreliable no-op in
   // the Wails webview (it returns undefined, so a `!confirm()` guard bails silently
   // and "nothing happens"), so we confirm with a two-step inline button instead —
@@ -64,7 +79,9 @@
   }
 
   async function handleMint() {
-    const profile = profileInput.trim();
+    // When a specific profile is selected the mint is scoped to it; otherwise the
+    // operator types a free-text profile (which may be brand-new).
+    const profile = selectedProfile || profileInput.trim();
     if (!profile) {
       notifications.error('A workspace profile is required.');
       return;
@@ -161,19 +178,24 @@
   <form class="mint-form" onsubmit={(e) => { e.preventDefault(); handleMint(); }}>
     <label>
       <span>Workspace profile</span>
-      <input
-        type="text"
-        list="profile-token-options"
-        bind:value={profileInput}
-        placeholder="e.g. personal"
-        spellcheck="false"
-        required
-      />
-      <datalist id="profile-token-options">
-        {#each profiles as p}
-          <option value={p}></option>
-        {/each}
-      </datalist>
+      {#if selectedProfile}
+        <!-- Scoped to the selected profile: lock the mint target to the filter. -->
+        <input type="text" value={selectedProfile} readonly disabled />
+      {:else}
+        <input
+          type="text"
+          list="profile-token-options"
+          bind:value={profileInput}
+          placeholder="e.g. personal"
+          spellcheck="false"
+          required
+        />
+        <datalist id="profile-token-options">
+          {#each profiles as p}
+            <option value={p}></option>
+          {/each}
+        </datalist>
+      {/if}
     </label>
 
     <div class="caps">
@@ -201,18 +223,29 @@
       <input type="text" bind:value={label} placeholder="what/where this token is used" spellcheck="false" />
     </label>
 
-    <button type="submit" class="btn-mint" disabled={minting || !profileInput.trim()}>
+    <button type="submit" class="btn-mint" disabled={minting || !(selectedProfile || profileInput.trim())}>
       {minting ? 'Minting…' : 'Mint token'}
     </button>
   </form>
 
-  <h2 class="section-title">Active tokens</h2>
+  <div class="section-head">
+    <h2 class="section-title">Active tokens</h2>
+    <label class="profile-filter">
+      <span>Profile</span>
+      <select bind:value={selectedProfile}>
+        <option value="">All profiles</option>
+        {#each knownProfiles as p}
+          <option value={p}>{p}</option>
+        {/each}
+      </select>
+    </label>
+  </div>
 
   {#if loading}
     <p class="hint">loading…</p>
-  {:else if tokens.length === 0}
+  {:else if filteredTokens.length === 0}
     <EmptyState
-      title="No tokens minted yet"
+      title={selectedProfile ? `No tokens for ${selectedProfile}` : 'No tokens minted yet'}
       message="Mint a profile token above to give an agent or service scoped access to the brainbox API/bus."
     />
   {:else}
@@ -230,7 +263,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each tokens as t (t.token_id)}
+          {#each filteredTokens as t (t.token_id)}
             <tr>
               <td class="mono">{t.workspace_profile}</td>
               <td>
@@ -366,7 +399,17 @@
   }
   .btn-mint:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  .section-title { font-size: 0.85rem; font-weight: 600; margin: 0 0 0.75rem; }
+  .section-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin: 0 0 0.75rem; }
+  .section-title { font-size: 0.85rem; font-weight: 600; margin: 0; }
+  .profile-filter { display: flex; align-items: center; gap: 0.4rem; }
+  .profile-filter > span {
+    font-size: 0.68rem; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .profile-filter select {
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); padding: 0.3rem 0.5rem; border-radius: 6px; font-size: 0.78rem;
+  }
 
   .table-scroll { overflow-x: auto; }
   .token-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
