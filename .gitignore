@@ -34,5 +34,9 @@ dist/
 # bootstrap secrets that must never be committed.
 docker/**/.env
 
+# Local Docker volume data (postgres/qdrant/minio/opensearch runtime state) —
+# runtime, not source; regenerated on `docker compose up`. Never track.
+docker/volumes/
+
 # Worker task output (ratchet review/fix artifacts)
 tasks/
