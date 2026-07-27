@@ -59,10 +59,16 @@ export interface LivePreset {
 
 const FILTERS_KEY = 'pi-stream-filters-v1';
 const PRESETS_KEY = 'pi-stream-presets-v1';
-export const STATUS_OPTIONS = ['upcoming', 'active', 'blocked', 'needs_action'];
+// Status chips. The first four are the default "live" set; `failed`/`done` are
+// terminal — selecting them turns the Live view into an all-events view (they
+// drive the server query, not just client-side narrowing, so terminal envelopes
+// that normally drop off are pulled in). Select all six for "show everything".
+export const STATUS_OPTIONS = ['upcoming', 'active', 'blocked', 'needs_action', 'failed', 'done'];
 
-// Active-state statuses queried for / retained by the Live view.
+// Active-state statuses queried for / retained by the Live view when no status
+// chips are selected (the default). Terminal statuses drop off in this mode.
 const LIVE_STATUSES = 'upcoming,active,blocked,needs_action';
+const LIVE_STATUS_LIST = LIVE_STATUSES.split(',');
 
 function loadFilters(): LiveFilters {
   try {
@@ -146,10 +152,15 @@ class StreamLiveStore {
       [bucket]: cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value],
     };
     this.persistFilters();
+    // The status bucket drives the server query (terminal statuses aren't in the
+    // default fetch), so a change there needs a refetch. Sources/tags only
+    // narrow the already-fetched rows client-side — no refetch needed.
+    if (bucket === 'statuses') void this.refreshLive();
   }
   clearFilters(): void {
     this.liveFilters = { sources: [], statuses: [], tags: [] };
     this.persistFilters();
+    void this.refreshLive();  // back to the default live-status set
   }
 
   savePreset(): void {
@@ -212,7 +223,9 @@ class StreamLiveStore {
     if (!a) return;
     try {
       this.live = ((await a.ListAgentState({
-        status: LIVE_STATUSES,
+        // Selected status chips drive the query so terminal (failed/done)
+        // envelopes can be pulled in; empty selection = the default live set.
+        status: this.liveFilters.statuses.length ? this.liveFilters.statuses.join(',') : LIVE_STATUSES,
         workspace: this.workspaceFilter,
         source: '',
         parent_id: '',
@@ -233,14 +246,18 @@ class StreamLiveStore {
     if (!env || typeof env !== 'object') return;
     if (env.workspace && this.workspaceFilter && env.workspace !== this.workspaceFilter) return;
 
-    const activeStatuses = ['upcoming', 'active', 'blocked', 'needs_action'];
-    const isActive = activeStatuses.includes(env.status);
+    // Retain an envelope if its status is in the set the view is currently
+    // showing: the selected chips, or the default live set when none are picked.
+    // In the default view terminal (failed/done) deltas still drop off; with
+    // `done`/`failed` chips selected they're kept, matching refreshLive's query.
+    const retainStatuses = this.liveFilters.statuses.length ? this.liveFilters.statuses : LIVE_STATUS_LIST;
+    const retain = retainStatuses.includes(env.status);
 
     // Always nudge attention — it might be a failed/blocked/needs_action delta.
     void attentionStore.refresh();
 
     const idx = this.live.findIndex((i) => i.id === env.id);
-    if (!isActive) {
+    if (!retain) {
       if (idx >= 0) this.live = this.live.filter((_, i) => i !== idx);
       return;
     }
