@@ -99,6 +99,30 @@
 
   const DOCKER_EVENTS = ['create', 'start', 'stop', 'die', 'destroy'];
 
+  // Bus-native session lifecycle types (audit -> bus; see phantom-router
+  // agent_store.envelope_from_audit). A clean, profile-aware signal that fires
+  // the moment an operation is audited — we refresh on these instead of
+  // inferring session changes from raw Docker container events. `session.command`
+  // (exec/query/...) is intentionally excluded: it doesn't change the session
+  // list or its container state, so it must not churn the poll.
+  const SESSION_LIFECYCLE_EVENTS = new Set([
+    'session.created', 'session.started', 'session.stopped',
+    'session.deleted', 'session.failed',
+  ]);
+  let agentEventOff: (() => void) | null = null;
+  let refreshDebounce: number | null = null;
+
+  // Coalesce event-driven refreshes. One session stop now emits a bus
+  // session.stopped envelope AND Docker stop/die/destroy events; without this
+  // they'd fire refresh() (5 parallel API calls each) 3-4x in a burst.
+  function scheduleRefresh() {
+    if (refreshDebounce != null) clearTimeout(refreshDebounce);
+    refreshDebounce = window.setTimeout(() => {
+      refreshDebounce = null;
+      void refresh();
+    }, 250);
+  }
+
   // Filter by active TitleBar profile
   let filtered = $derived.by(() => {
     if (!activeProfile) return allSessions;
@@ -253,6 +277,17 @@
     refreshMetrics();
     loadRoles();
     metricsTimer = setInterval(refreshMetrics, 10_000);
+
+    // Bus-driven refresh. agent:event is the typed envelope stream app.go emits
+    // from the brainbox /api/events SSE (same channel StreamPanel consumes). A
+    // session lifecycle envelope fires right when the operation is audited —
+    // ahead of, and semantically cleaner than, the Docker-event heuristic in the
+    // brainbox:event effect below, which stays as defense-in-depth.
+    agentEventOff = (window as any).runtime?.EventsOn?.('agent:event', (env: any) => {
+      if (typeof env?.type === 'string' && SESSION_LIFECYCLE_EVENTS.has(env.type)) {
+        scheduleRefresh();
+      }
+    }) ?? null;
     const a = await getApi();
     if (a) {
       try {
@@ -265,6 +300,8 @@
 
   onDestroy(() => {
     if (metricsTimer) clearInterval(metricsTimer);
+    if (typeof agentEventOff === 'function') agentEventOff();
+    if (refreshDebounce != null) clearTimeout(refreshDebounce);
   });
 
   $effect(() => {
@@ -277,7 +314,7 @@
     if (!ev) return;
     const raw = ev.raw;
     if (DOCKER_EVENTS.includes(raw) || (ev.data && (ev.data as any).hub)) {
-      refresh();
+      scheduleRefresh();
     }
     const action = (ev.data as any)?.action ?? '';
     if (action === 'agent.created' || action === 'agent.updated' || action === 'agent.deleted') {
