@@ -14,6 +14,8 @@ export function AttentionRespond(arg1:string,arg2:string):Promise<void>;
 
 export function AttentionRetry(arg1:string):Promise<void>;
 
+export function BackupDatabase(arg1:string):Promise<string>;
+
 export function BrowseFolder():Promise<string>;
 
 export function BrowseProfileFiles(arg1:string):Promise<Array<string>>;
@@ -262,6 +264,8 @@ export function ListLoopTemplates():Promise<Array<string>>;
 
 export function ListOllamaModels():Promise<Array<brainbox.OllamaModel>>;
 
+export function ListPlatformDatabases():Promise<Array<main.DatabaseInfo>>;
+
 export function ListPlaybooks(arg1:string):Promise<Array<brainbox.Playbook>>;
 
 export function ListProfileDirs(arg1:string):Promise<Array<string>>;
@@ -325,6 +329,8 @@ export function RescanAgents():Promise<Array<main.DetectedAgent>>;
 export function RestartBrainboxAPI():Promise<void>;
 
 export function RestoreAttention(arg1:string):Promise<void>;
+
+export function RestoreDatabase(arg1:string):Promise<string>;
 
 export function RestoreProfile(arg1:string):Promise<void>;
 
