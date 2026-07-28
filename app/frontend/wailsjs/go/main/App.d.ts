@@ -324,6 +324,8 @@ export function PurgeBackup(arg1:string):Promise<void>;
 
 export function PutLoopTemplate(arg1:string,arg2:string,arg3:boolean):Promise<brainbox.LoopTemplate>;
 
+export function ReadProfileHostEnv(arg1:string):Promise<string>;
+
 export function RebuildBaseImage(arg1:main.BaseImageBuildRequest):Promise<void>;
 
 export function RemoveChannelParticipant(arg1:string,arg2:string):Promise<brainbox.Channel>;
