@@ -143,7 +143,11 @@ type ServiceDef struct {
 	Description string `json:"description"`
 	DefaultURL  string `json:"default_url"`
 	Port        int    `json:"port"`
-	Native      bool   `json:"native"` // true = managed outside docker (e.g. macOS app)
+	Native      bool   `json:"native"`   // true = managed outside docker (e.g. macOS app)
+	Platform    bool   `json:"platform"` // true = belongs to the phantom-platform group,
+	// surfaced by the Platform Services card, not the Integrations toggles. The
+	// entry is kept (its DefaultURL still backs opensearchAPIURL / minio address
+	// resolution) but hidden from ListServices.
 }
 
 // ServiceStatus is the runtime state of a service.
@@ -195,6 +199,7 @@ var knownServices = []ServiceDef{
 		Description: "OpenTelemetry signal store — traces, metrics, and logs via OTLP → OpenSearch + Dashboards",
 		DefaultURL:  "http://localhost:5601",
 		Port:        5601,
+		Platform:    true,
 	},
 	{
 		Name:        "ollama",
@@ -203,6 +208,7 @@ var knownServices = []ServiceDef{
 		DefaultURL:  "http://localhost:11434",
 		Port:        11434,
 		Native:      true,
+		Platform:    true,
 	},
 	{
 		Name:        "minio",
@@ -210,6 +216,7 @@ var knownServices = []ServiceDef{
 		Description: "S3-compatible artifact store — vault + loops + sessions",
 		DefaultURL:  "http://localhost:9090",
 		Port:        9090,
+		Platform:    true,
 	},
 }
 

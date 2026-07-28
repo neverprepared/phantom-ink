@@ -28,6 +28,9 @@ func (a *App) getIntegrationConfig(name string) ServiceConfig {
 func (a *App) ListServices() []ServiceStatus {
 	var result []ServiceStatus
 	for _, def := range knownServices {
+		if def.Platform {
+			continue // managed under the Platform Services card, not Integrations
+		}
 		cfg := a.getIntegrationConfig(def.Name)
 		result = append(result, ServiceStatus{
 			ServiceDef: def,
