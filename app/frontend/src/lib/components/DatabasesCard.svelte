@@ -116,33 +116,47 @@
 </div>
 
 <style>
-  .db-card { display: flex; flex-direction: column; }
-  .card-top { display: flex; align-items: center; gap: 8px; }
-  .card-identity {
-    display: flex; align-items: center; gap: 8px; flex: 1;
-    background: none; border: none; cursor: pointer; color: var(--text);
-    padding: 0; text-align: left;
+  /* Matches ServicesPanel's card conventions (.service-card / .creds-card). */
+  .db-card {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-primary);
+    border-left: 3px solid var(--color-info);
+    border-radius: var(--radius-xl);
+    padding: 14px 18px;
+    margin-bottom: 20px;
   }
-  .expand-chevron { color: var(--text-muted); transition: transform 0.15s ease; flex: none; }
+  .card-top {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .card-identity {
+    display: flex; align-items: center; gap: 8px;
+    background: none; border: none; padding: 0; cursor: pointer;
+    color: inherit; font-family: inherit; text-align: left;
+  }
+  .expand-chevron { color: var(--color-text-tertiary); transition: transform 0.15s; flex-shrink: 0; }
   .expand-chevron.expanded { transform: rotate(90deg); }
-  .svc-name { font-weight: 600; font-size: 13.5px; }
-  .svc-status { color: var(--text-muted); font-size: 12px; margin-left: auto; }
+  .svc-name { font-weight: 500; font-size: 14px; color: var(--color-text-primary); }
+  .svc-status { font-size: 11px; color: var(--color-text-tertiary); }
 
-  .db-body { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+  .db-body { display: flex; flex-direction: column; margin-top: 10px; }
   .db-row {
     display: flex; align-items: center; gap: 10px;
-    padding: 7px 4px; border-top: 1px solid var(--border);
+    padding: 7px 2px; border-top: 1px solid var(--color-border-primary);
   }
-  .db-name { font-weight: 600; font-size: 13px; }
-  .db-size { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .db-name { font-family: var(--font-mono); font-size: 12px; color: var(--color-text-primary); }
+  .db-size { font-size: 11px; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
   .db-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
-  .db-warn { color: var(--fail); font-size: 12px; font-weight: 600; }
-  .db-note { color: var(--text-muted); font-size: 12.5px; padding: 4px; }
-  .db-note.err { color: var(--fail); white-space: pre-wrap; }
+  .db-warn { font-size: 11px; font-weight: 500; color: var(--color-error); }
+  .db-note { font-size: 12px; color: var(--color-text-tertiary); padding: 4px 2px; }
+  .db-note.err { color: var(--color-error); white-space: pre-wrap; }
   .db-result {
-    margin: 6px 0 0; padding: 8px 10px; background: var(--bg-hover);
-    border-radius: 6px; font-size: 11.5px; line-height: 1.45;
+    margin: 8px 0 0; padding: 8px 10px;
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-md, 6px);
+    font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
+    color: var(--color-text-secondary);
     white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: auto;
   }
-  .db-hint { color: var(--text-muted); font-size: 11.5px; line-height: 1.5; margin-top: 4px; }
+  .db-hint { font-size: 11px; line-height: 1.5; color: var(--color-text-tertiary); margin-top: 8px; }
 </style>
