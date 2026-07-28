@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,60 @@ def _api_key() -> str:
             return data.get("key", "")
     except Exception:
         return ""
+
+
+def _forced_profile() -> str:
+    """The profile this MCP instance is pinned to, or "" if unbound.
+
+    When brainbox-mcp runs inside a per-profile context (gateway or session,
+    launched with ``CL_WORKSPACE_PROFILE=<profile>``), every profile-scoped
+    operation is FORCED to that profile so an agent cannot reach across
+    profiles by passing a different ``workspace_profile`` argument. Empty means
+    operator/unbound mode (the caller holds the master key and chooses freely).
+    """
+    return os.environ.get("CL_WORKSPACE_PROFILE", "").strip()
+
+
+def _resolve_profile(requested: str) -> str:
+    """Pin a requested profile to the forced one when this MCP is profile-bound.
+
+    In bound mode the caller's argument is ignored — isolation is not negotiable.
+    In unbound mode the requested value passes through unchanged.
+    """
+    forced = _forced_profile()
+    return forced if forced else requested
+
+
+def _session_profile_guard(name: str) -> dict[str, Any] | None:
+    """Refuse by-name operations on a session owned by another profile.
+
+    Only enforced in profile-bound mode (``CL_WORKSPACE_PROFILE`` set). Forcing
+    the profile on *create* is not enough: ``exec_session`` / ``query_session`` /
+    ``delete_session`` etc. take a bare session or container name, so without
+    this an agent pinned to one profile could reach into another profile's
+    session by name. Returns an error dict to short-circuit the caller, or
+    ``None`` when the op is allowed (unbound mode, matching profile, unlabeled
+    session, or a name the API doesn't know — let its own 404 surface).
+    """
+    forced = _forced_profile()
+    if not forced:
+        return None
+    sessions = _request("GET", "/api/sessions")
+    if not isinstance(sessions, list):
+        return None  # API error will surface on the real call; don't mask it
+    for s in sessions:
+        if name in (s.get("session_name"), s.get("name")):
+            owner = (s.get("workspace_profile") or "").strip()
+            if owner and owner != forced:
+                return {
+                    "error": (
+                        f"session '{name}' belongs to profile '{owner}'; this "
+                        f"context is pinned to '{forced}' and cannot reach it"
+                    ),
+                    "status": 403,
+                }
+            return None
+    return None
 
 
 def _request_raw(
@@ -143,7 +198,11 @@ def _request_as_session(
 @mcp.tool()
 def list_sessions() -> list[dict[str, Any]]:
     """List all container sessions with their ports, volumes, and status."""
-    return _request("GET", "/api/sessions")
+    forced = _forced_profile()
+    path = "/api/sessions"
+    if forced:
+        path += f"?workspace_profile={urllib.parse.quote(forced)}"
+    return _request("GET", path)
 
 
 @mcp.tool()
@@ -191,6 +250,9 @@ def create_session(
         body["volume"] = volume
     if docker_host:
         body["docker_host"] = docker_host
+    forced = _forced_profile()
+    if forced:
+        body["workspace_profile"] = forced
     return _request("POST", "/api/create", body)
 
 
@@ -201,6 +263,8 @@ def start_session(name: str) -> dict[str, Any]:
     Args:
         name: Container name (e.g. developer-default)
     """
+    if guard := _session_profile_guard(name):
+        return guard
     return _request("POST", "/api/start", {"name": name})
 
 
@@ -211,6 +275,8 @@ def stop_session(name: str) -> dict[str, Any]:
     Args:
         name: Container name (e.g. developer-default)
     """
+    if guard := _session_profile_guard(name):
+        return guard
     return _request("POST", "/api/stop", {"name": name})
 
 
@@ -221,6 +287,8 @@ def delete_session(name: str) -> dict[str, Any]:
     Args:
         name: Container name (e.g. developer-default)
     """
+    if guard := _session_profile_guard(name):
+        return guard
     return _request("POST", "/api/delete", {"name": name})
 
 
@@ -234,6 +302,8 @@ def push_config(name: str) -> dict[str, Any]:
     Args:
         name: Session name (e.g. default) or container name (e.g. developer-default)
     """
+    if guard := _session_profile_guard(name):
+        return guard
     return _request("POST", f"/api/sessions/{name}/push-config")
 
 
@@ -295,6 +365,9 @@ def submit_task(
         body["repo_url"] = repo_url
     if job_id:
         body["job_id"] = job_id
+    forced = _forced_profile()
+    if forced:
+        body["workspace_profile"] = forced
     return _request("POST", "/api/hub/tasks", body)
 
 
@@ -320,6 +393,9 @@ def list_tasks(status: str | None = None, limit: int = 50) -> list[dict[str, Any
     if status:
         params.append(f"status={status}")
     params.append(f"limit={limit}")
+    forced = _forced_profile()
+    if forced:
+        params.append(f"workspace_profile={urllib.parse.quote(forced)}")
     path = "/api/hub/tasks?" + "&".join(params)
     return _request("GET", path)
 
@@ -337,6 +413,8 @@ def get_session(name: str) -> dict[str, Any]:
     Args:
         name: Session name (e.g. test-1)
     """
+    if guard := _session_profile_guard(name):
+        return guard
     return _request("GET", f"/api/sessions/{name}")
 
 
@@ -348,6 +426,8 @@ def exec_session(name: str, command: str) -> dict[str, Any]:
         name: Session name (e.g. test-1)
         command: Shell command to run (e.g. "pytest tests/", "git status")
     """
+    if guard := _session_profile_guard(name):
+        return guard
     return _request("POST", f"/api/sessions/{name}/exec", {"command": command})
 
 
@@ -364,6 +444,8 @@ def query_session(
         prompt: The prompt/task to execute in the container
         timeout: Maximum seconds to wait for response (default: 300)
     """
+    if guard := _session_profile_guard(name):
+        return guard
     body: dict[str, Any] = {"prompt": prompt, "timeout": timeout}
     return _request("POST", f"/api/sessions/{name}/query", body, timeout=timeout + 10)
 
@@ -685,11 +767,13 @@ def list_playbooks(workspace_profile: str = "global") -> list[dict[str, Any]]:
     Args:
         workspace_profile: Profile name to filter by (e.g. ``"work"``), or
                            ``"global"`` to list cross-profile playbooks
-                           (default: ``"global"``).
+                           (default: ``"global"``). Ignored when this MCP is
+                           pinned to a profile — listing is forced to it.
     """
+    profile = _resolve_profile(workspace_profile)
     path = "/api/hub/playbooks"
-    if workspace_profile:
-        path += f"?profile={workspace_profile}"
+    if profile:
+        path += f"?profile={urllib.parse.quote(profile)}"
     return _request("GET", path)
 
 
@@ -724,11 +808,13 @@ def create_playbook(name: str, markdown: str, workspace_profile: str = "global")
         workspace_profile: Profile scope for worker sessions spawned by this
                            playbook (e.g. ``"work"``), or ``"global"`` for
                            all-profile playbooks (default: ``"global"``).
+                           Ignored when this MCP is pinned to a profile — the
+                           playbook is forced to that profile.
     """
     return _request("POST", "/api/hub/playbooks", {
         "name": name,
         "markdown": markdown,
-        "workspace_profile": workspace_profile,
+        "workspace_profile": _resolve_profile(workspace_profile),
     })
 
 
