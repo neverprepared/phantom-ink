@@ -2,7 +2,9 @@ package brainbox
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
+	"time"
 )
 
 // MCP gateway operator surface (ADR-002 phase 3).
@@ -82,7 +84,12 @@ func (c *Client) SetGatewayServerEnabled(name string, enabled bool) error {
 func (c *Client) ListGatewayProfileTools(profile string) (GatewayToolsResult, error) {
 	var res GatewayToolsResult
 	path := fmt.Sprintf("/api/gateway/profiles/%s/tools", url.PathEscape(profile))
-	if err := c.get(path, &res); err != nil {
+	// A cold tools-test spawns each of the profile's enabled MCP servers to
+	// enumerate their tools — inherently slow (npx/uvx spawns), and a broken
+	// server fails slowly before it's negative-cached. The default 15s client
+	// times out on the first call; use a longer one (subsequent calls are fast).
+	longClient := &http.Client{Timeout: 60 * time.Second}
+	if err := c.doWith(longClient, http.MethodGet, path, nil, &res); err != nil {
 		return GatewayToolsResult{}, err
 	}
 	return res, nil
