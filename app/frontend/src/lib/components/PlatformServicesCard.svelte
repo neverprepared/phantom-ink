@@ -6,9 +6,13 @@
   interface Service {
     name: string; state: string; status: string; health: string; one_shot: boolean;
   }
+  interface External {
+    name: string; label: string; endpoint: string; healthy: boolean; note: string;
+  }
 
   let expanded = $state(false);
   let services = $state<Service[]>([]);
+  let externals = $state<External[]>([]);
   let loading = $state(false);
   let error = $state<string | null>(null);
   let busy = $state<string | null>(null);
@@ -23,6 +27,7 @@
       const a = await getApi();
       if (!a) return;
       services = (await a.ListPlatformServices()) ?? [];
+      externals = (await a.ListPlatformExternals()) ?? [];
     } catch (e: any) {
       error = e?.message ?? String(e);
       services = [];
@@ -122,6 +127,18 @@
         {/each}
       {/if}
 
+      {#if externals.length}
+        <div class="ps-sub">external (host / not compose-managed)</div>
+        {#each externals as e (e.name)}
+          <div class="ps-row">
+            <span class="ps-dot {e.healthy ? 'up' : 'down'}" title={e.endpoint}></span>
+            <span class="ps-name">{e.label}</span>
+            <span class="ps-tag">{e.note}</span>
+            <span class="ps-state">{e.endpoint} · {e.healthy ? 'reachable' : 'unreachable'}</span>
+          </div>
+        {/each}
+      {/if}
+
       <div class="ps-footer">
         <span class="ps-hint">restarting <code>router</code> briefly drops the app's own connection.</span>
         <button class="btn ghost sm" disabled={busy !== null || services.length === 0} onclick={restartAll}>restart all</button>
@@ -167,6 +184,11 @@
   }
   .ps-state { font-size: 11px; color: var(--color-text-tertiary); margin-left: 2px; }
   .ps-actions { margin-left: auto; display: flex; gap: 6px; }
+  .ps-sub {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--color-text-tertiary); margin-top: 12px; padding: 4px 2px 0;
+    border-top: 1px solid var(--color-border-primary);
+  }
   .ps-note { font-size: 12px; color: var(--color-text-tertiary); padding: 4px 2px; }
   .ps-note.err { color: var(--color-error); white-space: pre-wrap; }
   .ps-footer {

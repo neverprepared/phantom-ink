@@ -2630,6 +2630,26 @@ export namespace main {
 	        this.ref = source["ref"];
 	    }
 	}
+	export class PlatformExternal {
+	    name: string;
+	    label: string;
+	    endpoint: string;
+	    healthy: boolean;
+	    note: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PlatformExternal(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.label = source["label"];
+	        this.endpoint = source["endpoint"];
+	        this.healthy = source["healthy"];
+	        this.note = source["note"];
+	    }
+	}
 	export class PlatformService {
 	    name: string;
 	    state: string;
@@ -2896,6 +2916,7 @@ export namespace main {
 	    default_url: string;
 	    port: number;
 	    native: boolean;
+	    platform: boolean;
 	    enabled: boolean;
 	    remote: boolean;
 	    local_url: string;
@@ -2915,6 +2936,7 @@ export namespace main {
 	        this.default_url = source["default_url"];
 	        this.port = source["port"];
 	        this.native = source["native"];
+	        this.platform = source["platform"];
 	        this.enabled = source["enabled"];
 	        this.remote = source["remote"];
 	        this.local_url = source["local_url"];

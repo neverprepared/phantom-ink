@@ -85,6 +85,30 @@ func parseHealth(status string) string {
 	}
 }
 
+// PlatformExternal is a platform dependency that lives OUTSIDE the compose stack
+// (a host process or an external endpoint) — surfaced under the platform group as
+// read-only health, since it isn't docker-compose managed.
+type PlatformExternal struct {
+	Name     string `json:"name"`
+	Label    string `json:"label"`
+	Endpoint string `json:"endpoint"`
+	Healthy  bool   `json:"healthy"`
+	Note     string `json:"note"`
+}
+
+// ListPlatformExternals reports the platform's non-compose dependencies —
+// Ollama (host inference) and OpenSearch (OTEL signal store) — by a quick TCP
+// reachability probe. No start/stop: Ollama is a host process; OpenSearch is
+// external (its platform placement lands with the observability work).
+func (a *App) ListPlatformExternals() []PlatformExternal {
+	return []PlatformExternal{
+		{Name: "ollama", Label: "Ollama", Endpoint: "localhost:11434",
+			Healthy: isPortOpen(11434), Note: "host inference"},
+		{Name: "opensearch", Label: "OpenSearch", Endpoint: "localhost:9200",
+			Healthy: isPortOpen(9200), Note: "OTEL store (observability)"},
+	}
+}
+
 // StartPlatformService (re)creates + starts a service (revives removed/stopped ones).
 func (a *App) StartPlatformService(name string) error { return a.composeAction("up", "-d", name) }
 

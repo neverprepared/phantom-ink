@@ -266,6 +266,8 @@ export function ListOllamaModels():Promise<Array<brainbox.OllamaModel>>;
 
 export function ListPlatformDatabases():Promise<Array<main.DatabaseInfo>>;
 
+export function ListPlatformExternals():Promise<Array<main.PlatformExternal>>;
+
 export function ListPlatformServices():Promise<Array<main.PlatformService>>;
 
 export function ListPlaybooks(arg1:string):Promise<Array<brainbox.Playbook>>;

@@ -526,6 +526,10 @@ export function ListPlatformDatabases() {
   return window['go']['main']['App']['ListPlatformDatabases']();
 }
 
+export function ListPlatformExternals() {
+  return window['go']['main']['App']['ListPlatformExternals']();
+}
+
 export function ListPlatformServices() {
   return window['go']['main']['App']['ListPlatformServices']();
 }
