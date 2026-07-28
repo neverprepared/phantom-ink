@@ -21,11 +21,14 @@ func (a *App) opensearchAPIURL() (string, error) {
 	if def == nil {
 		return "", fmt.Errorf("opensearch service not registered")
 	}
+	// OpenSearch is a first-class platform service now, so default to its
+	// endpoint (the DefaultURL) even when the hidden integration toggle was never
+	// enabled. An explicit integration config still overrides.
 	cfg := a.getIntegrationConfig("opensearch")
-	if !cfg.Enabled {
-		return "", fmt.Errorf("opensearch is not enabled")
+	url := def.DefaultURL
+	if cfg.Enabled {
+		url = cfg.ActiveURL(def.DefaultURL)
 	}
-	url := cfg.ActiveURL(def.DefaultURL)
 	if i := strings.LastIndex(url, ":5601"); i >= 0 {
 		url = url[:i] + ":9200" + url[i+len(":5601"):]
 	}
