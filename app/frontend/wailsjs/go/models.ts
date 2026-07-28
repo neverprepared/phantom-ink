@@ -2630,6 +2630,26 @@ export namespace main {
 	        this.ref = source["ref"];
 	    }
 	}
+	export class PlatformService {
+	    name: string;
+	    state: string;
+	    status: string;
+	    health: string;
+	    one_shot: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new PlatformService(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.state = source["state"];
+	        this.status = source["status"];
+	        this.health = source["health"];
+	        this.one_shot = source["one_shot"];
+	    }
+	}
 	export class PreflightCheck {
 	    name: string;
 	    status: string;
