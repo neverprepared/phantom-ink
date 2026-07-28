@@ -642,6 +642,10 @@ export function PutLoopTemplate(arg1, arg2, arg3) {
   return window['go']['main']['App']['PutLoopTemplate'](arg1, arg2, arg3);
 }
 
+export function ReadProfileHostEnv(arg1) {
+  return window['go']['main']['App']['ReadProfileHostEnv'](arg1);
+}
+
 export function RebuildBaseImage(arg1) {
   return window['go']['main']['App']['RebuildBaseImage'](arg1);
 }

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -96,6 +98,28 @@ func (a *App) ImportEnvFile() (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
+	}
+	return string(data), nil
+}
+
+// ReadProfileHostEnv reads a profile's host .env
+// (~/workspaces/profiles/<name>/.env) as raw text — the "load host .env"
+// convenience in the gateway env editor. The editor parses + merges it into
+// reviewable rows the operator trims before saving; Save (SetGatewayEnv) is what
+// provisions the profile's broker namespace. Kept a read-only convenience so
+// nothing is pushed to the broker without an explicit review + save.
+func (a *App) ReadProfileHostEnv(profile string) (string, error) {
+	prof, err := a.findProfile(profile)
+	if err != nil {
+		return "", err
+	}
+	if prof.WorkspaceHome == "" {
+		return "", fmt.Errorf("profile %q has no workspace home", profile)
+	}
+	path := filepath.Join(prof.WorkspaceHome, ".env")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
 	}
 	return string(data), nil
 }
