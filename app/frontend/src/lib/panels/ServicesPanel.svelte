@@ -5,6 +5,7 @@
   import { notifications } from '../notifications.svelte';
   import { featureFlags, profileState } from '../stores.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import DatabasesCard from '../components/DatabasesCard.svelte';
 
   interface Service {
     name: string;
@@ -243,6 +244,9 @@
     <h1 class="page-title">integrations</h1>
     {#if loading}<Spinner />{/if}
   </header>
+
+  <!-- Platform database backup / restore -->
+  <DatabasesCard />
 
   <!-- 1Password card -->
   <div class="service-card creds-card">

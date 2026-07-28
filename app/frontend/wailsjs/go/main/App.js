@@ -22,6 +22,10 @@ export function AttentionRetry(arg1) {
   return window['go']['main']['App']['AttentionRetry'](arg1);
 }
 
+export function BackupDatabase(arg1) {
+  return window['go']['main']['App']['BackupDatabase'](arg1);
+}
+
 export function BrowseFolder() {
   return window['go']['main']['App']['BrowseFolder']();
 }
@@ -518,6 +522,10 @@ export function ListOllamaModels() {
   return window['go']['main']['App']['ListOllamaModels']();
 }
 
+export function ListPlatformDatabases() {
+  return window['go']['main']['App']['ListPlatformDatabases']();
+}
+
 export function ListPlaybooks(arg1) {
   return window['go']['main']['App']['ListPlaybooks'](arg1);
 }
@@ -644,6 +652,10 @@ export function RestartBrainboxAPI() {
 
 export function RestoreAttention(arg1) {
   return window['go']['main']['App']['RestoreAttention'](arg1);
+}
+
+export function RestoreDatabase(arg1) {
+  return window['go']['main']['App']['RestoreDatabase'](arg1);
 }
 
 export function RestoreProfile(arg1) {

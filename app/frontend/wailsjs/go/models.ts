@@ -2288,6 +2288,20 @@ export namespace main {
 	        this.pids = source["pids"];
 	    }
 	}
+	export class DatabaseInfo {
+	    name: string;
+	    size: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DatabaseInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.size = source["size"];
+	    }
+	}
 	export class DetectedAgent {
 	    id: string;
 	    binary: string;
