@@ -96,16 +96,14 @@ type PlatformExternal struct {
 	Note     string `json:"note"`
 }
 
-// ListPlatformExternals reports the platform's non-compose dependencies —
-// Ollama (host inference) and OpenSearch (OTEL signal store) — by a quick TCP
-// reachability probe. No start/stop: Ollama is a host process; OpenSearch is
-// external (its platform placement lands with the observability work).
+// ListPlatformExternals reports the platform's non-compose dependencies. Ollama
+// is a host process (the macOS app) surfaced here as read-only health; it has no
+// docker-compose lifecycle. (OpenSearch is now a first-class compose service, so
+// it appears in ListPlatformServices with controls instead.)
 func (a *App) ListPlatformExternals() []PlatformExternal {
 	return []PlatformExternal{
 		{Name: "ollama", Label: "Ollama", Endpoint: "localhost:11434",
 			Healthy: isPortOpen(11434), Note: "host inference"},
-		{Name: "opensearch", Label: "OpenSearch", Endpoint: "localhost:9200",
-			Healthy: isPortOpen(9200), Note: "OTEL store (observability)"},
 	}
 }
 
