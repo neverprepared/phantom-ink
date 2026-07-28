@@ -266,6 +266,8 @@ export function ListOllamaModels():Promise<Array<brainbox.OllamaModel>>;
 
 export function ListPlatformDatabases():Promise<Array<main.DatabaseInfo>>;
 
+export function ListPlatformServices():Promise<Array<main.PlatformService>>;
+
 export function ListPlaybooks(arg1:string):Promise<Array<brainbox.Playbook>>;
 
 export function ListProfileDirs(arg1:string):Promise<Array<string>>;
@@ -326,7 +328,11 @@ export function RemoveChannelParticipant(arg1:string,arg2:string):Promise<brainb
 
 export function RescanAgents():Promise<Array<main.DetectedAgent>>;
 
+export function RestartAllPlatformServices():Promise<void>;
+
 export function RestartBrainboxAPI():Promise<void>;
+
+export function RestartPlatformService(arg1:string):Promise<void>;
 
 export function RestoreAttention(arg1:string):Promise<void>;
 
@@ -406,11 +412,15 @@ export function SetTrustRule(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function StartLiveLoop(arg1:string,arg2:Record<string, any>):Promise<brainbox.LiveLoop>;
 
+export function StartPlatformService(arg1:string):Promise<void>;
+
 export function StartRunnerPairing(arg1:string,arg2:number,arg3:string):Promise<brainbox.PairingTicket>;
 
 export function StartService(arg1:string):Promise<void>;
 
 export function StartSession(arg1:string):Promise<brainbox.SessionActionResponse>;
+
+export function StopPlatformService(arg1:string):Promise<void>;
 
 export function StopService(arg1:string):Promise<void>;
 

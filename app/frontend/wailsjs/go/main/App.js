@@ -526,6 +526,10 @@ export function ListPlatformDatabases() {
   return window['go']['main']['App']['ListPlatformDatabases']();
 }
 
+export function ListPlatformServices() {
+  return window['go']['main']['App']['ListPlatformServices']();
+}
+
 export function ListPlaybooks(arg1) {
   return window['go']['main']['App']['ListPlaybooks'](arg1);
 }
@@ -646,8 +650,16 @@ export function RescanAgents() {
   return window['go']['main']['App']['RescanAgents']();
 }
 
+export function RestartAllPlatformServices() {
+  return window['go']['main']['App']['RestartAllPlatformServices']();
+}
+
 export function RestartBrainboxAPI() {
   return window['go']['main']['App']['RestartBrainboxAPI']();
+}
+
+export function RestartPlatformService(arg1) {
+  return window['go']['main']['App']['RestartPlatformService'](arg1);
 }
 
 export function RestoreAttention(arg1) {
@@ -806,6 +818,10 @@ export function StartLiveLoop(arg1, arg2) {
   return window['go']['main']['App']['StartLiveLoop'](arg1, arg2);
 }
 
+export function StartPlatformService(arg1) {
+  return window['go']['main']['App']['StartPlatformService'](arg1);
+}
+
 export function StartRunnerPairing(arg1, arg2, arg3) {
   return window['go']['main']['App']['StartRunnerPairing'](arg1, arg2, arg3);
 }
@@ -816,6 +832,10 @@ export function StartService(arg1) {
 
 export function StartSession(arg1) {
   return window['go']['main']['App']['StartSession'](arg1);
+}
+
+export function StopPlatformService(arg1) {
+  return window['go']['main']['App']['StopPlatformService'](arg1);
 }
 
 export function StopService(arg1) {

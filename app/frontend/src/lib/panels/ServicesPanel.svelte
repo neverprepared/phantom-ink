@@ -5,6 +5,7 @@
   import { notifications } from '../notifications.svelte';
   import { featureFlags, profileState } from '../stores.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import PlatformServicesCard from '../components/PlatformServicesCard.svelte';
   import DatabasesCard from '../components/DatabasesCard.svelte';
 
   interface Service {
@@ -244,6 +245,9 @@
     <h1 class="page-title">integrations</h1>
     {#if loading}<Spinner />{/if}
   </header>
+
+  <!-- Platform service stack: status + start/stop/restart -->
+  <PlatformServicesCard />
 
   <!-- Platform database backup / restore -->
   <DatabasesCard />
