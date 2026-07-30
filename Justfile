@@ -62,12 +62,6 @@ bb-docker-build:
 bb-docker-start *ARGS:
     cd brainbox && ./scripts/run.sh {{ ARGS }}
 
-# === Runner (Swift macOS menu-bar app) ===
-
-# Build BrainboxRunner.app and package it into a distributable DMG
-runner-dmg output="dist":
-    app/runner/scripts/make-dmg.sh {{output}}
-
 # === Shell Profiler (Go) ===
 
 sp-build:
