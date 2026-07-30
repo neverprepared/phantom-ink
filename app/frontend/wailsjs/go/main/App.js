@@ -234,6 +234,10 @@ export function GetArtifactsHealth() {
   return window['go']['main']['App']['GetArtifactsHealth']();
 }
 
+export function GetBrainProfile(arg1) {
+  return window['go']['main']['App']['GetBrainProfile'](arg1);
+}
+
 export function GetChannel(arg1) {
   return window['go']['main']['App']['GetChannel'](arg1);
 }
@@ -440,6 +444,10 @@ export function HeadArtifactObject(arg1, arg2) {
 
 export function ImportEnvFile() {
   return window['go']['main']['App']['ImportEnvFile']();
+}
+
+export function InitBrainProfile(arg1) {
+  return window['go']['main']['App']['InitBrainProfile'](arg1);
 }
 
 export function LaunchTeam(arg1, arg2, arg3, arg4, arg5, arg6) {

@@ -120,6 +120,8 @@ export function GetArtifactPreview(arg1:string,arg2:string):Promise<main.Artifac
 
 export function GetArtifactsHealth():Promise<brainbox.ArtifactsHealth>;
 
+export function GetBrainProfile(arg1:string):Promise<brainbox.BrainProfileInfo>;
+
 export function GetChannel(arg1:string):Promise<brainbox.Channel>;
 
 export function GetChannelMessages(arg1:string,arg2:string):Promise<Array<brainbox.ChannelMessage>>;
@@ -223,6 +225,8 @@ export function GetWidgetCount(arg1:string,arg2:string):Promise<number>;
 export function HeadArtifactObject(arg1:string,arg2:string):Promise<brainbox.ArtifactObjectHead>;
 
 export function ImportEnvFile():Promise<string>;
+
+export function InitBrainProfile(arg1:string):Promise<brainbox.BrainProfileInitResult>;
 
 export function LaunchTeam(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<brainbox.SessionActionResponse>;
 

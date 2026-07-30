@@ -258,6 +258,52 @@ export namespace brainbox {
 	        this.profile_prefix = source["profile_prefix"];
 	    }
 	}
+	export class BrainProfileInfo {
+	    profile: string;
+	    vault: string;
+	    provisioned: boolean;
+	    bucket: string;
+	    index_prefix: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BrainProfileInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.vault = source["vault"];
+	        this.provisioned = source["provisioned"];
+	        this.bucket = source["bucket"];
+	        this.index_prefix = source["index_prefix"];
+	    }
+	}
+	export class BrainProfileInitResult {
+	    profile: string;
+	    vault: string;
+	    provisioned: boolean;
+	    live: boolean;
+	    token_created: boolean;
+	    bucket: string;
+	    index_prefix: string;
+	    threaded: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new BrainProfileInitResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.vault = source["vault"];
+	        this.provisioned = source["provisioned"];
+	        this.live = source["live"];
+	        this.token_created = source["token_created"];
+	        this.bucket = source["bucket"];
+	        this.index_prefix = source["index_prefix"];
+	        this.threaded = source["threaded"];
+	    }
+	}
 	export class BundleMeta {
 	    profile: string;
 	    etag: string;
