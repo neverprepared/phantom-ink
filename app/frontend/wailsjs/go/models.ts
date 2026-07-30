@@ -2706,6 +2706,7 @@ export namespace main {
 	    status: string;
 	    health: string;
 	    one_shot: boolean;
+	    web_url?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new PlatformService(source);
@@ -2718,6 +2719,7 @@ export namespace main {
 	        this.status = source["status"];
 	        this.health = source["health"];
 	        this.one_shot = source["one_shot"];
+	        this.web_url = source["web_url"];
 	    }
 	}
 	export class PreflightCheck {

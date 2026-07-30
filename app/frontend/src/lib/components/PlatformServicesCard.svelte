@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { getApi } from '../utils/api';
+  import { getApi, openInBrowser } from '../utils/api';
   import { notifications } from '../notifications.svelte';
   import { onDestroy } from 'svelte';
 
   interface Service {
-    name: string; state: string; status: string; health: string; one_shot: boolean;
+    name: string; state: string; status: string; health: string; one_shot: boolean; web_url?: string;
   }
   interface External {
     name: string; label: string; endpoint: string; healthy: boolean; note: string;
@@ -116,6 +116,9 @@
             {#if s.one_shot}<span class="ps-tag">init</span>{/if}
             <span class="ps-state">{s.status || s.state}</span>
             <div class="ps-actions">
+              {#if s.web_url && s.state === 'running'}
+                <button class="btn ghost sm" onclick={() => openInBrowser(s.web_url!)} title="Open web UI in browser">open ↗</button>
+              {/if}
               {#if s.state === 'running'}
                 <button class="btn ghost sm" disabled={busy !== null} onclick={() => act(s.name, 'Restart')}>{busy === s.name ? '…' : 'restart'}</button>
                 <button class="btn ghost sm" disabled={busy !== null} onclick={() => act(s.name, 'Stop')}>stop</button>
