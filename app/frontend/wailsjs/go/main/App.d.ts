@@ -36,6 +36,8 @@ export function CompleteChannel(arg1:string,arg2:brainbox.CompleteChannelRequest
 
 export function CreateAgent(arg1:brainbox.CreateAgentRequest):Promise<brainbox.AgentDefinition>;
 
+export function CreateArtifactFolder(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function CreateChannel(arg1:brainbox.CreateChannelRequest):Promise<brainbox.Channel>;
 
 export function CreatePlaybook(arg1:brainbox.CreatePlaybookRequest):Promise<brainbox.Playbook>;
@@ -334,6 +336,8 @@ export function RebuildBaseImage(arg1:main.BaseImageBuildRequest):Promise<void>;
 
 export function RemoveChannelParticipant(arg1:string,arg2:string):Promise<brainbox.Channel>;
 
+export function RenameArtifactObject(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function RescanAgents():Promise<Array<main.DetectedAgent>>;
 
 export function RestartAllPlatformServices():Promise<void>;
@@ -453,6 +457,8 @@ export function TriggerRule(arg1:string,arg2:string,arg3:string):Promise<void>;
 export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promise<brainbox.AgentDefinition>;
 
 export function UpdatePlaybook(arg1:string,arg2:brainbox.UpdatePlaybookRequest):Promise<brainbox.Playbook>;
+
+export function UploadArtifactFile(arg1:string,arg2:string):Promise<string>;
 
 export function UsableAgents():Promise<Array<main.DetectedAgent>>;
 
