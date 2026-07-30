@@ -16,11 +16,22 @@ const platformProject = "phantom-platform"
 
 // PlatformService is one compose service's live state for the Services panel.
 type PlatformService struct {
-	Name    string `json:"name"`     // compose service name
-	State   string `json:"state"`    // running | exited | restarting | created | …
-	Status  string `json:"status"`   // docker's human status, e.g. "Up 4 hours (healthy)"
-	Health  string `json:"health"`   // healthy | unhealthy | starting | "" (no healthcheck)
-	OneShot bool   `json:"one_shot"` // *-init sidecars: "exited (0)" is success, not a fault
+	Name    string `json:"name"`              // compose service name
+	State   string `json:"state"`             // running | exited | restarting | created | …
+	Status  string `json:"status"`            // docker's human status, e.g. "Up 4 hours (healthy)"
+	Health  string `json:"health"`            // healthy | unhealthy | starting | "" (no healthcheck)
+	OneShot bool   `json:"one_shot"`          // *-init sidecars: "exited (0)" is success, not a fault
+	WebURL  string `json:"web_url,omitempty"` // browsable web UI, if the service has one (else "")
+}
+
+// platformWebUIs maps a compose service name → its host-published web UI URL,
+// for services that offer a browser-openable interface. The app runs on the
+// host and the platform stack is docker-compose-managed locally, so localhost
+// is correct. These mirror the compose port publishes; MinIO's UI is the
+// console on :9001 (distinct from the S3 API on :9090).
+var platformWebUIs = map[string]string{
+	"minio":                 "http://localhost:9001",
+	"opensearch-dashboards": "http://localhost:5601",
 }
 
 // platformComposeCtx returns the project's working dir + compose file, read off a
@@ -61,7 +72,7 @@ func (a *App) ListPlatformServices() ([]PlatformService, error) {
 		if len(f) < 2 || f[0] == "" {
 			continue
 		}
-		s := PlatformService{Name: f[0], State: f[1], OneShot: strings.HasSuffix(f[0], "-init")}
+		s := PlatformService{Name: f[0], State: f[1], OneShot: strings.HasSuffix(f[0], "-init"), WebURL: platformWebUIs[f[0]]}
 		if len(f) == 3 {
 			s.Status = f[2]
 			s.Health = parseHealth(f[2])
