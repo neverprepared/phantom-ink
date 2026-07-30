@@ -14,6 +14,11 @@ type ArtifactsHealth struct {
 	Endpoint      string            `json:"endpoint,omitempty"`
 	Buckets       map[string]string `json:"buckets,omitempty"`
 	ProfilePrefix string            `json:"profile_prefix,omitempty"`
+	// ProtectedBucket + ProtectedDirs describe the immutable vault folders
+	// (memory/artifacts/tasks/skills under the shared brain bucket). The
+	// Files panel renders <ProtectedBucket>/<profile>/<dir>/ read-only.
+	ProtectedBucket string   `json:"protected_bucket,omitempty"`
+	ProtectedDirs   []string `json:"protected_dirs,omitempty"`
 }
 
 // ArtifactBucket is one entry in the live bucket catalog.
@@ -180,4 +185,34 @@ func (c *Client) PresignArtifactURL(bucketKey, key, op string, ttlSeconds int, h
 		return ArtifactPresignedURL{}, err
 	}
 	return resp, nil
+}
+
+// PutArtifactObject creates or overwrites an object with raw bytes. Used
+// for uploads, empty-file creation, and folder creation (a key ending in
+// "/" with a nil body). The daemon refuses (403) writes to protected
+// vault folders.
+func (c *Client) PutArtifactObject(bucketKey, key string, data []byte, contentType string) error {
+	path := fmt.Sprintf(
+		"/api/artifacts/%s/object?key=%s",
+		url.PathEscape(bucketKey), url.QueryEscape(key),
+	)
+	if contentType != "" {
+		path += "&content_type=" + url.QueryEscape(contentType)
+	}
+	ct := contentType
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	return c.doRaw("PUT", path, ct, data, nil, nil)
+}
+
+// CopyArtifactObject copies src→dst within a bucket; move=true renames
+// (deletes the source). The daemon refuses (403) when the destination —
+// or, for a move, the source — is inside a protected vault folder.
+func (c *Client) CopyArtifactObject(bucketKey, src, dst string, move bool) error {
+	path := fmt.Sprintf(
+		"/api/artifacts/%s/copy?src=%s&dst=%s&move=%t",
+		url.PathEscape(bucketKey), url.QueryEscape(src), url.QueryEscape(dst), move,
+	)
+	return c.post(path, nil, nil)
 }

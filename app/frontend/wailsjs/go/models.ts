@@ -244,6 +244,8 @@ export namespace brainbox {
 	    endpoint?: string;
 	    buckets?: Record<string, string>;
 	    profile_prefix?: string;
+	    protected_bucket?: string;
+	    protected_dirs?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new ArtifactsHealth(source);
@@ -256,6 +258,8 @@ export namespace brainbox {
 	        this.endpoint = source["endpoint"];
 	        this.buckets = source["buckets"];
 	        this.profile_prefix = source["profile_prefix"];
+	        this.protected_bucket = source["protected_bucket"];
+	        this.protected_dirs = source["protected_dirs"];
 	    }
 	}
 	export class BrainProfileInfo {

@@ -66,6 +66,10 @@ export function CreateAgent(arg1) {
   return window['go']['main']['App']['CreateAgent'](arg1);
 }
 
+export function CreateArtifactFolder(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CreateArtifactFolder'](arg1, arg2, arg3);
+}
+
 export function CreateChannel(arg1) {
   return window['go']['main']['App']['CreateChannel'](arg1);
 }
@@ -662,6 +666,10 @@ export function RemoveChannelParticipant(arg1, arg2) {
   return window['go']['main']['App']['RemoveChannelParticipant'](arg1, arg2);
 }
 
+export function RenameArtifactObject(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RenameArtifactObject'](arg1, arg2, arg3);
+}
+
 export function RescanAgents() {
   return window['go']['main']['App']['RescanAgents']();
 }
@@ -900,6 +908,10 @@ export function UpdateAgent(arg1, arg2) {
 
 export function UpdatePlaybook(arg1, arg2) {
   return window['go']['main']['App']['UpdatePlaybook'](arg1, arg2);
+}
+
+export function UploadArtifactFile(arg1, arg2) {
+  return window['go']['main']['App']['UploadArtifactFile'](arg1, arg2);
 }
 
 export function UsableAgents() {

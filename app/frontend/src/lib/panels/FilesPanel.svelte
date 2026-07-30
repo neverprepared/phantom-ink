@@ -38,7 +38,9 @@
     last_modified_ms: number;
   }
 
-  let health = $state<{ ok: boolean; reason?: string; endpoint?: string; public_endpoint?: string; profile_prefix?: string } | null>(null);
+  let health = $state<{ ok: boolean; reason?: string; endpoint?: string; public_endpoint?: string; profile_prefix?: string; protected_bucket?: string; protected_dirs?: string[] } | null>(null);
+  // Write ops (upload / new folder / rename) — disables the toolbar while in flight.
+  let busy = $state(false);
   // The MinIO address this app fetches presigned URLs from: the app's
   // MinIO integration entry (local/remote per its toggle), falling back
   // to the daemon's public endpoint.
@@ -127,6 +129,27 @@
   function relPath(key: string): string {
     return scopeRoot && key.startsWith(scopeRoot) ? key.slice(scopeRoot.length) : key;
   }
+
+  // --- Immutable vault folders (memory/artifacts/tasks/skills). The daemon
+  // enforces this; the UI just renders them read-only so the operator never
+  // clicks into a guaranteed 403. protected_dirs comes from health.
+  const protectedDirs = $derived(health?.protected_dirs ?? []);
+  const isProtectedBucket = $derived(
+    !!selectedBucket && !!health?.protected_bucket && selectedBucket.name === health.protected_bucket
+  );
+  function firstSeg(key: string): string {
+    const rel = relPath(key).replace(/^\/+/, '');
+    const i = rel.indexOf('/');
+    return i === -1 ? rel : rel.slice(0, i);
+  }
+  // A key/prefix is protected when it sits under <profile>/<vault>/ in the
+  // shared brain bucket.
+  function isProtectedKey(key: string): boolean {
+    return isProtectedBucket && protectedDirs.includes(firstSeg(key));
+  }
+  // True when the folder currently open is (inside) a protected vault, so
+  // create/upload here would be refused.
+  const inProtectedContext = $derived(isProtectedBucket && protectedDirs.includes(firstSeg(currentPrefix)));
 
   function clearSearch() {
     query = '';
@@ -254,8 +277,71 @@
     }
   }
 
+  async function uploadFile() {
+    if (!selectedBucket || inProtectedContext) return;
+    busy = true;
+    try {
+      const api = await getApi();
+      if (!api) return;
+      const newKey = await api.UploadArtifactFile(selectedBucket.key, currentPrefix);
+      if (newKey) {
+        notifications.success(`Uploaded ${newKey.split('/').pop()}`);
+        await refreshListing();
+      }
+    } catch (err) {
+      notifications.error(`Upload failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function newFolder() {
+    if (!selectedBucket || inProtectedContext) return;
+    const name = window.prompt('New folder name:');
+    if (!name || !name.trim()) return;
+    busy = true;
+    try {
+      const api = await getApi();
+      if (!api) return;
+      await api.CreateArtifactFolder(selectedBucket.key, currentPrefix, name.trim());
+      notifications.success(`Created folder ${name.trim()}`);
+      await refreshListing();
+    } catch (err) {
+      notifications.error(`Create folder failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function renameFile(file: File) {
+    if (!selectedBucket || isProtectedKey(file.key)) return;
+    const next = window.prompt('Rename to:', file.name);
+    if (!next || !next.trim() || next.trim() === file.name) return;
+    if (next.includes('/')) {
+      notifications.error('Name cannot contain "/"');
+      return;
+    }
+    busy = true;
+    try {
+      const api = await getApi();
+      if (!api) return;
+      await api.RenameArtifactObject(selectedBucket.key, file.key, next.trim());
+      notifications.success(`Renamed to ${next.trim()}`);
+      closePreview();
+      await refreshListing();
+    } catch (err) {
+      notifications.error(`Rename failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function deleteFile(file: File) {
     if (!selectedBucket) return;
+    if (isProtectedKey(file.key)) {
+      notifications.error('This vault folder is read-only.');
+      return;
+    }
     // Deletes are soft — the daemon moves the object to the bucket's
     // .trash/ namespace. Inside .trash/ a delete is permanent.
     const inTrash = file.key.startsWith('.trash/');
@@ -389,6 +475,12 @@
           {#if currentPrefix !== scopeRoot}
             <button class="btn-up" onclick={goUp} title="Up one level">↑</button>
           {/if}
+          <div class="folder-actions">
+            <button class="btn-tool" onclick={uploadFile} disabled={busy || inProtectedContext}
+              title={inProtectedContext ? 'This vault folder is read-only' : 'Upload a file here'}>⤒ upload</button>
+            <button class="btn-tool" onclick={newFolder} disabled={busy || inProtectedContext}
+              title={inProtectedContext ? 'This vault folder is read-only' : 'New folder'}>+ folder</button>
+          </div>
         </div>
 
         {#if loading}
@@ -400,10 +492,11 @@
         {:else}
           <div class="grid">
             {#each folders as folder (folder.prefix)}
+              {@const locked = isProtectedKey(folder.prefix)}
               <button class="row folder-row" onclick={() => enterFolder(folder)}>
-                <span class="row-icon">📁</span>
+                <span class="row-icon">{locked ? '🔒' : '📁'}</span>
                 <span class="row-name">{folder.name}</span>
-                <span class="row-meta dim">folder</span>
+                <span class="row-meta dim">{locked ? 'vault · read-only' : 'folder'}</span>
               </button>
             {/each}
             {#each files as file (file.key)}
@@ -411,7 +504,10 @@
                 <span class="row-icon">📄</span>
                 <button class="row-name link" onclick={() => selectFile(file)}>{file.name}</button>
                 <span class="row-meta dim">{fmtSize(file.size)} · {fmtTime(file.last_modified_ms)}</span>
-                <button class="row-delete" onclick={() => deleteFile(file)} title="Delete">×</button>
+                {#if !inProtectedContext}
+                  <button class="row-rename" onclick={() => renameFile(file)} title="Rename">✎</button>
+                  <button class="row-delete" onclick={() => deleteFile(file)} title="Delete">×</button>
+                {/if}
               </div>
             {/each}
           </div>
@@ -434,7 +530,10 @@
               {downloading ? 'saving…' : 'download'}
             </button>
             <button class="btn-action ghost" onclick={() => openFile(selected!)}>open</button>
-            <button class="btn-action ghost danger" onclick={() => { const f = selected!; closePreview(); void deleteFile(f); }}>delete</button>
+            {#if !isProtectedKey(selected.key)}
+              <button class="btn-action ghost" onclick={() => renameFile(selected!)}>rename</button>
+              <button class="btn-action ghost danger" onclick={() => { const f = selected!; closePreview(); void deleteFile(f); }}>delete</button>
+            {/if}
           </div>
           <div class="detail-preview">
             {#if previewLoading}
@@ -663,7 +762,6 @@
   .crumb:disabled { color: var(--text); cursor: default; }
   .crumb-sep { color: var(--text-faint); }
   .btn-up {
-    margin-left: auto;
     background: transparent;
     border: 1px solid var(--border);
     color: var(--text-muted);
@@ -673,6 +771,23 @@
     font-size: 12px;
   }
   .btn-up:hover { color: var(--text); }
+  .folder-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 6px;
+  }
+  .btn-tool {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 2px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: inherit;
+  }
+  .btn-tool:hover:not(:disabled) { color: var(--text); background: var(--bg-hover); }
+  .btn-tool:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .grid {
     display: flex;
@@ -683,7 +798,7 @@
   }
   .row {
     display: grid;
-    grid-template-columns: 24px 1fr auto auto;
+    grid-template-columns: 24px 1fr auto auto auto;
     align-items: center;
     gap: 12px;
     padding: 8px 12px;
@@ -724,6 +839,16 @@
     border-radius: 3px;
   }
   .row-delete:hover { color: var(--fail); background: var(--fail-soft); }
+  .row-rename {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px 8px;
+    font-size: 13px;
+    border-radius: 3px;
+  }
+  .row-rename:hover { color: var(--accent); background: var(--bg-hover); }
 
   .error {
     color: var(--fail);

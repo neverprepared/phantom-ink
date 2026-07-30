@@ -1,6 +1,17 @@
 package main
 
-import "phantom-ink/brainbox"
+import (
+	"fmt"
+	"mime"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"phantom-ink/brainbox"
+)
 
 // Wails-bound surface for the MinIO artifact store.
 //
@@ -80,4 +91,53 @@ func (a *App) MinioIntegrationEnabled() bool {
 // MinIO address so the URL is fetchable from where the app runs.
 func (a *App) PresignArtifactURL(bucketKey, key, op string, ttlSeconds int) (brainbox.ArtifactPresignedURL, error) {
 	return a.client.PresignArtifactURL(bucketKey, key, op, ttlSeconds, a.resolveMinioAddress())
+}
+
+// UploadArtifactFile opens a native file picker and uploads the chosen
+// file into destPrefix. Returns the new object key, or "" if the user
+// cancelled. The daemon refuses (403) uploads into an immutable vault.
+func (a *App) UploadArtifactFile(bucketKey, destPrefix string) (string, error) {
+	picked, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Upload to " + bucketKey,
+	})
+	if err != nil {
+		return "", err
+	}
+	if picked == "" {
+		return "", nil // cancelled
+	}
+	data, err := os.ReadFile(picked)
+	if err != nil {
+		return "", err
+	}
+	name := filepath.Base(picked)
+	key := path.Join(destPrefix, name)
+	ct := mime.TypeByExtension(filepath.Ext(name))
+	if err := a.client.PutArtifactObject(bucketKey, key, data, ct); err != nil {
+		return "", err
+	}
+	return key, nil
+}
+
+// CreateArtifactFolder creates an empty folder placeholder at
+// prefix/name/. The daemon refuses (403) folders inside an immutable vault.
+func (a *App) CreateArtifactFolder(bucketKey, prefix, name string) error {
+	name = strings.Trim(strings.TrimSpace(name), "/")
+	if name == "" || strings.Contains(name, "/") {
+		return fmt.Errorf("folder name is required and must contain no slashes")
+	}
+	key := path.Join(prefix, name) + "/"
+	return a.client.PutArtifactObject(bucketKey, key, nil, "")
+}
+
+// RenameArtifactObject renames a key within its current folder via a
+// server-side copy+delete. newName is a bare name (no slashes) — renames
+// stay in place. The daemon refuses (403) renames of vault keys.
+func (a *App) RenameArtifactObject(bucketKey, srcKey, newName string) error {
+	newName = strings.TrimSpace(newName)
+	if newName == "" || strings.Contains(newName, "/") {
+		return fmt.Errorf("new name is required and must contain no slashes")
+	}
+	dst := path.Join(path.Dir(srcKey), newName)
+	return a.client.CopyArtifactObject(bucketKey, srcKey, dst, true)
 }
