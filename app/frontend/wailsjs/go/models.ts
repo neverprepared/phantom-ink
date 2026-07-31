@@ -1287,6 +1287,22 @@ export namespace brainbox {
 		}
 	}
 	
+	export class Pool {
+	    name: string;
+	    match_tags: string[];
+	    policy: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Pool(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.match_tags = source["match_tags"];
+	        this.policy = source["policy"];
+	    }
+	}
 	export class PostChannelMessageRequest {
 	    from_participant: string;
 	    content: string;

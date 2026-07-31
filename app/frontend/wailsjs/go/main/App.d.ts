@@ -68,6 +68,8 @@ export function DeleteOllamaModel(arg1:string):Promise<void>;
 
 export function DeletePlaybook(arg1:string):Promise<void>;
 
+export function DeletePool(arg1:string):Promise<void>;
+
 export function DeleteProfile(arg1:string,arg2:boolean):Promise<void>;
 
 export function DeleteProfileBundle(arg1:string):Promise<void>;
@@ -278,6 +280,8 @@ export function ListPlatformServices():Promise<Array<main.PlatformService>>;
 
 export function ListPlaybooks(arg1:string):Promise<Array<brainbox.Playbook>>;
 
+export function ListPools():Promise<Array<brainbox.Pool>>;
+
 export function ListProfileDirs(arg1:string):Promise<Array<string>>;
 
 export function ListProfileImages():Promise<Array<main.ProfileImageRow>>;
@@ -459,6 +463,8 @@ export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promis
 export function UpdatePlaybook(arg1:string,arg2:brainbox.UpdatePlaybookRequest):Promise<brainbox.Playbook>;
 
 export function UploadArtifactFile(arg1:string,arg2:string):Promise<string>;
+
+export function UpsertPool(arg1:string,arg2:Array<string>,arg3:string):Promise<brainbox.Pool>;
 
 export function UsableAgents():Promise<Array<main.DetectedAgent>>;
 

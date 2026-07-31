@@ -130,6 +130,10 @@ export function DeletePlaybook(arg1) {
   return window['go']['main']['App']['DeletePlaybook'](arg1);
 }
 
+export function DeletePool(arg1) {
+  return window['go']['main']['App']['DeletePool'](arg1);
+}
+
 export function DeleteProfile(arg1, arg2) {
   return window['go']['main']['App']['DeleteProfile'](arg1, arg2);
 }
@@ -550,6 +554,10 @@ export function ListPlaybooks(arg1) {
   return window['go']['main']['App']['ListPlaybooks'](arg1);
 }
 
+export function ListPools() {
+  return window['go']['main']['App']['ListPools']();
+}
+
 export function ListProfileDirs(arg1) {
   return window['go']['main']['App']['ListProfileDirs'](arg1);
 }
@@ -912,6 +920,10 @@ export function UpdatePlaybook(arg1, arg2) {
 
 export function UploadArtifactFile(arg1, arg2) {
   return window['go']['main']['App']['UploadArtifactFile'](arg1, arg2);
+}
+
+export function UpsertPool(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UpsertPool'](arg1, arg2, arg3);
 }
 
 export function UsableAgents() {
