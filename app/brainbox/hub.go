@@ -102,6 +102,7 @@ type SubmitTaskRequest struct {
 	RepoURL          string `json:"repo_url,omitempty"`
 	WorkspaceProfile string `json:"workspace_profile,omitempty"`
 	WorkspaceHome    string `json:"workspace_home,omitempty"`
+	Pool             string `json:"pool,omitempty"` // optional machine-class routing pool
 }
 
 // GetHubState returns the full hub state.
