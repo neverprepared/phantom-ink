@@ -21,7 +21,33 @@ type PlatformService struct {
 	Status  string `json:"status"`            // docker's human status, e.g. "Up 4 hours (healthy)"
 	Health  string `json:"health"`            // healthy | unhealthy | starting | "" (no healthcheck)
 	OneShot bool   `json:"one_shot"`          // *-init sidecars: "exited (0)" is success, not a fault
+	Addr    string `json:"addr,omitempty"`    // host-reachable host:port from the first published port ("" = internal-only)
 	WebURL  string `json:"web_url,omitempty"` // browsable web UI, if the service has one (else "")
+}
+
+// hostAddrFromPorts extracts a host-reachable "localhost:<port>" from a docker
+// ps Ports string (e.g. "0.0.0.0:9910->9910/tcp" or "127.0.0.1:4900->4900/tcp,
+// 0.0.0.0:21890-21892->…"). Returns the first single published host port, or ""
+// when nothing is published (internal-only service).
+func hostAddrFromPorts(ports string) string {
+	for _, part := range strings.Split(ports, ",") {
+		part = strings.TrimSpace(part)
+		arrow := strings.Index(part, "->")
+		if arrow < 0 {
+			continue // only exposed, not published
+		}
+		left := part[:arrow] // "0.0.0.0:9910" | "127.0.0.1:4900"
+		colon := strings.LastIndex(left, ":")
+		if colon < 0 {
+			continue
+		}
+		port := left[colon+1:]
+		if port == "" || strings.Contains(port, "-") {
+			continue // skip published ranges (e.g. 21890-21892)
+		}
+		return "localhost:" + port
+	}
+	return ""
 }
 
 // platformWebUIs maps a compose service name → its host-published web UI URL,
@@ -58,7 +84,7 @@ func (a *App) platformComposeCtx() (workdir, configFile string, err error) {
 func (a *App) ListPlatformServices() ([]PlatformService, error) {
 	out, err := exec.Command("docker", "ps", "-a",
 		"--filter", "label=com.docker.compose.project="+platformProject,
-		"--format", `{{.Label "com.docker.compose.service"}}	{{.State}}	{{.Status}}`,
+		"--format", `{{.Label "com.docker.compose.service"}}	{{.State}}	{{.Status}}	{{.Ports}}`,
 	).Output()
 	if err != nil {
 		return nil, fmt.Errorf("docker ps: %w", err)
@@ -68,14 +94,17 @@ func (a *App) ListPlatformServices() ([]PlatformService, error) {
 		if ln == "" {
 			continue
 		}
-		f := strings.SplitN(ln, "\t", 3)
+		f := strings.SplitN(ln, "\t", 4)
 		if len(f) < 2 || f[0] == "" {
 			continue
 		}
 		s := PlatformService{Name: f[0], State: f[1], OneShot: strings.HasSuffix(f[0], "-init"), WebURL: platformWebUIs[f[0]]}
-		if len(f) == 3 {
+		if len(f) >= 3 {
 			s.Status = f[2]
 			s.Health = parseHealth(f[2])
+		}
+		if len(f) >= 4 {
+			s.Addr = hostAddrFromPorts(f[3])
 		}
 		svcs = append(svcs, s)
 	}
