@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
   import { profileState } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
@@ -22,8 +23,16 @@
   let dispatchAgent = $state('supervisor');
   let dispatchDesc  = $state('');
   let dispatchRepo  = $state('');
+  let dispatchPool  = $state('');   // '' = any (global fleet)
   let dispatching   = $state(false);
   let history       = $state<DispatchEntry[]>(loadHistory());
+  let pools         = $state<{ name: string }[]>([]);
+
+  onMount(async () => {
+    const a = await getApi();
+    if (!a) return;
+    try { pools = ((await a.ListPools()) ?? []) as { name: string }[]; } catch { /* no fleet */ }
+  });
 
   let activeProfile = $derived(profileState.active?.name ?? '');
   let profileHistory = $derived(
@@ -110,6 +119,7 @@
         agent_name: entry.agent,
         repo_url: entry.repo || undefined,
         workspace_profile: entry.profile,
+        pool: dispatchPool || undefined,
       });
       recordDispatch(entry);
       dispatchDesc = '';
@@ -149,6 +159,14 @@
           <option value={a}>{a}</option>
         {/each}
       </select>
+      {#if pools.length}
+        <select bind:value={dispatchPool} class="dispatch-select" title="route to a machine-class pool (blank = whole fleet)">
+          <option value="">any pool</option>
+          {#each pools as p (p.name)}
+            <option value={p.name}>{p.name}</option>
+          {/each}
+        </select>
+      {/if}
       <input
         class="dispatch-repo"
         bind:value={dispatchRepo}

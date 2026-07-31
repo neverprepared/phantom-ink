@@ -1831,6 +1831,7 @@ export namespace brainbox {
 	    repo_url?: string;
 	    workspace_profile?: string;
 	    workspace_home?: string;
+	    pool?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SubmitTaskRequest(source);
@@ -1843,6 +1844,7 @@ export namespace brainbox {
 	        this.repo_url = source["repo_url"];
 	        this.workspace_profile = source["workspace_profile"];
 	        this.workspace_home = source["workspace_home"];
+	        this.pool = source["pool"];
 	    }
 	}
 	
