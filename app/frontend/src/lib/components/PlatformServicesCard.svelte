@@ -4,7 +4,12 @@
   import { onDestroy } from 'svelte';
 
   interface Service {
-    name: string; state: string; status: string; health: string; one_shot: boolean; web_url?: string;
+    name: string; state: string; status: string; health: string; one_shot: boolean; web_url?: string; addr?: string;
+  }
+
+  function copyAddr(addr: string) {
+    (window as any).runtime?.ClipboardSetText(addr);
+    notifications.success(`Copied ${addr}`);
   }
   interface External {
     name: string; label: string; endpoint: string; healthy: boolean; note: string;
@@ -114,6 +119,7 @@
             <span class="ps-dot {dot(s)}" title={s.status}></span>
             <span class="ps-name">{s.name}</span>
             {#if s.one_shot}<span class="ps-tag">init</span>{/if}
+            {#if s.addr}<button class="ps-addr" title="Click to copy" onclick={() => copyAddr(s.addr!)}>{s.addr}</button>{/if}
             <span class="ps-state">{s.status || s.state}</span>
             <div class="ps-actions">
               {#if s.web_url && s.state === 'running'}
@@ -185,6 +191,12 @@
     font-family: var(--font-mono); font-size: 10px; color: var(--color-text-tertiary);
     border: 1px solid var(--color-border-primary); border-radius: 3px; padding: 0 4px;
   }
+  .ps-addr {
+    font-family: var(--font-mono); font-size: 10px; color: var(--color-text-secondary);
+    background: transparent; border: 1px solid var(--color-border-primary);
+    border-radius: 3px; padding: 0 5px; cursor: pointer;
+  }
+  .ps-addr:hover { color: var(--color-text-primary); border-color: var(--color-text-tertiary); }
   .ps-state { font-size: 11px; color: var(--color-text-tertiary); margin-left: 2px; }
   .ps-actions { margin-left: auto; display: flex; gap: 6px; }
   .ps-sub {

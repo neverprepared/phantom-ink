@@ -2706,6 +2706,7 @@ export namespace main {
 	    status: string;
 	    health: string;
 	    one_shot: boolean;
+	    addr?: string;
 	    web_url?: string;
 	
 	    static createFrom(source: any = {}) {
@@ -2719,6 +2720,7 @@ export namespace main {
 	        this.status = source["status"];
 	        this.health = source["health"];
 	        this.one_shot = source["one_shot"];
+	        this.addr = source["addr"];
 	        this.web_url = source["web_url"];
 	    }
 	}
