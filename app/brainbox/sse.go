@@ -133,6 +133,12 @@ func (s *SSEListener) connect(ctx context.Context) error {
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
+	// One SSE event is a single `data:` line. Agent envelopes carry metadata,
+	// actions, and captured output and readily exceed bufio's default 64KB
+	// MaxScanTokenSize — which returns ErrTooLong, ends the scan, and is treated
+	// as a disconnect below, dropping every subsequent event on this connection
+	// plus forcing a reconnect. Grow from 64KB up to an 8MB ceiling.
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
