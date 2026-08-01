@@ -23,6 +23,7 @@ export interface AgentStateItem {
   status: string;
   title: string;
   subtitle: string;
+  description: string;
   workspace: string;
   parent_id: string;
   url: string;
@@ -273,6 +274,7 @@ class StreamLiveStore {
       status: env.status ?? '',
       title: env.title ?? '',
       subtitle: env.subtitle ?? '',
+      description: env.description ?? '',
       workspace: env.workspace ?? '',
       parent_id: env.parent_id ?? '',
       url: env.url ?? '',
