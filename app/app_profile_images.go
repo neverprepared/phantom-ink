@@ -132,6 +132,17 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 		})
 	}
 
+	// Publish the env key to the broker so ROUTER-created (task/hub) sessions
+	// can decrypt this image's baked credentials — app-created sessions get it
+	// from the local DB, but the router has no other source. Each build mints a
+	// new key, so this must run every build. Warn-and-continue: a broker hiccup
+	// must not fail an otherwise-good image build.
+	if result.EnvKey != "" {
+		if err := a.client.SetGatewayProfileEnvKey(req.Profile, "PROFILE_ENV_KEY", result.EnvKey); err != nil {
+			runtime.LogWarningf(a.ctx, "profile image: failed to publish PROFILE_ENV_KEY to broker: %v", err)
+		}
+	}
+
 	// Credential-bundle sync rides along with the rebuild (warn-and-continue:
 	// a MinIO/daemon hiccup must never fail an otherwise good image build).
 	// Only runs when the profile has sources enabled and MinIO is reachable.
