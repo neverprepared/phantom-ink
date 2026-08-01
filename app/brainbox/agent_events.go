@@ -35,24 +35,25 @@ func (c *Client) IngestAgentEvents(envelopes []json.RawMessage) (AgentEventInges
 // AgentStateItem is one row from GET /api/agent_state.
 // Fields mirror brainbox/src/brainbox/agent_store.py:_row_to_state.
 type AgentStateItem struct {
-	ID         string                 `json:"id"`
-	Kind       string                 `json:"kind"`
-	Source     string                 `json:"source"`
-	Type       string                 `json:"type"`
-	Status     string                 `json:"status"`
-	Title      string                 `json:"title"`
-	Subtitle   string                 `json:"subtitle"`
-	Workspace  string                 `json:"workspace"`
-	ParentID   string                 `json:"parent_id"`
-	URL        string                 `json:"url"`
-	StartAt    *int64                 `json:"start_at"`
-	EndAt      *int64                 `json:"end_at"`
-	Tags       []string               `json:"tags"`
-	Metadata   map[string]interface{} `json:"metadata"`
-	Actions    []map[string]any       `json:"actions"`
-	Outcome    map[string]any         `json:"outcome"`
-	CreatedAt  int64                  `json:"created_at"`
-	UpdatedAt  int64                  `json:"updated_at"`
+	ID          string                 `json:"id"`
+	Kind        string                 `json:"kind"`
+	Source      string                 `json:"source"`
+	Type        string                 `json:"type"`
+	Status      string                 `json:"status"`
+	Title       string                 `json:"title"`
+	Subtitle    string                 `json:"subtitle"`
+	Description string                 `json:"description"`
+	Workspace   string                 `json:"workspace"`
+	ParentID    string                 `json:"parent_id"`
+	URL         string                 `json:"url"`
+	StartAt     *int64                 `json:"start_at"`
+	EndAt       *int64                 `json:"end_at"`
+	Tags        []string               `json:"tags"`
+	Metadata    map[string]interface{} `json:"metadata"`
+	Actions     []map[string]any       `json:"actions"`
+	Outcome     map[string]any         `json:"outcome"`
+	CreatedAt   int64                  `json:"created_at"`
+	UpdatedAt   int64                  `json:"updated_at"`
 }
 
 // ListAgentStateOptions narrows the brainbox /api/agent_state query.

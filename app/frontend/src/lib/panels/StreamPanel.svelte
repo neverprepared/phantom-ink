@@ -10,6 +10,7 @@
   import ContextMenu from '../components/ContextMenu.svelte';
   import StreamLogsTab from '../components/StreamLogsTab.svelte';
   import EnvelopeHistory from '../components/EnvelopeHistory.svelte';
+  import SessionSummaryCard from '../components/SessionSummaryCard.svelte';
 
   interface CtxMenuItem {
     label: string;
@@ -244,6 +245,22 @@
     return id.length > 40 ? id.slice(0, 39) + '…' : id;
   }
 
+  // Lead the card with the SUBJECT it's about, not the producer tag. Every
+  // session-scoped event's id/parent is `session:<name>` — so a summary and its
+  // stopped event both headline "<name>" and clearly read as one session,
+  // instead of two cryptic "PHANTOM_ROUTER-SESSION"/"...-AUDIT" cards. Falls
+  // back to the source for non-session events.
+  function subjectLabel(item: { id?: string; parent_id?: string; source?: string }): string {
+    const m = (item.parent_id || item.id || '').match(/^session:([^:]+)/);
+    return m ? m[1] : (item.source || 'bus');
+  }
+
+  // session.summary rows expand inline into the rich card (full narrative +
+  // facts + transcript link) so the summary is readable right where you see it,
+  // not only via Event Log search.
+  let expandedSummaryId = $state<string | null>(null);
+  function toggleSummary(id: string) { expandedSummaryId = expandedSummaryId === id ? null : id; }
+
   // ── Actions ────────────────────────────────────────────────────────────────
 
   async function dismiss(item: AttentionItem) {
@@ -458,7 +475,7 @@
                     aria-label="Select for playbook"
                   />
                 {/if}
-                <span class="attn-source">{item.source || 'bus'}</span>
+                <span class="attn-source">{subjectLabel(item)}</span>
                 {#if item.status}
                   <span class="attn-status status-{item.status}">{statusLabel(item.status)}</span>
                 {/if}
@@ -471,10 +488,18 @@
                 <div class="attn-sub">{item.subtitle}</div>
               {/if}
               <div class="attn-actions">
+                {#if item.type === 'session.summary'}
+                  <button class="btn ghost small" onclick={() => toggleSummary(item.id)}>
+                    {expandedSummaryId === item.id ? 'hide summary' : 'view summary'}
+                  </button>
+                {/if}
                 <button class="btn ghost small" onclick={() => streamLive.toggleHistory(item.id)}>
                   {streamLive.history[item.id] ? 'hide history' : 'history'}
                 </button>
               </div>
+              {#if item.type === 'session.summary' && expandedSummaryId === item.id}
+                <div class="summary-wrap"><SessionSummaryCard envelope={item} /></div>
+              {/if}
               {#if streamLive.history[item.id]}
                 <EnvelopeHistory entries={streamLive.history[item.id]} loading={streamLive.historyLoading[item.id]} />
               {/if}
@@ -596,6 +621,7 @@
 />
 
 <style>
+  .summary-wrap { padding: 6px 0 4px 0; }
   .panel {
     display: flex;
     flex-direction: column;
