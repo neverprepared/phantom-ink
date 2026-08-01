@@ -141,10 +141,29 @@ type PlatformExternal struct {
 // docker-compose lifecycle. (OpenSearch is now a first-class compose service, so
 // it appears in ListPlatformServices with controls instead.)
 func (a *App) ListPlatformExternals() []PlatformExternal {
-	return []PlatformExternal{
+	out := []PlatformExternal{
 		{Name: "ollama", Label: "Ollama", Endpoint: "localhost:11434",
 			Healthy: isPortOpen(11434), Note: "host inference"},
 	}
+
+	// Image registry (remote): profile/base image push+pull target. Read-only
+	// health here; the URL is configured in Settings → General.
+	registryURL := ""
+	if a.db != nil {
+		registryURL = a.db.GetSetting(settingRegistryURL, "")
+	}
+	reg := PlatformExternal{Name: "registry", Label: "Registry"}
+	if registryURL == "" {
+		reg.Endpoint = "not configured"
+		reg.Note = "set the registry URL in Settings"
+	} else {
+		reg.Endpoint = registryURL
+		reg.Healthy = isHostReachable(registryURL)
+		reg.Note = "image registry"
+	}
+	out = append(out, reg)
+
+	return out
 }
 
 // StartPlatformService (re)creates + starts a service (revives removed/stopped ones).

@@ -2,7 +2,23 @@
   import { getApi } from '../utils/api';
   import { onMount } from 'svelte';
   import { notifications } from '../notifications.svelte';
-  import { profileState, type Profile } from '../stores.svelte';
+  import { profileState, settingsState, type Profile, type SettingsTab } from '../stores.svelte';
+  import RunnersPanel from './RunnersPanel.svelte';
+  import ProfilesPanel from './ProfilesPanel.svelte';
+  import GatewayPanel from './GatewayPanel.svelte';
+  import TokensPanel from './TokensPanel.svelte';
+
+  // Tab strip — General is the settings form below; the rest embed the panels
+  // that used to be top-level sidebar entries.
+  const TABS: { id: SettingsTab; label: string }[] = [
+    { id: 'general', label: 'general' },
+    { id: 'runners', label: 'runners' },
+    { id: 'profiles', label: 'profiles' },
+    { id: 'gateway', label: 'gateway' },
+    { id: 'tokens', label: 'api tokens' },
+  ];
+
+  let activeTab = $derived(settingsState.tab);
 
 
   // --- Connection settings ---
@@ -13,6 +29,7 @@
   let workspacesRoot = $state('');
 
   // --- Registry settings ---
+  let registryUrl = $state('');
   let registryUsername = $state('');
   let registryPassword = $state('');
   let savingRegistry = $state(false);
@@ -43,6 +60,7 @@
       workspacesRoot = cfg?.workspaces_root ?? '';
       theme = (cfg?.theme === 'muse' ? 'brew' : cfg?.theme) ?? 'dark';
       platform = plat ?? 'unknown';
+      registryUrl = reg?.url ?? '';
       registryUsername = reg?.username ?? '';
       registryPassword = reg?.password ?? '';
       otlpHost = olh ?? '';
@@ -105,7 +123,7 @@
     const a = await getApi();
     if (!a) { savingRegistry = false; return; }
     try {
-      await a.SetRegistrySettings(registryUsername, registryPassword);
+      await a.SetRegistrySettings(registryUrl, registryUsername, registryPassword);
       notifications.success('Registry settings saved');
     } catch (err: any) {
       notifications.error(`Failed to save registry settings: ${err}`);
@@ -159,15 +177,30 @@
   }
 </script>
 
-<div class="panel">
-  <header class="panel-header">
-    <h1 class="page-title">settings</h1>
-  </header>
+<div class="settings-panel">
+  <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+    {#each TABS as t (t.id)}
+      <button
+        class="settings-tab"
+        class:active={activeTab === t.id}
+        role="tab"
+        aria-selected={activeTab === t.id}
+        onclick={() => (settingsState.tab = t.id)}
+      >{t.label}</button>
+    {/each}
+  </div>
 
-  {#if !loaded}
-    <div class="loading">loading settings...</div>
-  {:else}
-    <div class="settings-form">
+  <div class="settings-content">
+    {#if activeTab === 'general'}
+      <div class="general-tab">
+        <header class="panel-header">
+          <h1 class="page-title">settings</h1>
+        </header>
+
+        {#if !loaded}
+          <div class="loading">loading settings...</div>
+        {:else}
+          <div class="settings-form">
 
       <!-- Appearance -->
       <div class="section">
@@ -244,7 +277,12 @@
       <!-- Registry -->
       <div class="section">
         <h2>profile image registry</h2>
-        <p class="hint" style="margin-bottom: 14px;">private Docker registry for pre-built profile images — set <code>CL_REGISTRY_URL</code> on the brainbox server</p>
+        <p class="hint" style="margin-bottom: 14px;">private Docker registry for pre-built profile images. The URL set here is used for image push/pull and drives the registry reachability indicator in Platform Services; leave blank to fall back to the brainbox server's <code>CL_REGISTRY_URL</code>.</p>
+
+        <div class="field">
+          <label for="reg-url">registry URL</label>
+          <input id="reg-url" type="text" bind:value={registryUrl} placeholder="registry.example.com:5000" autocomplete="off" />
+        </div>
 
         <div class="field">
           <label for="reg-user">username</label>
@@ -325,13 +363,71 @@
           <span class="info-label">api key source</span>
           <span class="info-val">~/.config/phantom-ink/brainbox/.api-key</span>
         </div>
+          </div>
+          </div>
+        {/if}
       </div>
-    </div>
-  {/if}
+    {:else if activeTab === 'runners'}
+      <RunnersPanel />
+    {:else if activeTab === 'profiles'}
+      <ProfilesPanel />
+    {:else if activeTab === 'gateway'}
+      <GatewayPanel />
+    {:else if activeTab === 'tokens'}
+      <TokensPanel />
+    {/if}
+  </div>
 </div>
 
 <style>
-  .panel { padding: var(--panel-padding); }
+  .settings-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+
+  /* Tab strip pins to the top; the active tab's content scrolls below it. */
+  .settings-tabs {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+    padding: 0 var(--panel-padding);
+    border-bottom: 1px solid var(--color-border-primary);
+    overflow-x: auto;
+  }
+
+  .settings-tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--color-text-tertiary);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 12px 14px;
+    margin-bottom: -1px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .settings-tab:hover { color: var(--color-text-secondary); }
+  .settings-tab.active {
+    color: var(--color-text-primary);
+    border-bottom-color: var(--color-accent);
+  }
+
+  .settings-content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  /* Embedded panels bring their own .panel padding; the general tab needs its
+     own since it no longer sits inside a padded wrapper. */
+  .general-tab { padding: var(--panel-padding); }
   .loading { color: var(--color-text-tertiary); font-size: 13px; padding: 24px 0; }
 
   .settings-form { max-width: 560px; }

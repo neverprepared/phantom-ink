@@ -230,6 +230,35 @@ func isPortOpen(port int) bool {
 	return true
 }
 
+// isHostReachable TCP-dials an arbitrary "host:port" (unlike isPortOpen, which is
+// localhost-only). Accepts bare host:port or a URL — scheme/path are stripped and
+// a missing port defaults by scheme (https→443, http→80, else 443). Used for the
+// remote Docker registry reachability indicator.
+func isHostReachable(endpoint string) bool {
+	e := strings.TrimSpace(endpoint)
+	if e == "" {
+		return false
+	}
+	defaultPort := "443"
+	if strings.HasPrefix(e, "http://") {
+		defaultPort = "80"
+	}
+	e = strings.TrimPrefix(e, "https://")
+	e = strings.TrimPrefix(e, "http://")
+	if i := strings.IndexByte(e, '/'); i >= 0 { // strip any path
+		e = e[:i]
+	}
+	if !strings.Contains(e, ":") {
+		e = e + ":" + defaultPort
+	}
+	conn, err := net.DialTimeout("tcp", e, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 // isComposeRunning checks if any containers are running for a service's compose file.
 func isComposeRunning(name string) bool {
 	composePath, err := ensureComposeFile(name)

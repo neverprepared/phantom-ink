@@ -161,6 +161,13 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 // image status (the tag is "<registry>/brainbox-profile:<name>"). Returns ""
 // when no registry is configured.
 func (a *App) resolveRegistryURL(profile string) string {
+	// An explicit app setting wins — it's what the operator configured in
+	// Settings and what the Platform Services indicator health-checks.
+	if a.db != nil {
+		if url := a.db.GetSetting(settingRegistryURL, ""); url != "" {
+			return url
+		}
+	}
 	status, err := a.client.GetProfileImageStatus(profile)
 	if err != nil || !status.Configured || status.Tag == "" {
 		return ""

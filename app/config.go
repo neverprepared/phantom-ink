@@ -14,6 +14,7 @@ const (
 	settingWorkspacesRoot     = "workspaces_root"
 	settingTheme              = "theme"
 	settingProfileColorPrefix = "profile_color:"
+	settingRegistryURL        = "registry_url"
 	settingRegistryUsername   = "registry_username"
 	settingRegistryPassword   = "registry_password"
 	settingOTLPHost           = "otlp_host"
