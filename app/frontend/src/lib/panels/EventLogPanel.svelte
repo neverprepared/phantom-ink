@@ -2,7 +2,12 @@
   import { brainboxEvents } from '../events.svelte';
   import { formatClock } from '../utils/format';
   import EmptyState from '../components/EmptyState.svelte';
+  import SessionSummaryCard from '../components/SessionSummaryCard.svelte';
   import { getApi } from '../utils/api';
+
+  // session.summary rows expand into a rich card (narrative + facts + evidence).
+  let expandedSeq = $state<number | null>(null);
+  function toggleExpand(seq: number) { expandedSeq = expandedSeq === seq ? null : seq; }
 
   let logEl: HTMLElement;
   let autoscroll = $state(true);
@@ -169,14 +174,20 @@
           message={searchBackend === 'error' ? 'Search failed — is the daemon reachable?' : 'No events match this query.'} />
       {:else}
         {#each searchResults as item (item.seq)}
-          <div class="row">
+          {@const isSummary = item.type === 'session.summary' && item.envelope}
+          <div class="row" class:clickable={isSummary} onclick={() => isSummary && toggleExpand(item.seq)}
+            role={isSummary ? 'button' : undefined} tabindex={isSummary ? 0 : undefined}>
             <span class="ts" title={new Date(item.ts).toISOString()}>{formatTs(item.ts)}</span>
             <span class="type">{item.type ?? '—'}</span>
             <span class="raw" title={JSON.stringify(item.envelope)}>
+              {#if isSummary}<span class="disclosure">{expandedSeq === item.seq ? '▾' : '▸'}</span>{/if}
               {item.envelope?.title ?? item.id}{item.status ? ` · ${item.status}` : ''}
               {#if item.envelope?.workspace}<span class="ws">[{item.envelope.workspace}]</span>{/if}
             </span>
           </div>
+          {#if isSummary && expandedSeq === item.seq}
+            <div class="summary-wrap"><SessionSummaryCard envelope={item.envelope} /></div>
+          {/if}
         {/each}
       {/if}
     </div>
@@ -304,6 +315,10 @@
     flex-shrink: 0;
   }
 
+  .row.clickable { cursor: pointer; }
+  .row.clickable:hover { background: var(--color-surface-hover); }
+  .disclosure { color: var(--color-accent); margin-right: 4px; }
+  .summary-wrap { padding: 4px 0 8px 0; }
   .type {
     color: var(--color-accent);
     overflow: hidden;
