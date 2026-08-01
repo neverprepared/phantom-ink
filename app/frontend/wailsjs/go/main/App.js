@@ -826,8 +826,8 @@ export function SetProfileServerOverride(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetProfileServerOverride'](arg1, arg2, arg3);
 }
 
-export function SetRegistrySettings(arg1, arg2) {
-  return window['go']['main']['App']['SetRegistrySettings'](arg1, arg2);
+export function SetRegistrySettings(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetRegistrySettings'](arg1, arg2, arg3);
 }
 
 export function SetRuleEnabled(arg1, arg2) {

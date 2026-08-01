@@ -416,7 +416,7 @@ export function SetProfileColor(arg1:string,arg2:string):Promise<void>;
 
 export function SetProfileServerOverride(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
-export function SetRegistrySettings(arg1:string,arg2:string):Promise<void>;
+export function SetRegistrySettings(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SetRuleEnabled(arg1:string,arg2:boolean):Promise<brainbox.RuleEnabledState>;
 

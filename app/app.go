@@ -519,21 +519,27 @@ func (a *App) GetPlatform() string {
 	return goruntime.GOOS
 }
 
-// GetRegistrySettings returns the stored registry credentials.
+// GetRegistrySettings returns the stored registry URL + credentials.
 func (a *App) GetRegistrySettings() map[string]string {
 	if a.db == nil {
 		return map[string]string{}
 	}
 	return map[string]string{
+		"url":      a.db.GetSetting(settingRegistryURL, ""),
 		"username": a.db.GetSetting(settingRegistryUsername, ""),
 		"password": a.db.GetSetting(settingRegistryPassword, ""),
 	}
 }
 
-// SetRegistrySettings persists registry credentials.
-func (a *App) SetRegistrySettings(username, password string) error {
+// SetRegistrySettings persists the registry URL + credentials. The URL, when
+// set, is authoritative for image push/pull (see resolveRegistryURL) and drives
+// the Platform Services reachability indicator.
+func (a *App) SetRegistrySettings(url, username, password string) error {
 	if a.db == nil {
 		return nil
+	}
+	if err := a.db.SetSetting(settingRegistryURL, strings.TrimSpace(url)); err != nil {
+		return err
 	}
 	if err := a.db.SetSetting(settingRegistryUsername, username); err != nil {
 		return err
