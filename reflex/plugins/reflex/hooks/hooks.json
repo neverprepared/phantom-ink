@@ -89,17 +89,6 @@
           }
         ]
       }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/session-summary-hook.sh",
-            "timeout": 20
-          }
-        ]
-      }
     ]
   }
 }
