@@ -121,6 +121,16 @@ func (c *Client) SetGatewayProfileEnv(profile string, env map[string]string) err
 	return c.put(path, body, nil)
 }
 
+// SetGatewayProfileEnvKey sets ONE env-typed credential for a profile without
+// touching the rest (unlike SetGatewayProfileEnv's full overwrite). Used to
+// store PROFILE_ENV_KEY in the broker at image-build time so router-created
+// (task/hub) sessions can decrypt the profile image's baked credentials.
+func (c *Client) SetGatewayProfileEnvKey(profile, key, value string) error {
+	path := fmt.Sprintf("/api/gateway/profiles/%s/env/%s",
+		url.PathEscape(profile), url.PathEscape(key))
+	return c.put(path, map[string]interface{}{"value": value}, nil)
+}
+
 // DeleteGatewayProfileEnv removes a profile's stored env file entirely.
 func (c *Client) DeleteGatewayProfileEnv(profile string) error {
 	path := fmt.Sprintf("/api/gateway/profiles/%s/env", url.PathEscape(profile))
