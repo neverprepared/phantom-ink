@@ -133,6 +133,36 @@ export const commandPalette = {
 };
 
 // ---------------------------------------------------------------------------
+// Settings sub-tabs — Runners, Profiles, Gateway, and API tokens are folded
+// into the Settings panel as tabs alongside the general settings form. Callers
+// that used to navigate to those panels directly (or via legacy #hash links)
+// are redirected to Settings with the matching tab pre-selected.
+// ---------------------------------------------------------------------------
+
+export type SettingsTab = 'general' | 'runners' | 'profiles' | 'gateway' | 'tokens';
+
+// Legacy panel ids that are now Settings tabs → their tab. Used by AppShell to
+// redirect stale navigation/deep-links and by the command palette.
+export const SETTINGS_TAB_PANELS: Record<string, SettingsTab> = {
+  runners: 'runners',
+  profiles: 'profiles',
+  gateway: 'gateway',
+  tokens: 'tokens',
+};
+
+let _settingsTab = $state<SettingsTab>('general');
+
+export const settingsState = {
+  get tab(): SettingsTab { return _settingsTab; },
+  set tab(v: SettingsTab) { _settingsTab = v; },
+  /** Navigate to the Settings panel with a specific tab pre-selected. */
+  open(tab: SettingsTab): void {
+    _settingsTab = tab;
+    currentPanel.value = 'settings';
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Active profile
 // ---------------------------------------------------------------------------
 

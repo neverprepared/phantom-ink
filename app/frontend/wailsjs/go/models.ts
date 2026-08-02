@@ -72,6 +72,7 @@ export namespace brainbox {
 	    status: string;
 	    title: string;
 	    subtitle: string;
+	    description: string;
 	    workspace: string;
 	    parent_id: string;
 	    url: string;
@@ -97,6 +98,7 @@ export namespace brainbox {
 	        this.status = source["status"];
 	        this.title = source["title"];
 	        this.subtitle = source["subtitle"];
+	        this.description = source["description"];
 	        this.workspace = source["workspace"];
 	        this.parent_id = source["parent_id"];
 	        this.url = source["url"];
