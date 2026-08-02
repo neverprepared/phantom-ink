@@ -103,16 +103,28 @@
     return t.length <= 10 ? '••••••••' : `${t.slice(0, 4)}…${t.slice(-4)}`;
   }
 
-  // The env vars an MCP client (pbrainctl / Claude Code / Codex / …) needs to
-  // reach THIS vault. The token already scopes (profile, vault); profile + vault
-  // are belt-and-suspenders that the daemon cross-checks against the token.
-  function exportBlock(t: VaultToken): string {
-    return [
-      `export CL_BRAIN_API=${sessionURL}`,
-      `export CL_BRAIN_API_TOKEN=${t.token}`,
-      `export CL_WORKSPACE_PROFILE=${profile}`,
-      `export CL_BRAIN_VAULT=${t.vault}`,
-    ].join('\n');
+  // An MCP server config for THIS vault — one server per vault. The env var
+  // names are the SAME for every vault (CL_BRAIN_API_TOKEN etc.); the token is
+  // what scopes to (profile, vault). That's why you add one named server per
+  // vault (phantom-brain-<vault>) rather than exporting one shared token — a
+  // single client process talks to exactly one vault.
+  function mcpConfig(t: VaultToken): string {
+    return JSON.stringify(
+      {
+        [`phantom-brain-${t.vault}`]: {
+          command: 'pbrainctl',
+          args: ['client', 'mcp'],
+          env: {
+            CL_BRAIN_API: sessionURL,
+            CL_BRAIN_API_TOKEN: t.token,
+            CL_WORKSPACE_PROFILE: profile,
+            CL_BRAIN_VAULT: t.vault,
+          },
+        },
+      },
+      null,
+      2,
+    );
   }
 </script>
 
@@ -139,7 +151,7 @@
           {#if sessionURL}
             <div class="mem-row"><span class="mem-k">session url</span><code>{sessionURL}</code></div>
           {/if}
-          <p class="mem-hint">Per-vault bearer tokens — the token <em>is</em> the (profile, vault) scope. Send as <code>Authorization: Bearer</code>. Secret — treat like an API key.</p>
+          <p class="mem-hint">Per-vault bearer tokens — the token <em>is</em> the (profile, vault) scope. One MCP server per vault: reveal a token to get a ready-to-paste <code>phantom-brain-&lt;vault&gt;</code> server config. (The env var names repeat across vaults — the <em>token</em> differs, not the names.) Secret — treat like an API key.</p>
           {#each vaultTokens as t (t.vault)}
             <div class="tok-item">
               <div class="tok-row">
@@ -151,10 +163,10 @@
               {#if revealed.has(t.vault)}
                 <div class="tok-env">
                   <div class="tok-env-head">
-                    <span>env for {profile}/{t.vault}</span>
-                    <button class="tok-x" onclick={() => copyText(exportBlock(t), 'env vars')}>copy env</button>
+                    <span>MCP server for {profile}/{t.vault}</span>
+                    <button class="tok-x" onclick={() => copyText(mcpConfig(t), 'MCP config')}>copy config</button>
                   </div>
-                  <pre class="tok-pre">{exportBlock(t)}</pre>
+                  <pre class="tok-pre">{mcpConfig(t)}</pre>
                 </div>
               {/if}
             </div>
