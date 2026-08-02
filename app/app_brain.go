@@ -17,3 +17,10 @@ func (a *App) GetBrainProfile(profile string) (brainbox.BrainProfileInfo, error)
 func (a *App) InitBrainProfile(profile string) (brainbox.BrainProfileInitResult, error) {
 	return a.client.InitBrainProfile(profile)
 }
+
+// GetBrainProfileTokens returns a profile's per-vault brain bearer tokens
+// (operator-gated, via the router facade). These are secrets — the Memory
+// section masks them and reveals/copies on demand.
+func (a *App) GetBrainProfileTokens(profile string) (brainbox.BrainProfileTokens, error) {
+	return a.client.GetBrainProfileTokens(profile)
+}

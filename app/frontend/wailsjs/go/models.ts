@@ -310,6 +310,59 @@ export namespace brainbox {
 	        this.threaded = source["threaded"];
 	    }
 	}
+	export class BrainVaultToken {
+	    vault: string;
+	    token: string;
+	    is_default: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new BrainVaultToken(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.vault = source["vault"];
+	        this.token = source["token"];
+	        this.is_default = source["is_default"];
+	    }
+	}
+	export class BrainProfileTokens {
+	    profile: string;
+	    session_url: string;
+	    default_vault: string;
+	    tokens: BrainVaultToken[];
+	
+	    static createFrom(source: any = {}) {
+	        return new BrainProfileTokens(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.session_url = source["session_url"];
+	        this.default_vault = source["default_vault"];
+	        this.tokens = this.convertValues(source["tokens"], BrainVaultToken);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class BundleMeta {
 	    profile: string;
 	    etag: string;

@@ -126,6 +126,8 @@ export function GetArtifactsHealth():Promise<brainbox.ArtifactsHealth>;
 
 export function GetBrainProfile(arg1:string):Promise<brainbox.BrainProfileInfo>;
 
+export function GetBrainProfileTokens(arg1:string):Promise<brainbox.BrainProfileTokens>;
+
 export function GetChannel(arg1:string):Promise<brainbox.Channel>;
 
 export function GetChannelMessages(arg1:string,arg2:string):Promise<Array<brainbox.ChannelMessage>>;

@@ -6,7 +6,10 @@
   // Per-profile phantom-brain memory binding. Shows whether the profile's
   // long-term memory (Postgres SoR + MinIO archives) is provisioned, and lets
   // the operator initialize it. Provisioning threads CL_BRAIN_* into the
-  // profile's credentials server-side — the bearer token never reaches the UI.
+  // profile's credentials server-side. The per-vault bearer tokens can be
+  // revealed on demand (operator-gated) for wiring an MCP client to a vault.
+
+  interface VaultToken { vault: string; token: string; is_default: boolean; }
 
   let { profile }: { profile: string } = $props();
 
@@ -17,6 +20,14 @@
   let bucket = $state('');
   let indexPrefix = $state('');
   let unavailable = $state(false); // brain facade not configured / router unreachable
+
+  // Per-vault bearer tokens — lazily loaded (a secret + a router round-trip),
+  // masked by default, revealed/copied per vault on demand.
+  let tokensLoaded = $state(false);
+  let tokensLoading = $state(false);
+  let vaultTokens = $state<VaultToken[]>([]);
+  let sessionURL = $state('');
+  let revealed = $state<Set<string>>(new Set());
 
   async function load() {
     loading = true;
@@ -55,6 +66,42 @@
       initializing = false;
     }
   }
+
+  async function loadTokens() {
+    tokensLoading = true;
+    const a = await getApi();
+    if (!a) { tokensLoading = false; return; }
+    try {
+      const res = await a.GetBrainProfileTokens(profile);
+      vaultTokens = res?.tokens ?? [];
+      sessionURL = res?.session_url ?? '';
+      tokensLoaded = true;
+    } catch (e) {
+      notifications.error(`load vault tokens failed: ${e}`);
+    } finally {
+      tokensLoading = false;
+    }
+  }
+
+  function toggleReveal(vault: string) {
+    const next = new Set(revealed);
+    if (next.has(vault)) next.delete(vault); else next.add(vault);
+    revealed = next;
+  }
+
+  async function copyToken(token: string) {
+    try {
+      await navigator.clipboard.writeText(token);
+      notifications.success('token copied');
+    } catch {
+      notifications.error('copy failed');
+    }
+  }
+
+  function mask(t: string): string {
+    if (!t) return '';
+    return t.length <= 10 ? '••••••••' : `${t.slice(0, 4)}…${t.slice(-4)}`;
+  }
 </script>
 
 <CardExpander label="memory" count={loaded && provisioned ? '(ready)' : ''} onOpen={() => { if (!loaded) void load(); }}>
@@ -70,6 +117,27 @@
       <button class="mem-btn" disabled={initializing} onclick={initialize}>
         {initializing ? 're-provisioning…' : 're-initialize'}
       </button>
+
+      <div class="tok-section">
+        {#if !tokensLoaded}
+          <button class="mem-btn" disabled={tokensLoading} onclick={loadTokens}>
+            {tokensLoading ? 'loading…' : 'show vault tokens'}
+          </button>
+        {:else}
+          {#if sessionURL}
+            <div class="mem-row"><span class="mem-k">session url</span><code>{sessionURL}</code></div>
+          {/if}
+          <p class="mem-hint">Per-vault bearer tokens — the token <em>is</em> the (profile, vault) scope. Send as <code>Authorization: Bearer</code>. Secret — treat like an API key.</p>
+          {#each vaultTokens as t (t.vault)}
+            <div class="tok-row">
+              <span class="tok-vault">{t.vault}{#if t.is_default}<span class="tok-def">default</span>{/if}</span>
+              <code class="tok-val">{revealed.has(t.vault) ? t.token : mask(t.token)}</code>
+              <button class="tok-x" onclick={() => toggleReveal(t.vault)}>{revealed.has(t.vault) ? 'hide' : 'reveal'}</button>
+              <button class="tok-x" onclick={() => copyToken(t.token)}>copy</button>
+            </div>
+          {/each}
+        {/if}
+      </div>
     {:else}
       <p class="mem-hint">no memory binding yet for this profile.</p>
       <button class="mem-btn primary" disabled={initializing} onclick={initialize}>
@@ -94,4 +162,14 @@
   }
   .mem-btn.primary { border-color: var(--card-accent, var(--color-border-primary)); }
   .mem-btn:disabled { opacity: 0.6; cursor: default; }
+
+  .tok-section { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--color-border-primary); }
+  .tok-row { display: flex; align-items: center; gap: 8px; font-size: 0.85em; }
+  .tok-vault { min-width: 90px; color: var(--color-text-secondary); display: flex; align-items: center; gap: 6px; }
+  .tok-def { font-size: 0.7em; padding: 0 4px; border-radius: var(--radius-md, 4px); background: var(--color-bg-secondary); color: var(--color-text-tertiary); }
+  .tok-val { flex: 1; font-family: var(--font-mono); color: var(--color-text-primary); overflow-x: auto; white-space: nowrap; }
+  .tok-x {
+    padding: 2px 8px; border-radius: var(--radius-md, 4px); border: 1px solid var(--color-border-primary);
+    background: var(--color-bg-secondary); color: var(--color-text-secondary); cursor: pointer; font-size: 0.8em;
+  }
 </style>
