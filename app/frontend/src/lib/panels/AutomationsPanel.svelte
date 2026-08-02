@@ -2,7 +2,7 @@
   import { getApi, safe } from '../utils/api';
   import { timeAgoOrDate } from '../utils/format';
   import { onMount } from 'svelte';
-  import { profileState, refreshTick } from '../stores.svelte';
+  import { profileState, refreshTick, ruleSeed } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -12,6 +12,13 @@
   // 24/7 on the daemon) and the app-local engine below (entry triggers,
   // fire_job, notify — concepts that live in this app's SQLite).
   let activeTab = $state<'rules' | 'local'>('rules');
+
+  // A pending rule seed (from Stream's "create rule") targets the server-side
+  // Rules tab — force it so ServerRulesTab mounts and consumes the seed. Peek
+  // only (never consume) so ServerRulesTab is the sole consumer.
+  $effect(() => {
+    if (ruleSeed.value) activeTab = 'rules';
+  });
 
   // ── Types ──────────────────────────────────────────────────────────────
 

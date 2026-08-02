@@ -376,6 +376,35 @@ export const playbookSeed = {
 };
 
 // ---------------------------------------------------------------------------
+// Rule seed — used by Stream's "create rule" flow to hand off a pre-filled
+// rule draft (pattern derived from a live event card + suggested name/profile)
+// to the Automations panel's Rules tab, which opens the new-rule form with it.
+// ---------------------------------------------------------------------------
+
+export interface RuleSeed {
+  name?: string;
+  profile?: string;
+  description?: string;
+  pattern: Record<string, any>;
+  actions?: Record<string, any>[];
+}
+
+let _ruleSeed = $state<RuleSeed | null>(null);
+
+export const ruleSeed = {
+  get value(): RuleSeed | null { return _ruleSeed; },
+  seed(target: RuleSeed): void {
+    _ruleSeed = target;
+    currentPanel.value = 'automations';
+  },
+  consume(): RuleSeed | null {
+    const f = _ruleSeed;
+    _ruleSeed = null;
+    return f;
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Outbox health — singleton 10s poll of OutboxPending so the StatusBar chip,
 // any future detail panel, and panel-level diagnostics all share one source.
 // ---------------------------------------------------------------------------

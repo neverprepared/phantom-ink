@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { timeAgo } from '../utils/format';
   import { getApi, openInBrowser } from '../utils/api';
-  import { featureFlags, profileState, currentPanel, attentionStore, streamFocus } from '../stores.svelte';
+  import { featureFlags, profileState, currentPanel, attentionStore, streamFocus, ruleSeed } from '../stores.svelte';
   import { streamLive, STATUS_OPTIONS } from '../stores/streamLive.svelte';
   import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
@@ -261,6 +261,21 @@
   let expandedSummaryId = $state<string | null>(null);
   function toggleSummary(id: string) { expandedSummaryId = expandedSummaryId === id ? null : id; }
 
+  // Hand off a pre-filled rule draft to Automations → Rules, deriving the match
+  // pattern from this live event card (type/workspace/source). The action is
+  // left blank for the user to choose — that's the point of authoring a rule.
+  function createRule(item: { type?: string; workspace?: string; source?: string }) {
+    const pattern: Record<string, any> = {};
+    if (item.type) pattern.type = [item.type];
+    if (item.workspace) pattern.workspace = [item.workspace];
+    if (item.source) pattern.source = [item.source];
+    ruleSeed.seed({
+      name: item.type ? `when ${item.type}` : '',
+      profile: item.workspace ?? '',
+      pattern,
+    });
+  }
+
   // ── Actions ────────────────────────────────────────────────────────────────
 
   async function dismiss(item: AttentionItem) {
@@ -495,6 +510,10 @@
                 {/if}
                 <button class="btn ghost small" onclick={() => streamLive.toggleHistory(item.id)}>
                   {streamLive.history[item.id] ? 'hide history' : 'history'}
+                </button>
+                <button class="btn ghost small" onclick={() => createRule(item)}
+                  title="Create an automation rule matching events like this one">
+                  create rule
                 </button>
               </div>
               {#if item.type === 'session.summary' && expandedSummaryId === item.id}
