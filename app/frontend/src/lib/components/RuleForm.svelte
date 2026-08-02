@@ -12,16 +12,19 @@
     type ActionDraft,
     type Rule,
   } from '../rules';
+  import { type RuleSeed } from '../stores.svelte';
 
   // Create/edit form for one server-side rule.
   let {
     rule,
+    seed = null,
     activeProfile,
     allProfiles,
     onSaved,
     onCancel,
   }: {
     rule: Rule | null; // null = create
+    seed?: RuleSeed | null; // pre-fill for a create (ignored when editing)
     activeProfile: string;
     allProfiles: string[];
     onSaved: () => void;
@@ -30,15 +33,17 @@
 
   let draft = $state({
     id: rule?.id ?? '',
-    name: rule?.name ?? '',
-    description: rule?.description ?? '',
-    profile: rule?.profile ?? activeProfile,
+    name: rule?.name ?? seed?.name ?? '',
+    description: rule?.description ?? seed?.description ?? '',
+    profile: rule?.profile ?? seed?.profile ?? activeProfile,
     enabled: rule?.enabled ?? true,
   });
   let actionDrafts = $state<ActionDraft[]>(
     rule?.actions?.length
       ? rule.actions.map(draftFromAction)
-      : [newActionDraft('submit_task')]
+      : seed?.actions?.length
+        ? seed.actions.map(draftFromAction)
+        : [newActionDraft('submit_task')]
   );
   let saving = $state(false);
   let saveError = $state('');
@@ -131,7 +136,7 @@
 
   <RulePatternEditor
     bind:this={patternEditor}
-    initial={rule?.pattern ?? null}
+    initial={rule?.pattern ?? seed?.pattern ?? null}
     defaultWorkspace={draft.profile}
     bind:patternErrors
   />

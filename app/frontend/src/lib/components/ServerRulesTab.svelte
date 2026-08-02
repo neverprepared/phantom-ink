@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import { getApi } from '../utils/api';
-  import { profileState } from '../stores.svelte';
+  import { profileState, ruleSeed, type RuleSeed } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
   import Spinner from './Spinner.svelte';
   import EmptyState from './EmptyState.svelte';
@@ -27,6 +27,7 @@
   let loading = $state(true);
   let loadError = $state('');
   let editing = $state<Rule | 'new' | null>(null);
+  let seed = $state<RuleSeed | null>(null); // pre-fill for a Stream-initiated new rule
   let rulesStatus = $state<RulesStatus | null>(null);
   let statusView = $state<string | null>(null); // open execution-filter panel
   let statusExecs = $state<RuleExecution[]>([]);
@@ -126,8 +127,24 @@
 
   function onSaved() {
     editing = null;
+    seed = null;
     void load(true);
   }
+
+  function cancelEdit() {
+    editing = null;
+    seed = null;
+  }
+
+  // Consume a rule seed handed off from Stream's "create rule" — open the
+  // new-rule form pre-filled. Reads ruleSeed.value reactively so it fires
+  // whether this tab is freshly mounted or already alive when the seed lands.
+  $effect(() => {
+    if (ruleSeed.value) {
+      seed = ruleSeed.consume();
+      editing = 'new';
+    }
+  });
 
   onMount(() => {
     void load();
@@ -208,8 +225,8 @@
   {/if}
 
   {#if editing === 'new'}
-    <RuleForm rule={null} activeProfile={profile} {allProfiles}
-      onSaved={onSaved} onCancel={() => (editing = null)} />
+    <RuleForm rule={null} {seed} activeProfile={profile} {allProfiles}
+      onSaved={onSaved} onCancel={cancelEdit} />
   {/if}
 
   {#if loadError}
