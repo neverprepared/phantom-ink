@@ -89,10 +89,10 @@
     revealed = next;
   }
 
-  async function copyToken(token: string) {
+  async function copyText(text: string, label: string) {
     try {
-      await navigator.clipboard.writeText(token);
-      notifications.success('token copied');
+      await navigator.clipboard.writeText(text);
+      notifications.success(`${label} copied`);
     } catch {
       notifications.error('copy failed');
     }
@@ -101,6 +101,18 @@
   function mask(t: string): string {
     if (!t) return '';
     return t.length <= 10 ? '••••••••' : `${t.slice(0, 4)}…${t.slice(-4)}`;
+  }
+
+  // The env vars an MCP client (pbrainctl / Claude Code / Codex / …) needs to
+  // reach THIS vault. The token already scopes (profile, vault); profile + vault
+  // are belt-and-suspenders that the daemon cross-checks against the token.
+  function exportBlock(t: VaultToken): string {
+    return [
+      `export CL_BRAIN_API=${sessionURL}`,
+      `export CL_BRAIN_API_TOKEN=${t.token}`,
+      `export CL_WORKSPACE_PROFILE=${profile}`,
+      `export CL_BRAIN_VAULT=${t.vault}`,
+    ].join('\n');
   }
 </script>
 
@@ -129,11 +141,22 @@
           {/if}
           <p class="mem-hint">Per-vault bearer tokens — the token <em>is</em> the (profile, vault) scope. Send as <code>Authorization: Bearer</code>. Secret — treat like an API key.</p>
           {#each vaultTokens as t (t.vault)}
-            <div class="tok-row">
-              <span class="tok-vault">{t.vault}{#if t.is_default}<span class="tok-def">default</span>{/if}</span>
-              <code class="tok-val">{revealed.has(t.vault) ? t.token : mask(t.token)}</code>
-              <button class="tok-x" onclick={() => toggleReveal(t.vault)}>{revealed.has(t.vault) ? 'hide' : 'reveal'}</button>
-              <button class="tok-x" onclick={() => copyToken(t.token)}>copy</button>
+            <div class="tok-item">
+              <div class="tok-row">
+                <span class="tok-vault">{t.vault}{#if t.is_default}<span class="tok-def">default</span>{/if}</span>
+                <code class="tok-val">{revealed.has(t.vault) ? t.token : mask(t.token)}</code>
+                <button class="tok-x" onclick={() => toggleReveal(t.vault)}>{revealed.has(t.vault) ? 'hide' : 'reveal'}</button>
+                <button class="tok-x" onclick={() => copyText(t.token, 'token')}>copy token</button>
+              </div>
+              {#if revealed.has(t.vault)}
+                <div class="tok-env">
+                  <div class="tok-env-head">
+                    <span>env for {profile}/{t.vault}</span>
+                    <button class="tok-x" onclick={() => copyText(exportBlock(t), 'env vars')}>copy env</button>
+                  </div>
+                  <pre class="tok-pre">{exportBlock(t)}</pre>
+                </div>
+              {/if}
             </div>
           {/each}
         {/if}
@@ -164,7 +187,16 @@
   .mem-btn:disabled { opacity: 0.6; cursor: default; }
 
   .tok-section { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--color-border-primary); }
+  .tok-item { display: flex; flex-direction: column; gap: 4px; }
   .tok-row { display: flex; align-items: center; gap: 8px; font-size: 0.85em; }
+  .tok-env { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 4px 90px; }
+  .tok-env-head { display: flex; align-items: center; justify-content: space-between; font-size: 0.75em; color: var(--color-text-tertiary); }
+  .tok-pre {
+    margin: 0; padding: 6px 8px; border-radius: var(--radius-md, 4px);
+    background: var(--color-bg-secondary); border: 1px solid var(--color-border-primary);
+    font-family: var(--font-mono); font-size: 0.78em; color: var(--color-text-primary);
+    overflow-x: auto; white-space: pre; user-select: all;
+  }
   .tok-vault { min-width: 90px; color: var(--color-text-secondary); display: flex; align-items: center; gap: 6px; }
   .tok-def { font-size: 0.7em; padding: 0 4px; border-radius: var(--radius-md, 4px); background: var(--color-bg-secondary); color: var(--color-text-tertiary); }
   .tok-val { flex: 1; font-family: var(--font-mono); color: var(--color-text-primary); overflow-x: auto; white-space: nowrap; }
