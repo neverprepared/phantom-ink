@@ -1,15 +1,15 @@
 <script lang="ts">
-  import { connectionState, commandPalette, profileState, profileColorStore, currentPanel } from '../stores.svelte';
+  import { connectionState, commandPalette, profileState, profileColorStore, currentPanel, settingsState } from '../stores.svelte';
   import { getProfileColor } from '../utils/profileColors';
   import { notifications } from '../notifications.svelte';
 
   let connected = $derived(connectionState.connected);
   let profiles = $derived(profileState.visible);
   let activeProfile = $derived(profileState.active);
-  // The Profiles panel edits one profile at a time — "all" doesn't apply there.
-  let allDisabled = $derived(currentPanel.value === 'profiles');
-  // The Gateway panel is global (remote MCP servers) — profile selection N/A.
-  let profilesDisabled = $derived(currentPanel.value === 'gateway');
+  // The Profiles tab edits one profile at a time — "all" doesn't apply there.
+  let allDisabled = $derived(currentPanel.value === 'settings' && settingsState.tab === 'profiles');
+  // The Gateway tab is global (remote MCP servers) — profile selection N/A.
+  let profilesDisabled = $derived(currentPanel.value === 'settings' && settingsState.tab === 'gateway');
 
   // A hidden profile can still be the active one — you select it from the
   // Profiles panel's lower tab bar to edit it or un-hide it. The upper tabs

@@ -2,11 +2,12 @@
   import TitleBar from './TitleBar.svelte';
   import Sidebar from './Sidebar.svelte';
   import StatusBar from './StatusBar.svelte';
-  import { currentPanel, attentionStore, profileState, integrationState } from '../stores.svelte';
+  import { currentPanel, attentionStore, profileState, integrationState, settingsState, SETTINGS_TAB_PANELS } from '../stores.svelte';
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
 
-  // Panels (lazy imports)
+  // Panels (lazy imports). Runners, Profiles, Gateway, and API tokens live
+  // inside SettingsPanel as tabs, so they are imported there, not here.
   import SessionsPanel from '../panels/SessionsPanel.svelte';
   import LoopsPanel from '../panels/LoopsPanel.svelte';
   import ConversationsPanel from '../panels/ConversationsPanel.svelte';
@@ -14,13 +15,9 @@
   import PlaybooksPanel from '../panels/PlaybooksPanel.svelte';
   import JobsPanel from '../panels/JobsPanel.svelte';
   import AutomationsPanel from '../panels/AutomationsPanel.svelte';
-  import ProfilesPanel from '../panels/ProfilesPanel.svelte';
-  import GatewayPanel from '../panels/GatewayPanel.svelte';
-  import TokensPanel from '../panels/TokensPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
   import DashboardPanel from '../panels/DashboardPanel.svelte';
   import StreamPanel from '../panels/StreamPanel.svelte';
-  import RunnersPanel from '../panels/RunnersPanel.svelte';
   import EventLogPanel from '../panels/EventLogPanel.svelte';
   import FilesPanel from '../panels/FilesPanel.svelte';
 
@@ -52,6 +49,17 @@
     }
   });
 
+  // Runners/Profiles/Gateway/API tokens are now Settings tabs. Redirect any
+  // stale navigation or legacy #hash deep-links to Settings with the matching
+  // tab active. Converges immediately (once on 'settings' the map misses).
+  $effect(() => {
+    const tab = SETTINGS_TAB_PANELS[currentPanel.value];
+    if (tab) {
+      settingsState.tab = tab;
+      currentPanel.value = 'settings';
+    }
+  });
+
   // Attention store powers the sidebar badge + Dashboard ActionItems fold-in.
   // Bootstrapping it here means the count is fresh on every panel, not only
   // while StreamPanel is mounted.
@@ -77,8 +85,6 @@
         <StreamPanel />
       {:else if currentPanel.value === 'sessions'}
         <SessionsPanel />
-      {:else if currentPanel.value === 'runners'}
-        <RunnersPanel />
       {:else if currentPanel.value === 'dashboard'}
         <DashboardPanel />
       {:else if currentPanel.value === 'integrations'}
@@ -93,12 +99,6 @@
         <AutomationsPanel />
       {:else if currentPanel.value === 'jobs'}
         <JobsPanel />
-      {:else if currentPanel.value === 'profiles'}
-        <ProfilesPanel />
-      {:else if currentPanel.value === 'gateway'}
-        <GatewayPanel />
-      {:else if currentPanel.value === 'tokens'}
-        <TokensPanel />
       {:else if currentPanel.value === 'settings'}
         <SettingsPanel />
       {:else if currentPanel.value === 'event-log'}

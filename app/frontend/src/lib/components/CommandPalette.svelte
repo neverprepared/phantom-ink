@@ -1,6 +1,15 @@
 <script lang="ts">
-  import { commandPalette, currentPanel, integrationState } from '../stores.svelte';
+  import { commandPalette, currentPanel, integrationState, settingsState, type SettingsTab } from '../stores.svelte';
   import { panels } from '../panels';
+
+  // Settings tabs that used to be top-level panels — kept in the palette so
+  // they stay directly jumpable even though they no longer have a sidebar entry.
+  const settingsTabCommands: { tab: SettingsTab; label: string }[] = [
+    { tab: 'runners', label: 'Runners' },
+    { tab: 'profiles', label: 'Profiles' },
+    { tab: 'gateway', label: 'Gateway' },
+    { tab: 'tokens', label: 'API tokens' },
+  ];
 
   interface Command {
     id: string;
@@ -24,6 +33,12 @@
         description: p.shortcut,
         action: () => { currentPanel.value = p.id; commandPalette.close(); },
       })),
+    ...settingsTabCommands.map(t => ({
+      id: `nav:settings:${t.tab}`,
+      label: `Go to ${t.label}`,
+      description: 'Settings',
+      action: () => { settingsState.open(t.tab); commandPalette.close(); },
+    })),
     {
       id: 'reload',
       label: 'Reload app',
