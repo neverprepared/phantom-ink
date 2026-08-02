@@ -246,6 +246,10 @@ export function GetBrainProfile(arg1) {
   return window['go']['main']['App']['GetBrainProfile'](arg1);
 }
 
+export function GetBrainProfileTokens(arg1) {
+  return window['go']['main']['App']['GetBrainProfileTokens'](arg1);
+}
+
 export function GetChannel(arg1) {
   return window['go']['main']['App']['GetChannel'](arg1);
 }
