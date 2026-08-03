@@ -10,6 +10,7 @@
   import ProfileServersEditor from '../components/ProfileServersEditor.svelte';
   import CredentialBundleEditor from '../components/CredentialBundleEditor.svelte';
   import BrainMemoryEditor from '../components/BrainMemoryEditor.svelte';
+  import BrainSkillsEditor from '../components/BrainSkillsEditor.svelte';
   import CardExpander from '../components/CardExpander.svelte';
 
   // --- Profile image state ---
@@ -497,6 +498,7 @@
           <GatewayEnvEditor profile={p.name} unlocked={gatewayUnlocked} />
           <ProfileServersEditor profile={p.name} />
           <BrainMemoryEditor profile={p.name} />
+          <BrainSkillsEditor profile={p.name} />
           {#if integrationState.minioEnabled}
             <CredentialBundleEditor profile={p.name} />
           {/if}
