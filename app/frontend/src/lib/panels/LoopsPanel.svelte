@@ -560,7 +560,14 @@ Describe what the agent does each iteration.
 
 <div class="panel">
   <header class="panel-header">
-    <h1 class="page-title">loops</h1>
+    <div class="header-top">
+      <h1 class="page-title">loops</h1>
+      {#if activeTab === 'templates'}
+        <button class="btn primary" onclick={openNewTemplateModal} title="Create a new loop template">
+          + new template
+        </button>
+      {/if}
+    </div>
     <nav class="tabs">
       <button
         class="tab"
@@ -596,9 +603,6 @@ Describe what the agent does each iteration.
       <aside class="template-list">
         <div class="template-list-head">
           <span class="template-list-label">templates</span>
-          <button class="btn-new" onclick={openNewTemplateModal} title="Create a new loop template">
-            + new
-          </button>
         </div>
         {#if templatesLoading}
           <div class="loading"><Spinner /></div>
@@ -875,9 +879,18 @@ Describe what the agent does each iteration.
   }
 
   .panel-header {
-    padding: 12px 20px 0;
+    /* Match the app-wide panel inset (--panel-padding: 30px 40px) so the
+       header action lands in the same upper-right spot as every other panel,
+       instead of the old hard-coded 20px. */
+    padding: var(--main-pad, 30px) 40px 0;
     display: flex;
     flex-direction: column;
+    /* The global .panel-header sets align-items: center (for its row layout);
+       in this column override that would center + shrink-wrap the title/tabs
+       (and break the header action's right-alignment). Force stretch so the
+       header-top row spans full width and space-between pushes the action to
+       the same upper-right spot as every other panel. */
+    align-items: stretch;
     gap: 8px;
   }
   .panel-header h2 {
@@ -917,7 +930,9 @@ Describe what the agent does each iteration.
     display: grid;
     grid-template-columns: 220px 1fr;
     gap: 12px;
-    padding: 12px 20px;
+    /* Horizontal inset matches the header/token (40px) so the sidebar + editor
+       share the same right edge as the header action above them. */
+    padding: 12px 40px;
     overflow: hidden;
   }
   .template-list {
@@ -941,19 +956,11 @@ Describe what the agent does each iteration.
     letter-spacing: 0.5px;
     color: var(--text-muted);
   }
-  .btn-new {
-    background: var(--accent);
-    color: #fff;
-    border: none;
-    border-radius: var(--r-sm);
-    padding: 4px 10px;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background-color 0.12s;
-  }
-  .btn-new:hover {
-    background: color-mix(in srgb, var(--accent) 88%, #000);
+  .header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
   }
   .template-item {
     background: transparent;
