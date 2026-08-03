@@ -5,7 +5,7 @@
   import { mount, unmount, onMount } from 'svelte';
   import { getApi, safe } from '../utils/api';
   import { brainboxEvents } from '../events.svelte';
-  import { profileState, dashboardState, dashboardDataStore, featureFlags, attentionStore, currentPanel } from '../stores.svelte';
+  import { profileState, dashboardState, dashboardDataStore, attentionStore, currentPanel } from '../stores.svelte';
   import { runnerQueueHistory } from '../metricsHistory.svelte';
   import { DEFAULT_LAYOUT } from '../widgets/defaultLayout';
   import type { WidgetInstance, WidgetKind, ActionItem, OpenSearchOverview } from '../widgets/types';
@@ -203,13 +203,15 @@
     };
   });
 
-  // Poll OpenSearch overview only when (a) opensearch is enabled AND
-  // (b) at least one opensearch-metric widget is on the dashboard.
+  // Poll OpenSearch overview whenever ≥1 opensearch-metric widget is on the
+  // dashboard. OpenSearch is a first-class platform service — the Go side
+  // (opensearchAPIURL) defaults to its endpoint regardless of the legacy
+  // integration toggle — so we don't gate on that flag; GetObservabilityOverview
+  // fails soft (leaves the previous value) if the store is unreachable.
   let opensearchPoll: ReturnType<typeof setInterval> | null = null;
   const OPENSEARCH_POLL_MS = 15_000;
   let opensearchNeeded = $derived(
-    featureFlags.isEnabled('opensearch')
-      && dashboardState.widgets.some(w => w.kind === 'opensearch-metric')
+    dashboardState.widgets.some(w => w.kind === 'opensearch-metric')
   );
   let opensearchWorkspace = $derived(profileState.active?.name ?? '');
 
