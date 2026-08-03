@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { dashboardDataStore, featureFlags, profileState, streamFocus } from '../stores.svelte';
+  import { dashboardDataStore, profileState, streamFocus } from '../stores.svelte';
   import type { OpenSearchMetricConfig } from './types';
 
   let { config }: { config: OpenSearchMetricConfig } = $props();
@@ -16,7 +16,6 @@
   }
 
   let data = $derived(dashboardDataStore.value);
-  let enabled = $derived(featureFlags.isEnabled('opensearch'));
   let overview = $derived(data?.opensearch ?? null);
   let workspaceMissing = $derived(
     overview != null
@@ -52,7 +51,7 @@
 
 <div class="drag-strip widget-drag-handle" aria-hidden="true"></div>
 
-{#if enabled && overview && !workspaceMissing}
+{#if overview && !workspaceMissing}
   <button class="stat-card clickable" onclick={drill} title="Open Stream → Logs">
     <span class="stat-label">» {label}</span>
     <span class="stat-value {colorClass}">{value}</span>
@@ -60,10 +59,7 @@
 {:else}
   <div class="stat-card">
     <span class="stat-label">» {label}</span>
-    {#if !enabled}
-      <span class="stat-value muted">—</span>
-      <span class="footnote">opensearch disabled</span>
-    {:else if !overview}
+    {#if !overview}
       <span class="stat-value muted">…</span>
     {:else}
       <span class="stat-value muted">—</span>
