@@ -108,14 +108,20 @@
   // what scopes to (profile, vault). That's why you add one named server per
   // vault (phantom-brain-<vault>) rather than exporting one shared token — a
   // single client process talks to exactly one vault.
-  function mcpConfig(t: VaultToken): string {
+  //
+  // ``api`` differs by WHERE the client runs: the daemon's session_url is
+  // host.docker.internal (reachable only from inside a session container). A
+  // host-run client (laptop/desktop Claude Code) can't resolve that — it needs
+  // localhost. hostApi() rewrites the one to the other; we surface both so the
+  // operator copies the right one instead of hand-editing.
+  function mcpConfig(t: VaultToken, api: string): string {
     return JSON.stringify(
       {
         [`phantom-brain-${t.vault}`]: {
           command: 'pbrainctl',
           args: ['client', 'mcp'],
           env: {
-            CL_BRAIN_API: sessionURL,
+            CL_BRAIN_API: api,
             CL_BRAIN_API_TOKEN: t.token,
             CL_WORKSPACE_PROFILE: profile,
             CL_BRAIN_VAULT: t.vault,
@@ -125,6 +131,12 @@
       null,
       2,
     );
+  }
+
+  // The host-reachable endpoint: host.docker.internal only resolves inside a
+  // container, so swap it for localhost for a host-run MCP client.
+  function hostApi(): string {
+    return sessionURL.replace('host.docker.internal', 'localhost');
   }
 </script>
 
@@ -151,7 +163,7 @@
           {#if sessionURL}
             <div class="mem-row"><span class="mem-k">session url</span><code>{sessionURL}</code></div>
           {/if}
-          <p class="mem-hint">Per-vault bearer tokens — the token <em>is</em> the (profile, vault) scope. One MCP server per vault: reveal a token to get a ready-to-paste <code>phantom-brain-&lt;vault&gt;</code> server config. (The env var names repeat across vaults — the <em>token</em> differs, not the names.) Secret — treat like an API key.</p>
+          <p class="mem-hint">Per-vault bearer tokens — the token <em>is</em> the (profile, vault) scope. One MCP server per vault: reveal a token to get a ready-to-paste <code>phantom-brain-&lt;vault&gt;</code> server config in two flavors — <strong>host</strong> (<code>localhost</code>, for laptop/desktop Claude Code) and <strong>in-container</strong> (<code>host.docker.internal</code>, for a session agent). Copy the one matching where the client runs. (The env var names repeat across vaults — the <em>token</em> differs, not the names.) Secret — treat like an API key.</p>
           {#each vaultTokens as t (t.vault)}
             <div class="tok-item">
               <div class="tok-row">
@@ -163,10 +175,17 @@
               {#if revealed.has(t.vault)}
                 <div class="tok-env">
                   <div class="tok-env-head">
-                    <span>MCP server for {profile}/{t.vault}</span>
-                    <button class="tok-x" onclick={() => copyText(mcpConfig(t), 'MCP config')}>copy config</button>
+                    <span>{profile}/{t.vault} — host <span class="tok-note">(localhost, laptop/desktop)</span></span>
+                    <button class="tok-x" onclick={() => copyText(mcpConfig(t, hostApi()), 'host MCP config')}>copy config</button>
                   </div>
-                  <pre class="tok-pre">{mcpConfig(t)}</pre>
+                  <pre class="tok-pre">{mcpConfig(t, hostApi())}</pre>
+                  {#if sessionURL !== hostApi()}
+                    <div class="tok-env-head">
+                      <span>{profile}/{t.vault} — in-container <span class="tok-note">(session agent)</span></span>
+                      <button class="tok-x" onclick={() => copyText(mcpConfig(t, sessionURL), 'in-container MCP config')}>copy config</button>
+                    </div>
+                    <pre class="tok-pre">{mcpConfig(t, sessionURL)}</pre>
+                  {/if}
                 </div>
               {/if}
             </div>
@@ -202,7 +221,8 @@
   .tok-item { display: flex; flex-direction: column; gap: 4px; }
   .tok-row { display: flex; align-items: center; gap: 8px; font-size: 0.85em; }
   .tok-env { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 4px 90px; }
-  .tok-env-head { display: flex; align-items: center; justify-content: space-between; font-size: 0.75em; color: var(--color-text-tertiary); }
+  .tok-env-head { display: flex; align-items: center; justify-content: space-between; font-size: 0.75em; color: var(--color-text-tertiary); margin-top: 4px; }
+  .tok-note { color: var(--color-text-tertiary); opacity: 0.75; }
   .tok-pre {
     margin: 0; padding: 6px 8px; border-radius: var(--radius-md, 4px);
     background: var(--color-bg-secondary); border: 1px solid var(--color-border-primary);
