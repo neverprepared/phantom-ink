@@ -38,6 +38,8 @@ export function CreateAgent(arg1:brainbox.CreateAgentRequest):Promise<brainbox.A
 
 export function CreateArtifactFolder(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function CreateBrainSkill(arg1:string,arg2:string):Promise<brainbox.BrainSkillWriteResult>;
+
 export function CreateChannel(arg1:brainbox.CreateChannelRequest):Promise<brainbox.Channel>;
 
 export function CreatePlaybook(arg1:brainbox.CreatePlaybookRequest):Promise<brainbox.Playbook>;
@@ -51,6 +53,8 @@ export function DeleteAgent(arg1:string):Promise<void>;
 export function DeleteArtifactObject(arg1:string,arg2:string):Promise<void>;
 
 export function DeleteAutomationRule(arg1:string):Promise<void>;
+
+export function DeleteBrainSkill(arg1:string,arg2:string):Promise<brainbox.BrainSkillWriteResult>;
 
 export function DeleteBundleSource(arg1:string,arg2:string):Promise<void>;
 
@@ -127,6 +131,8 @@ export function GetArtifactsHealth():Promise<brainbox.ArtifactsHealth>;
 export function GetBrainProfile(arg1:string):Promise<brainbox.BrainProfileInfo>;
 
 export function GetBrainProfileTokens(arg1:string):Promise<brainbox.BrainProfileTokens>;
+
+export function GetBrainSkill(arg1:string,arg2:string):Promise<brainbox.BrainSkillDetail>;
 
 export function GetChannel(arg1:string):Promise<brainbox.Channel>;
 
@@ -255,6 +261,8 @@ export function ListAttention(arg1:string):Promise<Array<main.AttentionItem>>;
 export function ListAutomationRules(arg1:string):Promise<Array<main.AutomationRule>>;
 
 export function ListBackups():Promise<Array<string>>;
+
+export function ListBrainSkills(arg1:string):Promise<Array<brainbox.BrainSkill>>;
 
 export function ListBundleSources(arg1:string):Promise<Array<main.BundleSourceView>>;
 
@@ -461,6 +469,8 @@ export function TestRulePattern(arg1:Record<string, any>,arg2:number):Promise<br
 export function TriggerRule(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promise<brainbox.AgentDefinition>;
+
+export function UpdateBrainSkill(arg1:string,arg2:string,arg3:string):Promise<brainbox.BrainSkillWriteResult>;
 
 export function UpdatePlaybook(arg1:string,arg2:brainbox.UpdatePlaybookRequest):Promise<brainbox.Playbook>;
 

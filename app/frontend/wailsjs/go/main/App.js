@@ -70,6 +70,10 @@ export function CreateArtifactFolder(arg1, arg2, arg3) {
   return window['go']['main']['App']['CreateArtifactFolder'](arg1, arg2, arg3);
 }
 
+export function CreateBrainSkill(arg1, arg2) {
+  return window['go']['main']['App']['CreateBrainSkill'](arg1, arg2);
+}
+
 export function CreateChannel(arg1) {
   return window['go']['main']['App']['CreateChannel'](arg1);
 }
@@ -96,6 +100,10 @@ export function DeleteArtifactObject(arg1, arg2) {
 
 export function DeleteAutomationRule(arg1) {
   return window['go']['main']['App']['DeleteAutomationRule'](arg1);
+}
+
+export function DeleteBrainSkill(arg1, arg2) {
+  return window['go']['main']['App']['DeleteBrainSkill'](arg1, arg2);
 }
 
 export function DeleteBundleSource(arg1, arg2) {
@@ -248,6 +256,10 @@ export function GetBrainProfile(arg1) {
 
 export function GetBrainProfileTokens(arg1) {
   return window['go']['main']['App']['GetBrainProfileTokens'](arg1);
+}
+
+export function GetBrainSkill(arg1, arg2) {
+  return window['go']['main']['App']['GetBrainSkill'](arg1, arg2);
 }
 
 export function GetChannel(arg1) {
@@ -504,6 +516,10 @@ export function ListAutomationRules(arg1) {
 
 export function ListBackups() {
   return window['go']['main']['App']['ListBackups']();
+}
+
+export function ListBrainSkills(arg1) {
+  return window['go']['main']['App']['ListBrainSkills'](arg1);
 }
 
 export function ListBundleSources(arg1) {
@@ -916,6 +932,10 @@ export function TriggerRule(arg1, arg2, arg3) {
 
 export function UpdateAgent(arg1, arg2) {
   return window['go']['main']['App']['UpdateAgent'](arg1, arg2);
+}
+
+export function UpdateBrainSkill(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UpdateBrainSkill'](arg1, arg2, arg3);
 }
 
 export function UpdatePlaybook(arg1, arg2) {

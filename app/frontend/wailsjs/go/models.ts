@@ -362,6 +362,68 @@ export namespace brainbox {
 		    return a;
 		}
 	}
+	export class BrainSkill {
+	    name: string;
+	    title: string;
+	    sha: string;
+	    updated_at: string;
+	    tags: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new BrainSkill(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.title = source["title"];
+	        this.sha = source["sha"];
+	        this.updated_at = source["updated_at"];
+	        this.tags = source["tags"];
+	    }
+	}
+	export class BrainSkillDetail {
+	    name: string;
+	    title: string;
+	    body: string;
+	    sha: string;
+	    updated_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BrainSkillDetail(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.title = source["title"];
+	        this.body = source["body"];
+	        this.sha = source["sha"];
+	        this.updated_at = source["updated_at"];
+	    }
+	}
+	export class BrainSkillWriteResult {
+	    name: string;
+	    title: string;
+	    sha: string;
+	    created: boolean;
+	    replaced: number;
+	    deleted: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new BrainSkillWriteResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.title = source["title"];
+	        this.sha = source["sha"];
+	        this.created = source["created"];
+	        this.replaced = source["replaced"];
+	        this.deleted = source["deleted"];
+	    }
+	}
 	
 	export class BundleMeta {
 	    profile: string;

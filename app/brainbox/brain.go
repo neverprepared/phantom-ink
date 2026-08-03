@@ -88,3 +88,95 @@ func (c *Client) GetBrainProfileTokens(profile string) (BrainProfileTokens, erro
 	}
 	return res, nil
 }
+
+// Skills CRUD over the router's brain-authoritative skills facade
+// (/api/brain/profiles/{profile}/skills). The skills vault is the source of
+// truth; the router mints the vault token server-side. Identity is the skill's
+// frontmatter name. See phantom-router skills_crud for the semantics.
+
+// BrainSkill is one skill's list-view metadata (body omitted).
+type BrainSkill struct {
+	Name      string   `json:"name"`
+	Title     string   `json:"title"`
+	SHA       string   `json:"sha"`
+	UpdatedAt string   `json:"updated_at"`
+	Tags      []string `json:"tags"`
+}
+
+// BrainSkillDetail is one skill with its full SKILL.md body.
+type BrainSkillDetail struct {
+	Name      string `json:"name"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	SHA       string `json:"sha"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// BrainSkillWriteResult is the outcome of a create/update/delete. Fields are
+// populated per operation: create sets Created+SHA, update sets SHA+Replaced,
+// delete sets Deleted+Title.
+type BrainSkillWriteResult struct {
+	Name     string `json:"name"`
+	Title    string `json:"title"`
+	SHA      string `json:"sha"`
+	Created  bool   `json:"created"`
+	Replaced int    `json:"replaced"`
+	Deleted  int    `json:"deleted"`
+}
+
+type brainSkillsList struct {
+	Profile string       `json:"profile"`
+	Skills  []BrainSkill `json:"skills"`
+}
+
+// ListBrainSkills returns a profile's skills (metadata only, newest-wins).
+func (c *Client) ListBrainSkills(profile string) ([]BrainSkill, error) {
+	var res brainSkillsList
+	path := fmt.Sprintf("/api/brain/profiles/%s/skills", url.PathEscape(profile))
+	if err := c.get(path, &res); err != nil {
+		return nil, err
+	}
+	return res.Skills, nil
+}
+
+// GetBrainSkill returns one skill's full SKILL.md body by name.
+func (c *Client) GetBrainSkill(profile, name string) (BrainSkillDetail, error) {
+	var d BrainSkillDetail
+	path := fmt.Sprintf("/api/brain/profiles/%s/skills/%s", url.PathEscape(profile), url.PathEscape(name))
+	if err := c.get(path, &d); err != nil {
+		return BrainSkillDetail{}, err
+	}
+	return d, nil
+}
+
+// CreateBrainSkill creates a skill from a full SKILL.md body (name from its
+// frontmatter). Errors 409 if the name already exists.
+func (c *Client) CreateBrainSkill(profile, body string) (BrainSkillWriteResult, error) {
+	var res BrainSkillWriteResult
+	path := fmt.Sprintf("/api/brain/profiles/%s/skills", url.PathEscape(profile))
+	if err := c.post(path, map[string]string{"body": body}, &res); err != nil {
+		return BrainSkillWriteResult{}, err
+	}
+	return res, nil
+}
+
+// UpdateBrainSkill replaces a skill's body by name (upsert; prior versions are
+// forgotten). The body's frontmatter name must match name.
+func (c *Client) UpdateBrainSkill(profile, name, body string) (BrainSkillWriteResult, error) {
+	var res BrainSkillWriteResult
+	path := fmt.Sprintf("/api/brain/profiles/%s/skills/%s", url.PathEscape(profile), url.PathEscape(name))
+	if err := c.put(path, map[string]string{"body": body}, &res); err != nil {
+		return BrainSkillWriteResult{}, err
+	}
+	return res, nil
+}
+
+// DeleteBrainSkill hard-deletes every version of a skill by name.
+func (c *Client) DeleteBrainSkill(profile, name string) (BrainSkillWriteResult, error) {
+	var res BrainSkillWriteResult
+	path := fmt.Sprintf("/api/brain/profiles/%s/skills/%s", url.PathEscape(profile), url.PathEscape(name))
+	if err := c.delete(path, &res); err != nil {
+		return BrainSkillWriteResult{}, err
+	}
+	return res, nil
+}
