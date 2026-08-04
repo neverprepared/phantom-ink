@@ -202,6 +202,10 @@ export function EnqueueTask(arg1) {
   return window['go']['main']['App']['EnqueueTask'](arg1);
 }
 
+export function ExportBrainVault(arg1, arg2) {
+  return window['go']['main']['App']['ExportBrainVault'](arg1, arg2);
+}
+
 export function ExportSecretsTemplate(arg1) {
   return window['go']['main']['App']['ExportSecretsTemplate'](arg1);
 }
@@ -464,6 +468,10 @@ export function GetWidgetCount(arg1, arg2) {
 
 export function HeadArtifactObject(arg1, arg2) {
   return window['go']['main']['App']['HeadArtifactObject'](arg1, arg2);
+}
+
+export function ImportBrainVault(arg1, arg2) {
+  return window['go']['main']['App']['ImportBrainVault'](arg1, arg2);
 }
 
 export function ImportEnvFile() {

@@ -104,6 +104,8 @@ export function EnableLocalRunner(arg1:string):Promise<void>;
 
 export function EnqueueTask(arg1:main.EnqueueTaskRequest):Promise<string>;
 
+export function ExportBrainVault(arg1:string,arg2:string):Promise<string>;
+
 export function ExportSecretsTemplate(arg1:string):Promise<string>;
 
 export function FetchMetricUrl(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
@@ -235,6 +237,8 @@ export function GetTrust(arg1:string):Promise<brainbox.TrustConfig>;
 export function GetWidgetCount(arg1:string,arg2:string):Promise<number>;
 
 export function HeadArtifactObject(arg1:string,arg2:string):Promise<brainbox.ArtifactObjectHead>;
+
+export function ImportBrainVault(arg1:string,arg2:string):Promise<string>;
 
 export function ImportEnvFile():Promise<string>;
 
