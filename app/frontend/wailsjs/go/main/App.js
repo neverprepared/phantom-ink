@@ -554,6 +554,10 @@ export function ListHubTasks(arg1, arg2) {
   return window['go']['main']['App']['ListHubTasks'](arg1, arg2);
 }
 
+export function ListIntegrations() {
+  return window['go']['main']['App']['ListIntegrations']();
+}
+
 export function ListLiveLoops(arg1) {
   return window['go']['main']['App']['ListLiveLoops'](arg1);
 }
@@ -652,6 +656,10 @@ export function OpenLocalSession(arg1) {
 
 export function OutboxPending() {
   return window['go']['main']['App']['OutboxPending']();
+}
+
+export function PlaceIntegration(arg1, arg2, arg3) {
+  return window['go']['main']['App']['PlaceIntegration'](arg1, arg2, arg3);
 }
 
 export function PostChannelMessage(arg1, arg2) {
