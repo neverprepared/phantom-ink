@@ -6,6 +6,7 @@
   import { featureFlags, profileState } from '../stores.svelte';
   import Spinner from '../components/Spinner.svelte';
   import PlatformServicesCard from '../components/PlatformServicesCard.svelte';
+  import IntegrationsCard from '../components/IntegrationsCard.svelte';
   import DatabasesCard from '../components/DatabasesCard.svelte';
 
   interface Service {
@@ -248,6 +249,9 @@
 
   <!-- Platform service stack: status + start/stop/restart -->
   <PlatformServicesCard />
+
+  <!-- On-demand integrations (ADR-003): place compose stacks on fleet nodes -->
+  <IntegrationsCard />
 
   <!-- Platform database backup / restore -->
   <DatabasesCard />
