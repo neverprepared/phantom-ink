@@ -58,6 +58,7 @@ func hostAddrFromPorts(ports string) string {
 var platformWebUIs = map[string]string{
 	"minio":                 "http://localhost:9001",
 	"opensearch-dashboards": "http://localhost:5601",
+	"traefik":               "http://localhost:8090/dashboard/",
 }
 
 // platformComposeCtx returns the project's working dir + compose file, read off a
