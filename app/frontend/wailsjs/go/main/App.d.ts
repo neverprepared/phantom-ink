@@ -280,6 +280,8 @@ export function ListGatewayServers():Promise<Array<brainbox.GatewayServer>>;
 
 export function ListHubTasks(arg1:string,arg2:string):Promise<Array<main.HubTask>>;
 
+export function ListIntegrations():Promise<brainbox.IntegrationsList>;
+
 export function ListLiveLoops(arg1:string):Promise<Array<brainbox.LiveLoopSummary>>;
 
 export function ListLoopTemplates():Promise<Array<string>>;
@@ -329,6 +331,8 @@ export function MintProfileToken(arg1:string,arg2:Array<string>,arg3:string):Pro
 export function OpenLocalSession(arg1:string):Promise<void>;
 
 export function OutboxPending():Promise<number>;
+
+export function PlaceIntegration(arg1:string,arg2:string,arg3:string):Promise<main.IntegrationPlacementOutcome>;
 
 export function PostChannelMessage(arg1:string,arg2:brainbox.PostChannelMessageRequest):Promise<brainbox.ChannelMessage>;
 
