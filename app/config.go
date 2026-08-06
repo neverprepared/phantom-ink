@@ -20,6 +20,10 @@ const (
 	settingOTLPHost           = "otlp_host"
 	settingLocalRunnerEnabled = "local_runner_enabled"
 	settingLocalRunnerName    = "local_runner_name"
+	// settingPlatformNode names the fleet node whose runner drives the
+	// phantom-platform compose stack. Empty ⇒ manage the local docker daemon
+	// (app co-located with the platform, the original behaviour).
+	settingPlatformNode = "platform_node"
 	settingLocalRunnerWorkDir = "local_runner_work_dir"
 	settingLocalRunnerMachineID = "local_runner_machine_id"
 )

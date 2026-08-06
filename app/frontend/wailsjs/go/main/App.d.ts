@@ -192,6 +192,8 @@ export function GetOrchestrationZones(arg1:string):Promise<brainbox.Orchestratio
 
 export function GetPlatform():Promise<string>;
 
+export function GetPlatformNode():Promise<string>;
+
 export function GetPlaybook(arg1:string):Promise<brainbox.Playbook>;
 
 export function GetProfileBundleMeta(arg1:string):Promise<brainbox.BundleMeta>;
@@ -291,6 +293,8 @@ export function ListOllamaModels():Promise<Array<brainbox.OllamaModel>>;
 export function ListPlatformDatabases():Promise<Array<main.DatabaseInfo>>;
 
 export function ListPlatformExternals():Promise<Array<main.PlatformExternal>>;
+
+export function ListPlatformNodes():Promise<Array<brainbox.PlatformNode>>;
 
 export function ListPlatformServices():Promise<Array<main.PlatformService>>;
 
@@ -429,6 +433,8 @@ export function SetGatewayServerEnabled(arg1:string,arg2:boolean):Promise<void>;
 export function SetHiddenProfiles(arg1:Array<string>):Promise<void>;
 
 export function SetOTLPHost(arg1:string):Promise<void>;
+
+export function SetPlatformNode(arg1:string):Promise<void>;
 
 export function SetProfileColor(arg1:string,arg2:string):Promise<void>;
 

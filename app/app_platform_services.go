@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+
+	"phantom-ink/brainbox"
 )
 
 // The phantom-platform compose project — the decomposed service stack the app
@@ -81,8 +83,47 @@ func (a *App) platformComposeCtx() (workdir, configFile string, err error) {
 	return "", "", fmt.Errorf("no running %s containers found", platformProject)
 }
 
+// platformNode returns the configured remote platform node ("" ⇒ manage local
+// docker). When set, Platform Services operations route through the router →
+// that node's runner, so the app can manage a platform it isn't co-located with.
+func (a *App) platformNode() string {
+	if a.db == nil {
+		return ""
+	}
+	return a.db.GetSetting(settingPlatformNode, "")
+}
+
+// ListPlatformNodes returns docker-capable fleet nodes eligible to host the
+// platform stack (for the Settings picker). Requires a configured router.
+func (a *App) ListPlatformNodes() ([]brainbox.PlatformNode, error) {
+	if a.client == nil {
+		return nil, fmt.Errorf("not connected to a platform API")
+	}
+	res, err := a.client.ListPlatformNodes()
+	if err != nil {
+		return nil, err
+	}
+	return res.Nodes, nil
+}
+
 // ListPlatformServices lists the platform compose services with their state.
+// Routes through the runner on the configured platform node, or the local
+// docker daemon when no node is set.
 func (a *App) ListPlatformServices() ([]PlatformService, error) {
+	if node := a.platformNode(); node != "" {
+		res, err := a.client.ListPlatformServicesOn(node)
+		if err != nil {
+			return nil, err
+		}
+		svcs := make([]PlatformService, 0, len(res.Services))
+		for _, s := range res.Services {
+			svcs = append(svcs, PlatformService{
+				Name: s.Name, State: s.State, Status: s.Status, Health: s.Health,
+				OneShot: s.OneShot, Addr: s.Addr, WebURL: s.WebURL,
+			})
+		}
+		return svcs, nil
+	}
 	out, err := exec.Command("docker", "ps", "-a",
 		"--filter", "label=com.docker.compose.project="+platformProject,
 		"--format", `{{.Label "com.docker.compose.service"}}	{{.State}}	{{.Status}}	{{.Ports}}`,
@@ -168,17 +209,41 @@ func (a *App) ListPlatformExternals() []PlatformExternal {
 }
 
 // StartPlatformService (re)creates + starts a service (revives removed/stopped ones).
-func (a *App) StartPlatformService(name string) error { return a.composeAction("up", "-d", name) }
+func (a *App) StartPlatformService(name string) error { return a.platformAction("up", name) }
 
 // StopPlatformService stops a service (container kept, revivable via Start).
-func (a *App) StopPlatformService(name string) error { return a.composeAction("stop", name) }
+func (a *App) StopPlatformService(name string) error { return a.platformAction("stop", name) }
 
 // RestartPlatformService restarts a service. NOTE: restarting `router` briefly
 // drops the app's own connection to the platform.
-func (a *App) RestartPlatformService(name string) error { return a.composeAction("restart", name) }
+func (a *App) RestartPlatformService(name string) error { return a.platformAction("restart", name) }
 
 // RestartAllPlatformServices restarts the whole stack.
-func (a *App) RestartAllPlatformServices() error { return a.composeAction("restart") }
+func (a *App) RestartAllPlatformServices() error { return a.platformAction("restart", "") }
+
+// platformAction runs up|stop|restart on the configured platform node's runner
+// (whole stack when service is ""), or the local docker daemon when no node is
+// set. `up` maps to `docker compose up -d`.
+func (a *App) platformAction(action, service string) error {
+	if node := a.platformNode(); node != "" {
+		res, err := a.client.PlatformActionOn(node, action, service)
+		if err != nil {
+			return err
+		}
+		if !res.OK {
+			return fmt.Errorf("%s", strings.TrimSpace(res.Output))
+		}
+		return nil
+	}
+	args := []string{action}
+	if action == "up" {
+		args = append(args, "-d")
+	}
+	if service != "" {
+		args = append(args, service)
+	}
+	return a.composeAction(args...)
+}
 
 // composeAction runs `docker compose <args>` scoped to the discovered platform
 // project. `name` (when passed via args) targets one service; omit it for the stack.
