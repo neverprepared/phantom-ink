@@ -240,6 +240,21 @@ class StreamLiveStore {
     }
   }
 
+  // Debounced attention refresh. Every agent:event might be a
+  // failed/blocked/needs_action delta, but attentionStore.refresh() is a full
+  // ListAttention round-trip that reassigns _attention $state and re-runs every
+  // consumer (sidebar badge, dashboard action items, this panel). On a burst
+  // that is a lot of cross-panel re-render churn for redundant reloads, so
+  // coalesce a burst into one refresh. The 5s attention poll is the backstop.
+  private attnTimer: ReturnType<typeof setTimeout> | null = null;
+  private nudgeAttention(): void {
+    if (this.attnTimer !== null) return; // trailing edge already scheduled
+    this.attnTimer = setTimeout(() => {
+      this.attnTimer = null;
+      void attentionStore.refresh();
+    }, 600);
+  }
+
   // Apply one bus envelope delta into the live list without a full reload.
   // Matches the brainbox upsert semantics: same id mutates in place; new ids
   // append; terminal/done statuses drop off the live view.
@@ -254,8 +269,8 @@ class StreamLiveStore {
     const retainStatuses = this.liveFilters.statuses.length ? this.liveFilters.statuses : LIVE_STATUS_LIST;
     const retain = retainStatuses.includes(env.status);
 
-    // Always nudge attention — it might be a failed/blocked/needs_action delta.
-    void attentionStore.refresh();
+    // Nudge attention (debounced) — this delta might change the attention set.
+    this.nudgeAttention();
 
     const idx = this.live.findIndex((i) => i.id === env.id);
     if (!retain) {
