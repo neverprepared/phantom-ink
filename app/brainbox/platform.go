@@ -57,6 +57,25 @@ func (c *Client) ListPlatformServicesOn(node string) (PlatformServicesResponse, 
 	return out, err
 }
 
+// RemoteDatabase is one per-service database on the platform postgres.
+type RemoteDatabase struct {
+	Name string `json:"name"`
+	Size string `json:"size"`
+}
+
+// PlatformDatabasesResponse is the GET /api/platform/{node}/databases response.
+type PlatformDatabasesResponse struct {
+	Node      string           `json:"node"`
+	Databases []RemoteDatabase `json:"databases"`
+}
+
+// ListPlatformDatabasesOn returns the platform postgres databases on a node.
+func (c *Client) ListPlatformDatabasesOn(node string) (PlatformDatabasesResponse, error) {
+	var out PlatformDatabasesResponse
+	err := c.get("/api/platform/"+node+"/databases", &out)
+	return out, err
+}
+
 // PlatformActionOn runs up|stop|restart on a node — whole stack when service is "".
 func (c *Client) PlatformActionOn(node, action, service string) (PlatformActionResult, error) {
 	var out PlatformActionResult

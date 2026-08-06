@@ -41,8 +41,20 @@ func (a *App) platformPostgresContainer() (string, error) {
 }
 
 // ListPlatformDatabases lists the per-service databases on the platform Postgres,
-// excluding template/admin databases and throwaway _test databases.
+// excluding template/admin databases and throwaway _test databases. Routes
+// through the configured platform node's runner, or local docker when unset.
 func (a *App) ListPlatformDatabases() ([]DatabaseInfo, error) {
+	if node := a.platformNode(); node != "" {
+		res, err := a.client.ListPlatformDatabasesOn(node)
+		if err != nil {
+			return nil, err
+		}
+		dbs := make([]DatabaseInfo, 0, len(res.Databases))
+		for _, d := range res.Databases {
+			dbs = append(dbs, DatabaseInfo{Name: d.Name, Size: d.Size})
+		}
+		return dbs, nil
+	}
 	cid, err := a.platformPostgresContainer()
 	if err != nil {
 		return nil, err
@@ -76,6 +88,9 @@ func (a *App) ListPlatformDatabases() ([]DatabaseInfo, error) {
 // BackupDatabase dumps one database to a user-chosen file using pg_dump custom
 // format (compressed and restorable via pg_restore). Returns the saved path.
 func (a *App) BackupDatabase(db string) (string, error) {
+	if a.platformNode() != "" {
+		return "", fmt.Errorf("backup isn't available for a remote platform node yet — run pg_dump on the platform host, or clear the platform node in Settings to manage a local stack")
+	}
 	cid, err := a.platformPostgresContainer()
 	if err != nil {
 		return "", err
@@ -112,6 +127,9 @@ func (a *App) BackupDatabase(db string) (string, error) {
 // on ignorable warnings (--clean against a populated DB), so the raw output is
 // surfaced rather than treated as a hard failure — the caller reviews it.
 func (a *App) RestoreDatabase(db string) (string, error) {
+	if a.platformNode() != "" {
+		return "", fmt.Errorf("restore isn't available for a remote platform node yet — run pg_restore on the platform host, or clear the platform node in Settings to manage a local stack")
+	}
 	cid, err := a.platformPostgresContainer()
 	if err != nil {
 		return "", err
