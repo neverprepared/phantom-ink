@@ -378,6 +378,10 @@ export function GetPlatform() {
   return window['go']['main']['App']['GetPlatform']();
 }
 
+export function GetPlatformNode() {
+  return window['go']['main']['App']['GetPlatformNode']();
+}
+
 export function GetPlaybook(arg1) {
   return window['go']['main']['App']['GetPlaybook'](arg1);
 }
@@ -576,6 +580,10 @@ export function ListPlatformDatabases() {
 
 export function ListPlatformExternals() {
   return window['go']['main']['App']['ListPlatformExternals']();
+}
+
+export function ListPlatformNodes() {
+  return window['go']['main']['App']['ListPlatformNodes']();
 }
 
 export function ListPlatformServices() {
@@ -852,6 +860,10 @@ export function SetHiddenProfiles(arg1) {
 
 export function SetOTLPHost(arg1) {
   return window['go']['main']['App']['SetOTLPHost'](arg1);
+}
+
+export function SetPlatformNode(arg1) {
+  return window['go']['main']['App']['SetPlatformNode'](arg1);
 }
 
 export function SetProfileColor(arg1, arg2) {

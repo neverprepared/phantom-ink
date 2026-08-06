@@ -38,6 +38,11 @@
   let otlpHost = $state('');
   let savingOTLP = $state(false);
 
+  // --- Platform node (which runner drives the platform stack) ---
+  let platformNode = $state('');
+  let platformNodes = $state<{ name: string; host: string }[]>([]);
+  let savingPlatformNode = $state(false);
+
   // --- Local Runner ---
   type LocalRunnerStatus = { enabled: boolean; running: boolean; name: string; work_dir: string };
   let runnerStatus = $state<LocalRunnerStatus>({ enabled: false, running: false, name: 'local-mac', work_dir: '' });
@@ -67,6 +72,11 @@
       runnerStatus = rs ?? runnerStatus;
       runnerName = rs?.name ?? 'local-mac';
       applyTheme(theme);
+      // Platform node (best-effort — needs a reachable router for the node list).
+      try {
+        platformNode = (await a.GetPlatformNode()) ?? '';
+        platformNodes = (await a.ListPlatformNodes()) ?? [];
+      } catch { /* router not reachable yet; leave picker empty */ }
     } catch (err: any) {
       notifications.error(`Failed to load settings: ${err?.message ?? err}`);
     } finally {
@@ -143,6 +153,22 @@
       notifications.error(`Failed to save observability settings: ${err}`);
     } finally {
       savingOTLP = false;
+    }
+  }
+
+  async function handleSavePlatformNode() {
+    savingPlatformNode = true;
+    const a = await getApi();
+    if (!a) { savingPlatformNode = false; return; }
+    try {
+      await a.SetPlatformNode(platformNode);
+      notifications.success(platformNode
+        ? `Platform managed via node "${platformNode}"`
+        : 'Platform managed via local Docker');
+    } catch (err: any) {
+      notifications.error(`Failed to save platform node: ${err}`);
+    } finally {
+      savingPlatformNode = false;
     }
   }
 
@@ -314,6 +340,31 @@
         <div class="form-actions">
           <button class="btn-save" onclick={handleSaveOTLP} disabled={savingOTLP}>
             {savingOTLP ? 'saving...' : 'save observability settings'}
+          </button>
+        </div>
+      </div>
+
+      <!-- Platform node -->
+      <div class="section">
+        <h2>platform node</h2>
+        <p class="hint" style="margin-bottom: 14px;">which node's runner drives the <code>phantom-platform</code> stack (start/stop/status in Services). Leave as <em>local Docker</em> when the app runs on the platform box; pick a node to manage a remote platform via its runner.</p>
+
+        <div class="field">
+          <label for="platform-node">Node</label>
+          <select id="platform-node" bind:value={platformNode}>
+            <option value="">local Docker (this machine)</option>
+            {#each platformNodes as n}
+              <option value={n.name}>{n.name}{n.host ? ` (${n.host})` : ''}</option>
+            {/each}
+            {#if platformNode && !platformNodes.some((n) => n.name === platformNode)}
+              <option value={platformNode}>{platformNode} (not currently registered)</option>
+            {/if}
+          </select>
+        </div>
+
+        <div class="form-actions">
+          <button class="btn-save" onclick={handleSavePlatformNode} disabled={savingPlatformNode}>
+            {savingPlatformNode ? 'saving...' : 'save platform node'}
           </button>
         </div>
       </div>

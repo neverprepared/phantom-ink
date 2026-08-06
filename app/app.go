@@ -563,6 +563,24 @@ func (a *App) SetOTLPHost(host string) error {
 	return a.db.SetSetting(settingOTLPHost, host)
 }
 
+// GetPlatformNode returns the fleet node whose runner drives the platform stack
+// ("" ⇒ manage the local docker daemon).
+func (a *App) GetPlatformNode() string {
+	if a.db == nil {
+		return ""
+	}
+	return a.db.GetSetting(settingPlatformNode, "")
+}
+
+// SetPlatformNode persists which node hosts the platform. When set, Platform
+// Services operations route through the router → that node's runner.
+func (a *App) SetPlatformNode(node string) error {
+	if a.db == nil {
+		return nil
+	}
+	return a.db.SetSetting(settingPlatformNode, strings.TrimSpace(node))
+}
+
 // BrowseFolder opens a native folder selection dialog and returns the path.
 func (a *App) BrowseFolder() (string, error) {
 	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{

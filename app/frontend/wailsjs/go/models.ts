@@ -1449,6 +1449,20 @@ export namespace brainbox {
 	        this.zone = source["zone"];
 	    }
 	}
+	export class PlatformNode {
+	    name: string;
+	    host: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PlatformNode(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.host = source["host"];
+	    }
+	}
 	export class PlaybookTask {
 	    id: string;
 	    index: number;
