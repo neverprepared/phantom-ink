@@ -108,6 +108,32 @@ _secret CLAUDE_MODEL
 _secret CLAUDE_EFFORT
 _secret ANTHROPIC_BASE_URL
 
+# --- ADR-004: live Claude credential pull (preferred over baked .claude.enc) ---
+# Pull a FRESH OAuth credential from the router at startup so authentication
+# decouples from the image's bake time. The router is the sole broker reader; it
+# applies the TTL floor and fails closed. On any non-200 (live creds off, none
+# stored, below TTL floor, broker down, no token) we KEEP the baked credential —
+# so this is strictly additive and safe to ship flag-gated. Uses the same
+# BRAINBOX_TOKEN / BRAINBOX_HUB_URL the task fetch already relies on.
+_bb_token="$(cat "${HOME}/.agent-token" 2>/dev/null || echo "${BRAINBOX_TOKEN:-}")"
+_bb_hub="${BRAINBOX_HUB_URL_PUBLIC:-${BRAINBOX_HUB_URL:-}}"
+if [ -n "$_bb_token" ] && [ -n "$_bb_hub" ]; then
+    _cred_tmp="$(mktemp)"
+    _code="$(curl -s -o "$_cred_tmp" -w '%{http_code}' --max-time 10 \
+        -H "Authorization: Bearer $_bb_token" \
+        "$_bb_hub/api/session-store/claude-credentials" 2>/dev/null || echo 000)"
+    if [ "$_code" = "200" ] && [ -s "$_cred_tmp" ] \
+       && python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$_cred_tmp" 2>/dev/null; then
+        mkdir -p "$HOME/.claude"
+        cp -f "$_cred_tmp" "$HOME/.claude/.credentials.json"
+        chmod 600 "$HOME/.claude/.credentials.json"
+        echo "ttyd-wrapper: using LIVE Claude credential from broker (ADR-004)" >&2
+    else
+        echo "ttyd-wrapper: live credential unavailable (HTTP $_code) — using baked credential" >&2
+    fi
+    rm -f "$_cred_tmp"
+fi
+
 # Attach to existing session, or create new one
 if tmux has-session -t main 2>/dev/null; then
     exec tmux attach -t main
