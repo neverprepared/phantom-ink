@@ -124,8 +124,15 @@ func (c *Client) sumOfMetric(ctx context.Context, name, since, workspace string)
 	return out.Aggregations.Total.Value, nil
 }
 
-// countAndAvgLatency runs a count + avg(duration_ms) over api_request log
-// events, optionally constrained to a workspace.
+// countAndAvgLatency counts api_request log events and averages their
+// duration_ms, optionally constrained to a workspace. The two are queried
+// SEPARATELY on purpose: log.attributes.duration_ms is dynamically mapped as
+// text on some daily indices, so an avg agg over it throws an
+// illegal_argument_exception on those shards. OpenSearch answers such a partial
+// failure with HTTP 200 + a truncated hits.total (only the surviving shards),
+// which would silently zero the request count if count and avg shared one query.
+// Count therefore runs agg-free (authoritative); latency is best-effort and
+// tolerates the shard failure (falls back to 0 until the mapping is corrected).
 func (c *Client) countAndAvgLatency(ctx context.Context, since, workspace string) (int64, float64, error) {
 	must := []any{
 		map[string]any{"term": map[string]any{
@@ -134,23 +141,31 @@ func (c *Client) countAndAvgLatency(ctx context.Context, since, workspace string
 		map[string]any{"range": map[string]any{"time": map[string]any{"gte": since}}},
 	}
 	must = append(must, workspaceFilter(workspace)...)
-	body := map[string]any{
+	query := map[string]any{"bool": map[string]any{"must": must}}
+
+	var cnt aggAvgCountResp
+	if err := c.search(ctx, "logs-otel-*", map[string]any{
 		"size":             0,
 		"track_total_hits": true,
-		"query":            map[string]any{"bool": map[string]any{"must": must}},
+		"query":            query,
+	}, &cnt); err != nil {
+		return 0, 0, err
+	}
+
+	var lat aggAvgCountResp
+	// Best-effort: a mapping-conflict shard failure here must not fail the card.
+	_ = c.search(ctx, "logs-otel-*", map[string]any{
+		"size":  0,
+		"query": query,
 		"aggs": map[string]any{
 			"avg": map[string]any{"avg": map[string]any{"field": "log.attributes.duration_ms"}},
 		},
-	}
-	var out aggAvgCountResp
-	if err := c.search(ctx, "logs-otel-*", body, &out); err != nil {
-		return 0, 0, err
-	}
+	}, &lat)
 	var avg float64
-	if out.Aggregations.Avg.Value != nil {
-		avg = *out.Aggregations.Avg.Value
+	if lat.Aggregations.Avg.Value != nil {
+		avg = *lat.Aggregations.Avg.Value
 	}
-	return out.Hits.Total.Value, avg, nil
+	return cnt.Hits.Total.Value, avg, nil
 }
 
 // hasWorkspaceData returns true when ≥1 doc in the last 24h carries the given

@@ -84,7 +84,16 @@ otel-logs:
                   "time": { "type": "date", "format": "strict_date_time" },
                   "observedTime": { "type": "date", "format": "strict_date_time" },
                   "severityText": { "type": "keyword" },
-                  "body": { "type": "text" }
+                  "body": { "type": "text" },
+                  "log": {
+                    "properties": {
+                      "attributes": {
+                        "properties": {
+                          "duration_ms": { "type": "long" }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
