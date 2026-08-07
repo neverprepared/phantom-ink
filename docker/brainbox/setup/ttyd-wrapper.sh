@@ -54,6 +54,25 @@ if [ -f "$HOME/.claude/.claude.json" ]; then
     cp -f "$HOME/.claude/.claude.json" "$HOME/.claude.json"
 fi
 
+# Re-assert onboarding + Bypass-Permissions acceptance AFTER the profile config
+# is in place. The decrypted host config (claude_json from .claude.enc) does NOT
+# carry these flags, so it overwrites the ones baked into the image — and a
+# `claude --dangerously-skip-permissions` launch then stalls on the interactive
+# "Bypass Permissions" warning, which is fatal for a headless session. Merge the
+# flags back in (preserving oauthAccount and everything else) on both the file
+# Claude reads (~/.claude.json) and the canonical copy.
+for _cfg in "$HOME/.claude.json" "$HOME/.claude/.claude.json"; do
+    if [ -f "$_cfg" ] && command -v jq >/dev/null 2>&1; then
+        _tmp="$(mktemp)" || continue
+        if jq '. + {hasCompletedOnboarding:true,bypassPermissionsModeAccepted:true}' \
+               "$_cfg" > "$_tmp" 2>/dev/null; then
+            mv "$_tmp" "$_cfg"
+        else
+            rm -f "$_tmp"
+        fi
+    fi
+done
+
 # Decrypt Codex credentials (ChatGPT OAuth) if the image contains an encrypted
 # bundle. Codex reads ~/.codex/auth.json; without it a codex session aborts at
 # startup because ~/.codex does not exist. Create the dir and write the auth
