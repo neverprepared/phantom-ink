@@ -115,23 +115,37 @@ _secret ANTHROPIC_BASE_URL
 # stored, below TTL floor, broker down, no token) we KEEP the baked credential —
 # so this is strictly additive and safe to ship flag-gated. Uses the same
 # BRAINBOX_TOKEN / BRAINBOX_HUB_URL the task fetch already relies on.
+# We content-validate the body (top-level "claudeAiOauth" object, the real
+# .credentials.json shape) before overwriting, so a well-formed-but-wrong 200
+# (e.g. {} or an error envelope) can never clobber a working baked credential.
 _bb_token="$(cat "${HOME}/.agent-token" 2>/dev/null || echo "${BRAINBOX_TOKEN:-}")"
 _bb_hub="${BRAINBOX_HUB_URL_PUBLIC:-${BRAINBOX_HUB_URL:-}}"
 if [ -n "$_bb_token" ] && [ -n "$_bb_hub" ]; then
-    _cred_tmp="$(mktemp)"
-    _code="$(curl -s -o "$_cred_tmp" -w '%{http_code}' --max-time 10 \
-        -H "Authorization: Bearer $_bb_token" \
-        "$_bb_hub/api/session-store/claude-credentials" 2>/dev/null || echo 000)"
-    if [ "$_code" = "200" ] && [ -s "$_cred_tmp" ] \
-       && python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$_cred_tmp" 2>/dev/null; then
-        mkdir -p "$HOME/.claude"
-        cp -f "$_cred_tmp" "$HOME/.claude/.credentials.json"
-        chmod 600 "$HOME/.claude/.credentials.json"
-        echo "ttyd-wrapper: using LIVE Claude credential from broker (ADR-004)" >&2
-    else
-        echo "ttyd-wrapper: live credential unavailable (HTTP $_code) — using baked credential" >&2
+    # Stage the download inside ~/.claude (0700), never a world-sticky /tmp, and
+    # trap-clean it — so the plaintext OAuth credential can't be read by another
+    # UID nor leak if the wrapper is hard-killed mid-startup (the platform's stop
+    # model SIGTERMs the container routinely). Publish with an atomic `mv`, not a
+    # `cp`: this block runs on BOTH the create and the reattach path (kept so a
+    # long-lived session refreshes its credential), so a reattached, already-running
+    # claude must never observe a half-written file.
+    mkdir -p "$HOME/.claude"
+    chmod 700 "$HOME/.claude" 2>/dev/null || true
+    _cred_tmp="$(mktemp "$HOME/.claude/.cred.XXXXXX" 2>/dev/null || echo "")"
+    if [ -n "$_cred_tmp" ]; then
+        trap 'rm -f "$_cred_tmp"' EXIT
+        _code="$(curl -s -o "$_cred_tmp" -w '%{http_code}' --max-time 10 \
+            -H "Authorization: Bearer $_bb_token" \
+            "$_bb_hub/api/session-store/claude-credentials" 2>/dev/null || echo 000)"
+        if [ "$_code" = "200" ] && [ -s "$_cred_tmp" ] \
+           && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if isinstance(d.get('claudeAiOauth'), dict) else 1)" "$_cred_tmp" 2>/dev/null; then
+            chmod 600 "$_cred_tmp"
+            mv -f "$_cred_tmp" "$HOME/.claude/.credentials.json"
+            echo "ttyd-wrapper: using LIVE Claude credential from broker (ADR-004)" >&2
+        else
+            echo "ttyd-wrapper: live credential unavailable (HTTP $_code) — using baked credential" >&2
+            rm -f "$_cred_tmp"
+        fi
     fi
-    rm -f "$_cred_tmp"
 fi
 
 # Attach to existing session, or create new one
