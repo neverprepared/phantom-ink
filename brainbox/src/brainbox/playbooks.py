@@ -16,11 +16,10 @@ import re
 from pathlib import Path
 from typing import Callable
 
-import httpx
-
-from .config import settings
+from .llm import CallCtx, CompletionPolicy
+from .llm import complete as llm_complete
 from .log import get_logger
-from .models import Playbook, PlaybookTask
+from .models import ModelTarget, Playbook, PlaybookTask
 
 log = get_logger()
 
@@ -241,50 +240,31 @@ async def _run_task(pb: Playbook, task: PlaybookTask, *, run_profile: str = "glo
     _emit("playbook.task_started", {"playbook_id": pb.id, "task_id": task.id})
     log.info("playbook.task_started", metadata={"playbook": pb.id, "task": task.index, "session": session_name, "runner": run_runner})
 
-    api_key = _load_api_key()
-    base_url = f"http://localhost:{settings.api_port}"
+    # Run the task through the LLM-request seam. A playbook task is arbitrary
+    # instruction work that may use tools, so it routes to the session-backed
+    # `claude_oauth` backend (quality=high, allow_paid off → free/subscription).
+    # The seam owns create → (wait) → query → stop → delete; we pass the stable
+    # session_name so it stays visible in the Tasks panel.
+    workspace_home = (
+        _resolve_workspace_home(run_profile) if run_profile and run_profile != "global" else None
+    )
 
     try:
-        async with httpx.AsyncClient(base_url=base_url, timeout=600) as client:
-            headers = {"X-API-Key": api_key}
-
-            # Create fresh worker session with the runtime profile context
-            create_body: dict = {"name": session_name}
-            if run_profile and run_profile != "global":
-                create_body["workspace_profile"] = run_profile
-                # Resolve workspace_home from profile name so mounts are correct
-                workspace_home = _resolve_workspace_home(run_profile)
-                if workspace_home:
-                    create_body["workspace_home"] = workspace_home
-            if run_runner:
-                create_body["runner"] = run_runner
-            resp = await client.post("/api/create", json=create_body, headers=headers)
-            resp.raise_for_status()
-
-            try:
-                # Runner-backed sessions signal readiness via session.exec;
-                # no container tmux setup needed — skip the wait entirely.
-                if not run_runner:
-                    await _wait_for_session(client, session_name, api_key)
-
-                # Send the task prompt
-                resp = await client.post(
-                    f"/api/sessions/{session_name}/query",
-                    json={"prompt": task.content, "timeout": 300},
-                    headers=headers,
-                )
-                resp.raise_for_status()
-                body = resp.json()
-                task.output = body.get("output") or body.get("response", "")
-                task.status = "completed"
-
-            finally:
-                # Clean up ephemeral session
-                try:
-                    await client.post("/api/stop", json={"name": session_name}, headers=headers)
-                    await client.post("/api/delete", json={"name": session_name}, headers=headers)
-                except Exception as cleanup_exc:
-                    log.warning("playbook.session_cleanup_failed", metadata={"session": session_name, "reason": str(cleanup_exc)})
+        comp = await llm_complete(
+            task.content,
+            profile=run_profile,
+            target=ModelTarget(provider="claude"),
+            policy=CompletionPolicy(quality="high"),
+            ctx=CallCtx(
+                caller="playbooks",
+                runner=run_runner,
+                workspace_home=workspace_home,
+                session_name=session_name,
+                timeout=300,
+            ),
+        )
+        task.output = comp.text
+        task.status = "completed"
 
     except asyncio.CancelledError:
         task.status = "failed"
@@ -298,57 +278,6 @@ async def _run_task(pb: Playbook, task: PlaybookTask, *, run_profile: str = "glo
         from .models import _now_ms as _ms
         task.finished_at = _ms()
         _emit("playbook.task_done", {"playbook_id": pb.id, "task_id": task.id, "status": task.status})
-
-
-async def _wait_for_session(client: httpx.AsyncClient, session_name: str, api_key: str, max_wait: int = 120) -> None:
-    """Poll until Claude Code's tmux session is ready inside the container."""
-    headers = {"X-API-Key": api_key}
-    deadline = asyncio.get_event_loop().time() + max_wait
-    tmux_started = False
-
-    while asyncio.get_event_loop().time() < deadline:
-        try:
-            resp = await client.post(
-                f"/api/sessions/{session_name}/exec",
-                json={"command": "echo alive"},
-                headers=headers,
-            )
-            if resp.status_code != 200:
-                await asyncio.sleep(3)
-                continue
-
-            if not tmux_started:
-                await client.post(
-                    f"/api/sessions/{session_name}/exec",
-                    json={"command": "tmux has-session -t main 2>/dev/null || tmux new-session -d -s main 'claude --dangerously-skip-permissions'"},
-                    headers=headers,
-                )
-                tmux_started = True
-                await asyncio.sleep(5)
-
-            resp = await client.post(
-                f"/api/sessions/{session_name}/exec",
-                json={"command": "tmux has-session -t main 2>/dev/null && echo claude_ready || echo waiting"},
-                headers=headers,
-            )
-            if resp.status_code == 200:
-                output = resp.json().get("output", "")
-                if "claude_ready" in output:
-                    return
-
-        except Exception:
-            pass
-
-        await asyncio.sleep(3)
-
-    raise TimeoutError(f"Session '{session_name}' did not become ready within {max_wait}s")
-
-
-def _load_api_key() -> str:
-    try:
-        return settings.api_key_file.read_text().strip()
-    except FileNotFoundError:
-        return ""
 
 
 def _resolve_workspace_home(profile_name: str) -> str | None:
