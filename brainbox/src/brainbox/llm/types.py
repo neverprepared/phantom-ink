@@ -80,7 +80,9 @@ class CallCtx:
     # --- session-backed (claude_oauth) knobs; ignored by stateless backends ---
     runner: str | None = None          # route the ephemeral session to a runner
     workspace_home: str | None = None  # mount context for the ephemeral session
-    session_prefix: str = "llm"        # ephemeral session-name prefix
+    session_prefix: str = "llm"        # ephemeral session-name prefix (when session_name unset)
+    session_name: str | None = None    # explicit ephemeral session name (verbatim); callers that
+                                       # track the name (e.g. playbooks) pass it so it stays stable
 
 
 class LlmCompletionRecord(BaseModel):
