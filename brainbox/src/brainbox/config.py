@@ -383,6 +383,36 @@ class OpenSearchSettings(BaseSettings):
         return len(self.addresses) > 0
 
 
+class LlmSettings(BaseSettings):
+    """The LLM-request plane (``brainbox.llm`` seam) — stateless completions.
+
+    Distinct from the OAuth *session* plane: API keys live HERE and never enter
+    a session container. ``allow_paid_default`` is the platform-wide default for
+    ``CompletionPolicy.allow_paid`` and defaults **off** — paid backends
+    (``claude_api``) run only when a caller explicitly opts in, protecting the
+    "subscription, not per-token" cost model.
+
+    ``anthropic_api_key`` is the Phase-1 key source (injected via ``brainbox.env``
+    like every other ``CL_`` secret). Per-profile broker sourcing is a later
+    refinement injected through ``ClaudeApiBackend``'s key-provider seam; it does
+    not change this field.
+
+    ``cost_per_mtok_*`` default to 0.0 — set them (approx per-model $/1M tokens)
+    to populate ``cost_estimate_usd`` on metering records. Token counts are always
+    recorded regardless; only the dollar estimate is gated on these rates so we
+    never bake a stale published price into the code.
+    """
+
+    allow_paid_default: bool = False           # CL_LLM__ALLOW_PAID_DEFAULT
+    anthropic_api_key: str = ""                 # CL_LLM__ANTHROPIC_API_KEY
+    anthropic_base_url: str = "https://api.anthropic.com"  # CL_LLM__ANTHROPIC_BASE_URL
+    anthropic_version: str = "2023-06-01"       # CL_LLM__ANTHROPIC_VERSION
+    claude_api_model: str = "claude-opus-4-8"   # CL_LLM__CLAUDE_API_MODEL (default when target.model unset)
+    claude_api_max_tokens: int = 4096           # CL_LLM__CLAUDE_API_MAX_TOKENS
+    cost_per_mtok_in: float = 0.0               # CL_LLM__COST_PER_MTOK_IN (approx; 0 = disabled)
+    cost_per_mtok_out: float = 0.0              # CL_LLM__COST_PER_MTOK_OUT (approx; 0 = disabled)
+
+
 class Settings(BaseSettings):
     role: str = "assistant"
     image: str = ""
@@ -461,6 +491,7 @@ class Settings(BaseSettings):
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     docker: DockerSettings = Field(default_factory=DockerSettings)
     rules: RulesSettings = Field(default_factory=RulesSettings)
+    llm: LlmSettings = Field(default_factory=LlmSettings)
     opensearch: OpenSearchSettings = Field(default_factory=OpenSearchSettings)
     path_map: dict[str, str] = Field(
         default_factory=dict

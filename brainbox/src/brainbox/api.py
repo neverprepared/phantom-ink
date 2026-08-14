@@ -353,6 +353,32 @@ async def lifespan(app: FastAPI):
     playbook_on_event(_ingest_converted(agent_store.envelope_from_playbook))
     channel_on_event(_ingest_converted(agent_store.envelope_from_channel))
 
+    # Bridge LLM-request-plane metering (brainbox.llm seam) onto the agent bus as
+    # kind='metric' envelopes. One record per complete() call — success or failure
+    # — carrying backend/model/tokens/cost/profile. Keeps the seam DB-decoupled.
+    from . import llm as _llm_seam
+
+    def _on_llm_completion(rec: object) -> None:
+        try:
+            data = rec.model_dump() if hasattr(rec, "model_dump") else dict(rec)
+            env = agent_store.AgentEnvelope(
+                id=f"llm-{data.get('trace_id') or ''}",
+                kind="metric",
+                title="llm.completion",
+                source="brainbox.llm",
+                type="llm.completion",
+                status="done" if data.get("ok") else "failed",
+                subtitle=f"{data.get('caller', '?')} · {data.get('backend') or 'none'}",
+                workspace=data.get("profile") or None,
+                tags=["llm", data.get("backend") or "none", data.get("caller", "?")],
+                metadata=data,
+            )
+            agent_store.ingest(env)
+        except Exception as exc:
+            log.warning("agent_bus.llm_ingest_failed", metadata={"reason": str(exc)})
+
+    _llm_seam.on_completion(_on_llm_completion)
+
     # Forward every successful ingest into the SSE bus as a unified 'agent.event'.
     def _on_agent_envelope(env: object) -> None:
         try:
