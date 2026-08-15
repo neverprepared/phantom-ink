@@ -352,7 +352,7 @@ class RulesSettings(BaseSettings):
     retry_backoff_s: float = 5.0        # base delay; exponential per attempt
     max_chain_depth: int = 4            # refuse to fire on events at/beyond this depth
     rate_limit_per_minute: int = 30     # per-rule fires/min before 'throttled'
-    dispatch_timeout_s: float = 30.0    # submit_task / run_playbook / start_loop
+    dispatch_timeout_s: float = 30.0    # submit_task / start_loop
     webhook_timeout_s: float = 15.0
     script_timeout_s: float = 60.0
     output_cap_bytes: int = 16384       # stdout/stderr/http-body cap in execution.result

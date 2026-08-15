@@ -386,33 +386,3 @@ class Channel(BaseModel):
     completed_by: str | None = None
     parent_task_id: str | None = None  # task that spawned this channel
     workspace_profile: str | None = None
-
-
-class PlaybookTask(BaseModel):
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
-    index: int
-    content: str  # the raw checklist item text — sent as the agent prompt
-    status: Literal["pending", "running", "completed", "failed"] = "pending"
-    session_name: str | None = None  # ephemeral session that ran this task
-    output: str | None = None
-    error: str | None = None
-    started_at: int | None = None
-    finished_at: int | None = None
-
-
-class Playbook(BaseModel):
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
-    name: str
-    markdown: str  # raw user-supplied markdown
-    tasks: list[PlaybookTask] = Field(default_factory=list)
-    status: Literal["idle", "running", "completed", "failed", "cancelled"] = "idle"
-    workspace_profile: str = "global"  # profile name or "global" for all profiles
-    runner: str | None = None  # runner to dispatch all tasks to; None = local execution
-    created_at: int = Field(default_factory=_now_ms)
-    started_at: int | None = None
-    finished_at: int | None = None
-
-    # Event-rule provenance for the current/most-recent run (see Task fields
-    # of the same name). Reset to defaults on non-rule-triggered runs.
-    origin_rule_id: str | None = None
-    rule_chain_depth: int = 0

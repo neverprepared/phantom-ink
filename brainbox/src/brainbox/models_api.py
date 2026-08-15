@@ -205,23 +205,6 @@ class CompleteChannelRequest(BaseModel):
     reason: str | None = Field(None, description="Optional reason / summary")
 
 
-class CreatePlaybookRequest(BaseModel):
-    """Request model for POST /api/hub/playbooks."""
-
-    name: str = Field(..., min_length=1, max_length=128, description="Playbook name")
-    markdown: str = Field(..., min_length=1, description="Markdown with - [ ] checklist items")
-    workspace_profile: str = Field("global", description="Profile scope, or 'global' for all profiles")
-    runner: str | None = Field(None, description="Runner to dispatch all tasks to (None = local)")
-
-
-class UpdatePlaybookRequest(BaseModel):
-    """Request model for PATCH /api/hub/playbooks/{id}."""
-
-    name: str | None = Field(None, min_length=1, max_length=128)
-    markdown: str | None = Field(None, min_length=1)
-    runner: str | None = Field(None, description="Runner to dispatch all tasks to (None = local, omit = no change)")
-
-
 class CreateAgentRequest(BaseModel):
     """Request model for POST /api/hub/agents."""
 

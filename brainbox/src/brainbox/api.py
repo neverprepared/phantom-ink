@@ -100,18 +100,8 @@ from .channels import (
     post_message as channel_post_message,
     remove_participant as channel_remove_participant,
 )
-from .playbooks import (
-    cancel_playbook,
-    create_playbook,
-    delete_playbook,
-    get_playbook,
-    list_playbooks,
-    on_event as playbook_on_event,
-    run_playbook,
-    update_playbook,
-)
 from .models import ChannelParticipant
-from .models_api import OllamaChatRequest, OllamaPullRequest, CreatePlaybookRequest, UpdatePlaybookRequest
+from .models_api import OllamaChatRequest, OllamaPullRequest
 from .ollama import (
     OllamaError,
     achat as ollama_chat,
@@ -336,10 +326,10 @@ async def lifespan(app: FastAPI):
 
     on_event(_on_hub_task_event)
 
-    # Widen durable bus coverage: playbook + channel lifecycle events also
-    # become envelopes in agent_events so the rules consumer sees them.
-    # Converters returning None (e.g. channel.message) are skipped; the SSE
-    # listeners below are untouched.
+    # Widen durable bus coverage: channel lifecycle events also become
+    # envelopes in agent_events so the rules consumer sees them. Converters
+    # returning None (e.g. channel.message) are skipped; the SSE listeners
+    # below are untouched.
     def _ingest_converted(converter):
         def _listener(event: str, data: object) -> None:
             try:
@@ -350,7 +340,6 @@ async def lifespan(app: FastAPI):
                 log.warning("agent_bus.ingest_failed", metadata={"event": event, "reason": str(exc)})
         return _listener
 
-    playbook_on_event(_ingest_converted(agent_store.envelope_from_playbook))
     channel_on_event(_ingest_converted(agent_store.envelope_from_channel))
 
     # Bridge LLM-request-plane metering (brainbox.llm seam) onto the agent bus as
@@ -410,16 +399,6 @@ async def lifespan(app: FastAPI):
             }))
 
     channel_on_event(_on_channel_event)
-
-    # Forward playbook events to global SSE
-    playbook_on_event(
-        lambda event, data: _broadcast_sse(
-            json.dumps({
-                "action": event,
-                "data": data.model_dump() if hasattr(data, "model_dump") else data,
-            })
-        )
-    )
 
     # Start Docker events watcher
     global _docker_events_task, _metrics_sample_task
@@ -4051,128 +4030,6 @@ async def hub_channel_stream(channel_id: str, request: Request, _key=Depends(req
             pass
         finally:
             _channel_queues.get(channel_id, set()).discard(q)
-
-    return EventSourceResponse(event_generator())
-
-
-# ---------------------------------------------------------------------------
-# Playbooks
-# ---------------------------------------------------------------------------
-
-_playbook_queues: dict[str, set[asyncio.Queue]] = {}
-
-
-def _broadcast_to_playbook(playbook_id: str, data: str) -> None:
-    for q in list(_playbook_queues.get(playbook_id, set())):
-        try:
-            q.put_nowait(data)
-        except asyncio.QueueFull:
-            pass
-
-
-@app.post("/api/hub/playbooks")
-async def hub_create_playbook(body: CreatePlaybookRequest, _key=Depends(require_api_key)):
-    pb = create_playbook(name=body.name, markdown=body.markdown, workspace_profile=body.workspace_profile, runner=body.runner)
-    return pb.model_dump()
-
-
-@app.get("/api/hub/playbooks")
-async def hub_list_playbooks(profile: str | None = None, _key=Depends(require_api_key)):
-    return [pb.model_dump() for pb in list_playbooks(profile=profile)]
-
-
-@app.get("/api/hub/playbooks/{playbook_id}")
-async def hub_get_playbook(playbook_id: str, _key=Depends(require_api_key)):
-    pb = get_playbook(playbook_id)
-    if not pb:
-        raise HTTPException(status_code=404, detail=f"Playbook '{playbook_id}' not found")
-    return pb.model_dump()
-
-
-@app.patch("/api/hub/playbooks/{playbook_id}")
-async def hub_update_playbook(playbook_id: str, body: UpdatePlaybookRequest, _key=Depends(require_api_key)):
-    try:
-        from .playbooks import _UNSET as _PB_UNSET
-        runner_arg = body.runner if body.model_fields_set and "runner" in body.model_fields_set else _PB_UNSET
-        pb = update_playbook(playbook_id, name=body.name, markdown=body.markdown, runner=runner_arg)
-        return pb.model_dump()
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.delete("/api/hub/playbooks/{playbook_id}")
-async def hub_delete_playbook(playbook_id: str, _key=Depends(require_api_key)):
-    try:
-        delete_playbook(playbook_id)
-        _broadcast_sse(json.dumps({"action": "playbook.deleted", "playbook_id": playbook_id}))
-        return {"ok": True}
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-
-
-@app.post("/api/hub/playbooks/{playbook_id}/run")
-async def hub_run_playbook(playbook_id: str, request: Request, _key=Depends(require_api_key)):
-    try:
-        profile = None
-        runner = None
-        try:
-            body = await request.json()
-            if isinstance(body, dict):
-                profile = body.get("workspace_profile")
-                runner = body.get("runner")
-        except Exception:
-            pass
-        pb = await run_playbook(playbook_id, workspace_profile=profile, runner=runner)
-        return pb.model_dump()
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@app.post("/api/hub/playbooks/{playbook_id}/cancel")
-async def hub_cancel_playbook(playbook_id: str, _key=Depends(require_api_key)):
-    pb = get_playbook(playbook_id)
-    if not pb:
-        raise HTTPException(status_code=404, detail=f"Playbook '{playbook_id}' not found")
-    cancel_playbook(playbook_id)
-    return {"ok": True}
-
-
-@app.get("/api/hub/playbooks/{playbook_id}/stream")
-async def hub_playbook_stream(playbook_id: str, request: Request, _key=Depends(require_api_key)):
-    """SSE stream for a single playbook — delivers task progress events in real-time."""
-    pb = get_playbook(playbook_id)
-    if not pb:
-        raise HTTPException(status_code=404, detail=f"Playbook '{playbook_id}' not found")
-
-    q: asyncio.Queue = asyncio.Queue(maxsize=100)
-    _playbook_queues.setdefault(playbook_id, set()).add(q)
-
-    # Wire this playbook's events to the per-playbook queue
-    def _on_playbook_event(event: str, data: object) -> None:
-        pid = None
-        if isinstance(data, dict):
-            pid = data.get("playbook_id")
-        elif hasattr(data, "id"):
-            pid = data.id  # type: ignore[union-attr]
-        if pid == playbook_id:
-            payload = json.dumps({
-                "event": event,
-                "data": data.model_dump() if hasattr(data, "model_dump") else data,
-            })
-            _broadcast_to_playbook(playbook_id, payload)
-
-    playbook_on_event(_on_playbook_event)
-
-    async def event_generator():
-        try:
-            yield {"data": "connected"}
-            while True:
-                data = await q.get()
-                yield {"data": data}
-        except asyncio.CancelledError:
-            pass
-        finally:
-            _playbook_queues.get(playbook_id, set()).discard(q)
 
     return EventSourceResponse(event_generator())
 
