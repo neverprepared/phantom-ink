@@ -107,6 +107,8 @@ type HubTask struct {
 	Error            string   `json:"error"`             // flat string
 	SessionName      string   `json:"session_name"`
 	WorkspaceProfile string   `json:"workspace_profile"`
+	RunnerName       string   `json:"runner_name"`
+	Backend          string   `json:"backend"`
 	JobID            string   `json:"job_id"`
 	SpawnedBy        string   `json:"spawned_by"`
 	ChildTaskIDs     []string `json:"child_task_ids"`
@@ -134,6 +136,8 @@ func normalizeHubTask(t brainbox.Task) HubTask {
 		Error:            errString(t.Error),
 		SessionName:      t.SessionName,
 		WorkspaceProfile: t.WorkspaceProfile,
+		RunnerName:       t.RunnerName,
+		Backend:          t.Backend,
 		JobID:            t.JobID,
 		SpawnedBy:        t.SpawnedBy,
 		ChildTaskIDs:     t.ChildTaskIDs,

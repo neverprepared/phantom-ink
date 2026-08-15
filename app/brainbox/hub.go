@@ -18,6 +18,8 @@ type Task struct {
 	Error            interface{} `json:"error"`
 	SessionName      string      `json:"session_name"`
 	WorkspaceProfile string      `json:"workspace_profile"`
+	RunnerName       string      `json:"runner_name"`      // machine the task was dispatched to ("" = in-process/auto)
+	Backend          string      `json:"backend"`          // execution backend (docker | utm)
 	JobID            string      `json:"job_id"`
 	SpawnedBy        string      `json:"spawned_by"`       // task ID of the parent that spawned this one
 	ChildTaskIDs     []string    `json:"child_task_ids"`   // task IDs of children spawned by this task
@@ -155,6 +157,67 @@ func (c *Client) SubmitTask(req SubmitTaskRequest) (Task, error) {
 func (c *Client) CancelTask(taskID string) error {
 	path := fmt.Sprintf("/api/hub/tasks/%s", taskID)
 	return c.delete(path, nil)
+}
+
+// --- Agent jobs (fan-out over /api/hub/jobs) --------------------------------
+
+// JobTarget is one machine an agent job fans out to. Each becomes one
+// autonomous task sharing the job's job_id.
+type JobTarget struct {
+	Runner     string   `json:"runner,omitempty"`      // explicit runner name; "" = auto-select
+	RunnerTags []string `json:"runner_tags,omitempty"` // preferred tags for auto-selection
+	Pool       string   `json:"pool,omitempty"`        // machine-class pool
+	Backend    string   `json:"backend,omitempty"`     // docker | utm
+}
+
+// SubmitJobRequest is the payload for POST /api/hub/jobs — fan one agent spec
+// across many machines.
+type SubmitJobRequest struct {
+	Description      string      `json:"description"`
+	AgentName        string      `json:"agent_name"`
+	RepoURL          string      `json:"repo_url,omitempty"`
+	WorkspaceProfile string      `json:"workspace_profile,omitempty"`
+	WorkspaceHome    string      `json:"workspace_home,omitempty"`
+	Targets          []JobTarget `json:"targets"`
+	Priority         int         `json:"priority,omitempty"`
+}
+
+// JobSubmitResult is returned by POST /api/hub/jobs.
+type JobSubmitResult struct {
+	JobID   string   `json:"job_id"`
+	TaskIDs []string `json:"task_ids"`
+	Count   int      `json:"count"`
+}
+
+// JobStatusSummary is the per-status roll-up of a job's tasks.
+type JobStatusSummary struct {
+	Total    int            `json:"total"`
+	ByStatus map[string]int `json:"by_status"`
+}
+
+// JobDetail is returned by GET /api/hub/jobs/{job_id}.
+type JobDetail struct {
+	JobID   string           `json:"job_id"`
+	Summary JobStatusSummary `json:"summary"`
+	Tasks   []Task           `json:"tasks"`
+}
+
+// SubmitJob fans one agent spec across many machines (one task per target).
+func (c *Client) SubmitJob(req SubmitJobRequest) (JobSubmitResult, error) {
+	var res JobSubmitResult
+	if err := c.post("/api/hub/jobs", req, &res); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+// GetJob rolls up one job's per-target tasks (the "come back to results" read).
+func (c *Client) GetJob(jobID string) (JobDetail, error) {
+	var d JobDetail
+	if err := c.get(fmt.Sprintf("/api/hub/jobs/%s", jobID), &d); err != nil {
+		return d, err
+	}
+	return d, nil
 }
 
 // ListAgents returns all registered agent definitions.
