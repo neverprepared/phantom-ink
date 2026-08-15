@@ -20,7 +20,7 @@
   }
   interface HubTask {
     id: string; description: string; agent_name: string; status: string;
-    runner_name: string; backend: string; docker_host: string; session_name: string;
+    runner_name: string; backend: string; docker_host: string; ssh_host: string; session_name: string;
     result: string; error: string; created_at: number;
   }
   interface JobDetail {
@@ -51,6 +51,7 @@
   let useLocal = $state(false);
   let selectedRunners = $state<Set<string>>(new Set());
   let dockerHosts = $state('');  // remote Docker daemons over SSH, one ssh://user@host per line
+  let sshHosts = $state('');     // bare-metal SSH hosts, one [user@]host[:port] per line
   let submitting = $state(false);
 
   let pollHandle: number | undefined;
@@ -110,14 +111,17 @@
     selectedRunners = next;
   }
 
-  function remoteHosts(): string[] {
-    return dockerHosts.split('\n').map((h) => h.trim()).filter(Boolean);
+  function splitLines(s: string): string[] {
+    return s.split('\n').map((h) => h.trim()).filter(Boolean);
   }
+  const remoteHosts = $derived(splitLines(dockerHosts));
+  const bareHosts = $derived(splitLines(sshHosts));
 
   function buildTargets(): any[] {
     const targets: any[] = [];
     for (const name of selectedRunners) targets.push({ runner: name, backend });
-    for (const host of remoteHosts()) targets.push({ docker_host: host, backend: 'docker' });
+    for (const host of remoteHosts) targets.push({ docker_host: host, backend: 'docker' });
+    for (const host of bareHosts) targets.push({ ssh_host: host, backend: 'ssh' });
     if (useLocal || targets.length === 0) {
       const t: any = { backend };
       if (pool.trim()) t.pool = pool.trim();
@@ -125,10 +129,8 @@
     }
     return targets;
   }
-  const targetCount = $derived(
-    selectedRunners.size + remoteHosts().length +
-    ((useLocal || selectedRunners.size + remoteHosts().length === 0) ? 1 : 0),
-  );
+  const explicitCount = $derived(selectedRunners.size + remoteHosts.length + bareHosts.length);
+  const targetCount = $derived(explicitCount + ((useLocal || explicitCount === 0) ? 1 : 0));
 
   async function submit() {
     if (!task.trim() || submitting) return;
@@ -180,7 +182,7 @@
     return Object.entries(by).sort((a, b) => a[0].localeCompare(b[0]));
   }
   function targetLabel(t: HubTask): string {
-    return t.runner_name || t.docker_host || `auto/${t.backend || 'docker'}`;
+    return t.runner_name || t.docker_host || t.ssh_host || `auto/${t.backend || 'docker'}`;
   }
   const canSubmit = $derived(task.trim().length > 0 && !submitting);
   const jobLive = $derived(detail?.tasks.some((t) => !TERMINAL.has(t.status)) ?? false);
@@ -243,6 +245,10 @@
       <label class="field">
         <span class="form-label">remote docker hosts <span class="opt">(ssh://user@host, one per line)</span></span>
         <textarea bind:value={dockerHosts} rows="2" placeholder="ssh://ops@build-1&#10;ssh://ops@build-2"></textarea>
+      </label>
+      <label class="field">
+        <span class="form-label">bare-metal ssh hosts <span class="opt">([user@]host[:port], no docker)</span></span>
+        <textarea bind:value={sshHosts} rows="2" placeholder="ops@build-1&#10;ops@build-2:2222"></textarea>
       </label>
       <div class="row">
         <label class="field">
