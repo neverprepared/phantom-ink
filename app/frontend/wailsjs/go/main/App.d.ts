@@ -114,6 +114,8 @@ export function GetAPILogs(arg1:number):Promise<Array<main.LogEntry>>;
 
 export function GetActiveProfile():Promise<main.Profile>;
 
+export function GetAgentJob(arg1:string):Promise<main.AgentJobDetail>;
+
 export function GetAgentRole(arg1:string):Promise<brainbox.AgentDefinition>;
 
 export function GetAgentState(arg1:string):Promise<brainbox.AgentStateItem>;
@@ -241,6 +243,8 @@ export function InitBrainProfile(arg1:string):Promise<brainbox.BrainProfileInitR
 export function LaunchTeam(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<brainbox.SessionActionResponse>;
 
 export function ListAgentEvents(arg1:string,arg2:string,arg3:number):Promise<Array<brainbox.AgentEventEntry>>;
+
+export function ListAgentJobs():Promise<Array<main.AgentJobSummary>>;
 
 export function ListAgentRoles():Promise<Array<brainbox.AgentDefinition>>;
 
@@ -453,6 +457,8 @@ export function StopPlatformService(arg1:string):Promise<void>;
 export function StopService(arg1:string):Promise<void>;
 
 export function StopSession(arg1:string):Promise<brainbox.SessionActionResponse>;
+
+export function SubmitAgentJob(arg1:brainbox.SubmitJobRequest):Promise<brainbox.JobSubmitResult>;
 
 export function SubmitTask(arg1:brainbox.SubmitTaskRequest):Promise<main.HubTask>;
 

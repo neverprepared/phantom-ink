@@ -222,6 +222,10 @@ export function GetActiveProfile() {
   return window['go']['main']['App']['GetActiveProfile']();
 }
 
+export function GetAgentJob(arg1) {
+  return window['go']['main']['App']['GetAgentJob'](arg1);
+}
+
 export function GetAgentRole(arg1) {
   return window['go']['main']['App']['GetAgentRole'](arg1);
 }
@@ -476,6 +480,10 @@ export function LaunchTeam(arg1, arg2, arg3, arg4, arg5, arg6) {
 
 export function ListAgentEvents(arg1, arg2, arg3) {
   return window['go']['main']['App']['ListAgentEvents'](arg1, arg2, arg3);
+}
+
+export function ListAgentJobs() {
+  return window['go']['main']['App']['ListAgentJobs']();
 }
 
 export function ListAgentRoles() {
@@ -900,6 +908,10 @@ export function StopService(arg1) {
 
 export function StopSession(arg1) {
   return window['go']['main']['App']['StopSession'](arg1);
+}
+
+export function SubmitAgentJob(arg1) {
+  return window['go']['main']['App']['SubmitAgentJob'](arg1);
 }
 
 export function SubmitTask(arg1) {

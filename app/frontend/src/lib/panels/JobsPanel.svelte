@@ -1,662 +1,437 @@
 <script lang="ts">
-  import { getApi, safe } from '../utils/api';
-  import { timeAgoOrDate } from '../utils/format';
-  import { onCollectUpdate } from '../utils/collectEvents';
-  import { onMount } from 'svelte';
-  import { profileState, dashboardState } from '../stores.svelte';
+  // Autonomous agent jobs: fan one agent spec across many machines, walk away,
+  // come back to grouped per-target results. Thin surface over the router's
+  // /api/hub/jobs helper (SubmitAgentJob / ListAgentJobs / GetAgentJob).
+  import { onMount, onDestroy } from 'svelte';
+  import { getApi } from '../utils/api';
+  import { profileState } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
+  import { timeAgo } from '../utils/format';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
 
-  // ── Types ──────────────────────────────────────────────────────────────
-
-  interface CollectJob {
-    id: string;
-    profile: string;
-    name: string;
-    command: string;
-    interval_s: number;
-    enabled: boolean;
-    default_actions: string;
-    last_run_at?: number;
-    last_error: string;
+  interface JobSummary {
+    job_id: string;
+    agent_name: string;
+    description: string;
+    total: number;
+    by_status: Record<string, number>;
     created_at: number;
-    target_type: string;
-    target_id: string;
-    target_prompt: string;
-    run_at: string;
-    days: string;
   }
-
-  interface NamedItem { id: string; name: string; workspace_profile: string; }
-
-  type TargetType = 'shell' | 'loop' | 'runner';
-  type ScheduleMode = 'interval' | 'time';
-
-  // ── State ──────────────────────────────────────────────────────────────
-
-  const profile = $derived(profileState.active?.name ?? '');
-
-  let jobs         = $state<CollectJob[]>([]);
-  let loops       = $state<NamedItem[]>([]);
-  let loading      = $state(false);
-  let loadError    = $state<string | null>(null); // set when the jobs fetch fails, so the panel shows an error not a false "no jobs"
-  let saving       = $state(false); // in-flight guard for save() — prevents double-submit
-  let editingId    = $state<string | null>(null); // null=none, 'new'=create, id=edit
-  let runningId    = $state<string | null>(null);
-  let statusMsg    = $state('');
-  let filterProfile = $state('');
-  $effect(() => { filterProfile = profile; });
-
-  // Edit form state
-  let draft = $state({
-    name: '',
-    targetType: 'shell' as TargetType,
-    command: '',
-    targetId: '',
-    targetPrompt: '',
-    scheduleMode: 'interval' as ScheduleMode,
-    interval_s: 300,
-    run_at: '08:30',
-    days: 'daily',
-    enabled: true,
-  });
-
-  // ── Derived ────────────────────────────────────────────────────────────
-
-  let jobProfiles = $derived.by(() => {
-    const s = new Set<string>();
-    for (const j of jobs) if (j.profile) s.add(j.profile);
-    return [...s].sort();
-  });
-
-  let visible = $derived(
-    filterProfile ? jobs.filter(j => j.profile === filterProfile) : jobs
-  );
-
-  let draftProfile = $derived.by(() => {
-    if (editingId === 'new') return filterProfile || profile;
-    const job = jobs.find(j => j.id === editingId);
-    return job?.profile ?? profile;
-  });
-
-  let visibleSequences = $derived(
-    loops.filter(c => !c.workspace_profile || c.workspace_profile === draftProfile)
-  );
-
-  // ── Data loading ───────────────────────────────────────────────────────
-
-  async function load() {
-    const a = await getApi();
-    if (!a) { loadError = 'API bindings unavailable'; loading = false; return; }
-    loading = true;
-    try {
-      // The jobs list is the panel's primary data — let its failure surface as
-      // an error state. The sequence list only feeds the target picker, so a
-      // failure there degrades gracefully (empty picker) via safe().
-      const [j, c] = await Promise.all([
-        (a.ListCollectJobs as any)(''),
-        safe((a.ListSequences as any)(), [], 'ListSequences'),
-      ]);
-      jobs = (j ?? []) as CollectJob[];
-      loops = ((c ?? []) as any[]).map((x: any) => ({
-        id: x.id, name: x.name,
-        workspace_profile: x.workspace_profile ?? '',
-      }));
-      loadError = null;
-    } catch (err: any) {
-      loadError = `${err?.message ?? err}`;
-      jobs = [];
-    } finally {
-      loading = false;
-    }
+  interface HubTask {
+    id: string; description: string; agent_name: string; status: string;
+    runner_name: string; backend: string; session_name: string;
+    result: string; error: string; created_at: number;
   }
-
-  // ── CRUD ───────────────────────────────────────────────────────────────
-
-  async function save() {
-    if (saving) return; // guard against double-submit (a new job has id:'' and would insert twice)
-    const a = await getApi();
-    if (!a || !draft.name.trim()) return;
-    const isNew = editingId === 'new';
-    const existing = jobs.find(j => j.id === editingId);
-    const payload: Partial<CollectJob> = {
-      id:           isNew ? '' : (editingId ?? ''),
-      profile:      isNew ? (filterProfile || profile) : (existing?.profile ?? profile),
-      name:         draft.name.trim(),
-      command:      draft.targetType === 'shell' ? draft.command.trim() : '',
-      interval_s:   draft.scheduleMode === 'interval' ? draft.interval_s : 0,
-      enabled:      draft.enabled,
-      default_actions: '[]',
-      last_error:   '',
-      created_at:   0,
-      target_type:  draft.targetType,
-      target_id:    draft.targetId,
-      target_prompt: draft.targetPrompt.trim(),
-      run_at:       draft.scheduleMode === 'time' ? draft.run_at : '',
-      days:         draft.scheduleMode === 'time' ? draft.days : '',
-    };
-    // Validation
-    if (draft.targetType === 'shell' && !payload.command) return;
-    if (draft.targetType === 'loop' && !payload.target_id) return;
-    if (draft.targetType === 'runner' && !payload.target_prompt) return;
-    saving = true;
-    try {
-      await (a.SaveCollectJob as any)(payload);
-      editingId = null;
-      await load();
-    } catch (e: any) {
-      flash(`Error: ${e?.message ?? 'save failed'}`, true);
-    } finally {
-      saving = false;
-    }
+  interface JobDetail {
+    job_id: string;
+    summary: { total: number; by_status: Record<string, number> };
+    tasks: HubTask[];
   }
+  interface Runner { name: string; tags: string[]; }
 
-  async function remove(id: string) {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      await (a.DeleteCollectJob as any)(id);
-      // If any dashboard widget references this job, remove it from the
-      // layout and persist — otherwise the widget would auto-recreate
-      // the job on its next mount.
-      const layout = dashboardState.layout;
-      if (layout) {
-        const filtered = layout.widgets.filter(w => (w.config as any)?.jobId !== id);
-        if (filtered.length !== layout.widgets.length) {
-          dashboardState.updateWidgets(filtered);
-          try {
-            await (a as any).SaveDashboardLayout(
-              profileState.active?.name ?? '',
-              JSON.stringify({ version: 1, widgets: filtered }),
-            );
-          } catch {}
-        }
-      }
-      await load();
-    } catch (e: any) {
-      notifications.error(`Failed to delete job: ${e?.message ?? 'unknown error'}`);
-    }
-  }
+  const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 
-  async function runNow(id: string) {
-    const a = await getApi();
-    if (!a) return;
-    runningId = id;
-    try {
-      await (a.RunCollectJobNow as any)(id);
-      await load();
-    } finally {
-      runningId = null;
-    }
-  }
+  let jobs = $state<JobSummary[]>([]);
+  let runners = $state<Runner[]>([]);
+  let agents = $state<string[]>(['worker']);
+  let loaded = $state(false);
+  let loadError = $state<string | null>(null);
 
-  async function toggle(job: CollectJob) {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      await (a.SaveCollectJob as any)({ ...job, enabled: !job.enabled });
-      await load();
-    } catch (e: any) {
-      notifications.error(`Failed to update job: ${e?.message ?? 'unknown error'}`);
-    }
-  }
+  let selectedId = $state<string | null>(null);
+  let detail = $state<JobDetail | null>(null);
 
-  // ── Form helpers ───────────────────────────────────────────────────────
+  // submit form
+  let task = $state('');
+  let agent = $state('worker');
+  let repo = $state('');
+  let backend = $state<'docker' | 'utm'>('docker');
+  let pool = $state('');
+  let priority = $state(0);
+  let useLocal = $state(false);
+  let selectedRunners = $state<Set<string>>(new Set());
+  let submitting = $state(false);
 
-  function startNew() {
-    editingId = 'new';
-    draft = { name: '', targetType: 'shell', command: '', targetId: '', targetPrompt: '',
-              scheduleMode: 'interval', interval_s: 300, run_at: '08:30', days: 'daily', enabled: true };
-  }
-
-  function startEdit(job: CollectJob) {
-    editingId = job.id;
-    draft = {
-      name:         job.name,
-      targetType:   (job.target_type || 'shell') as TargetType,
-      command:      job.command,
-      targetId:     job.target_id,
-      targetPrompt: job.target_prompt,
-      scheduleMode: job.run_at ? 'time' : 'interval',
-      interval_s:   job.interval_s || 300,
-      run_at:       job.run_at || '08:30',
-      days:         job.days || 'daily',
-      enabled:      job.enabled,
-    };
-  }
-
-  function cancelEdit() { editingId = null; }
-
-  function flash(msg: string, _err = false) {
-    statusMsg = msg;
-    setTimeout(() => { statusMsg = ''; }, 3000);
-  }
-
-  // ── Format helpers ─────────────────────────────────────────────────────
-
-  function fmtSchedule(job: CollectJob): string {
-    if (job.run_at) {
-      return job.days === 'weekdays' ? `${job.run_at} weekdays` : `${job.run_at} daily`;
-    }
-    const s = job.interval_s;
-    if (s >= 3600) return `every ${s / 3600}h`;
-    if (s >= 60)   return `every ${Math.floor(s / 60)}m`;
-    return `every ${s}s`;
-  }
-
-  function fmtLastRun(job: CollectJob): string {
-    return timeAgoOrDate(job.last_run_at);
-  }
-
-  function targetLabel(job: CollectJob): string {
-    switch (job.target_type) {
-      case 'loop': {
-        const ch = loops.find(c => c.id === job.target_id);
-        return ch ? ch.name : job.target_id.slice(0, 8);
-      }
-      case 'runner':  return job.target_prompt.slice(0, 40) + (job.target_prompt.length > 40 ? '…' : '');
-      default:        return job.command.split('\n')[0].slice(0, 60) + (job.command.length > 60 ? '…' : '');
-    }
-  }
-
-  function isFormValid(): boolean {
-    if (!draft.name.trim()) return false;
-    if (draft.targetType === 'shell' && !draft.command.trim()) return false;
-    if (draft.targetType === 'loop' && !draft.targetId) return false;
-    if (draft.targetType === 'runner' && !draft.targetPrompt.trim()) return false;
-    return true;
-  }
+  let pollHandle: number | undefined;
 
   onMount(() => {
-    void load();
-    const off = onCollectUpdate(() => void load());
-    return () => off();
+    void bootstrap();
+    void refresh();
+    pollHandle = window.setInterval(() => { void refresh(); void refreshDetail(); }, 5_000);
   });
+  onDestroy(() => { if (pollHandle !== undefined) window.clearInterval(pollHandle); });
+
+  async function bootstrap() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const rs = (await a.ListRunners()) ?? [];
+      runners = rs.map((r: any) => ({ name: r.name, tags: r.tags ?? [] }));
+    } catch { /* runners optional */ }
+    try {
+      const roles = (await (a as any).ListAgentRoles()) ?? [];
+      const names = roles.map((r: any) => r.name).filter(Boolean);
+      if (names.length) agents = names;
+    } catch { /* fall back to ['worker'] */ }
+  }
+
+  async function refresh() {
+    const a = await getApi();
+    if (!a) { loaded = true; loadError = 'API bindings unavailable'; return; }
+    try {
+      jobs = ((await (a as any).ListAgentJobs()) ?? []) as JobSummary[];
+      loadError = null;
+    } catch (e) {
+      loadError = String(e);
+    } finally {
+      loaded = true;
+    }
+  }
+
+  async function refreshDetail() {
+    if (!selectedId) return;
+    const a = await getApi();
+    if (!a) return;
+    try {
+      detail = (await (a as any).GetAgentJob(selectedId)) as JobDetail;
+    } catch { /* job may have aged out */ }
+  }
+
+  async function selectJob(id: string) {
+    selectedId = id;
+    detail = null;
+    await refreshDetail();
+  }
+
+  function toggleRunner(name: string) {
+    const next = new Set(selectedRunners);
+    next.has(name) ? next.delete(name) : next.add(name);
+    selectedRunners = next;
+  }
+
+  function buildTargets(): any[] {
+    const targets: any[] = [];
+    for (const name of selectedRunners) targets.push({ runner: name, backend });
+    if (useLocal || targets.length === 0) {
+      const t: any = { backend };
+      if (pool.trim()) t.pool = pool.trim();
+      targets.push(t);
+    }
+    return targets;
+  }
+
+  async function submit() {
+    if (!task.trim() || submitting) return;
+    const a = await getApi();
+    if (!a) return;
+    submitting = true;
+    try {
+      const targets = buildTargets();
+      const res = await (a as any).SubmitAgentJob({
+        description: task.trim(),
+        agent_name: agent,
+        repo_url: repo.trim() || undefined,
+        workspace_profile: profileState.active?.name || undefined,
+        targets,
+        priority,
+      });
+      notifications.success(`Job fanned out to ${res.count} machine(s)`);
+      task = '';
+      await refresh();
+      if (res.job_id) await selectJob(res.job_id);
+    } catch (e) {
+      notifications.error(`Submit failed: ${e}`);
+    } finally {
+      submitting = false;
+    }
+  }
+
+  async function cancelJob() {
+    if (!detail) return;
+    const a = await getApi();
+    if (!a) return;
+    const live = detail.tasks.filter((t) => !TERMINAL.has(t.status));
+    for (const t of live) {
+      try { await (a as any).CancelHubTask(t.id); } catch { /* best effort */ }
+    }
+    notifications.success(`Cancelled ${live.length} task(s)`);
+    await refreshDetail();
+    await refresh();
+  }
+
+  function badgeClass(status: string): string {
+    if (status === 'completed') return 'ok';
+    if (status === 'failed') return 'err';
+    if (status === 'running') return 'run';
+    if (status === 'cancelled') return 'muted';
+    return 'pend';
+  }
+  function rollup(by: Record<string, number>): [string, number][] {
+    return Object.entries(by).sort((a, b) => a[0].localeCompare(b[0]));
+  }
+  function targetLabel(t: HubTask): string {
+    return t.runner_name || `auto/${t.backend || 'docker'}`;
+  }
+  const canSubmit = $derived(task.trim().length > 0 && !submitting);
+  const jobLive = $derived(detail?.tasks.some((t) => !TERMINAL.has(t.status)) ?? false);
 </script>
 
 <div class="jobs">
-  <div class="panel-header" style="margin-bottom:var(--spacing-sm);">
-    <h1 class="page-title">jobs</h1>
-    <div style="display:flex;align-items:center;gap:var(--spacing-md);">
-      {#if loading}<Spinner />{/if}
-      {#if statusMsg}
-        <span class="status-msg">{statusMsg}</span>
-      {/if}
-      {#if editingId !== 'new'}
-        <button class="btn primary" onclick={startNew}>+ new job</button>
-      {/if}
+  <header class="head">
+    <div>
+      <h1>Jobs</h1>
+      <p class="sub">Fan an autonomous agent across machines — then walk away.</p>
     </div>
-  </div>
+  </header>
 
-  <!-- Profile filter -->
-  {#if jobProfiles.length > 1}
-    <div class="filter-row">
-      <span class="filter-label">profile</span>
-      <div class="tag-bar">
-        <button class="tag" class:active={filterProfile === ''} onclick={() => filterProfile = ''}>all</button>
-        {#each jobProfiles as p (p)}
-          <button class="tag" class:active={filterProfile === p} onclick={() => filterProfile = filterProfile === p ? '' : p}>{p}</button>
-        {/each}
-      </div>
-    </div>
-  {/if}
-
-  <!-- Create form -->
-  {#if editingId === 'new'}
-    <div class="job-form">
-      <div class="form-title">new job</div>
-
-      <label class="form-row">
-        <span class="form-label">name</span>
-        <input class="form-input" bind:value={draft.name} placeholder="Morning standup" />
+  <div class="grid">
+    <!-- Submit -->
+    <section class="card submit">
+      <h2>New job</h2>
+      <label class="field">
+        <span class="form-label">task</span>
+        <textarea bind:value={task} rows="3" placeholder="What should each agent do?"></textarea>
       </label>
-
-      <!-- Target type selector -->
-      <div class="form-row">
-        <span class="form-label">target</span>
-        <div class="seg-ctrl">
-          {#each (['shell', 'loop', 'runner'] as TargetType[]) as t (t)}
-            <button class="seg-btn" class:active={draft.targetType === t} onclick={() => { draft.targetType = t; draft.targetId = ''; }}>{t}</button>
-          {/each}
-        </div>
-      </div>
-
-      <!-- Conditional target fields -->
-      {#if draft.targetType === 'shell'}
-        <label class="form-row">
-          <span class="form-label">command</span>
-          <textarea class="form-textarea" bind:value={draft.command} placeholder="script that outputs JSON array" rows="4"></textarea>
-        </label>
-      {:else if draft.targetType === 'loop'}
-        <label class="form-row">
-          <span class="form-label">loop</span>
-          <select class="form-select" bind:value={draft.targetId}>
-            <option value="">— select —</option>
-            {#each visibleSequences as ch (ch.id)}
-              <option value={ch.id}>{ch.name}</option>
-            {/each}
+      <div class="row">
+        <label class="field">
+          <span class="form-label">agent</span>
+          <select bind:value={agent}>
+            {#each agents as name}<option value={name}>{name}</option>{/each}
           </select>
         </label>
-      {:else if draft.targetType === 'runner'}
-        <label class="form-row">
-          <span class="form-label">prompt</span>
-          <textarea class="form-textarea" bind:value={draft.targetPrompt} placeholder="Run the morning standup and write output to…" rows="4"></textarea>
+        <label class="field">
+          <span class="form-label">backend</span>
+          <select bind:value={backend}>
+            <option value="docker">docker</option>
+            <option value="utm">utm</option>
+          </select>
         </label>
-      {/if}
-
-      <!-- Schedule mode -->
-      <div class="form-row">
-        <span class="form-label">schedule</span>
-        <div class="seg-ctrl">
-          <button class="seg-btn" class:active={draft.scheduleMode === 'interval'} onclick={() => draft.scheduleMode = 'interval'}>interval</button>
-          <button class="seg-btn" class:active={draft.scheduleMode === 'time'}     onclick={() => draft.scheduleMode = 'time'}>time of day</button>
-        </div>
       </div>
+      <label class="field">
+        <span class="form-label">repo url <span class="opt">(optional)</span></span>
+        <input bind:value={repo} placeholder="https://github.com/org/repo.git" />
+      </label>
 
-      {#if draft.scheduleMode === 'interval'}
-        <label class="form-row">
-          <span class="form-label">every</span>
-          <div class="interval-row">
-            <input class="form-input short" type="number" min="30" bind:value={draft.interval_s} />
-            <span class="form-unit">seconds</span>
-          </div>
+      <span class="form-label">targets</span>
+      <div class="targets">
+        {#if runners.length === 0}
+          <span class="muted-note">no runners registered</span>
+        {:else}
+          {#each runners as r}
+            <button
+              type="button"
+              class="chip"
+              class:on={selectedRunners.has(r.name)}
+              onclick={() => toggleRunner(r.name)}
+            >{r.name}</button>
+          {/each}
+        {/if}
+        <label class="chip check" class:on={useLocal}>
+          <input type="checkbox" bind:checked={useLocal} /> local / auto
         </label>
+      </div>
+      <div class="row">
+        <label class="field">
+          <span class="form-label">pool <span class="opt">(auto targets)</span></span>
+          <input bind:value={pool} placeholder="e.g. gpu" />
+        </label>
+        <label class="field narrow">
+          <span class="form-label">priority</span>
+          <input type="number" bind:value={priority} />
+        </label>
+      </div>
+      <p class="hint">
+        {selectedRunners.size} runner(s){(useLocal || selectedRunners.size === 0) ? ' + 1 auto' : ''}
+        → {selectedRunners.size + ((useLocal || selectedRunners.size === 0) ? 1 : 0)} task(s)
+      </p>
+      <button class="primary" disabled={!canSubmit} onclick={submit}>
+        {submitting ? 'Submitting…' : 'Fan out job'}
+      </button>
+    </section>
+
+    <!-- Jobs list -->
+    <section class="card list">
+      <h2>Recent jobs</h2>
+      {#if !loaded}
+        <Spinner />
+      {:else if loadError}
+        <EmptyState title="Couldn't load jobs" detail={loadError} />
+      {:else if jobs.length === 0}
+        <EmptyState title="No jobs yet" detail="Fan out a job to see it here." />
       {:else}
-        <div class="form-row">
-          <span class="form-label">time</span>
-          <div class="time-row">
-            <input class="form-input short" type="time" bind:value={draft.run_at} />
-            <select class="form-select narrow" bind:value={draft.days}>
-              <option value="daily">daily</option>
-              <option value="weekdays">weekdays</option>
-            </select>
-          </div>
-        </div>
-      {/if}
-
-      <div class="form-actions">
-        <button class="btn sm primary" onclick={save} disabled={saving || !isFormValid()}>{saving ? 'saving…' : 'save'}</button>
-        <button class="btn sm ghost" onclick={cancelEdit}>cancel</button>
-      </div>
-    </div>
-  {/if}
-
-  <!-- Job list -->
-  {#if loading && jobs.length === 0}
-    <div class="empty">loading…</div>
-  {:else if loadError}
-    <EmptyState title="Failed to load jobs" message={loadError} />
-  {:else if jobs.length === 0 && editingId !== 'new'}
-    <EmptyState title="No jobs yet" message="Create one to schedule recurring work." />
-  {:else if visible.length === 0 && editingId !== 'new'}
-    <EmptyState title="No jobs for this profile" />
-  {:else}
-    <div class="job-list">
-      {#each visible as job (job.id)}
-        <div class="job-card" class:editing={editingId === job.id}>
-          {#if editingId === job.id}
-            <!-- Inline edit form -->
-            <div class="job-form inline">
-              <label class="form-row">
-                <span class="form-label">name</span>
-                <input class="form-input" bind:value={draft.name} />
-              </label>
-
-              <div class="form-row">
-                <span class="form-label">target</span>
-                <div class="seg-ctrl">
-                  {#each (['shell', 'loop', 'runner'] as TargetType[]) as t (t)}
-                    <button class="seg-btn" class:active={draft.targetType === t} onclick={() => { draft.targetType = t; draft.targetId = ''; }}>{t}</button>
+        <ul class="rows">
+          {#each jobs as j}
+            <li>
+              <button class="job-row" class:sel={selectedId === j.job_id} onclick={() => selectJob(j.job_id)}>
+                <div class="job-main">
+                  <code class="jid">{j.job_id.slice(0, 8)}</code>
+                  <span class="agent">{j.agent_name}</span>
+                  <span class="count">{j.total} task{j.total === 1 ? '' : 's'}</span>
+                </div>
+                <div class="job-meta">
+                  {#each rollup(j.by_status) as [st, n]}
+                    <span class="badge {badgeClass(st)}">{st} {n}</span>
                   {/each}
+                  <span class="ago">{timeAgo(j.created_at)}</span>
                 </div>
-              </div>
-
-              {#if draft.targetType === 'shell'}
-                <label class="form-row">
-                  <span class="form-label">command</span>
-                  <textarea class="form-textarea" bind:value={draft.command} rows="4"></textarea>
-                </label>
-              {:else if draft.targetType === 'loop'}
-                <label class="form-row">
-                  <span class="form-label">loop</span>
-                  <select class="form-select" bind:value={draft.targetId}>
-                    <option value="">— select —</option>
-                    {#each loops as ch (ch.id)}
-                      <option value={ch.id}>{ch.name}</option>
-                    {/each}
-                  </select>
-                </label>
-              {:else if draft.targetType === 'runner'}
-                <label class="form-row">
-                  <span class="form-label">prompt</span>
-                  <textarea class="form-textarea" bind:value={draft.targetPrompt} rows="4"></textarea>
-                </label>
-              {/if}
-
-              <div class="form-row">
-                <span class="form-label">schedule</span>
-                <div class="seg-ctrl">
-                  <button class="seg-btn" class:active={draft.scheduleMode === 'interval'} onclick={() => draft.scheduleMode = 'interval'}>interval</button>
-                  <button class="seg-btn" class:active={draft.scheduleMode === 'time'}     onclick={() => draft.scheduleMode = 'time'}>time of day</button>
-                </div>
-              </div>
-
-              {#if draft.scheduleMode === 'interval'}
-                <label class="form-row">
-                  <span class="form-label">every</span>
-                  <div class="interval-row">
-                    <input class="form-input short" type="number" min="30" bind:value={draft.interval_s} />
-                    <span class="form-unit">seconds</span>
-                  </div>
-                </label>
-              {:else}
-                <div class="form-row">
-                  <span class="form-label">time</span>
-                  <div class="time-row">
-                    <input class="form-input short" type="time" bind:value={draft.run_at} />
-                    <select class="form-select narrow" bind:value={draft.days}>
-                      <option value="daily">daily</option>
-                      <option value="weekdays">weekdays</option>
-                    </select>
-                  </div>
-                </div>
-              {/if}
-
-              <div class="form-actions">
-                <button class="btn sm primary" onclick={save} disabled={saving || !isFormValid()}>{saving ? 'saving…' : 'save'}</button>
-                <button class="btn sm ghost" onclick={cancelEdit}>cancel</button>
-              </div>
-            </div>
-          {:else}
-            <div class="job-row">
-              <button class="job-toggle" class:on={job.enabled} onclick={() => toggle(job)}
-                title={job.enabled ? 'disable' : 'enable'}>
-                {job.enabled ? '●' : '○'}
               </button>
-              <div class="job-info" role="button" tabindex="0"
-                onclick={() => startEdit(job)}
-                onkeydown={(e) => e.key === 'Enter' && startEdit(job)}>
-                <span class="job-name">{job.name}</span>
-                <span class="job-cmd">{targetLabel(job)}</span>
-                <div class="job-meta-row">
-                  {#if job.profile}
-                    <span class="job-profile">{job.profile}</span>
-                  {/if}
-                  <span class="job-type-badge type-{job.target_type || 'shell'}">{job.target_type || 'shell'}</span>
-                  {#if job.source === 'widget'}
-                    <span class="job-source-badge" title="created by a dashboard widget">widget</span>
-                  {/if}
-                  <span class="job-meta">{fmtSchedule(job)}</span>
-                  <span class="job-meta">last run: {fmtLastRun(job)}</span>
-                  {#if job.last_error}
-                    <span class="job-err" title={job.last_error}>✗ error</span>
-                  {/if}
-                </div>
-              </div>
-              <div class="job-btns">
-                <button class="job-btn" onclick={() => runNow(job.id)} disabled={runningId === job.id} title="run now">
-                  {runningId === job.id ? '…' : '▶'}
-                </button>
-                <button class="job-btn danger" onclick={() => remove(job.id)} title="delete">✕</button>
-              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+
+    <!-- Detail -->
+    <section class="card detail">
+      {#if !detail}
+        <EmptyState title="Select a job" detail="Per-machine results appear here." />
+      {:else}
+        <div class="detail-head">
+          <div>
+            <h2>Job <code>{detail.job_id.slice(0, 8)}</code></h2>
+            <div class="detail-summary">
+              total {detail.summary.total}
+              {#each rollup(detail.summary.by_status) as [st, n]}
+                <span class="badge {badgeClass(st)}">{st} {n}</span>
+              {/each}
             </div>
+          </div>
+          {#if jobLive}
+            <button class="danger" onclick={cancelJob}>Cancel live</button>
           {/if}
         </div>
-      {/each}
-    </div>
-  {/if}
+        <ul class="tasks">
+          {#each detail.tasks as t}
+            <li class="task">
+              <div class="task-top">
+                <span class="badge {badgeClass(t.status)}">{t.status}</span>
+                <span class="target">{targetLabel(t)}</span>
+                {#if t.session_name}<code class="sess">{t.session_name}</code>{/if}
+              </div>
+              {#if t.error}<pre class="err-body">{t.error}</pre>{/if}
+              {#if t.result && t.status === 'completed'}<pre class="res-body">{t.result}</pre>{/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  </div>
 </div>
 
 <style>
-  .jobs {
-    padding: var(--panel-padding);
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-md);
-    min-height: 100%;
+  .jobs { padding: var(--panel-padding); color: var(--color-text-primary); }
+  .head { margin-bottom: var(--spacing-lg); }
+  h1 { font-size: 1.4rem; margin: 0; }
+  .sub { color: var(--color-text-muted); margin: 2px 0 0; font-size: 0.85rem; }
+  h2 { font-size: 0.95rem; margin: 0 0 var(--spacing-md); color: var(--color-text-secondary); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    grid-template-areas: "submit list" "submit detail";
+    gap: var(--spacing-lg);
+    align-items: start;
   }
+  .submit { grid-area: submit; }
+  .list { grid-area: list; }
+  .detail { grid-area: detail; min-height: 200px; }
 
-  .status-msg {
-    font-family: var(--font-mono); font-size: 11px;
-    color: var(--color-success);
-  }
-
-  /* Filter */
-  .filter-row { display: flex; align-items: center; gap: var(--spacing-sm); }
-  .filter-label { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-muted); width: 38px; flex-shrink: 0; }
-  .tag-bar { display: flex; flex-wrap: wrap; gap: 6px; }
-  .tag {
-    font-family: var(--font-mono); font-size: 10px; padding: 2px 8px;
-    border-radius: 999px; border: 1px solid var(--color-border-primary);
-    background: none; cursor: pointer; color: var(--color-text-muted);
-  }
-  .tag:hover { border-color: var(--color-border-secondary); color: var(--color-text-secondary); }
-  .tag.active { border-color: var(--color-accent); color: var(--color-accent); background: rgba(234,179,8,0.06); }
-
-  .empty {
-    font-size: 13px; color: var(--color-text-tertiary);
-    padding: var(--spacing-3xl) 0; line-height: 1.5;
-  }
-
-  /* Job list */
-  .job-list { display: flex; flex-direction: column; gap: var(--spacing-sm); }
-
-  .job-card {
+  .card {
+    background: var(--color-bg-secondary);
     border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-md);
-    background: var(--color-bg-secondary);
-    overflow: hidden; transition: border-color 100ms;
-  }
-  .job-card:hover { border-color: var(--color-border-secondary); }
-  .job-card.editing { border-color: var(--color-accent); }
-
-  .job-row {
-    display: grid; grid-template-columns: 24px 1fr auto;
-    align-items: center; gap: var(--spacing-md);
-    padding: var(--spacing-md) var(--spacing-lg);
-  }
-
-  .job-toggle {
-    background: none; border: none; cursor: pointer;
-    font-size: 14px; font-family: var(--font-mono);
-    color: var(--color-text-muted); padding: 0; line-height: 1; transition: color 100ms;
-  }
-  .job-toggle.on { color: var(--color-success); }
-  .job-toggle:hover { opacity: 0.7; }
-
-  .job-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; cursor: pointer; }
-  .job-name { font-size: 13px; font-weight: 500; color: var(--color-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .job-cmd { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .job-meta-row { display: flex; gap: var(--spacing-sm); align-items: center; flex-wrap: wrap; }
-  .job-meta { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-tertiary); }
-  .job-profile { font-family: var(--font-mono); font-size: 10px; color: var(--color-accent); background: rgba(234,179,8,0.08); border: 1px solid rgba(234,179,8,0.2); border-radius: 999px; padding: 1px 6px; }
-  .job-err { font-family: var(--font-mono); font-size: 10px; color: var(--color-error); }
-
-  .job-type-badge {
-    font-family: var(--font-mono); font-size: 10px;
-    padding: 1px 6px; border-radius: 999px;
-    border: 1px solid var(--color-border-primary);
-    color: var(--color-text-muted);
-  }
-  .job-type-badge.type-loop    { color: #10b981; border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.06); }
-  .job-type-badge.type-runner   { color: #f59e0b; border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.06); }
-
-  .job-source-badge {
-    font-family: var(--font-mono); font-size: 10px;
-    padding: 1px 6px; border-radius: 999px;
-    color: var(--accent, var(--color-accent));
-    border: 1px solid color-mix(in srgb, var(--accent, var(--color-accent)) 30%, transparent);
-    background: color-mix(in srgb, var(--accent, var(--color-accent)) 8%, transparent);
-  }
-
-
-  .job-btns { display: flex; gap: 4px; flex-shrink: 0; }
-  .job-btn {
-    background: none; border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-sm); padding: 3px 8px;
-    font-size: 11px; cursor: pointer; color: var(--color-text-muted);
-    transition: all 100ms; font-family: var(--font-mono);
-  }
-  .job-btn:hover:not(:disabled) { border-color: var(--color-accent); color: var(--color-accent); }
-  .job-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .job-btn.danger:hover:not(:disabled) { border-color: var(--color-error); color: var(--color-error); }
-
-  /* Form */
-  .job-form {
-    display: flex; flex-direction: column; gap: var(--spacing-md);
     padding: var(--spacing-lg);
-    border: 1px solid var(--color-accent);
-    border-radius: var(--radius-md);
-    background: var(--color-bg-secondary);
   }
-  .job-form.inline { border: none; border-radius: 0; }
-  .form-title { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
-  .form-row { display: flex; flex-direction: column; gap: 4px; }
-  .form-label { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-muted); }
 
-  .form-input {
-    background: var(--color-bg-primary); border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-sm); padding: 6px 8px;
-    font-size: 12px; color: var(--color-text-primary); font-family: inherit; width: 100%;
+  .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: var(--spacing-md); }
+  .field.narrow { max-width: 90px; }
+  .row { display: flex; gap: var(--spacing-md); }
+  .row .field { flex: 1; }
+  .form-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-tertiary); }
+  .opt { text-transform: none; letter-spacing: 0; color: var(--color-text-muted); }
+  input, select, textarea {
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-primary);
+    padding: 6px 8px;
+    font-size: 0.85rem;
+    font-family: inherit;
   }
-  .form-input:focus { outline: none; border-color: var(--color-accent); }
-  .form-input.short { width: 100px; }
+  textarea { resize: vertical; }
 
-  .form-textarea {
-    background: var(--color-bg-primary); border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-sm); padding: 6px 8px;
-    font-size: 11px; font-family: var(--font-mono);
-    color: var(--color-text-primary); width: 100%; resize: vertical;
+  .targets { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 var(--spacing-md); }
+  .chip {
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: 999px;
+    color: var(--color-text-secondary);
+    padding: 4px 10px;
+    font-size: 0.78rem;
+    cursor: pointer;
   }
-  .form-textarea:focus { outline: none; border-color: var(--color-accent); }
+  .chip.on { border-color: var(--color-accent); color: var(--color-accent); }
+  .chip.check { display: inline-flex; align-items: center; gap: 5px; }
+  .chip.check input { width: auto; padding: 0; }
+  .muted-note { color: var(--color-text-muted); font-size: 0.8rem; }
+  .hint { color: var(--color-text-muted); font-size: 0.78rem; margin: 0 0 var(--spacing-md); }
 
-  .form-select {
-    background: var(--color-bg-primary); border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-sm); padding: 6px 8px;
-    font-size: 12px; color: var(--color-text-primary); font-family: inherit;
-    width: 100%; cursor: pointer;
+  button.primary {
+    width: 100%;
+    background: var(--color-accent);
+    color: var(--color-bg-primary);
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 8px;
+    font-weight: 600;
+    cursor: pointer;
   }
-  .form-select:focus { outline: none; border-color: var(--color-accent); }
-  .form-select.narrow { width: auto; min-width: 100px; }
-
-  /* Segmented control */
-  .seg-ctrl { display: flex; gap: 0; }
-  .seg-btn {
-    font-family: var(--font-mono); font-size: 11px;
-    padding: 4px 10px; background: none;
-    border: 1px solid var(--color-border-primary);
-    cursor: pointer; color: var(--color-text-muted);
-    transition: all 100ms; margin-left: -1px;
+  button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.danger {
+    background: transparent; color: var(--color-error);
+    border: 1px solid var(--color-error); border-radius: var(--radius-sm);
+    padding: 5px 10px; font-size: 0.8rem; cursor: pointer;
   }
-  .seg-btn:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); margin-left: 0; }
-  .seg-btn:last-child  { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
-  .seg-btn.active { background: rgba(234,179,8,0.08); border-color: var(--color-accent); color: var(--color-accent); z-index: 1; position: relative; }
-  .seg-btn:hover:not(.active) { color: var(--color-text-secondary); }
 
-  .interval-row { display: flex; align-items: center; gap: var(--spacing-sm); }
-  .time-row { display: flex; align-items: center; gap: var(--spacing-sm); }
-  .form-unit { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-muted); }
+  .rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .job-row {
+    width: 100%; text-align: left; cursor: pointer;
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .job-row.sel { border-color: var(--color-accent); }
+  .job-main { display: flex; align-items: center; gap: 10px; }
+  .jid { font-family: var(--font-mono); color: var(--color-text-secondary); font-size: 0.8rem; }
+  .agent { font-size: 0.85rem; }
+  .count { color: var(--color-text-muted); font-size: 0.78rem; }
+  .job-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .ago { color: var(--color-text-muted); font-size: 0.72rem; margin-left: auto; }
 
-  .form-actions { display: flex; gap: var(--spacing-sm); }
+  .badge {
+    font-size: 0.68rem; padding: 2px 7px; border-radius: 999px;
+    text-transform: lowercase; white-space: nowrap;
+    border: 1px solid var(--color-border-secondary); color: var(--color-text-secondary);
+  }
+  .badge.ok { color: var(--color-success); border-color: var(--color-success); }
+  .badge.err { color: var(--color-error); border-color: var(--color-error); }
+  .badge.run { color: var(--color-accent); border-color: var(--color-accent); }
+  .badge.pend { color: var(--color-text-muted); }
+  .badge.muted { color: var(--color-text-tertiary); }
+
+  .detail-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--spacing-md); }
+  .detail-summary { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--color-text-muted); font-size: 0.78rem; }
+  .tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .task { border: 1px solid var(--color-border-secondary); border-radius: var(--radius-sm); padding: 8px 10px; }
+  .task-top { display: flex; align-items: center; gap: 10px; }
+  .target { font-size: 0.85rem; }
+  .sess { font-family: var(--font-mono); font-size: 0.72rem; color: var(--color-text-muted); margin-left: auto; }
+  .err-body, .res-body {
+    margin: 8px 0 0; padding: 6px 8px; border-radius: var(--radius-sm);
+    background: var(--color-bg-primary); font-family: var(--font-mono);
+    font-size: 0.72rem; white-space: pre-wrap; max-height: 140px; overflow: auto;
+  }
+  .err-body { color: var(--color-error); }
 </style>
