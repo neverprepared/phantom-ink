@@ -1,74 +1,13 @@
-"""Tests for agent_store envelope converters (playbook/channel/hub-task)."""
+"""Tests for agent_store envelope converters (channel/hub-task)."""
 
 from __future__ import annotations
 
 import brainbox.channels as channels
-import brainbox.playbooks as playbooks
 from brainbox.agent_store import (
     envelope_from_channel,
     envelope_from_hub_task,
-    envelope_from_playbook,
 )
 from brainbox.models import ChannelParticipant, Task, TaskStatus
-
-
-class TestPlaybookConverter:
-    def _pb(self, **kwargs):
-        return playbooks.create_playbook(
-            kwargs.pop("name", "deploy"),
-            "- [ ] step one\n- [ ] step two\n",
-            **kwargs,
-        )
-
-    def test_lifecycle_event(self):
-        pb = self._pb(workspace_profile="personal")
-        env = envelope_from_playbook("playbook.created", pb)
-        assert env.id == f"playbook:{pb.id}"
-        assert env.type == "playbook.created"
-        assert env.status == "upcoming"
-        assert env.workspace == "personal"
-        assert env.metadata["tasks_total"] == 2
-        assert env.tags == ["playbook"]
-
-    def test_status_mapping(self):
-        pb = self._pb()
-        for raw, mapped in [
-            ("running", "active"), ("completed", "done"),
-            ("failed", "failed"), ("cancelled", "done"),
-        ]:
-            pb.status = raw
-            assert envelope_from_playbook("playbook.updated", pb).status == mapped
-
-    def test_global_workspace_normalizes_to_none(self):
-        pb = self._pb()  # defaults to "global"
-        env = envelope_from_playbook("playbook.created", pb)
-        assert env.workspace is None
-
-    def test_provenance_metadata(self):
-        pb = self._pb()
-        pb.origin_rule_id = "rule-1"
-        pb.rule_chain_depth = 2
-        env = envelope_from_playbook("playbook.started", pb)
-        assert env.metadata["origin_rule_id"] == "rule-1"
-        assert env.metadata["rule_chain_depth"] == 2
-
-    def test_no_depth_key_when_zero(self):
-        env = envelope_from_playbook("playbook.created", self._pb())
-        assert "rule_chain_depth" not in env.metadata
-
-    def test_task_done_dict_shape(self):
-        pb = self._pb()
-        env = envelope_from_playbook(
-            "playbook.task_done",
-            {"playbook_id": pb.id, "task_id": "t1", "status": "completed"},
-        )
-        assert env.id == f"playbook:{pb.id}"
-        assert env.type == "playbook.task_done"
-        assert env.title == pb.name
-        assert env.metadata["task_id"] == "t1"
-
-    def test_unresolvable_dict_returns_none(self):
-        assert envelope_from_playbook("playbook.task_done", {"task_id": "t1"}) is None
 
 
 class TestChannelConverter:

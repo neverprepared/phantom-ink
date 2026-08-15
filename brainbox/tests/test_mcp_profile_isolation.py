@@ -81,22 +81,6 @@ def test_list_tasks_filters(monkeypatch, capture):
     assert "workspace_profile=personal" in path
 
 
-# --- playbook tools force, ignoring a caller-supplied profile ---------------
-
-def test_list_playbooks_ignores_requested_profile(monkeypatch, capture):
-    _bind(monkeypatch, "personal")
-    m.list_playbooks(workspace_profile="work")
-    _, path, _ = capture[-1]
-    assert path == "/api/hub/playbooks?profile=personal"
-
-
-def test_create_playbook_forces_profile(monkeypatch, capture):
-    _bind(monkeypatch, "personal")
-    m.create_playbook(name="p", markdown="- [ ] x", workspace_profile="work")
-    _, _, body = capture[-1]
-    assert body["workspace_profile"] == "personal"
-
-
 # --- by-name guard: refuse foreign, allow own / orphan / unbound ------------
 
 def test_exec_foreign_session_refused(monkeypatch, capture):

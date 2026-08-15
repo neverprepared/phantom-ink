@@ -14,8 +14,6 @@ from .log import get_logger
 from .channels import get_state as channels_get_state
 from .channels import ollama_watcher
 from .channels import restore_state as channels_restore_state
-from .playbooks import get_state as playbooks_get_state
-from .playbooks import restore_state as playbooks_restore_state
 from .runners import get_state as runners_get_state
 from .runners import restore_state as runners_restore_state
 from .messages import get_state as messages_get_state
@@ -134,7 +132,6 @@ async def _flush_state() -> None:
         "router": router_get_state(),
         "messages": messages_get_state(),
         "channels": channels_get_state(),
-        "playbooks": playbooks_get_state(),
         "runners": runners_get_state(),
     }
 
@@ -168,7 +165,6 @@ async def _restore_state() -> None:
     router_restore_state(state.get("router"))
     messages_restore_state(state.get("messages"))
     channels_restore_state(state.get("channels"))
-    playbooks_restore_state(state.get("playbooks"))
     runners_restore_state(state.get("runners"))
 
     log.info(

@@ -173,69 +173,6 @@ class TestOutputCap:
         assert len(capped.encode()) < 40
 
 
-class TestRunPlaybookExecutor:
-    @pytest.fixture(autouse=True)
-    def _fresh_playbooks(self):
-        # playbooks module state is not covered by the conftest reset —
-        # clear it so name-resolution tests are order-independent.
-        import brainbox.playbooks as playbooks
-        playbooks._playbooks.clear()
-        yield
-        playbooks._playbooks.clear()
-
-    @pytest.fixture
-    def captured(self, monkeypatch):
-        import brainbox.playbooks as playbooks
-        calls: list[dict] = []
-        pb = playbooks.create_playbook("deploy", "- [ ] step\n")
-
-        async def _fake_run(playbook_id, **kwargs):
-            calls.append({"playbook_id": playbook_id, **kwargs})
-            return pb
-
-        monkeypatch.setattr(playbooks, "run_playbook", _fake_run)
-        return pb, calls
-
-    async def test_resolves_by_id_and_stamps_provenance(self, captured):
-        pb, calls = captured
-        rule = er.EventRule(
-            name="r", pattern={"type": ["task.failed"]},
-            actions=[er.RunPlaybookAction(playbook=pb.id)],
-        )
-        result = await er._exec_run_playbook(rule.actions[0], rule, DOC)
-        assert result == {"playbook_id": pb.id}
-        assert calls[0]["origin_rule_id"] == rule.id
-        assert calls[0]["rule_chain_depth"] == 2
-        assert calls[0]["workspace_profile"] == "personal"  # inherited
-
-    async def test_resolves_by_unique_name(self, captured):
-        pb, calls = captured
-        rule = er.EventRule(
-            name="r", pattern={"x": ["y"]},
-            actions=[er.RunPlaybookAction(playbook="deploy")],
-        )
-        await er._exec_run_playbook(rule.actions[0], rule, DOC)
-        assert calls[0]["playbook_id"] == pb.id
-
-    async def test_not_found_is_permanent(self):
-        rule = er.EventRule(
-            name="r", pattern={"x": ["y"]},
-            actions=[er.RunPlaybookAction(playbook="ghost")],
-        )
-        with pytest.raises(er._PermanentActionError, match="not found"):
-            await er._exec_run_playbook(rule.actions[0], rule, DOC)
-
-    async def test_ambiguous_name_is_permanent(self, captured):
-        import brainbox.playbooks as playbooks
-        playbooks.create_playbook("deploy", "- [ ] other\n")  # second "deploy"
-        rule = er.EventRule(
-            name="r", pattern={"x": ["y"]},
-            actions=[er.RunPlaybookAction(playbook="deploy")],
-        )
-        with pytest.raises(er._PermanentActionError, match="ambiguous"):
-            await er._exec_run_playbook(rule.actions[0], rule, DOC)
-
-
 class TestStartLoopExecutor:
     async def test_renders_refs_and_stamps_provenance(self, monkeypatch):
         import brainbox.loop_runner as loop_runner

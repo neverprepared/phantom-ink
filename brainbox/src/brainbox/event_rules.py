@@ -68,13 +68,6 @@ class SubmitTaskAction(BaseModel):
     model_target: ModelTarget | None = None
 
 
-class RunPlaybookAction(BaseModel):
-    type: Literal["run_playbook"] = "run_playbook"
-    playbook: str  # playbook id, falling back to unique name match
-    workspace_profile: str | None = None  # None = inherit event.workspace
-    runner: str | None = None
-
-
 class StartLoopAction(BaseModel):
     type: Literal["start_loop"] = "start_loop"
     template_name: str
@@ -101,7 +94,7 @@ class RunScriptAction(BaseModel):
 
 
 RuleAction = Annotated[
-    SubmitTaskAction | RunPlaybookAction | StartLoopAction | WebhookAction | RunScriptAction,
+    SubmitTaskAction | StartLoopAction | WebhookAction | RunScriptAction,
     Field(discriminator="type"),
 ]
 
@@ -254,7 +247,12 @@ def get_rule(rule_id: str) -> EventRule | None:
 
 def list_rules(profile: str | None = None, enabled: bool | None = None) -> list[EventRule]:
     """List rules. ``profile`` returns that profile's rules plus global
-    (''/'global') ones, mirroring playbooks.list_playbooks."""
+    (''/'global') ones.
+
+    Rows whose stored actions no longer parse — e.g. a retired action type like
+    the removed ``run_playbook`` — are skipped with a warning rather than raising,
+    so one stale rule can't wedge the consumer (fail-soft).
+    """
     clauses: list[str] = []
     params: list[Any] = []
     if profile is not None:
@@ -268,7 +266,16 @@ def list_rules(profile: str | None = None, enabled: bool | None = None) -> list[
         rows = c.execute(
             f"SELECT * FROM event_rules {where} ORDER BY created_at ASC", params
         ).fetchall()
-    return [_row_to_rule(r) for r in rows]
+    out: list[EventRule] = []
+    for r in rows:
+        try:
+            out.append(_row_to_rule(r))
+        except Exception as exc:
+            log.warning(
+                "event_rules.skip_unparseable",
+                metadata={"rule_id": dict(r).get("id", "?"), "reason": str(exc)},
+            )
+    return out
 
 
 def delete_rule(rule_id: str) -> bool:
@@ -615,33 +622,6 @@ async def _exec_submit_task(
     return {"task_id": task.id}
 
 
-async def _exec_run_playbook(
-    action: RunPlaybookAction, rule: EventRule, doc: dict[str, Any]
-) -> dict[str, Any]:
-    from . import playbooks
-
-    pb = playbooks.get_playbook(action.playbook)
-    if pb is None:
-        named = [p for p in playbooks.list_playbooks() if p.name == action.playbook]
-        if len(named) == 1:
-            pb = named[0]
-        elif len(named) > 1:
-            raise _PermanentActionError(
-                f"playbook name '{action.playbook}' is ambiguous ({len(named)} matches) — use the id"
-            )
-    if pb is None:
-        raise _PermanentActionError(f"playbook '{action.playbook}' not found")
-
-    started = await playbooks.run_playbook(
-        pb.id,
-        workspace_profile=action.workspace_profile or doc.get("workspace"),
-        runner=action.runner,
-        origin_rule_id=rule.id,
-        rule_chain_depth=_chain_depth(doc) + 1,
-    )
-    return {"playbook_id": started.id}
-
-
 async def _exec_start_loop(
     action: StartLoopAction, rule: EventRule, doc: dict[str, Any]
 ) -> dict[str, Any]:
@@ -755,8 +735,6 @@ async def _execute_action(
 ) -> dict[str, Any]:
     if action.type == "submit_task":
         return await _exec_submit_task(action, rule, doc)
-    if action.type == "run_playbook":
-        return await _exec_run_playbook(action, rule, doc)
     if action.type == "start_loop":
         return await _exec_start_loop(action, rule, doc)
     if action.type == "webhook":
