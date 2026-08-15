@@ -20,6 +20,7 @@ type Task struct {
 	WorkspaceProfile string      `json:"workspace_profile"`
 	RunnerName       string      `json:"runner_name"`      // machine the task was dispatched to ("" = in-process/auto)
 	Backend          string      `json:"backend"`          // execution backend (docker | utm)
+	DockerHost       string      `json:"docker_host"`      // remote Docker daemon over SSH, if any
 	JobID            string      `json:"job_id"`
 	SpawnedBy        string      `json:"spawned_by"`       // task ID of the parent that spawned this one
 	ChildTaskIDs     []string    `json:"child_task_ids"`   // task IDs of children spawned by this task
@@ -168,6 +169,7 @@ type JobTarget struct {
 	RunnerTags []string `json:"runner_tags,omitempty"` // preferred tags for auto-selection
 	Pool       string   `json:"pool,omitempty"`        // machine-class pool
 	Backend    string   `json:"backend,omitempty"`     // docker | utm
+	DockerHost string   `json:"docker_host,omitempty"` // remote Docker daemon over SSH (ssh://user@host)
 }
 
 // SubmitJobRequest is the payload for POST /api/hub/jobs — fan one agent spec
