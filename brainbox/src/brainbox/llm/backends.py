@@ -226,7 +226,7 @@ class ClaudeOAuthBackend:
 
         api_key = _load_local_api_key()
         base_url = f"http://localhost:{settings.api_port}"
-        session_name = f"{ctx.session_prefix}-{uuid.uuid4().hex[:8]}"
+        session_name = ctx.session_name or f"{ctx.session_prefix}-{uuid.uuid4().hex[:8]}"
         headers = {"X-API-Key": api_key}
         prompt = _compose_prompt(messages)
 
