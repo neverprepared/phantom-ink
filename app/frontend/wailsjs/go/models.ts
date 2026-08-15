@@ -1083,6 +1083,7 @@ export namespace brainbox {
 	    runner_tags?: string[];
 	    pool?: string;
 	    backend?: string;
+	    docker_host?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new JobTarget(source);
@@ -1094,6 +1095,7 @@ export namespace brainbox {
 	        this.runner_tags = source["runner_tags"];
 	        this.pool = source["pool"];
 	        this.backend = source["backend"];
+	        this.docker_host = source["docker_host"];
 	    }
 	}
 	export class LiveLoop {
@@ -2300,6 +2302,7 @@ export namespace main {
 	    workspace_profile: string;
 	    runner_name: string;
 	    backend: string;
+	    docker_host: string;
 	    job_id: string;
 	    spawned_by: string;
 	    child_task_ids: string[];
@@ -2324,6 +2327,7 @@ export namespace main {
 	        this.workspace_profile = source["workspace_profile"];
 	        this.runner_name = source["runner_name"];
 	        this.backend = source["backend"];
+	        this.docker_host = source["docker_host"];
 	        this.job_id = source["job_id"];
 	        this.spawned_by = source["spawned_by"];
 	        this.child_task_ids = source["child_task_ids"];

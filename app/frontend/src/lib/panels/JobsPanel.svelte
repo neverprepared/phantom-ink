@@ -20,7 +20,7 @@
   }
   interface HubTask {
     id: string; description: string; agent_name: string; status: string;
-    runner_name: string; backend: string; session_name: string;
+    runner_name: string; backend: string; docker_host: string; session_name: string;
     result: string; error: string; created_at: number;
   }
   interface JobDetail {
@@ -50,6 +50,7 @@
   let priority = $state(0);
   let useLocal = $state(false);
   let selectedRunners = $state<Set<string>>(new Set());
+  let dockerHosts = $state('');  // remote Docker daemons over SSH, one ssh://user@host per line
   let submitting = $state(false);
 
   let pollHandle: number | undefined;
@@ -109,9 +110,14 @@
     selectedRunners = next;
   }
 
+  function remoteHosts(): string[] {
+    return dockerHosts.split('\n').map((h) => h.trim()).filter(Boolean);
+  }
+
   function buildTargets(): any[] {
     const targets: any[] = [];
     for (const name of selectedRunners) targets.push({ runner: name, backend });
+    for (const host of remoteHosts()) targets.push({ docker_host: host, backend: 'docker' });
     if (useLocal || targets.length === 0) {
       const t: any = { backend };
       if (pool.trim()) t.pool = pool.trim();
@@ -119,6 +125,10 @@
     }
     return targets;
   }
+  const targetCount = $derived(
+    selectedRunners.size + remoteHosts().length +
+    ((useLocal || selectedRunners.size + remoteHosts().length === 0) ? 1 : 0),
+  );
 
   async function submit() {
     if (!task.trim() || submitting) return;
@@ -170,7 +180,7 @@
     return Object.entries(by).sort((a, b) => a[0].localeCompare(b[0]));
   }
   function targetLabel(t: HubTask): string {
-    return t.runner_name || `auto/${t.backend || 'docker'}`;
+    return t.runner_name || t.docker_host || `auto/${t.backend || 'docker'}`;
   }
   const canSubmit = $derived(task.trim().length > 0 && !submitting);
   const jobLive = $derived(detail?.tasks.some((t) => !TERMINAL.has(t.status)) ?? false);
@@ -230,6 +240,10 @@
           <input type="checkbox" bind:checked={useLocal} /> local / auto
         </label>
       </div>
+      <label class="field">
+        <span class="form-label">remote docker hosts <span class="opt">(ssh://user@host, one per line)</span></span>
+        <textarea bind:value={dockerHosts} rows="2" placeholder="ssh://ops@build-1&#10;ssh://ops@build-2"></textarea>
+      </label>
       <div class="row">
         <label class="field">
           <span class="form-label">pool <span class="opt">(auto targets)</span></span>
@@ -240,10 +254,7 @@
           <input type="number" bind:value={priority} />
         </label>
       </div>
-      <p class="hint">
-        {selectedRunners.size} runner(s){(useLocal || selectedRunners.size === 0) ? ' + 1 auto' : ''}
-        → {selectedRunners.size + ((useLocal || selectedRunners.size === 0) ? 1 : 0)} task(s)
-      </p>
+      <p class="hint">{targetCount} task(s) across selected targets</p>
       <button class="primary" disabled={!canSubmit} onclick={submit}>
         {submitting ? 'Submitting…' : 'Fan out job'}
       </button>
@@ -255,9 +266,9 @@
       {#if !loaded}
         <Spinner />
       {:else if loadError}
-        <EmptyState title="Couldn't load jobs" detail={loadError} />
+        <EmptyState title="Couldn't load jobs" message={loadError} />
       {:else if jobs.length === 0}
-        <EmptyState title="No jobs yet" detail="Fan out a job to see it here." />
+        <EmptyState title="No jobs yet" message="Fan out a job to see it here." />
       {:else}
         <ul class="rows">
           {#each jobs as j}
@@ -284,7 +295,7 @@
     <!-- Detail -->
     <section class="card detail">
       {#if !detail}
-        <EmptyState title="Select a job" detail="Per-machine results appear here." />
+        <EmptyState title="Select a job" message="Per-machine results appear here." />
       {:else}
         <div class="detail-head">
           <div>

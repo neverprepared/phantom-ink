@@ -109,6 +109,7 @@ type HubTask struct {
 	WorkspaceProfile string   `json:"workspace_profile"`
 	RunnerName       string   `json:"runner_name"`
 	Backend          string   `json:"backend"`
+	DockerHost       string   `json:"docker_host"`
 	JobID            string   `json:"job_id"`
 	SpawnedBy        string   `json:"spawned_by"`
 	ChildTaskIDs     []string `json:"child_task_ids"`
@@ -138,6 +139,7 @@ func normalizeHubTask(t brainbox.Task) HubTask {
 		WorkspaceProfile: t.WorkspaceProfile,
 		RunnerName:       t.RunnerName,
 		Backend:          t.Backend,
+		DockerHost:       t.DockerHost,
 		JobID:            t.JobID,
 		SpawnedBy:        t.SpawnedBy,
 		ChildTaskIDs:     t.ChildTaskIDs,
