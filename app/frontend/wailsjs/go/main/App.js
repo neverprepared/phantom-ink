@@ -46,10 +46,6 @@ export function CancelLiveLoop(arg1, arg2) {
   return window['go']['main']['App']['CancelLiveLoop'](arg1, arg2);
 }
 
-export function CancelPlaybook(arg1) {
-  return window['go']['main']['App']['CancelPlaybook'](arg1);
-}
-
 export function CancelTask(arg1) {
   return window['go']['main']['App']['CancelTask'](arg1);
 }
@@ -76,10 +72,6 @@ export function CreateBrainSkill(arg1, arg2) {
 
 export function CreateChannel(arg1) {
   return window['go']['main']['App']['CreateChannel'](arg1);
-}
-
-export function CreatePlaybook(arg1) {
-  return window['go']['main']['App']['CreatePlaybook'](arg1);
 }
 
 export function CreateProfile(arg1) {
@@ -132,10 +124,6 @@ export function DeleteLoopTemplate(arg1) {
 
 export function DeleteOllamaModel(arg1) {
   return window['go']['main']['App']['DeleteOllamaModel'](arg1);
-}
-
-export function DeletePlaybook(arg1) {
-  return window['go']['main']['App']['DeletePlaybook'](arg1);
 }
 
 export function DeletePool(arg1) {
@@ -382,10 +370,6 @@ export function GetPlatformNode() {
   return window['go']['main']['App']['GetPlatformNode']();
 }
 
-export function GetPlaybook(arg1) {
-  return window['go']['main']['App']['GetPlaybook'](arg1);
-}
-
 export function GetProfileBundleMeta(arg1) {
   return window['go']['main']['App']['GetProfileBundleMeta'](arg1);
 }
@@ -590,10 +574,6 @@ export function ListPlatformServices() {
   return window['go']['main']['App']['ListPlatformServices']();
 }
 
-export function ListPlaybooks(arg1) {
-  return window['go']['main']['App']['ListPlaybooks'](arg1);
-}
-
 export function ListPools() {
   return window['go']['main']['App']['ListPools']();
 }
@@ -768,10 +748,6 @@ export function RunCollectJobNow(arg1) {
 
 export function RunMetricScript(arg1, arg2) {
   return window['go']['main']['App']['RunMetricScript'](arg1, arg2);
-}
-
-export function RunPlaybook(arg1, arg2, arg3) {
-  return window['go']['main']['App']['RunPlaybook'](arg1, arg2, arg3);
 }
 
 export function RunPreflightChecks() {
@@ -964,10 +940,6 @@ export function UpdateAgent(arg1, arg2) {
 
 export function UpdateBrainSkill(arg1, arg2, arg3) {
   return window['go']['main']['App']['UpdateBrainSkill'](arg1, arg2, arg3);
-}
-
-export function UpdatePlaybook(arg1, arg2) {
-  return window['go']['main']['App']['UpdatePlaybook'](arg1, arg2);
 }
 
 export function UploadArtifactFile(arg1, arg2) {

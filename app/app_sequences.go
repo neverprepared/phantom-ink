@@ -17,15 +17,6 @@ import (
 	"phantom-ink/internal/outbox"
 )
 
-// playbookPollInterval is how often we check playbook status while waiting
-// for a playbook step to finish.
-const playbookPollInterval = 4 * time.Second
-
-// playbookStepTimeout is the maximum time a single playbook step may run
-// before the loop aborts it. Playbooks drive brainbox sessions which can
-// be slow — 30 minutes is generous but bounded.
-const playbookStepTimeout = 30 * time.Minute
-
 // ---------------------------------------------------------------------------
 // Sequences — runtime CRUD + execution
 // ---------------------------------------------------------------------------
@@ -271,33 +262,6 @@ func (a *App) executeSequence(runID, loopID, initialInput, baseCwd string, steps
 
 	for i, step := range steps {
 		switch step.Type {
-		case "playbook":
-			if step.PlaybookID == "" {
-				status = "failed"
-				failure = fmt.Sprintf("step %d: playbook step has no playbook_id", i+1)
-				emit(SequenceRunEvent{
-					Phase: "step:done", StepIndex: i,
-					Error: failure, Status: "failed",
-				})
-				goto done
-			}
-			emit(SequenceRunEvent{Phase: "step:start", StepIndex: i, AgentID: "playbook:" + step.PlaybookID, Status: "running"})
-			playbookOut, err := a.runPlaybookStep(ctx, step.PlaybookID, profileName)
-			if err != nil {
-				status = "failed"
-				failure = fmt.Sprintf("step %d (playbook:%s): %v", i+1, step.PlaybookID, err)
-				emit(SequenceRunEvent{
-					Phase: "step:done", StepIndex: i, AgentID: "playbook:" + step.PlaybookID,
-					Error: err.Error(), Status: "failed",
-				})
-				goto done
-			}
-			emit(SequenceRunEvent{
-				Phase: "step:done", StepIndex: i, AgentID: "playbook:" + step.PlaybookID,
-				Output: playbookOut, Status: "success",
-			})
-			prevOutput = playbookOut
-
 		default: // "agent" or legacy empty string
 			desc, _ := agentDescriptor(step.AgentID)
 			rawCwd := step.Cwd
@@ -553,44 +517,6 @@ func (a *App) emitTaskEnvelope(taskID, loopID, status string, attempts int, errM
 		Metadata:  meta,
 		EndAt:     endAt,
 	})
-}
-
-// runPlaybookStep triggers a brainbox playbook and polls until it reaches a
-// terminal state. Returns a brief status summary as the step output (fed into
-// {{prev.output}} for downstream steps). Blocks up to playbookStepTimeout.
-func (a *App) runPlaybookStep(parent context.Context, playbookID, profileName string) (string, error) {
-	if a.client == nil {
-		return "", fmt.Errorf("brainbox client not available")
-	}
-	ctx, cancel := context.WithTimeout(parent, playbookStepTimeout)
-	defer cancel()
-
-	if _, err := a.client.RunPlaybook(playbookID, profileName, ""); err != nil {
-		return "", fmt.Errorf("start playbook: %w", err)
-	}
-
-	ticker := time.NewTicker(playbookPollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return "", fmt.Errorf("timed out waiting for playbook %s", playbookID)
-		case <-ticker.C:
-			pb, err := a.client.GetPlaybook(playbookID)
-			if err != nil {
-				return "", fmt.Errorf("poll playbook: %w", err)
-			}
-			switch pb.Status {
-			case "completed":
-				return fmt.Sprintf("playbook %q completed (%d tasks)", pb.Name, len(pb.Tasks)), nil
-			case "failed":
-				return "", fmt.Errorf("playbook %q failed", pb.Name)
-			case "cancelled":
-				return "", fmt.Errorf("playbook %q was cancelled", pb.Name)
-			}
-			// "running" or "idle" — keep polling
-		}
-	}
 }
 
 // newSequenceID returns a short opaque loop identifier.

@@ -379,31 +379,6 @@ export const streamFocus = {
   },
 };
 
-// ---------------------------------------------------------------------------
-// Playbook seed — used by Stream's "save as playbook" flow to hand off a
-// markdown body + suggested name to the Playbooks panel's create modal.
-// ---------------------------------------------------------------------------
-
-export interface PlaybookSeed {
-  name: string;
-  markdown: string;
-  scope?: 'profile' | 'global';
-}
-
-let _playbookSeed = $state<PlaybookSeed | null>(null);
-
-export const playbookSeed = {
-  get value(): PlaybookSeed | null { return _playbookSeed; },
-  seed(target: PlaybookSeed): void {
-    _playbookSeed = target;
-    currentPanel.value = 'playbooks';
-  },
-  consume(): PlaybookSeed | null {
-    const f = _playbookSeed;
-    _playbookSeed = null;
-    return f;
-  },
-};
 
 // ---------------------------------------------------------------------------
 // Rule seed — used by Stream's "create rule" flow to hand off a pre-filled

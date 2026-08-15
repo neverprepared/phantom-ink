@@ -469,8 +469,7 @@
         {@const agent = task ? agentByName.get(task.agent_name) : null}
         {@const isPersistent = agent?.persistent ?? false}
         {@const isWorktree = session.name.startsWith('wt-')}
-        {@const isPlaybook = session.name.startsWith('pb-')}
-        {@const isManual = !task && !isWorktree && !isPlaybook}
+        {@const isManual = !task && !isWorktree}
 
         <div class="session-card" class:active class:inactive={!active}>
           <div class="card-header">
@@ -505,9 +504,6 @@
             {/if}
             {#if isWorktree}
               <span class="worktree-badge">worktree</span>
-            {/if}
-            {#if isPlaybook}
-              <span class="playbook-badge">playbook</span>
             {/if}
             {#if task}
               <span class="task-badge">task</span>
@@ -842,19 +838,6 @@
     background: rgba(148, 163, 184, 0.1);
     color: var(--color-text-secondary);
     border: 1px solid rgba(148, 163, 184, 0.2);
-    flex-shrink: 0;
-  }
-
-  .playbook-badge {
-    font-size: 9px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    padding: 1px 6px;
-    border-radius: 9999px;
-    background: rgba(245, 158, 11, 0.1);
-    color: var(--color-accent);
-    border: 1px solid rgba(245, 158, 11, 0.2);
     flex-shrink: 0;
   }
 

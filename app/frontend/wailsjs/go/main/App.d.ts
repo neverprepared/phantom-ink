@@ -26,8 +26,6 @@ export function CancelHubTask(arg1:string):Promise<void>;
 
 export function CancelLiveLoop(arg1:string,arg2:string):Promise<brainbox.LiveLoop>;
 
-export function CancelPlaybook(arg1:string):Promise<void>;
-
 export function CancelTask(arg1:string):Promise<void>;
 
 export function ClearProfileServerOverride(arg1:string,arg2:string):Promise<void>;
@@ -41,8 +39,6 @@ export function CreateArtifactFolder(arg1:string,arg2:string,arg3:string):Promis
 export function CreateBrainSkill(arg1:string,arg2:string):Promise<brainbox.BrainSkillWriteResult>;
 
 export function CreateChannel(arg1:brainbox.CreateChannelRequest):Promise<brainbox.Channel>;
-
-export function CreatePlaybook(arg1:brainbox.CreatePlaybookRequest):Promise<brainbox.Playbook>;
 
 export function CreateProfile(arg1:string):Promise<main.Profile>;
 
@@ -69,8 +65,6 @@ export function DeleteGatewayEnv(arg1:string):Promise<void>;
 export function DeleteLoopTemplate(arg1:string):Promise<void>;
 
 export function DeleteOllamaModel(arg1:string):Promise<void>;
-
-export function DeletePlaybook(arg1:string):Promise<void>;
 
 export function DeletePool(arg1:string):Promise<void>;
 
@@ -194,8 +188,6 @@ export function GetPlatform():Promise<string>;
 
 export function GetPlatformNode():Promise<string>;
 
-export function GetPlaybook(arg1:string):Promise<brainbox.Playbook>;
-
 export function GetProfileBundleMeta(arg1:string):Promise<brainbox.BundleMeta>;
 
 export function GetProfileColors():Promise<Record<string, string>>;
@@ -298,8 +290,6 @@ export function ListPlatformNodes():Promise<Array<brainbox.PlatformNode>>;
 
 export function ListPlatformServices():Promise<Array<main.PlatformService>>;
 
-export function ListPlaybooks(arg1:string):Promise<Array<brainbox.Playbook>>;
-
 export function ListPools():Promise<Array<brainbox.Pool>>;
 
 export function ListProfileDirs(arg1:string):Promise<Array<string>>;
@@ -387,8 +377,6 @@ export function RevokeProfileToken(arg1:string):Promise<void>;
 export function RunCollectJobNow(arg1:string):Promise<void>;
 
 export function RunMetricScript(arg1:string,arg2:string):Promise<string>;
-
-export function RunPlaybook(arg1:string,arg2:string,arg3:string):Promise<brainbox.Playbook>;
 
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
 
@@ -485,8 +473,6 @@ export function TriggerRule(arg1:string,arg2:string,arg3:string):Promise<void>;
 export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promise<brainbox.AgentDefinition>;
 
 export function UpdateBrainSkill(arg1:string,arg2:string,arg3:string):Promise<brainbox.BrainSkillWriteResult>;
-
-export function UpdatePlaybook(arg1:string,arg2:brainbox.UpdatePlaybookRequest):Promise<brainbox.Playbook>;
 
 export function UploadArtifactFile(arg1:string,arg2:string):Promise<string>;
 

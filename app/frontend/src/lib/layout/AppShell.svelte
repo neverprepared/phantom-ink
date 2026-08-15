@@ -12,7 +12,6 @@
   import LoopsPanel from '../panels/LoopsPanel.svelte';
   import ConversationsPanel from '../panels/ConversationsPanel.svelte';
   import ServicesPanel from '../panels/ServicesPanel.svelte';
-  import PlaybooksPanel from '../panels/PlaybooksPanel.svelte';
   import JobsPanel from '../panels/JobsPanel.svelte';
   import AutomationsPanel from '../panels/AutomationsPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
@@ -93,8 +92,6 @@
         <LoopsPanel />
       {:else if currentPanel.value === 'conversations'}
         <ConversationsPanel />
-      {:else if currentPanel.value === 'playbooks'}
-        <PlaybooksPanel />
       {:else if currentPanel.value === 'automations'}
         <AutomationsPanel />
       {:else if currentPanel.value === 'jobs'}

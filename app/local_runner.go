@@ -31,8 +31,8 @@ type localRunner struct {
 
 	procs    sync.Map // sessionName → *exec.Cmd (for session.stop/delete)
 	workDirs sync.Map // sessionName → string (working dir from session.create)
-	tabs     sync.Map // playbookKey → tty string (reuse one tab per playbook run)
-	accums   sync.Map // playbookKey → *stepAccum (batch steps before sending)
+	tabs     sync.Map // tabGroupKey → tty string (reuse one tab per sequence run)
+	accums   sync.Map // tabGroupKey → *stepAccum (batch steps before sending)
 }
 
 func newLocalRunner(client *brainbox.Client, name, machineID string) *localRunner {
@@ -193,9 +193,9 @@ func (r *localRunner) handleSessionCreate(item *brainbox.RunnerWorkItem) brainbo
 		r.workDirs.Store(sessionName, workDir)
 	}
 
-	// Open a terminal tab once per playbook run with Claude running interactively.
+	// Open a terminal tab once per sequence run with Claude running interactively.
 	// cd first so direnv fires and exports env vars before Claude starts.
-	key := playbookKey(sessionName)
+	key := tabGroupKey(sessionName)
 	if _, exists := r.tabs.Load(key); !exists {
 		if tty, err := openTabGetTTY(); err == nil && tty != "" {
 			r.tabs.Store(key, tty)
@@ -227,7 +227,7 @@ func (r *localRunner) handleSessionCreate(item *brainbox.RunnerWorkItem) brainbo
 	}
 }
 
-// stepAccum batches playbook step prompts that arrive in a quick burst (now
+// stepAccum batches sequence step prompts that arrive in a quick burst (now
 // that _wait_for_session is skipped for runner sessions) and fires a single
 // instruction to Claude once the burst settles.
 type stepAccum struct {
@@ -240,7 +240,7 @@ type stepAccum struct {
 
 // flushDelay is how long after the last step arrives before flushing. Must be
 // longer than the remote API round-trip time (create→query→stop→delete) so all
-// steps from a single playbook run land in the same batch before we fire.
+// steps from a single sequence run land in the same batch before we fire.
 const flushDelay = 3 * time.Second
 
 func (a *stepAccum) add(step string) {
@@ -289,7 +289,7 @@ func (r *localRunner) handleSessionQuery(_ context.Context, item *brainbox.Runne
 	}
 
 	sessionName, _ := item.Payload["session_name"].(string)
-	key := playbookKey(sessionName)
+	key := tabGroupKey(sessionName)
 
 	tabTTY := ""
 	if v, ok := r.tabs.Load(key); ok {
@@ -381,10 +381,10 @@ func (r *localRunner) handleSessionStop(item *brainbox.RunnerWorkItem) brainbox.
 	return brainbox.RunnerResult{OK: true}
 }
 
-// playbookKey extracts a group key from a session name so that all steps of
-// the same playbook run share a single terminal tab.
+// tabGroupKey extracts a group key from a session name so that all steps of
+// the same sequence run share a single terminal tab.
 // "pb-abc123-t0" → "pb-abc123", anything else → sessionName unchanged.
-func playbookKey(sessionName string) string {
+func tabGroupKey(sessionName string) string {
 	parts := strings.Split(sessionName, "-")
 	if len(parts) >= 3 && parts[0] == "pb" {
 		return parts[0] + "-" + parts[1]

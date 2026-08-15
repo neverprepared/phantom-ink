@@ -200,13 +200,6 @@ func (e *AutomationEngine) fireAction(rule AutomationRule, evt AutomationEvent) 
 			e.app.emitCollectUpdate(evt.Profile)
 		}
 
-	case "run_playbook":
-		playbookID := cfg["playbook_id"]
-		if playbookID == "" {
-			return
-		}
-		_, _ = e.app.RunPlaybook(playbookID, evt.Profile, "")
-
 	case "run_loop":
 		loopID := cfg["loop_id"]
 		if loopID == "" {
