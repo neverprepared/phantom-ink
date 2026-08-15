@@ -89,7 +89,6 @@
         '1': 'dashboard',
         '2': 'sessions',
         '3': 'integrations',
-        '5': 'playbooks',
         ',': 'settings',
       };
 

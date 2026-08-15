@@ -60,7 +60,6 @@ export interface RulesStatus {
 
 export const ACTION_TYPES = [
   'submit_task',
-  'run_playbook',
   'start_loop',
   'webhook',
   'run_script',
@@ -183,8 +182,6 @@ export interface ActionDraft {
   backend: string;
   workspaceProfile: string; // '' = inherit event workspace
   repoUrl: string;
-  // run_playbook
-  playbook: string;
   // start_loop
   templateName: string;
   refRows: KVPair[];
@@ -208,7 +205,6 @@ export function newActionDraft(type: RuleActionType): ActionDraft {
     type,
     agentName: '', description: '', priority: '0', backend: 'docker',
     workspaceProfile: '', repoUrl: '',
-    playbook: '',
     templateName: '', refRows: [], refsRaw: '{}', refsRawMode: false, workspaceHome: '',
     url: '', headerRows: [], bodyMode: 'envelope', bodyRaw: '{}', timeoutS: '',
     argv: [''], cwd: '',
@@ -218,7 +214,6 @@ export function newActionDraft(type: RuleActionType): ActionDraft {
 
 const MANAGED_KEYS: Record<RuleActionType, string[]> = {
   submit_task: ['type', 'description', 'agent_name', 'priority', 'backend', 'workspace_profile', 'repo_url'],
-  run_playbook: ['type', 'playbook', 'workspace_profile'],
   start_loop: ['type', 'template_name', 'artifact_refs', 'workspace_profile', 'workspace_home'],
   webhook: ['type', 'url', 'headers', 'body', 'timeout_s'],
   run_script: ['type', 'argv', 'cwd', 'timeout_s'],
@@ -241,9 +236,6 @@ export function draftFromAction(action: Record<string, any>): ActionDraft {
     d.backend = action.backend ?? 'docker';
     d.workspaceProfile = action.workspace_profile ?? '';
     d.repoUrl = action.repo_url ?? '';
-  } else if (type === 'run_playbook') {
-    d.playbook = action.playbook ?? '';
-    d.workspaceProfile = action.workspace_profile ?? '';
   } else if (type === 'start_loop') {
     d.templateName = action.template_name ?? '';
     d.workspaceProfile = action.workspace_profile ?? '';
@@ -293,9 +285,6 @@ export function draftToAction(d: ActionDraft): Record<string, any> {
     if (d.backend && d.backend !== 'docker') action.backend = d.backend;
     if (d.workspaceProfile) action.workspace_profile = d.workspaceProfile;
     if (d.repoUrl.trim()) action.repo_url = d.repoUrl.trim();
-  } else if (d.type === 'run_playbook') {
-    action.playbook = d.playbook;
-    if (d.workspaceProfile) action.workspace_profile = d.workspaceProfile;
   } else if (d.type === 'start_loop') {
     action.template_name = d.templateName;
     if (d.refsRawMode) {
@@ -346,7 +335,6 @@ export function draftToAction(d: ActionDraft): Record<string, any> {
 export function draftValid(d: ActionDraft): boolean {
   switch (d.type) {
     case 'submit_task': return d.agentName.trim() !== '' && d.description.trim() !== '';
-    case 'run_playbook': return d.playbook.trim() !== '';
     case 'start_loop': return d.templateName.trim() !== '';
     case 'webhook': return d.url.trim() !== '';
     case 'run_script': return d.argv.some((a) => a.trim() !== '');

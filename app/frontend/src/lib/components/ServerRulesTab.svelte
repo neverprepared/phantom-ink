@@ -382,7 +382,6 @@
     color: var(--color-text-muted);
   }
   .sr-badge.type-submit_task  { color: var(--color-accent); border-color: rgba(234,179,8,0.3); background: rgba(234,179,8,0.06); }
-  .sr-badge.type-run_playbook { color: #10b981; border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.06); }
   .sr-badge.type-start_loop   { color: #f59e0b; border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.06); }
   .sr-badge.type-webhook      { color: #60a5fa; border-color: rgba(96,165,250,0.3); background: rgba(96,165,250,0.06); }
   .sr-badge.type-run_script   { color: #f472b6; border-color: rgba(244,114,182,0.3); background: rgba(244,114,182,0.06); }

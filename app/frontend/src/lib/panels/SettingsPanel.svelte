@@ -372,7 +372,7 @@
       <!-- Local Runner -->
       <div class="section">
         <h2>local runner</h2>
-        <p class="hint" style="margin-bottom: 14px;">runs playbook and loop steps as one-shot <code>claude</code> invocations on this Mac — no Docker, no mounts required</p>
+        <p class="hint" style="margin-bottom: 14px;">runs loop steps as one-shot <code>claude</code> invocations on this Mac — no Docker, no mounts required</p>
 
         <div class="field">
           <label for="runner-name">runner name</label>

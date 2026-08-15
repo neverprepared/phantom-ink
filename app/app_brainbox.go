@@ -412,39 +412,3 @@ func (a *App) RemoveChannelParticipant(id, name string) (brainbox.Channel, error
 	return a.client.RemoveChannelParticipant(id, name)
 }
 
-// ListPlaybooks returns playbooks, optionally filtered by profile.
-func (a *App) ListPlaybooks(profile string) ([]brainbox.Playbook, error) {
-	return a.client.ListPlaybooks(profile)
-}
-
-// GetPlaybook returns a single playbook by ID.
-func (a *App) GetPlaybook(id string) (brainbox.Playbook, error) {
-	return a.client.GetPlaybook(id)
-}
-
-// CreatePlaybook creates a new playbook from markdown.
-func (a *App) CreatePlaybook(req brainbox.CreatePlaybookRequest) (brainbox.Playbook, error) {
-	return a.client.CreatePlaybook(req)
-}
-
-// UpdatePlaybook updates a playbook's name and/or markdown instructions.
-func (a *App) UpdatePlaybook(id string, req brainbox.UpdatePlaybookRequest) (brainbox.Playbook, error) {
-	return a.client.UpdatePlaybook(id, req)
-}
-
-// DeletePlaybook deletes a playbook (cancels it first if running).
-func (a *App) DeletePlaybook(id string) error {
-	return a.client.DeletePlaybook(id)
-}
-
-// RunPlaybook starts sequential execution of a playbook.
-// workspaceProfile and runner override the playbook's saved values for this run.
-func (a *App) RunPlaybook(id, workspaceProfile, runner string) (brainbox.Playbook, error) {
-	return a.client.RunPlaybook(id, workspaceProfile, runner)
-}
-
-// CancelPlaybook cancels a running playbook.
-func (a *App) CancelPlaybook(id string) error {
-	return a.client.CancelPlaybook(id)
-}
-

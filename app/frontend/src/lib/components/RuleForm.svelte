@@ -52,19 +52,16 @@
 
   // Pickers
   let agents = $state<string[]>([]);
-  let playbooks = $state<{ id: string; name: string }[]>([]);
   let loopTemplates = $state<string[]>([]);
 
   onMount(async () => {
     const api = await getApi();
     if (!api) return;
-    const [ag, pb, lt] = await Promise.all([
+    const [ag, lt] = await Promise.all([
       safe(api.ListAgentRoles(), [], 'ListAgentRoles'),
-      safe(api.ListPlaybooks(''), [], 'ListPlaybooks'),
       safe(api.ListLoopTemplates(), [], 'ListLoopTemplates'),
     ]);
     agents = ((ag ?? []) as any[]).map((a) => a.name).filter(Boolean);
-    playbooks = ((pb ?? []) as any[]).map((p) => ({ id: p.id, name: p.name }));
     loopTemplates = (lt ?? []) as string[];
   });
 
@@ -146,7 +143,6 @@
     <RuleActionsEditor
       bind:drafts={actionDrafts}
       {agents}
-      {playbooks}
       {loopTemplates}
       profiles={allProfiles}
     />

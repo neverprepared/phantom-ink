@@ -2,7 +2,7 @@
  * Live-tab store for the Stream panel.
  *
  * Owns the "live" envelope list plus its client-side view machinery — chip
- * filters, saved presets, playbook-selection mode, and per-envelope history
+ * filters, saved presets, and per-envelope history
  * drill-down. Lifting this out of StreamPanel lets StreamLiveTab read the
  * state directly instead of receiving a dozen props, and keeps the panel
  * focused on tab routing, polling lifecycle, and the SSE subscription (which
@@ -13,7 +13,7 @@
  */
 import { getApi } from '../utils/api';
 import { notifications } from '../notifications.svelte';
-import { profileState, playbookSeed, attentionStore } from '../stores.svelte';
+import { profileState, attentionStore } from '../stores.svelte';
 
 export interface AgentStateItem {
   id: string;
@@ -93,9 +93,6 @@ class StreamLiveStore {
 
   liveFilters = $state<LiveFilters>(loadFilters());
   presets = $state<LivePreset[]>(loadPresets());
-
-  selectMode = $state(false);
-  selected = $state<Set<string>>(new Set());
 
   // History drill-down — keyed by envelope id, holds the fetched event
   // sequence. A card is expanded when its id is present in this map.
@@ -184,38 +181,6 @@ class StreamLiveStore {
   deletePreset(name: string): void {
     this.presets = this.presets.filter((p) => p.name !== name);
     this.persistPresets();
-  }
-
-  // ── Selection mode (drives Save-as-playbook) ─────────────────────────────
-  toggleSelect(id: string): void {
-    const next = new Set(this.selected);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    this.selected = next;
-  }
-  clearSelection(): void { this.selected = new Set(); }
-  exitSelectMode(): void { this.selectMode = false; this.clearSelection(); }
-  toggleSelectMode(): void {
-    this.selectMode = !this.selectMode;
-    if (!this.selectMode) this.clearSelection();
-  }
-
-  saveAsPlaybook(): void {
-    if (this.selected.size === 0) return;
-    // Preserve the user's visible order so the playbook reads top-to-bottom.
-    const picked = this.filteredLive.filter((it) => this.selected.has(it.id));
-    if (picked.length === 0) return;
-    const lines = picked.map((it) => {
-      const title = (it.title || it.source || it.type || 'step').replace(/\s+/g, ' ').trim();
-      const sub = (it.subtitle ?? '').trim();
-      return sub ? `- [ ] ${title} — ${sub}` : `- [ ] ${title}`;
-    });
-    const seedName = `from-stream-${new Date().toISOString().slice(0, 10)}`;
-    playbookSeed.seed({
-      name: seedName,
-      markdown: lines.join('\n'),
-      scope: this.workspaceFilter ? 'profile' : 'global',
-    });
-    this.exitSelectMode();
   }
 
   // ── Loaders ──────────────────────────────────────────────────────────────

@@ -12,13 +12,11 @@
   let {
     drafts = $bindable([] as ActionDraft[]),
     agents = [],
-    playbooks = [],
     loopTemplates = [],
     profiles = [],
   }: {
     drafts?: ActionDraft[];
     agents?: string[];
-    playbooks?: { id: string; name: string }[];
     loopTemplates?: string[];
     profiles?: string[];
   } = $props();
@@ -78,24 +76,6 @@
           <label class="form-row">
             <span class="form-label">repo url (optional, templated)</span>
             <input class="form-input" bind:value={d.repoUrl} />
-          </label>
-        </div>
-
-      {:else if d.type === 'run_playbook'}
-        <div class="form-grid">
-          <label class="form-row">
-            <span class="form-label">playbook</span>
-            <select class="form-select narrow" bind:value={d.playbook}>
-              <option value="">— select —</option>
-              {#each playbooks as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
-            </select>
-          </label>
-          <label class="form-row">
-            <span class="form-label">workspace</span>
-            <select class="form-select narrow" bind:value={d.workspaceProfile}>
-              <option value="">inherit event workspace</option>
-              {#each profiles as p (p)}<option value={p}>{p}</option>{/each}
-            </select>
           </label>
         </div>
 
@@ -210,7 +190,6 @@
     color: var(--color-text-muted);
   }
   .action-type-badge.type-submit_task  { color: var(--color-accent); border-color: rgba(234,179,8,0.3); background: rgba(234,179,8,0.06); }
-  .action-type-badge.type-run_playbook { color: #10b981; border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.06); }
   .action-type-badge.type-start_loop   { color: #f59e0b; border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.06); }
   .action-type-badge.type-webhook      { color: #60a5fa; border-color: rgba(96,165,250,0.3); background: rgba(96,165,250,0.06); }
   .action-type-badge.type-run_script   { color: #f472b6; border-color: rgba(244,114,182,0.3); background: rgba(244,114,182,0.06); }

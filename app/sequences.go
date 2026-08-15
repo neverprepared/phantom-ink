@@ -67,15 +67,12 @@ type SequenceFollowup struct {
 // Type selects the step kind:
 //
 //   - "agent" (default/empty): run an agent binary on the host via AgentID
-//   - "playbook": trigger a brainbox playbook run via PlaybookID, block until
-//     the playbook reaches a terminal state (completed/failed/cancelled)
 //
 // Executor (agent steps only) selects the execution backend. Only "host" is
 // wired today. Reserved: "session", "queue".
 type SequenceStep struct {
-	Type           string `json:"type"`        // "agent" (default) | "playbook"
+	Type           string `json:"type"`        // "agent" (default/empty)
 	AgentID        string `json:"agent_id"`    // non-empty when type="agent"
-	PlaybookID     string `json:"playbook_id"` // non-empty when type="playbook"
 	PromptTemplate string `json:"prompt_template"`
 	Cwd            string `json:"cwd"`
 	Executor       string `json:"executor"`

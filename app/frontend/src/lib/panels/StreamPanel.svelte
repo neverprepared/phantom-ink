@@ -441,15 +441,6 @@
             <button class="btn ghost small" onclick={() => streamLive.clearFilters()} title="Clear all filters">clear ({streamLive.activeFilterCount})</button>
             <button class="btn ghost small" onclick={() => streamLive.savePreset()} title="Save current filters as a preset">save preset</button>
           {/if}
-          <button
-            class="btn ghost small"
-            class:active={streamLive.selectMode}
-            onclick={() => streamLive.toggleSelectMode()}>{streamLive.selectMode ? 'cancel select' : 'select'}</button>
-          {#if streamLive.selectMode && streamLive.selected.size > 0}
-            <button class="btn ghost small accent" onclick={() => streamLive.saveAsPlaybook()}>
-              save as playbook ({streamLive.selected.size})
-            </button>
-          {/if}
         </div>
       </div>
 
@@ -479,17 +470,8 @@
       {:else}
         <ul class="attn-list">
           {#each streamLive.filteredLive as item (item.id)}
-            <li class="attn-row src-bus" class:selected={streamLive.selected.has(item.id)}>
+            <li class="attn-row src-bus">
               <div class="attn-meta">
-                {#if streamLive.selectMode}
-                  <input
-                    type="checkbox"
-                    class="select-box"
-                    checked={streamLive.selected.has(item.id)}
-                    onchange={() => streamLive.toggleSelect(item.id)}
-                    aria-label="Select for playbook"
-                  />
-                {/if}
                 <span class="attn-source">{subjectLabel(item)}</span>
                 {#if item.status}
                   <span class="attn-status status-{item.status}">{statusLabel(item.status)}</span>

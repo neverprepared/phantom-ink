@@ -31,8 +31,8 @@ type CollectJob struct {
 	LastError      string `json:"last_error"`
 	CreatedAt      int64  `json:"created_at"`
 	// composable target
-	TargetType   string `json:"target_type"`   // "shell" | "playbook" | "loop" | "runner"
-	TargetID     string `json:"target_id"`     // playbook or loop ID
+	TargetType   string `json:"target_type"`   // "shell" | "loop" | "runner"
+	TargetID     string `json:"target_id"`     // loop or runner ID
 	TargetPrompt string `json:"target_prompt"` // prompt text for runner target
 	// time-of-day scheduling (overrides interval_s when set)
 	RunAt string `json:"run_at"` // "HH:MM", e.g. "08:30"
@@ -568,7 +568,7 @@ func (s *collectScheduler) runJob(job CollectJob) {
 }
 
 // dispatchCollectJob executes a job according to its target_type.
-// Shell jobs return timeline entries; playbook/loop/runner jobs manage their
+// Shell jobs return timeline entries; loop/runner jobs manage their
 // own output and return nil entries (last_run_at is still recorded).
 func (a *App) dispatchCollectJob(job CollectJob) ([]CollectedEntry, error) {
 	// Dashboard-widget jobs emit a scalar value, not a timeline-entries
@@ -577,9 +577,6 @@ func (a *App) dispatchCollectJob(job CollectJob) ([]CollectedEntry, error) {
 		return a.runWidgetCommand(job)
 	}
 	switch job.TargetType {
-	case "playbook":
-		_, err := a.RunPlaybook(job.TargetID, job.Profile, "")
-		return nil, err
 	case "loop":
 		_, err := a.RunSequence(job.TargetID, "", "")
 		return nil, err

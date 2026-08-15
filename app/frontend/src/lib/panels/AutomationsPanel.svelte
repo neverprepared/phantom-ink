@@ -38,10 +38,9 @@
   }
 
   type TriggerType = 'entry_created' | 'entry_status_change' | 'job_complete' | 'webhook';
-  type ActionType  = 'fire_job' | 'run_playbook' | 'run_loop' | 'notify';
+  type ActionType  = 'fire_job' | 'run_loop' | 'notify';
 
   interface JobItem      { id: string; name: string; profile: string; }
-  interface PlaybookItem { id: string; name: string; workspace_profile: string; }
   interface SequenceItem    { id: string; name: string; }
 
   // ── State ──────────────────────────────────────────────────────────────
@@ -50,7 +49,6 @@
 
   let rules     = $state<AutomationRule[]>([]);
   let jobs      = $state<JobItem[]>([]);
-  let playbooks = $state<PlaybookItem[]>([]);
   let loops    = $state<SequenceItem[]>([]);
   let loading   = $state(false);
   let loadError = $state<string | null>(null); // set when the initial rules fetch fails
@@ -76,8 +74,6 @@
     actionType:       'notify' as ActionType,
     // action config — fire_job
     actJobID:         '',
-    // action config — run_playbook
-    actPlaybookID:    '',
     // action config — run_loop
     actSequenceID:       '',
     actSequenceInput:    '',
@@ -101,9 +97,6 @@
   let visibleJobs = $derived(
     !draftProfile ? jobs : jobs.filter(j => !j.profile || j.profile === draftProfile)
   );
-  let visiblePlaybooks = $derived(
-    !draftProfile ? playbooks : playbooks.filter(p => !p.workspace_profile || p.workspace_profile === draftProfile)
-  );
   let visibleSequences = $derived(loops);
 
   let webhookURL = $derived(
@@ -118,18 +111,16 @@
     if (!silent) loading = true;
     try {
       // The rules list is the panel's primary data — let its failure surface.
-      // The job/playbook/sequence/config lists only feed the action picker, so
-      // a failure there degrades gracefully via safe().
-      const [r, j, p, c, cfg] = await Promise.all([
+      // The job/sequence/config lists only feed the action picker, so a
+      // failure there degrades gracefully via safe().
+      const [r, j, c, cfg] = await Promise.all([
         (a.ListAutomationRules as any)(''),
         safe((a.ListCollectJobs as any)(''), [], 'ListCollectJobs'),
-        safe((a.ListPlaybooks as any)(''), [], 'ListPlaybooks'),
         safe((a.ListSequences as any)(), [], 'ListSequences'),
         safe((a.GetConfig as any)(), null, 'GetConfig'),
       ]);
       rules     = (r ?? []) as AutomationRule[];
       jobs      = ((j ?? []) as any[]).map((x: any): JobItem      => ({ id: x.id, name: x.name, profile:           x.profile           ?? '' }));
-      playbooks = ((p ?? []) as any[]).map((x: any): PlaybookItem => ({ id: x.id, name: x.name, workspace_profile: x.workspace_profile  ?? '' }));
       loops    = ((c ?? []) as any[]).map((x: any): SequenceItem    => ({ id: x.id, name: x.name }));
       if (cfg?.base_url) baseURL = cfg.base_url;
       loadError = null;
@@ -196,7 +187,6 @@
   function buildActionConfig(): Record<string, any> {
     switch (draft.actionType) {
       case 'fire_job':     return { job_id: draft.actJobID };
-      case 'run_playbook': return { playbook_id: draft.actPlaybookID };
       case 'run_loop':    return { loop_id: draft.actSequenceID, input: draft.actSequenceInput };
       case 'notify':       return { title: draft.actTitle, body: draft.actBody };
     }
@@ -232,7 +222,7 @@
       name: '', description: '', profile: profile, enabled: true,
       triggerType: 'entry_created', trigKind: '', trigTags: '', trigStatus: '', trigJobID: '',
       trigWebhookKey: '',
-      actionType: 'notify', actJobID: '', actPlaybookID: '', actSequenceID: '', actSequenceInput: '',
+      actionType: 'notify', actJobID: '', actSequenceID: '', actSequenceInput: '',
       actTitle: '{title}', actBody: '',
     };
   }
@@ -257,7 +247,6 @@
       trigWebhookKey:   trigCfg.key    ?? '',
       actionType:       (rule.action_type || 'notify') as ActionType,
       actJobID:         actCfg.job_id      ?? '',
-      actPlaybookID:    actCfg.playbook_id ?? '',
       actSequenceID:       actCfg.loop_id    ?? '',
       actSequenceInput:    actCfg.input       ?? '',
       actTitle:         actCfg.title       ?? '{title}',
@@ -276,7 +265,6 @@
     if (!draft.name.trim()) return false;
     if (draft.triggerType === 'webhook' && !draft.trigWebhookKey) return false;
     if (draft.actionType === 'fire_job' && !draft.actJobID) return false;
-    if (draft.actionType === 'run_playbook' && !draft.actPlaybookID) return false;
     if (draft.actionType === 'run_loop' && !draft.actSequenceID) return false;
     return true;
   }
@@ -301,7 +289,6 @@
     try { cfg = JSON.parse(rule.action_config); } catch {}
     switch (rule.action_type) {
       case 'fire_job':     return `fire job · ${resolveJobName(cfg.job_id)}`;
-      case 'run_playbook': return `run playbook · ${resolvePlaybookName(cfg.playbook_id)}`;
       case 'run_loop':    return `run loop · ${resolveSequenceName(cfg.loop_id)}`;
       case 'notify':       return `notify · "${cfg.title}"`;
       default:             return rule.action_type;
@@ -320,9 +307,6 @@
 
   function resolveJobName(id: string): string {
     return jobs.find(j => j.id === id)?.name ?? id?.slice(0, 8) ?? '?';
-  }
-  function resolvePlaybookName(id: string): string {
-    return playbooks.find(p => p.id === id)?.name ?? id?.slice(0, 8) ?? '?';
   }
   function resolveSequenceName(id: string): string {
     return loops.find(c => c.id === id)?.name ?? id?.slice(0, 8) ?? '?';
@@ -460,7 +444,7 @@
         <div class="form-row">
           <span class="form-label">action</span>
           <div class="seg-ctrl">
-            {#each (['fire_job', 'run_playbook', 'run_loop', 'notify'] as ActionType[]) as t (t)}
+            {#each (['fire_job', 'run_loop', 'notify'] as ActionType[]) as t (t)}
               <button class="seg-btn" class:active={draft.actionType === t}
                 onclick={() => { draft.actionType = t; }}>{t.replace('_', ' ')}</button>
             {/each}
@@ -476,16 +460,6 @@
                 <option value="">— select —</option>
                 {#each visibleJobs as j (j.id)}
                   <option value={j.id}>{j.name}</option>
-                {/each}
-              </select>
-            </label>
-          {:else if draft.actionType === 'run_playbook'}
-            <label class="form-row">
-              <span class="form-label">playbook</span>
-              <select class="form-select" bind:value={draft.actPlaybookID}>
-                <option value="">— select —</option>
-                {#each visiblePlaybooks as p (p.id)}
-                  <option value={p.id}>{p.name}</option>
                 {/each}
               </select>
             </label>
@@ -623,7 +597,7 @@
               <div class="form-row">
                 <span class="form-label">action</span>
                 <div class="seg-ctrl">
-                  {#each (['fire_job', 'run_playbook', 'run_loop', 'notify'] as ActionType[]) as t (t)}
+                  {#each (['fire_job', 'run_loop', 'notify'] as ActionType[]) as t (t)}
                     <button class="seg-btn" class:active={draft.actionType === t}
                       onclick={() => draft.actionType = t}>{t.replace('_', ' ')}</button>
                   {/each}
@@ -636,14 +610,6 @@
                     <select class="form-select" bind:value={draft.actJobID}>
                       <option value="">— select —</option>
                       {#each visibleJobs as j (j.id)}<option value={j.id}>{j.name}</option>{/each}
-                    </select>
-                  </label>
-                {:else if draft.actionType === 'run_playbook'}
-                  <label class="form-row">
-                    <span class="form-label">playbook</span>
-                    <select class="form-select" bind:value={draft.actPlaybookID}>
-                      <option value="">— select —</option>
-                      {#each visiblePlaybooks as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
                     </select>
                   </label>
                 {:else if draft.actionType === 'run_loop'}
@@ -788,7 +754,6 @@
   }
   .rule-badge.trigger { color: #6366f1; border-color: rgba(99,102,241,0.3); background: rgba(99,102,241,0.06); }
   .rule-badge.action.type-fire_job     { color: var(--color-accent); border-color: rgba(234,179,8,0.3); background: rgba(234,179,8,0.06); }
-  .rule-badge.action.type-run_playbook { color: #10b981; border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.06); }
   .rule-badge.action.type-run_loop    { color: #f59e0b; border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.06); }
   .rule-badge.action.type-notify       { color: #60a5fa; border-color: rgba(96,165,250,0.3); background: rgba(96,165,250,0.06); }
 
