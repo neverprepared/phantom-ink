@@ -49,7 +49,10 @@
   }
 </script>
 
-<CardExpander label="vault transfer" onOpen={() => { if (!loaded) void load(); }}>
+<CardExpander label="vault transfer"
+  hint="export / import a brain vault (portable, SHA-deduped)"
+  description="Export a brain vault to a portable, re-importable folder, or import one back as an idempotent, SHA-deduped union — the migration and archival path for moving memory/skills across daemons or hosts."
+  onOpen={() => { if (!loaded) void load(); }}>
   <div class="vt-body">
     {#if loading}
       <p class="vt-hint">loading…</p>

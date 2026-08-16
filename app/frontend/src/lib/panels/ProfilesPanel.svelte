@@ -506,7 +506,10 @@
           {/if}
 
           {#if logs.length > 0}
-            <CardExpander label="build log" count="({logs.length})" bind:open={imageLogsOpen[p.name]}>
+            <CardExpander label="build log" count="({logs.length})"
+              hint="output from the last profile image build"
+              description="Combined output from the most recent brainbox image build for this profile — check here when a build fails or an image status looks stale."
+              bind:open={imageLogsOpen[p.name]}>
               <div class="build-log">
                 {#each logs as line}
                   <div class="log-line">{line}</div>

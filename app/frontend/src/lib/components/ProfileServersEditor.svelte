@@ -79,6 +79,8 @@
 
 <CardExpander
   label="gateway servers"
+  hint="toggle which MCP servers this profile may reach"
+  description="Enable or disable each gateway MCP server for this profile. Defaults come from residency resolution (a server's trust zone must sit within the profile's ceiling); toggling overrides that. A server also needs its credentials set under gateway secrets to actually connect."
   count={loaded && rows.length ? `(${onCount}/${rows.length})` : ''}
   onOpen={() => { if (!loaded) void load(); }}
 >
