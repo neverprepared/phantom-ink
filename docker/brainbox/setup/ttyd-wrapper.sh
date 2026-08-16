@@ -107,6 +107,27 @@ _secret CODEX_MODEL
 _secret CLAUDE_MODEL
 _secret CLAUDE_EFFORT
 _secret ANTHROPIC_BASE_URL
+_secret GITHUB_TOKEN
+
+# --- GitHub auth from the broker-delivered token ----------------------------
+# The per-profile GITHUB_TOKEN arrives via the session env (credentials-broker
+# bundle -> ~/.env sourced above, or /run/secrets in hardened mode). Wire it
+# into git so `git clone`/`push` over HTTPS just work — no per-prompt
+# `gh auth login --with-token` needed (gh itself reads GITHUB_TOKEN from the env
+# natively). A HOST-SCOPED credential helper reads the token from the env at
+# git-operation time, so nothing is written to ~/.gitconfig in plaintext and a
+# rotated token is picked up automatically. `x-access-token` as the username
+# makes the same config also accept a GitHub App installation token later
+# (ADR-004-style short-lived creds), not just a PAT. Scoped to github.com so the
+# token is never offered to any other host. No-op when GITHUB_TOKEN is unset, so
+# this is strictly additive and safe for sessions without a broker GitHub cred.
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+    # --replace-all (not a plain set): this wrapper also runs on the reattach
+    # path, and a plain `git config` errors ("has multiple values") on re-run;
+    # --replace-all is idempotent and collapses any duplicates to one.
+    git config --global --replace-all credential."https://github.com".helper \
+        '!f() { echo "username=x-access-token"; echo "password=${GITHUB_TOKEN}"; }; f'
+fi
 
 # --- ADR-004: live Claude credential pull (preferred over baked .claude.enc) ---
 # Pull a FRESH OAuth credential from the router at startup so authentication
