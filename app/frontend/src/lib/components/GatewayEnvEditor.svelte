@@ -163,6 +163,14 @@
   }
 
   async function save() {
+    // Save is a FULL OVERWRITE (PUT .../env replaces the whole map). Refuse to
+    // run unless the current env loaded successfully — otherwise a failed load
+    // (broker 503 → loaded=false, rows=[]) followed by save would PUT {} and
+    // wipe every stored secret for this profile. Reopen the card to reload.
+    if (!loaded) {
+      notifications.error('Not saved — current secrets never loaded (a full-overwrite now would wipe them). Reopen the card to load first.');
+      return;
+    }
     // collapse rows → map; last key wins; skip blank keys
     const env: Record<string, string> = {};
     for (const r of rows) {
@@ -260,7 +268,7 @@
         <button class="gw-btn" onclick={loadHostEnv} title="Load this profile's host .env (~/workspaces/profiles/{profile}/.env) into the list to review + save">load host .env</button>
         <button class="gw-btn" onclick={importFromFile} title="Import a .env file (merges into the list)">import .env</button>
         <button class="gw-btn" class:active={showPaste} onclick={() => (showPaste = !showPaste)} title="Paste .env contents">paste</button>
-        <button class="gw-btn primary" onclick={save} disabled={saving}>{saving ? 'saving…' : 'save'}</button>
+        <button class="gw-btn primary" onclick={save} disabled={saving || !loaded} title={loaded ? '' : 'current secrets not loaded — reopen the card'}>{saving ? 'saving…' : 'save'}</button>
         {#if rows.length > 0}
           <button class="gw-btn danger" onclick={clearAll} disabled={saving}>clear all</button>
         {/if}
