@@ -144,6 +144,8 @@
 
 <CardExpander
   label="credential bundle"
+  hint="cloud/SSH/git creds captured from this machine for sessions"
+  description="Pick which credential sources (aws, kube, git, … plus custom) get captured from this machine and synced to MinIO for gateway and session materialization. Everything defaults OFF — explicit opt-in. 'Sync now' captures and uploads without an image rebuild. Distinct from gateway secrets: these are files/configs mounted into the container, not env vars."
   count={loaded && rows.length ? `(${onCount} on)` : ''}
   onOpen={() => { if (!loaded) void load(); }}
 >

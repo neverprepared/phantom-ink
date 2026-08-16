@@ -140,7 +140,10 @@
   }
 </script>
 
-<CardExpander label="memory" count={loaded && provisioned ? '(ready)' : ''} onOpen={() => { if (!loaded) void load(); }}>
+<CardExpander label="memory" count={loaded && provisioned ? '(ready)' : ''}
+  hint="this profile's long-term brain memory binding"
+  description="Whether this profile's long-term memory (Postgres system-of-record + MinIO archives) is provisioned, and lets you initialize it. Provisioning threads the CL_BRAIN_* config into the profile's credentials server-side; agents recall from it via brain_recall."
+  onOpen={() => { if (!loaded) void load(); }}>
   <div class="mem-body">
     {#if loading}
       <p class="mem-hint">loading…</p>

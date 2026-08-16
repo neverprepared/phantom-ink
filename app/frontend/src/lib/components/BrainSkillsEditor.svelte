@@ -131,7 +131,10 @@ Tight, imperative instructions with at least one concrete example.
   }
 </script>
 
-<CardExpander label="skills" count={loaded && !unavailable ? `(${skills.length})` : ''} onOpen={() => { if (!loaded) void load(); }}>
+<CardExpander label="skills" count={loaded && !unavailable ? `(${skills.length})` : ''}
+  hint="reusable SKILL.md capabilities (brain is the source of truth)"
+  description="The operator surface for this profile's brain skills vault (rendered to SKILL.md for agents): list, view, create, edit, and — when enabled — delete. Create and edit are safe; delete is gated."
+  onOpen={() => { if (!loaded) void load(); }}>
   <div class="sk-body">
     {#if loading}
       <p class="sk-hint">loading…</p>

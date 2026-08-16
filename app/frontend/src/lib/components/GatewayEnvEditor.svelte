@@ -230,6 +230,8 @@
 
 <CardExpander
   label="gateway secrets"
+  hint="encrypted keys/tokens injected into MCP servers & sessions"
+  description="API keys and tokens (encrypted at rest) the gateway injects into this profile's MCP server processes and into agent sessions at startup — e.g. GITHUB_TOKEN for git auth. Also mints Tier-0 tokens for a local client to reach the gateway scoped to this profile."
   count={loaded && rows.length ? `(${rows.length})` : ''}
   onOpen={() => { if (!loaded) void load(); }}
 >
