@@ -105,3 +105,73 @@ func TestInjectMCPServerEnv_MissingFileIsNoOp(t *testing.T) {
 		t.Fatalf("expected skip for missing file, got ok=%v err=%v", ok, err)
 	}
 }
+
+func TestUpsertMCPServer_CreatesWhenAbsent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude.json")
+	os.WriteFile(path, []byte(`{"otherTop":42,"mcpServers":{"kroki":{"command":"mcp-kroki"}}}`), 0o644)
+	def := map[string]any{
+		"command": "pbrainctl",
+		"args":    []any{"client", "mcp"},
+		"env":     map[string]any{"CL_BRAIN_API": "http://api.neverprepared.com:9998"},
+	}
+	changed, err := upsertMCPServer(path, "mcpServers", "phantom-brain-memory", def)
+	if err != nil || !changed {
+		t.Fatalf("upsert: changed=%v err=%v", changed, err)
+	}
+	root := readJSON(t, path)
+	if root["otherTop"].(float64) != 42 {
+		t.Fatal("clobbered sibling top-level key")
+	}
+	servers := root["mcpServers"].(map[string]any)
+	if _, ok := servers["kroki"]; !ok {
+		t.Fatal("clobbered existing server")
+	}
+	pb := servers["phantom-brain-memory"].(map[string]any)
+	if pb["command"] != "pbrainctl" {
+		t.Fatalf("bad command: %v", pb["command"])
+	}
+}
+
+func TestUpsertMCPServer_ReplacesAndIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude.json")
+	os.WriteFile(path, []byte(`{"mcpServers":{"phantom-brain-memory":{"command":"old","env":{"CL_BRAIN_API":"http://localhost:9998"}}}}`), 0o644)
+	def := map[string]any{"command": "pbrainctl", "env": map[string]any{"CL_BRAIN_API": "http://api.neverprepared.com:9998"}}
+	if changed, err := upsertMCPServer(path, "mcpServers", "phantom-brain-memory", def); err != nil || !changed {
+		t.Fatalf("replace: changed=%v err=%v", changed, err)
+	}
+	if got := readJSON(t, path)["mcpServers"].(map[string]any)["phantom-brain-memory"].(map[string]any)["env"].(map[string]any)["CL_BRAIN_API"]; got != "http://api.neverprepared.com:9998" {
+		t.Fatalf("not replaced: %v", got)
+	}
+	// second identical upsert is a no-op
+	if changed, err := upsertMCPServer(path, "mcpServers", "phantom-brain-memory", def); err != nil || changed {
+		t.Fatalf("expected no-op: changed=%v err=%v", changed, err)
+	}
+}
+
+func TestUpsertMCPServer_CreatesFileAndMap(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude", ".claude.json") // .claude/ does not exist yet
+	def := map[string]any{"command": "pbrainctl"}
+	if changed, err := upsertMCPServer(path, "mcpServers", "phantom-brain-memory", def); err != nil || !changed {
+		t.Fatalf("create-file: changed=%v err=%v", changed, err)
+	}
+	if _, ok := readJSON(t, path)["mcpServers"].(map[string]any)["phantom-brain-memory"]; !ok {
+		t.Fatal("server not written to fresh file")
+	}
+}
+
+func TestBrainHostAPI_DerivesHostOnBrainPort(t *testing.T) {
+	cases := map[string]string{
+		"https://api.neverprepared.com":   "http://api.neverprepared.com:9998",
+		"http://127.0.0.1:9910":           "http://127.0.0.1:9998",
+		"https://api.neverprepared.com/":  "http://api.neverprepared.com:9998",
+		"":                                "http://localhost:9998",
+	}
+	for in, want := range cases {
+		if got := brainHostAPI(in); got != want {
+			t.Errorf("brainHostAPI(%q)=%q want %q", in, got, want)
+		}
+	}
+}
