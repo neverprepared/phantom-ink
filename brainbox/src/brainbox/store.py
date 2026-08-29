@@ -520,7 +520,8 @@ def upsert_runner(info: "RunnerInfo") -> None:  # type: ignore[name-defined]
                 max_concurrent = EXCLUDED.max_concurrent,
                 registered_at  = EXCLUDED.registered_at,
                 updated_at     = EXCLUDED.updated_at,
-                owner_node     = EXCLUDED.owner_node
+                owner_node     = EXCLUDED.owner_node,
+                deleted_at     = NULL
             """,
             (
                 info.name,
@@ -538,15 +539,26 @@ def upsert_runner(info: "RunnerInfo") -> None:  # type: ignore[name-defined]
 
 
 def delete_runner(name: str) -> None:
+    """Tombstone the runner (soft delete) so the removal survives a merge.
+
+    A raw DELETE is invisible to a node that never saw the row and would be
+    resurrected on the next sync; a tombstone with a fresh ``updated_at`` wins
+    the owner-keyed last-writer-wins merge. Re-registration (upsert_runner)
+    clears it. Reads go through load_all_runners, which filters tombstones out.
+    """
+    now = int(time.time() * 1000)
     with _conn() as c:
-        c.execute("DELETE FROM runners WHERE name = %s", (name,))
+        c.execute(
+            "UPDATE runners SET deleted_at = %s, updated_at = %s WHERE name = %s",
+            (now, now, name),
+        )
 
 
 def load_all_runners() -> list[dict]:
     with _conn() as c:
         rows = c.execute(
             "SELECT name, capabilities, tags, version, host, machine_id, "
-            "max_concurrent, registered_at FROM runners"
+            "max_concurrent, registered_at FROM runners WHERE deleted_at IS NULL"
         ).fetchall()
     result = []
     for row in rows:
