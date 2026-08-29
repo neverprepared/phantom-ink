@@ -1343,6 +1343,31 @@ async def rules_status(_key=Depends(require_api_key)):
     return snapshot
 
 
+@app.get("/api/sync/events")
+async def sync_events_export(
+    since: str | None = None,
+    limit: int = 500,
+    _key=Depends(require_api_key),
+):
+    """Local-first peer sync (Slice 3): export this node's agent_events by ULID
+    cursor so a peer can pull and union-merge them (node_sync). Read-only.
+
+    Returns 404 unless CL_SYNC__ENABLED — the surface stays invisible until peer
+    sync is turned on, so this changes nothing in a default deployment.
+    """
+    if not settings.sync.enabled:
+        raise HTTPException(status_code=404, detail="peer sync disabled")
+    from . import node_sync
+
+    capped = max(1, min(limit, settings.sync.batch_limit))
+    rows = await asyncio.to_thread(node_sync.export_events, since, capped)
+    return {
+        "events": rows,
+        "count": len(rows),
+        "cursor": rows[-1]["event_ulid"] if rows else since,
+    }
+
+
 @app.post("/api/rules/test")
 async def rules_test(request: Request, _key=Depends(require_api_key)):
     """Dry-run a pattern. Body: {pattern, event} matches one supplied event

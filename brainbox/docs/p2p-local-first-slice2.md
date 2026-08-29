@@ -60,11 +60,31 @@ runner delete→tombstone→revive round-trip.
   or MV-register) and the 3 consensus/token tables are untouched — they were
   flagged hard/security-critical and get their own design.
 
-## Slice 3 — the transport (NEEDS A DECISION, not yet built)
+## Slice 3a — server half of pull-sync (BUILT, flag-gated off)
 
-The merge engine is complete and tested; what remains is moving rows between
-nodes. This is intentionally not auto-built because it hard-codes deployment
-choices. Decisions required:
+Landed, inert until enabled:
+- `SyncSettings` (`CL_SYNC__ENABLED` default **false**, `CL_SYNC__PEERS`,
+  `CL_SYNC__BATCH_LIMIT`, `CL_SYNC__INTERVAL_SECS`).
+- `GET /api/sync/events?since=<ulid>&limit=<n>` → `node_sync.export_events(...)`,
+  returns `{events, count, cursor}`. **Returns 404 unless `CL_SYNC__ENABLED`** —
+  the surface is invisible in a default deployment, so this changes nothing until
+  turned on. Tested: 404-when-disabled, and cursor-correct export when enabled.
+
+A peer node can now pull this node's event log by ULID cursor. What remains is
+the *client* that does the pulling.
+
+## Slice 3b — the pull client (NEEDS A DECISION, not built)
+
+The merge engine and the export endpoint are done; what remains is the background
+tick that fetches peers and applies `sync_pull_events`. Intentionally not
+auto-built — it hard-codes deployment choices AND must navigate a known gotcha:
+
+> **Transport gotcha:** the daemon's outbound `httpx` to LAN/tailnet destinations
+> reproduces `OSError(65, 'No route to host')` on macOS/Python 3.14 (see
+> CLAUDE.md "Known issues"). The pull client MUST use the curl-subprocess pattern
+> (`ollama.py::acurl_request`), not httpx, exactly like the Ollama calls do.
+
+Decisions required:
 
 1. **Pull vs push.** Pull (each node periodically `fetch`es peers' `export_*`)
    composes cleanly with `sync_pull_events` and needs no inbound auth beyond the

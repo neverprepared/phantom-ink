@@ -361,6 +361,24 @@ class RulesSettings(BaseSettings):
     stuck_running_ms: int = 300_000     # 'running' rows older than this requeue on boot
 
 
+class SyncSettings(BaseSettings):
+    """Local-first peer sync (Slice 3). OFF by default.
+
+    When enabled, the daemon exposes a read-only event-export endpoint
+    (GET /api/sync/events) so a peer node can pull this node's agent_events by
+    ULID cursor and union-merge them (node_sync). The pull CLIENT — a background
+    tick that fetches peers and applies node_sync.sync_pull_events — is a
+    documented follow-up; it must use the curl-subprocess transport, not httpx,
+    because of the daemon's macOS-LAN httpx regression (see CLAUDE.md). Full
+    design in docs/p2p-local-first-slice2.md.
+    """
+
+    enabled: bool = False                           # CL_SYNC__ENABLED
+    peers: list[str] = Field(default_factory=list)  # CL_SYNC__PEERS='["host:9999"]'
+    batch_limit: int = 500                          # max rows per export / pull batch
+    interval_secs: int = 15                         # pull cadence (client, when built)
+
+
 class OpenSearchSettings(BaseSettings):
     """Event-stream sink: a durable consumer indexes agent_events into
     OpenSearch (monthly brainbox-events-YYYY.MM indices) for history/search.
@@ -493,6 +511,7 @@ class Settings(BaseSettings):
     rules: RulesSettings = Field(default_factory=RulesSettings)
     llm: LlmSettings = Field(default_factory=LlmSettings)
     opensearch: OpenSearchSettings = Field(default_factory=OpenSearchSettings)
+    sync: SyncSettings = Field(default_factory=SyncSettings)
     path_map: dict[str, str] = Field(
         default_factory=dict
     )  # host path → container path substitutions

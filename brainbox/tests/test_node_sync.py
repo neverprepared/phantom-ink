@@ -7,6 +7,7 @@ the import side, so the merge semantics are exercised without any transport.
 from __future__ import annotations
 
 from brainbox import node_sync
+from brainbox.config import settings
 from brainbox.runners import RunnerInfo
 from brainbox.store import _conn, delete_runner, load_all_runners, upsert_runner
 
@@ -163,3 +164,26 @@ def test_delete_runner_tombstones_and_reregister_revives():
     upsert_runner(info)  # re-register clears the tombstone
     assert "rX" in _runner_names()
     assert _runner_field("rX", "deleted_at") is None
+
+
+# ---------------------------------------------------------------------------
+# Slice 3a: flag-gated export endpoint (server half of pull-sync)
+# ---------------------------------------------------------------------------
+
+
+async def test_sync_export_endpoint_404_when_disabled(client):
+    assert settings.sync.enabled is False  # default
+    async with client as c:
+        r = await c.get("/api/sync/events")
+    assert r.status_code == 404
+
+
+async def test_sync_export_endpoint_returns_events_when_enabled(client, monkeypatch):
+    node_sync.import_events([_remote_event("01AAA"), _remote_event("01BBB")])
+    monkeypatch.setattr(settings.sync, "enabled", True)
+    async with client as c:
+        r = await c.get("/api/sync/events", params={"since": "01AAA"})
+    assert r.status_code == 200
+    body = r.json()
+    assert [e["event_ulid"] for e in body["events"]] == ["01BBB"]
+    assert body["cursor"] == "01BBB"
