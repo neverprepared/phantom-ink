@@ -34,6 +34,7 @@ from typing import Any
 
 from .config import settings
 from .log import get_logger
+from .node_identity import node_id
 from .store import _conn
 
 log = get_logger()
@@ -76,17 +77,21 @@ def put(
             """
             INSERT INTO session_store (
                 session_name, key, profile, task_id, token_id,
-                content, content_type, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                content, content_type, created_at, updated_at, owner_node
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (session_name, key) DO UPDATE SET
                 profile      = EXCLUDED.profile,
                 task_id      = COALESCE(EXCLUDED.task_id, session_store.task_id),
                 token_id     = COALESCE(EXCLUDED.token_id, session_store.token_id),
                 content      = EXCLUDED.content,
                 content_type = EXCLUDED.content_type,
-                updated_at   = EXCLUDED.updated_at
+                updated_at   = EXCLUDED.updated_at,
+                owner_node   = EXCLUDED.owner_node
             """,
-            (session_name, key, profile, task_id, token_id, content, content_type, now, now),
+            (
+                session_name, key, profile, task_id, token_id,
+                content, content_type, now, now, node_id(),
+            ),
         )
 
     if settings.minio.enabled:

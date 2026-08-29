@@ -29,6 +29,8 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
+from .node_identity import node_id, ulid
+
 if TYPE_CHECKING:
     from .loops import LoopInstance
     from .models import SessionContext
@@ -134,7 +136,9 @@ _SCHEMA: tuple[str, ...] = (
         runner_name   TEXT   NOT NULL,
         active        BIGINT NOT NULL DEFAULT 1,
         stopped_at    BIGINT,
-        blob          TEXT   NOT NULL
+        blob          TEXT   NOT NULL,
+        owner_node    TEXT,
+        deleted_at    BIGINT
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(active)",
@@ -150,7 +154,9 @@ _SCHEMA: tuple[str, ...] = (
         max_concurrent BIGINT NOT NULL DEFAULT 4,
         last_seal_at   BIGINT,
         registered_at  BIGINT NOT NULL,
-        updated_at     BIGINT NOT NULL
+        updated_at     BIGINT NOT NULL,
+        owner_node     TEXT,
+        deleted_at     BIGINT
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_runners_machine_id ON runners(machine_id)",
@@ -167,11 +173,14 @@ _SCHEMA: tuple[str, ...] = (
         task_id      TEXT,
         job_id       TEXT,
         repo_url     TEXT,
-        reason       TEXT
+        reason       TEXT,
+        row_ulid     TEXT,
+        node_id      TEXT
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_history_stopped_at ON session_history(stopped_at)",
     "CREATE INDEX IF NOT EXISTS idx_history_runner ON session_history(runner_name)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_session_history_ulid ON session_history(row_ulid)",
     """
     CREATE TABLE IF NOT EXISTS audit_log (
         id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -180,11 +189,14 @@ _SCHEMA: tuple[str, ...] = (
         session_name TEXT,
         actor        TEXT,
         success      BIGINT NOT NULL DEFAULT 1,
-        detail       TEXT
+        detail       TEXT,
+        row_ulid     TEXT,
+        node_id      TEXT
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts)",
     "CREATE INDEX IF NOT EXISTS idx_audit_event ON audit_log(event)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_log_ulid ON audit_log(row_ulid)",
     """
     CREATE TABLE IF NOT EXISTS agent_state (
         id            TEXT PRIMARY KEY,
@@ -212,19 +224,24 @@ _SCHEMA: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_agent_state_parent ON agent_state(parent_id)",
     """
     CREATE TABLE IF NOT EXISTS agent_events (
-        seq       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-        id        TEXT NOT NULL,
-        source    TEXT,
-        type      TEXT,
-        status    TEXT,
-        parent_id TEXT,
-        ts        BIGINT NOT NULL,
-        envelope  TEXT NOT NULL
+        seq        BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        id         TEXT NOT NULL,
+        source     TEXT,
+        type       TEXT,
+        status     TEXT,
+        parent_id  TEXT,
+        ts         BIGINT NOT NULL,
+        envelope   TEXT NOT NULL,
+        event_ulid TEXT,
+        node_id    TEXT
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_agent_events_id ON agent_events(id, seq)",
     "CREATE INDEX IF NOT EXISTS idx_agent_events_parent ON agent_events(parent_id, seq)",
     "CREATE INDEX IF NOT EXISTS idx_agent_events_ts ON agent_events(ts)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_events_ulid ON agent_events(event_ulid)",
+    # time-ordered scan index for the Slice-2 ULID cursor (unused by reads in Slice 1)
+    "CREATE INDEX IF NOT EXISTS idx_agent_events_ulid_ord ON agent_events(event_ulid)",
     """
     CREATE TABLE IF NOT EXISTS loop_instances (
         id                TEXT   PRIMARY KEY,
@@ -235,7 +252,8 @@ _SCHEMA: tuple[str, ...] = (
         current_child_id  TEXT,
         created_at        BIGINT NOT NULL,
         updated_at        BIGINT NOT NULL,
-        blob              TEXT   NOT NULL
+        blob              TEXT   NOT NULL,
+        owner_node        TEXT
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_loop_instances_status "
@@ -254,6 +272,7 @@ _SCHEMA: tuple[str, ...] = (
         model                    TEXT,
         state_at_end             TEXT,
         timestamp                BIGINT NOT NULL,
+        node_id                  TEXT,
         UNIQUE(loop_id, iteration)
     )
     """,
@@ -321,7 +340,8 @@ _SCHEMA: tuple[str, ...] = (
     CREATE TABLE IF NOT EXISTS event_rule_cursor (
         name       TEXT   PRIMARY KEY,
         last_seq   BIGINT NOT NULL,
-        updated_at BIGINT NOT NULL
+        updated_at BIGINT NOT NULL,
+        node_id    TEXT
     )
     """,
     """
@@ -354,6 +374,8 @@ _SCHEMA: tuple[str, ...] = (
         content_type TEXT   NOT NULL DEFAULT 'application/json',
         created_at   BIGINT NOT NULL,
         updated_at   BIGINT NOT NULL,
+        owner_node   TEXT,
+        deleted_at   BIGINT,
         PRIMARY KEY (session_name, key)
     )
     """,
@@ -396,6 +418,30 @@ def init_db() -> None:
             "ALTER TABLE gateway_tokens "
             "ADD COLUMN IF NOT EXISTS residency_ceiling TEXT NOT NULL DEFAULT ''"
         )
+        # Local-first / P2P substrate (Slice 1): additive identity + ownership +
+        # tombstone columns. Dual-written on insert/delete; reads unchanged. See
+        # docs/p2p-local-first-slice1.md. On an existing DB the CREATE TABLE IF
+        # NOT EXISTS statements above are no-ops, so these ALTERs are what add the
+        # columns; the unique indexes are created via _SCHEMA (NULLs are distinct
+        # in Postgres, so pre-backfill NULL ulids don't collide).
+        for stmt in (
+            "ALTER TABLE agent_events           ADD COLUMN IF NOT EXISTS event_ulid TEXT",
+            "ALTER TABLE agent_events           ADD COLUMN IF NOT EXISTS node_id    TEXT",
+            "ALTER TABLE session_history        ADD COLUMN IF NOT EXISTS row_ulid   TEXT",
+            "ALTER TABLE session_history        ADD COLUMN IF NOT EXISTS node_id    TEXT",
+            "ALTER TABLE audit_log              ADD COLUMN IF NOT EXISTS row_ulid   TEXT",
+            "ALTER TABLE audit_log              ADD COLUMN IF NOT EXISTS node_id    TEXT",
+            "ALTER TABLE loop_iteration_metric  ADD COLUMN IF NOT EXISTS node_id    TEXT",
+            "ALTER TABLE sessions               ADD COLUMN IF NOT EXISTS owner_node TEXT",
+            "ALTER TABLE sessions               ADD COLUMN IF NOT EXISTS deleted_at BIGINT",
+            "ALTER TABLE runners                ADD COLUMN IF NOT EXISTS owner_node TEXT",
+            "ALTER TABLE runners                ADD COLUMN IF NOT EXISTS deleted_at BIGINT",
+            "ALTER TABLE loop_instances         ADD COLUMN IF NOT EXISTS owner_node TEXT",
+            "ALTER TABLE session_store          ADD COLUMN IF NOT EXISTS owner_node TEXT",
+            "ALTER TABLE session_store          ADD COLUMN IF NOT EXISTS deleted_at BIGINT",
+            "ALTER TABLE event_rule_cursor      ADD COLUMN IF NOT EXISTS node_id    TEXT",
+        ):
+            c.execute(stmt)
 
 
 # ---------------------------------------------------------------------------
@@ -416,15 +462,16 @@ def upsert_session(ctx: "SessionContext") -> None:  # type: ignore[name-defined]
     with _conn() as c:
         c.execute(
             """
-            INSERT INTO sessions (session_name, runner_name, active, blob)
-            VALUES (%s, %s, 1, %s)
+            INSERT INTO sessions (session_name, runner_name, active, blob, owner_node)
+            VALUES (%s, %s, 1, %s, %s)
             ON CONFLICT (session_name) DO UPDATE SET
                 runner_name = EXCLUDED.runner_name,
                 active      = 1,
                 stopped_at  = NULL,
-                blob        = EXCLUDED.blob
+                blob        = EXCLUDED.blob,
+                owner_node  = EXCLUDED.owner_node
             """,
-            (ctx.session_name, ctx.runner_name or "", blob),
+            (ctx.session_name, ctx.runner_name or "", blob, node_id()),
         )
 
 
@@ -462,8 +509,8 @@ def upsert_runner(info: "RunnerInfo") -> None:  # type: ignore[name-defined]
             """
             INSERT INTO runners
                 (name, capabilities, tags, version, host, machine_id,
-                 max_concurrent, registered_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 max_concurrent, registered_at, updated_at, owner_node)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (name) DO UPDATE SET
                 capabilities   = EXCLUDED.capabilities,
                 tags           = EXCLUDED.tags,
@@ -472,7 +519,8 @@ def upsert_runner(info: "RunnerInfo") -> None:  # type: ignore[name-defined]
                 machine_id     = EXCLUDED.machine_id,
                 max_concurrent = EXCLUDED.max_concurrent,
                 registered_at  = EXCLUDED.registered_at,
-                updated_at     = EXCLUDED.updated_at
+                updated_at     = EXCLUDED.updated_at,
+                owner_node     = EXCLUDED.owner_node
             """,
             (
                 info.name,
@@ -484,6 +532,7 @@ def upsert_runner(info: "RunnerInfo") -> None:  # type: ignore[name-defined]
                 info.max_concurrent,
                 info.registered_at,
                 now,
+                node_id(),
             ),
         )
 
@@ -858,8 +907,9 @@ def insert_session_history(ctx: "SessionContext", reason: str) -> None:  # type:
             """
             INSERT INTO session_history
                 (session_name, runner_name, backend, role, state_final,
-                 created_at, stopped_at, task_id, job_id, repo_url, reason)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 created_at, stopped_at, task_id, job_id, repo_url, reason,
+                 row_ulid, node_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 ctx.session_name,
@@ -873,6 +923,8 @@ def insert_session_history(ctx: "SessionContext", reason: str) -> None:  # type:
                 ctx.job_id,
                 ctx.repo_url,
                 reason,
+                ulid(stopped_at),
+                node_id(),
             ),
         )
 
@@ -918,8 +970,9 @@ def insert_audit(
     with _conn() as c:
         c.execute(
             """
-            INSERT INTO audit_log (ts, event, session_name, actor, success, detail)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO audit_log
+                (ts, event, session_name, actor, success, detail, row_ulid, node_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 ts,
@@ -928,6 +981,8 @@ def insert_audit(
                 actor,
                 1 if success else 0,
                 json.dumps(detail) if detail else None,
+                ulid(ts),
+                node_id(),
             ),
         )
 
@@ -982,8 +1037,8 @@ def upsert_loop_instance(inst: "LoopInstance") -> None:  # type: ignore[name-def
             """
             INSERT INTO loop_instances
                 (id, parent_task_id, status, iteration, workspace_profile,
-                 current_child_id, created_at, updated_at, blob)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 current_child_id, created_at, updated_at, blob, owner_node)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 parent_task_id    = EXCLUDED.parent_task_id,
                 status            = EXCLUDED.status,
@@ -991,7 +1046,8 @@ def upsert_loop_instance(inst: "LoopInstance") -> None:  # type: ignore[name-def
                 workspace_profile = EXCLUDED.workspace_profile,
                 current_child_id  = EXCLUDED.current_child_id,
                 updated_at        = EXCLUDED.updated_at,
-                blob              = EXCLUDED.blob
+                blob              = EXCLUDED.blob,
+                owner_node        = EXCLUDED.owner_node
             """,
             (
                 inst.id,
@@ -1003,6 +1059,7 @@ def upsert_loop_instance(inst: "LoopInstance") -> None:  # type: ignore[name-def
                 inst.created_at,
                 inst.updated_at,
                 blob,
+                node_id(),
             ),
         )
 
@@ -1070,8 +1127,8 @@ def insert_loop_iteration_metric(
             """
             INSERT INTO loop_iteration_metric
                 (loop_id, iteration, convergence_metric_value, duration_ms,
-                 cost_usd, tokens, model, state_at_end, timestamp)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 cost_usd, tokens, model, state_at_end, timestamp, node_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (loop_id, iteration) DO UPDATE SET
                 convergence_metric_value = EXCLUDED.convergence_metric_value,
                 duration_ms              = EXCLUDED.duration_ms,
@@ -1079,7 +1136,8 @@ def insert_loop_iteration_metric(
                 tokens                   = EXCLUDED.tokens,
                 model                    = EXCLUDED.model,
                 state_at_end             = EXCLUDED.state_at_end,
-                timestamp                = EXCLUDED.timestamp
+                timestamp                = EXCLUDED.timestamp,
+                node_id                  = EXCLUDED.node_id
             """,
             (
                 loop_id,
@@ -1091,6 +1149,7 @@ def insert_loop_iteration_metric(
                 model,
                 state_at_end,
                 timestamp_ms,
+                node_id(),
             ),
         )
 
