@@ -342,6 +342,10 @@ export function GetMatchingRules(arg1, arg2) {
   return window['go']['main']['App']['GetMatchingRules'](arg1, arg2);
 }
 
+export function GetMeshStatus() {
+  return window['go']['main']['App']['GetMeshStatus']();
+}
+
 export function GetMessageLog() {
   return window['go']['main']['App']['GetMessageLog']();
 }

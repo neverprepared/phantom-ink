@@ -174,6 +174,8 @@ export function GetLoopTemplateSchema():Promise<Record<string, any>>;
 
 export function GetMatchingRules(arg1:string,arg2:string):Promise<Array<main.AutomationRule>>;
 
+export function GetMeshStatus():Promise<main.MeshStatus>;
+
 export function GetMessageLog():Promise<Array<brainbox.Message>>;
 
 export function GetMetricsHistory():Promise<Array<brainbox.MetricsSample>>;
