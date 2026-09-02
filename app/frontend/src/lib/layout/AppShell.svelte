@@ -13,6 +13,7 @@
   import ConversationsPanel from '../panels/ConversationsPanel.svelte';
   import ServicesPanel from '../panels/ServicesPanel.svelte';
   import JobsPanel from '../panels/JobsPanel.svelte';
+  import MeshPanel from '../panels/MeshPanel.svelte';
   import CollectorsPanel from '../panels/CollectorsPanel.svelte';
   import AutomationsPanel from '../panels/AutomationsPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
@@ -97,6 +98,8 @@
         <AutomationsPanel />
       {:else if currentPanel.value === 'jobs'}
         <JobsPanel />
+      {:else if currentPanel.value === 'mesh'}
+        <MeshPanel />
       {:else if currentPanel.value === 'collectors'}
         <CollectorsPanel />
       {:else if currentPanel.value === 'settings'}

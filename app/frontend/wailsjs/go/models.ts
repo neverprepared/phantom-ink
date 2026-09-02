@@ -3010,6 +3010,90 @@ export namespace main {
 	        this.line = source["line"];
 	    }
 	}
+	export class MeshMetrics {
+	    pb_sync_rounds_total: string;
+	    pb_sync_rows_merged_total: string;
+	    pb_sync_blobs_fetched_total: string;
+	    pb_sync_orphan_blobs_gc_total: string;
+	    pb_sync_errors_total: string;
+	    pb_sync_last_tick_ms: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MeshMetrics(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pb_sync_rounds_total = source["pb_sync_rounds_total"];
+	        this.pb_sync_rows_merged_total = source["pb_sync_rows_merged_total"];
+	        this.pb_sync_blobs_fetched_total = source["pb_sync_blobs_fetched_total"];
+	        this.pb_sync_orphan_blobs_gc_total = source["pb_sync_orphan_blobs_gc_total"];
+	        this.pb_sync_errors_total = source["pb_sync_errors_total"];
+	        this.pb_sync_last_tick_ms = source["pb_sync_last_tick_ms"];
+	    }
+	}
+	export class MeshPeer {
+	    id: string;
+	    base_url: string;
+	    profile: string;
+	    live: boolean;
+	    live_note: string;
+	    db_lag: string;
+	    links_lag: string;
+	    cursor_age: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MeshPeer(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.base_url = source["base_url"];
+	        this.profile = source["profile"];
+	        this.live = source["live"];
+	        this.live_note = source["live_note"];
+	        this.db_lag = source["db_lag"];
+	        this.links_lag = source["links_lag"];
+	        this.cursor_age = source["cursor_age"];
+	    }
+	}
+	export class MeshStatus {
+	    node_id: string;
+	    sync_enabled: boolean;
+	    peers: MeshPeer[];
+	    metrics: MeshMetrics;
+	
+	    static createFrom(source: any = {}) {
+	        return new MeshStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.node_id = source["node_id"];
+	        this.sync_enabled = source["sync_enabled"];
+	        this.peers = this.convertValues(source["peers"], MeshPeer);
+	        this.metrics = this.convertValues(source["metrics"], MeshMetrics);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class OpenTarget {
 	    panel: string;
 	    ref: string;
