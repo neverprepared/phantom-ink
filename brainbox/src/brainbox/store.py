@@ -344,6 +344,18 @@ _SCHEMA: tuple[str, ...] = (
         node_id    TEXT
     )
     """,
+    # Peer-sync resume cursors (Slice 3b): one row per (peer, stream). 'events'
+    # holds a ULID, 'owner_rows' an epoch-ms string — kept independent so the
+    # two streams advance separately. Local bookkeeping only; never synced.
+    """
+    CREATE TABLE IF NOT EXISTS sync_cursors (
+        peer_label TEXT   NOT NULL,
+        stream     TEXT   NOT NULL,
+        cursor     TEXT,
+        updated_at BIGINT NOT NULL,
+        PRIMARY KEY (peer_label, stream)
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS event_rule_executions (
         id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -579,6 +591,42 @@ def load_all_runners() -> list[dict]:
         except Exception:
             pass
     return result
+
+
+# ---------------------------------------------------------------------------
+# Peer-sync cursors (Slice 3b) — per (peer, stream) resume point
+# ---------------------------------------------------------------------------
+
+
+def get_sync_cursor(peer_label: str, stream: str) -> str | None:
+    """Return the persisted resume cursor for a peer's stream, or None if this
+    peer/stream has never been pulled.
+
+    ``stream`` is 'events' (cursor is a ULID) or 'owner_rows' (cursor is an
+    epoch-ms string). The two streams advance independently.
+    """
+    with _conn() as c:
+        r = c.execute(
+            "SELECT cursor FROM sync_cursors WHERE peer_label = %s AND stream = %s",
+            (peer_label, stream),
+        ).fetchone()
+    return r["cursor"] if r else None
+
+
+def set_sync_cursor(peer_label: str, stream: str, cursor: str | None) -> None:
+    """Upsert the resume cursor for a peer's stream (local bookkeeping only)."""
+    now = int(time.time() * 1000)
+    with _conn() as c:
+        c.execute(
+            """
+            INSERT INTO sync_cursors (peer_label, stream, cursor, updated_at)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (peer_label, stream) DO UPDATE SET
+                cursor     = EXCLUDED.cursor,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (peer_label, stream, cursor, now),
+        )
 
 
 # ---------------------------------------------------------------------------

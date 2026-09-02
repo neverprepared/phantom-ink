@@ -207,6 +207,7 @@ def _broadcast_to_channel(channel_id: str, data: str) -> None:
 # ---------------------------------------------------------------------------
 
 _docker_events_task: asyncio.Task | None = None
+_sync_pull_task: asyncio.Task | None = None  # Slice 3b peer-sync pull client
 
 
 async def _watch_docker_events() -> None:
@@ -401,9 +402,17 @@ async def lifespan(app: FastAPI):
     channel_on_event(_on_channel_event)
 
     # Start Docker events watcher
-    global _docker_events_task, _metrics_sample_task
+    global _docker_events_task, _metrics_sample_task, _sync_pull_task
     _docker_events_task = asyncio.create_task(_watch_docker_events())
     _metrics_sample_task = asyncio.create_task(_metrics_sample_loop())
+
+    # Peer-sync pull client (Slice 3b) — OFF unless CL_SYNC__ENABLED with peers
+    # configured. Gating at start means zero cost (no task, no ticker) in a
+    # default deployment; the transport is curl-subprocess (see node_sync_client).
+    if settings.sync.enabled and settings.sync.peers:
+        from . import node_sync_client
+
+        _sync_pull_task = asyncio.create_task(node_sync_client.pull_loop())
 
     # Start Ollama instance pool
     get_pool().start()
@@ -425,8 +434,10 @@ async def lifespan(app: FastAPI):
         _docker_events_task.cancel()
     if _metrics_sample_task:
         _metrics_sample_task.cancel()
+    if _sync_pull_task:
+        _sync_pull_task.cancel()
     await asyncio.gather(
-        *[t for t in (_docker_events_task, _metrics_sample_task) if t],
+        *[t for t in (_docker_events_task, _metrics_sample_task, _sync_pull_task) if t],
         return_exceptions=True,
     )
 
@@ -1365,6 +1376,32 @@ async def sync_events_export(
         "events": rows,
         "count": len(rows),
         "cursor": rows[-1]["event_ulid"] if rows else since,
+    }
+
+
+@app.get("/api/sync/owner-rows")
+async def sync_owner_rows_export(
+    since: int | None = None,
+    limit: int = 500,
+    _key=Depends(require_api_key),
+):
+    """Local-first peer sync (Slice 3b): export owner-keyed rows (currently
+    ``runners``) changed since an epoch-ms ``updated_at`` cursor — TOMBSTONES
+    INCLUDED — so a peer can last-writer-wins merge them (node_sync). Read-only.
+
+    Returns 404 unless CL_SYNC__ENABLED, exactly like the events export.
+    """
+    if not settings.sync.enabled:
+        raise HTTPException(status_code=404, detail="peer sync disabled")
+    from . import node_sync
+
+    capped = max(1, min(limit, settings.sync.batch_limit))
+    items = await asyncio.to_thread(node_sync.export_owner_rows, since, capped)
+    return {
+        "rows": items,
+        "count": len(items),
+        # items are ordered by updated_at ASC, so the last is the max cursor.
+        "cursor": items[-1]["updated_at"] if items else since,
     }
 
 
