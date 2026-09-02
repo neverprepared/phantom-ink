@@ -82,7 +82,7 @@
 <div class="mesh">
   <header class="head">
     <div>
-      <h1>Mesh</h1>
+      <h1>Brain Mesh</h1>
       <p class="sub">The p2p phantom-brain memory mesh — this node plus every peer, with sync stats.</p>
     </div>
     <div class="head-actions">
@@ -104,7 +104,7 @@
     <Spinner />
   {:else if loadError}
     <EmptyState
-      title="Mesh daemon unreachable"
+      title="Brain daemon unreachable"
       message={`${loadError}\n\nConfigured URL: ${DEFAULT_URL}. Check the Phantom-Brain Mesh integration in Integrations.`}
     />
   {:else if status}
