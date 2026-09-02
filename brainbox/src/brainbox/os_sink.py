@@ -34,6 +34,7 @@ from typing import Any
 
 from .config import settings
 from .log import get_logger
+from .node_identity import node_id
 from .store import _conn
 from . import agent_store
 from .event_rules import fetch_events_after
@@ -136,11 +137,11 @@ def init_cursor_if_absent() -> int:
     with _conn() as c:
         c.execute(
             """
-            INSERT INTO event_rule_cursor (name, last_seq, updated_at)
-            VALUES (%s, 0, %s)
+            INSERT INTO event_rule_cursor (name, last_seq, updated_at, node_id)
+            VALUES (%s, 0, %s, %s)
             ON CONFLICT (name) DO NOTHING
             """,
-            (CURSOR_NAME, _now_ms()),
+            (CURSOR_NAME, _now_ms(), node_id()),
         )
         row = c.execute(
             "SELECT last_seq FROM event_rule_cursor WHERE name = %s", (CURSOR_NAME,)
