@@ -218,6 +218,14 @@ var knownServices = []ServiceDef{
 		Port:        9090,
 		Platform:    true,
 	},
+	{
+		Name:        "phantom-brain-mesh",
+		Label:       "Phantom-Brain Mesh",
+		Description: "p2p phantom-brain memory mesh — local node + peers with sync stats",
+		DefaultURL:  "http://127.0.0.1:9998",
+		Port:        9998,
+		Native:      true, // the mesh daemon is managed outside docker
+	},
 }
 
 // isPortOpen checks if a TCP port is accepting connections.

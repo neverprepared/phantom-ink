@@ -4,6 +4,8 @@ import {brainbox} from '../models';
 import {main} from '../models';
 import {opensearch} from '../models';
 
+export function AddBrainMCP(arg1:string,arg2:string):Promise<string>;
+
 export function AddChannelParticipant(arg1:string,arg2:brainbox.ChannelParticipantRequest):Promise<brainbox.Channel>;
 
 export function AssistLoopTemplate(arg1:brainbox.LoopAssistRequest):Promise<brainbox.LoopAssistResult>;
@@ -15,6 +17,8 @@ export function AttentionRespond(arg1:string,arg2:string):Promise<void>;
 export function AttentionRetry(arg1:string):Promise<void>;
 
 export function BackupDatabase(arg1:string):Promise<string>;
+
+export function BrainHostAPI():Promise<string>;
 
 export function BrowseFolder():Promise<string>;
 
@@ -31,6 +35,8 @@ export function CancelTask(arg1:string):Promise<void>;
 export function ClearProfileServerOverride(arg1:string,arg2:string):Promise<void>;
 
 export function CompleteChannel(arg1:string,arg2:brainbox.CompleteChannelRequest):Promise<brainbox.Channel>;
+
+export function CopyVaultRecord(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function CreateAgent(arg1:brainbox.CreateAgentRequest):Promise<brainbox.AgentDefinition>;
 
@@ -108,11 +114,15 @@ export function FindClaudeProcesses():Promise<Array<main.LocalProcess>>;
 
 export function FocusTerminalTab(arg1:string):Promise<void>;
 
+export function ForgetVaultRecord(arg1:string,arg2:string):Promise<void>;
+
 export function GatewayInfo():Promise<brainbox.GatewayProfilesInfo>;
 
 export function GetAPILogs(arg1:number):Promise<Array<main.LogEntry>>;
 
 export function GetActiveProfile():Promise<main.Profile>;
+
+export function GetAgentJob(arg1:string):Promise<main.AgentJobDetail>;
 
 export function GetAgentRole(arg1:string):Promise<brainbox.AgentDefinition>;
 
@@ -172,6 +182,8 @@ export function GetLoopTemplateSchema():Promise<Record<string, any>>;
 
 export function GetMatchingRules(arg1:string,arg2:string):Promise<Array<main.AutomationRule>>;
 
+export function GetMeshStatus():Promise<main.MeshStatus>;
+
 export function GetMessageLog():Promise<Array<brainbox.Message>>;
 
 export function GetMetricsHistory():Promise<Array<brainbox.MetricsSample>>;
@@ -228,6 +240,12 @@ export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;
 
 export function GetTrust(arg1:string):Promise<brainbox.TrustConfig>;
 
+export function GetVaultProfiles(arg1:string):Promise<Array<string>>;
+
+export function GetVaultRecords(arg1:string):Promise<Array<main.VaultRecord>>;
+
+export function GetVaultToken(arg1:string):Promise<string>;
+
 export function GetWidgetCount(arg1:string,arg2:string):Promise<number>;
 
 export function HeadArtifactObject(arg1:string,arg2:string):Promise<brainbox.ArtifactObjectHead>;
@@ -241,6 +259,8 @@ export function InitBrainProfile(arg1:string):Promise<brainbox.BrainProfileInitR
 export function LaunchTeam(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<brainbox.SessionActionResponse>;
 
 export function ListAgentEvents(arg1:string,arg2:string,arg3:number):Promise<Array<brainbox.AgentEventEntry>>;
+
+export function ListAgentJobs():Promise<Array<main.AgentJobSummary>>;
 
 export function ListAgentRoles():Promise<Array<brainbox.AgentDefinition>>;
 
@@ -321,6 +341,8 @@ export function MinioIntegrationEnabled():Promise<boolean>;
 export function MintGatewayToken(arg1:string,arg2:Array<string>,arg3:number,arg4:string):Promise<brainbox.GatewayToken>;
 
 export function MintProfileToken(arg1:string,arg2:Array<string>,arg3:string):Promise<brainbox.ProfileToken>;
+
+export function MoveVaultRecord(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function OpenLocalSession(arg1:string):Promise<void>;
 
@@ -438,6 +460,8 @@ export function SetTheme(arg1:string):Promise<void>;
 
 export function SetTrustRule(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function SetVaultToken(arg1:string,arg2:string):Promise<void>;
+
 export function StartLiveLoop(arg1:string,arg2:Record<string, any>):Promise<brainbox.LiveLoop>;
 
 export function StartPlatformService(arg1:string):Promise<void>;
@@ -453,6 +477,8 @@ export function StopPlatformService(arg1:string):Promise<void>;
 export function StopService(arg1:string):Promise<void>;
 
 export function StopSession(arg1:string):Promise<brainbox.SessionActionResponse>;
+
+export function SubmitAgentJob(arg1:brainbox.SubmitJobRequest):Promise<brainbox.JobSubmitResult>;
 
 export function SubmitTask(arg1:brainbox.SubmitTaskRequest):Promise<main.HubTask>;
 

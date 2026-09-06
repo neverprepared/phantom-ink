@@ -2280,6 +2280,10 @@ async def api_create_session(
             contract_env["CLAUDE_MODEL"] = body.llm_model
         if body.llm_effort:
             contract_env["CLAUDE_EFFORT"] = body.llm_effort
+        # Run mode must ride the contract too (same reason as LLM_PROVIDER):
+        # runner sessions skip configure(), so this is the only path that puts
+        # SESSION_EXEC_MODE into the container env for a runner-dispatched print run.
+        contract_env["SESSION_EXEC_MODE"] = body.exec_mode
         if hub_token:
             contract_env["BRAINBOX_TOKEN"] = hub_token.token_id
         if task_id:
@@ -2312,6 +2316,7 @@ async def api_create_session(
             llm_provider=body.llm_provider,
             llm_model=body.llm_model,
             llm_effort=body.llm_effort,
+            exec_mode=body.exec_mode,
             ollama_host=body.ollama_host,
             codex_api_key=body.codex_api_key,
             workspace_profile=body.workspace_profile,

@@ -1,0 +1,662 @@
+<script lang="ts">
+  import { getApi, safe } from '../utils/api';
+  import { timeAgoOrDate } from '../utils/format';
+  import { onCollectUpdate } from '../utils/collectEvents';
+  import { onMount } from 'svelte';
+  import { profileState, dashboardState } from '../stores.svelte';
+  import { notifications } from '../notifications.svelte';
+  import Spinner from '../components/Spinner.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
+
+  // ── Types ──────────────────────────────────────────────────────────────
+
+  interface CollectJob {
+    id: string;
+    profile: string;
+    name: string;
+    command: string;
+    interval_s: number;
+    enabled: boolean;
+    default_actions: string;
+    last_run_at?: number;
+    last_error: string;
+    created_at: number;
+    target_type: string;
+    target_id: string;
+    target_prompt: string;
+    run_at: string;
+    days: string;
+  }
+
+  interface NamedItem { id: string; name: string; workspace_profile: string; }
+
+  type TargetType = 'shell' | 'loop' | 'runner';
+  type ScheduleMode = 'interval' | 'time';
+
+  // ── State ──────────────────────────────────────────────────────────────
+
+  const profile = $derived(profileState.active?.name ?? '');
+
+  let jobs         = $state<CollectJob[]>([]);
+  let loops       = $state<NamedItem[]>([]);
+  let loading      = $state(false);
+  let loadError    = $state<string | null>(null); // set when the jobs fetch fails, so the panel shows an error not a false "no jobs"
+  let saving       = $state(false); // in-flight guard for save() — prevents double-submit
+  let editingId    = $state<string | null>(null); // null=none, 'new'=create, id=edit
+  let runningId    = $state<string | null>(null);
+  let statusMsg    = $state('');
+  let filterProfile = $state('');
+  $effect(() => { filterProfile = profile; });
+
+  // Edit form state
+  let draft = $state({
+    name: '',
+    targetType: 'shell' as TargetType,
+    command: '',
+    targetId: '',
+    targetPrompt: '',
+    scheduleMode: 'interval' as ScheduleMode,
+    interval_s: 300,
+    run_at: '08:30',
+    days: 'daily',
+    enabled: true,
+  });
+
+  // ── Derived ────────────────────────────────────────────────────────────
+
+  let jobProfiles = $derived.by(() => {
+    const s = new Set<string>();
+    for (const j of jobs) if (j.profile) s.add(j.profile);
+    return [...s].sort();
+  });
+
+  let visible = $derived(
+    filterProfile ? jobs.filter(j => j.profile === filterProfile) : jobs
+  );
+
+  let draftProfile = $derived.by(() => {
+    if (editingId === 'new') return filterProfile || profile;
+    const job = jobs.find(j => j.id === editingId);
+    return job?.profile ?? profile;
+  });
+
+  let visibleSequences = $derived(
+    loops.filter(c => !c.workspace_profile || c.workspace_profile === draftProfile)
+  );
+
+  // ── Data loading ───────────────────────────────────────────────────────
+
+  async function load() {
+    const a = await getApi();
+    if (!a) { loadError = 'API bindings unavailable'; loading = false; return; }
+    loading = true;
+    try {
+      // The jobs list is the panel's primary data — let its failure surface as
+      // an error state. The sequence list only feeds the target picker, so a
+      // failure there degrades gracefully (empty picker) via safe().
+      const [j, c] = await Promise.all([
+        (a.ListCollectJobs as any)(''),
+        safe((a.ListSequences as any)(), [], 'ListSequences'),
+      ]);
+      jobs = (j ?? []) as CollectJob[];
+      loops = ((c ?? []) as any[]).map((x: any) => ({
+        id: x.id, name: x.name,
+        workspace_profile: x.workspace_profile ?? '',
+      }));
+      loadError = null;
+    } catch (err: any) {
+      loadError = `${err?.message ?? err}`;
+      jobs = [];
+    } finally {
+      loading = false;
+    }
+  }
+
+  // ── CRUD ───────────────────────────────────────────────────────────────
+
+  async function save() {
+    if (saving) return; // guard against double-submit (a new job has id:'' and would insert twice)
+    const a = await getApi();
+    if (!a || !draft.name.trim()) return;
+    const isNew = editingId === 'new';
+    const existing = jobs.find(j => j.id === editingId);
+    const payload: Partial<CollectJob> = {
+      id:           isNew ? '' : (editingId ?? ''),
+      profile:      isNew ? (filterProfile || profile) : (existing?.profile ?? profile),
+      name:         draft.name.trim(),
+      command:      draft.targetType === 'shell' ? draft.command.trim() : '',
+      interval_s:   draft.scheduleMode === 'interval' ? draft.interval_s : 0,
+      enabled:      draft.enabled,
+      default_actions: '[]',
+      last_error:   '',
+      created_at:   0,
+      target_type:  draft.targetType,
+      target_id:    draft.targetId,
+      target_prompt: draft.targetPrompt.trim(),
+      run_at:       draft.scheduleMode === 'time' ? draft.run_at : '',
+      days:         draft.scheduleMode === 'time' ? draft.days : '',
+    };
+    // Validation
+    if (draft.targetType === 'shell' && !payload.command) return;
+    if (draft.targetType === 'loop' && !payload.target_id) return;
+    if (draft.targetType === 'runner' && !payload.target_prompt) return;
+    saving = true;
+    try {
+      await (a.SaveCollectJob as any)(payload);
+      editingId = null;
+      await load();
+    } catch (e: any) {
+      flash(`Error: ${e?.message ?? 'save failed'}`, true);
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function remove(id: string) {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      await (a.DeleteCollectJob as any)(id);
+      // If any dashboard widget references this job, remove it from the
+      // layout and persist — otherwise the widget would auto-recreate
+      // the job on its next mount.
+      const layout = dashboardState.layout;
+      if (layout) {
+        const filtered = layout.widgets.filter(w => (w.config as any)?.jobId !== id);
+        if (filtered.length !== layout.widgets.length) {
+          dashboardState.updateWidgets(filtered);
+          try {
+            await (a as any).SaveDashboardLayout(
+              profileState.active?.name ?? '',
+              JSON.stringify({ version: 1, widgets: filtered }),
+            );
+          } catch {}
+        }
+      }
+      await load();
+    } catch (e: any) {
+      notifications.error(`Failed to delete job: ${e?.message ?? 'unknown error'}`);
+    }
+  }
+
+  async function runNow(id: string) {
+    const a = await getApi();
+    if (!a) return;
+    runningId = id;
+    try {
+      await (a.RunCollectJobNow as any)(id);
+      await load();
+    } finally {
+      runningId = null;
+    }
+  }
+
+  async function toggle(job: CollectJob) {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      await (a.SaveCollectJob as any)({ ...job, enabled: !job.enabled });
+      await load();
+    } catch (e: any) {
+      notifications.error(`Failed to update job: ${e?.message ?? 'unknown error'}`);
+    }
+  }
+
+  // ── Form helpers ───────────────────────────────────────────────────────
+
+  function startNew() {
+    editingId = 'new';
+    draft = { name: '', targetType: 'shell', command: '', targetId: '', targetPrompt: '',
+              scheduleMode: 'interval', interval_s: 300, run_at: '08:30', days: 'daily', enabled: true };
+  }
+
+  function startEdit(job: CollectJob) {
+    editingId = job.id;
+    draft = {
+      name:         job.name,
+      targetType:   (job.target_type || 'shell') as TargetType,
+      command:      job.command,
+      targetId:     job.target_id,
+      targetPrompt: job.target_prompt,
+      scheduleMode: job.run_at ? 'time' : 'interval',
+      interval_s:   job.interval_s || 300,
+      run_at:       job.run_at || '08:30',
+      days:         job.days || 'daily',
+      enabled:      job.enabled,
+    };
+  }
+
+  function cancelEdit() { editingId = null; }
+
+  function flash(msg: string, _err = false) {
+    statusMsg = msg;
+    setTimeout(() => { statusMsg = ''; }, 3000);
+  }
+
+  // ── Format helpers ─────────────────────────────────────────────────────
+
+  function fmtSchedule(job: CollectJob): string {
+    if (job.run_at) {
+      return job.days === 'weekdays' ? `${job.run_at} weekdays` : `${job.run_at} daily`;
+    }
+    const s = job.interval_s;
+    if (s >= 3600) return `every ${s / 3600}h`;
+    if (s >= 60)   return `every ${Math.floor(s / 60)}m`;
+    return `every ${s}s`;
+  }
+
+  function fmtLastRun(job: CollectJob): string {
+    return timeAgoOrDate(job.last_run_at);
+  }
+
+  function targetLabel(job: CollectJob): string {
+    switch (job.target_type) {
+      case 'loop': {
+        const ch = loops.find(c => c.id === job.target_id);
+        return ch ? ch.name : job.target_id.slice(0, 8);
+      }
+      case 'runner':  return job.target_prompt.slice(0, 40) + (job.target_prompt.length > 40 ? '…' : '');
+      default:        return job.command.split('\n')[0].slice(0, 60) + (job.command.length > 60 ? '…' : '');
+    }
+  }
+
+  function isFormValid(): boolean {
+    if (!draft.name.trim()) return false;
+    if (draft.targetType === 'shell' && !draft.command.trim()) return false;
+    if (draft.targetType === 'loop' && !draft.targetId) return false;
+    if (draft.targetType === 'runner' && !draft.targetPrompt.trim()) return false;
+    return true;
+  }
+
+  onMount(() => {
+    void load();
+    const off = onCollectUpdate(() => void load());
+    return () => off();
+  });
+</script>
+
+<div class="jobs">
+  <div class="panel-header" style="margin-bottom:var(--spacing-sm);">
+    <h1 class="page-title">jobs</h1>
+    <div style="display:flex;align-items:center;gap:var(--spacing-md);">
+      {#if loading}<Spinner />{/if}
+      {#if statusMsg}
+        <span class="status-msg">{statusMsg}</span>
+      {/if}
+      {#if editingId !== 'new'}
+        <button class="btn primary" onclick={startNew}>+ new job</button>
+      {/if}
+    </div>
+  </div>
+
+  <!-- Profile filter -->
+  {#if jobProfiles.length > 1}
+    <div class="filter-row">
+      <span class="filter-label">profile</span>
+      <div class="tag-bar">
+        <button class="tag" class:active={filterProfile === ''} onclick={() => filterProfile = ''}>all</button>
+        {#each jobProfiles as p (p)}
+          <button class="tag" class:active={filterProfile === p} onclick={() => filterProfile = filterProfile === p ? '' : p}>{p}</button>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
+  <!-- Create form -->
+  {#if editingId === 'new'}
+    <div class="job-form">
+      <div class="form-title">new job</div>
+
+      <label class="form-row">
+        <span class="form-label">name</span>
+        <input class="form-input" bind:value={draft.name} placeholder="Morning standup" />
+      </label>
+
+      <!-- Target type selector -->
+      <div class="form-row">
+        <span class="form-label">target</span>
+        <div class="seg-ctrl">
+          {#each (['shell', 'loop', 'runner'] as TargetType[]) as t (t)}
+            <button class="seg-btn" class:active={draft.targetType === t} onclick={() => { draft.targetType = t; draft.targetId = ''; }}>{t}</button>
+          {/each}
+        </div>
+      </div>
+
+      <!-- Conditional target fields -->
+      {#if draft.targetType === 'shell'}
+        <label class="form-row">
+          <span class="form-label">command</span>
+          <textarea class="form-textarea" bind:value={draft.command} placeholder="script that outputs JSON array" rows="4"></textarea>
+        </label>
+      {:else if draft.targetType === 'loop'}
+        <label class="form-row">
+          <span class="form-label">loop</span>
+          <select class="form-select" bind:value={draft.targetId}>
+            <option value="">— select —</option>
+            {#each visibleSequences as ch (ch.id)}
+              <option value={ch.id}>{ch.name}</option>
+            {/each}
+          </select>
+        </label>
+      {:else if draft.targetType === 'runner'}
+        <label class="form-row">
+          <span class="form-label">prompt</span>
+          <textarea class="form-textarea" bind:value={draft.targetPrompt} placeholder="Run the morning standup and write output to…" rows="4"></textarea>
+        </label>
+      {/if}
+
+      <!-- Schedule mode -->
+      <div class="form-row">
+        <span class="form-label">schedule</span>
+        <div class="seg-ctrl">
+          <button class="seg-btn" class:active={draft.scheduleMode === 'interval'} onclick={() => draft.scheduleMode = 'interval'}>interval</button>
+          <button class="seg-btn" class:active={draft.scheduleMode === 'time'}     onclick={() => draft.scheduleMode = 'time'}>time of day</button>
+        </div>
+      </div>
+
+      {#if draft.scheduleMode === 'interval'}
+        <label class="form-row">
+          <span class="form-label">every</span>
+          <div class="interval-row">
+            <input class="form-input short" type="number" min="30" bind:value={draft.interval_s} />
+            <span class="form-unit">seconds</span>
+          </div>
+        </label>
+      {:else}
+        <div class="form-row">
+          <span class="form-label">time</span>
+          <div class="time-row">
+            <input class="form-input short" type="time" bind:value={draft.run_at} />
+            <select class="form-select narrow" bind:value={draft.days}>
+              <option value="daily">daily</option>
+              <option value="weekdays">weekdays</option>
+            </select>
+          </div>
+        </div>
+      {/if}
+
+      <div class="form-actions">
+        <button class="btn sm primary" onclick={save} disabled={saving || !isFormValid()}>{saving ? 'saving…' : 'save'}</button>
+        <button class="btn sm ghost" onclick={cancelEdit}>cancel</button>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Job list -->
+  {#if loading && jobs.length === 0}
+    <div class="empty">loading…</div>
+  {:else if loadError}
+    <EmptyState title="Failed to load jobs" message={loadError} />
+  {:else if jobs.length === 0 && editingId !== 'new'}
+    <EmptyState title="No jobs yet" message="Create one to schedule recurring work." />
+  {:else if visible.length === 0 && editingId !== 'new'}
+    <EmptyState title="No jobs for this profile" />
+  {:else}
+    <div class="job-list">
+      {#each visible as job (job.id)}
+        <div class="job-card" class:editing={editingId === job.id}>
+          {#if editingId === job.id}
+            <!-- Inline edit form -->
+            <div class="job-form inline">
+              <label class="form-row">
+                <span class="form-label">name</span>
+                <input class="form-input" bind:value={draft.name} />
+              </label>
+
+              <div class="form-row">
+                <span class="form-label">target</span>
+                <div class="seg-ctrl">
+                  {#each (['shell', 'loop', 'runner'] as TargetType[]) as t (t)}
+                    <button class="seg-btn" class:active={draft.targetType === t} onclick={() => { draft.targetType = t; draft.targetId = ''; }}>{t}</button>
+                  {/each}
+                </div>
+              </div>
+
+              {#if draft.targetType === 'shell'}
+                <label class="form-row">
+                  <span class="form-label">command</span>
+                  <textarea class="form-textarea" bind:value={draft.command} rows="4"></textarea>
+                </label>
+              {:else if draft.targetType === 'loop'}
+                <label class="form-row">
+                  <span class="form-label">loop</span>
+                  <select class="form-select" bind:value={draft.targetId}>
+                    <option value="">— select —</option>
+                    {#each loops as ch (ch.id)}
+                      <option value={ch.id}>{ch.name}</option>
+                    {/each}
+                  </select>
+                </label>
+              {:else if draft.targetType === 'runner'}
+                <label class="form-row">
+                  <span class="form-label">prompt</span>
+                  <textarea class="form-textarea" bind:value={draft.targetPrompt} rows="4"></textarea>
+                </label>
+              {/if}
+
+              <div class="form-row">
+                <span class="form-label">schedule</span>
+                <div class="seg-ctrl">
+                  <button class="seg-btn" class:active={draft.scheduleMode === 'interval'} onclick={() => draft.scheduleMode = 'interval'}>interval</button>
+                  <button class="seg-btn" class:active={draft.scheduleMode === 'time'}     onclick={() => draft.scheduleMode = 'time'}>time of day</button>
+                </div>
+              </div>
+
+              {#if draft.scheduleMode === 'interval'}
+                <label class="form-row">
+                  <span class="form-label">every</span>
+                  <div class="interval-row">
+                    <input class="form-input short" type="number" min="30" bind:value={draft.interval_s} />
+                    <span class="form-unit">seconds</span>
+                  </div>
+                </label>
+              {:else}
+                <div class="form-row">
+                  <span class="form-label">time</span>
+                  <div class="time-row">
+                    <input class="form-input short" type="time" bind:value={draft.run_at} />
+                    <select class="form-select narrow" bind:value={draft.days}>
+                      <option value="daily">daily</option>
+                      <option value="weekdays">weekdays</option>
+                    </select>
+                  </div>
+                </div>
+              {/if}
+
+              <div class="form-actions">
+                <button class="btn sm primary" onclick={save} disabled={saving || !isFormValid()}>{saving ? 'saving…' : 'save'}</button>
+                <button class="btn sm ghost" onclick={cancelEdit}>cancel</button>
+              </div>
+            </div>
+          {:else}
+            <div class="job-row">
+              <button class="job-toggle" class:on={job.enabled} onclick={() => toggle(job)}
+                title={job.enabled ? 'disable' : 'enable'}>
+                {job.enabled ? '●' : '○'}
+              </button>
+              <div class="job-info" role="button" tabindex="0"
+                onclick={() => startEdit(job)}
+                onkeydown={(e) => e.key === 'Enter' && startEdit(job)}>
+                <span class="job-name">{job.name}</span>
+                <span class="job-cmd">{targetLabel(job)}</span>
+                <div class="job-meta-row">
+                  {#if job.profile}
+                    <span class="job-profile">{job.profile}</span>
+                  {/if}
+                  <span class="job-type-badge type-{job.target_type || 'shell'}">{job.target_type || 'shell'}</span>
+                  {#if job.source === 'widget'}
+                    <span class="job-source-badge" title="created by a dashboard widget">widget</span>
+                  {/if}
+                  <span class="job-meta">{fmtSchedule(job)}</span>
+                  <span class="job-meta">last run: {fmtLastRun(job)}</span>
+                  {#if job.last_error}
+                    <span class="job-err" title={job.last_error}>✗ error</span>
+                  {/if}
+                </div>
+              </div>
+              <div class="job-btns">
+                <button class="job-btn" onclick={() => runNow(job.id)} disabled={runningId === job.id} title="run now">
+                  {runningId === job.id ? '…' : '▶'}
+                </button>
+                <button class="job-btn danger" onclick={() => remove(job.id)} title="delete">✕</button>
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/each}
+    </div>
+  {/if}
+</div>
+
+<style>
+  .jobs {
+    padding: var(--panel-padding);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    min-height: 100%;
+  }
+
+  .status-msg {
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--color-success);
+  }
+
+  /* Filter */
+  .filter-row { display: flex; align-items: center; gap: var(--spacing-sm); }
+  .filter-label { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-muted); width: 38px; flex-shrink: 0; }
+  .tag-bar { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag {
+    font-family: var(--font-mono); font-size: 10px; padding: 2px 8px;
+    border-radius: 999px; border: 1px solid var(--color-border-primary);
+    background: none; cursor: pointer; color: var(--color-text-muted);
+  }
+  .tag:hover { border-color: var(--color-border-secondary); color: var(--color-text-secondary); }
+  .tag.active { border-color: var(--color-accent); color: var(--color-accent); background: rgba(234,179,8,0.06); }
+
+  .empty {
+    font-size: 13px; color: var(--color-text-tertiary);
+    padding: var(--spacing-3xl) 0; line-height: 1.5;
+  }
+
+  /* Job list */
+  .job-list { display: flex; flex-direction: column; gap: var(--spacing-sm); }
+
+  .job-card {
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    overflow: hidden; transition: border-color 100ms;
+  }
+  .job-card:hover { border-color: var(--color-border-secondary); }
+  .job-card.editing { border-color: var(--color-accent); }
+
+  .job-row {
+    display: grid; grid-template-columns: 24px 1fr auto;
+    align-items: center; gap: var(--spacing-md);
+    padding: var(--spacing-md) var(--spacing-lg);
+  }
+
+  .job-toggle {
+    background: none; border: none; cursor: pointer;
+    font-size: 14px; font-family: var(--font-mono);
+    color: var(--color-text-muted); padding: 0; line-height: 1; transition: color 100ms;
+  }
+  .job-toggle.on { color: var(--color-success); }
+  .job-toggle:hover { opacity: 0.7; }
+
+  .job-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; cursor: pointer; }
+  .job-name { font-size: 13px; font-weight: 500; color: var(--color-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .job-cmd { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .job-meta-row { display: flex; gap: var(--spacing-sm); align-items: center; flex-wrap: wrap; }
+  .job-meta { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-tertiary); }
+  .job-profile { font-family: var(--font-mono); font-size: 10px; color: var(--color-accent); background: rgba(234,179,8,0.08); border: 1px solid rgba(234,179,8,0.2); border-radius: 999px; padding: 1px 6px; }
+  .job-err { font-family: var(--font-mono); font-size: 10px; color: var(--color-error); }
+
+  .job-type-badge {
+    font-family: var(--font-mono); font-size: 10px;
+    padding: 1px 6px; border-radius: 999px;
+    border: 1px solid var(--color-border-primary);
+    color: var(--color-text-muted);
+  }
+  .job-type-badge.type-loop    { color: #10b981; border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.06); }
+  .job-type-badge.type-runner   { color: #f59e0b; border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.06); }
+
+  .job-source-badge {
+    font-family: var(--font-mono); font-size: 10px;
+    padding: 1px 6px; border-radius: 999px;
+    color: var(--accent, var(--color-accent));
+    border: 1px solid color-mix(in srgb, var(--accent, var(--color-accent)) 30%, transparent);
+    background: color-mix(in srgb, var(--accent, var(--color-accent)) 8%, transparent);
+  }
+
+
+  .job-btns { display: flex; gap: 4px; flex-shrink: 0; }
+  .job-btn {
+    background: none; border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-sm); padding: 3px 8px;
+    font-size: 11px; cursor: pointer; color: var(--color-text-muted);
+    transition: all 100ms; font-family: var(--font-mono);
+  }
+  .job-btn:hover:not(:disabled) { border-color: var(--color-accent); color: var(--color-accent); }
+  .job-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .job-btn.danger:hover:not(:disabled) { border-color: var(--color-error); color: var(--color-error); }
+
+  /* Form */
+  .job-form {
+    display: flex; flex-direction: column; gap: var(--spacing-md);
+    padding: var(--spacing-lg);
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+  }
+  .job-form.inline { border: none; border-radius: 0; }
+  .form-title { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
+  .form-row { display: flex; flex-direction: column; gap: 4px; }
+  .form-label { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-muted); }
+
+  .form-input {
+    background: var(--color-bg-primary); border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-sm); padding: 6px 8px;
+    font-size: 12px; color: var(--color-text-primary); font-family: inherit; width: 100%;
+  }
+  .form-input:focus { outline: none; border-color: var(--color-accent); }
+  .form-input.short { width: 100px; }
+
+  .form-textarea {
+    background: var(--color-bg-primary); border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-sm); padding: 6px 8px;
+    font-size: 11px; font-family: var(--font-mono);
+    color: var(--color-text-primary); width: 100%; resize: vertical;
+  }
+  .form-textarea:focus { outline: none; border-color: var(--color-accent); }
+
+  .form-select {
+    background: var(--color-bg-primary); border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-sm); padding: 6px 8px;
+    font-size: 12px; color: var(--color-text-primary); font-family: inherit;
+    width: 100%; cursor: pointer;
+  }
+  .form-select:focus { outline: none; border-color: var(--color-accent); }
+  .form-select.narrow { width: auto; min-width: 100px; }
+
+  /* Segmented control */
+  .seg-ctrl { display: flex; gap: 0; }
+  .seg-btn {
+    font-family: var(--font-mono); font-size: 11px;
+    padding: 4px 10px; background: none;
+    border: 1px solid var(--color-border-primary);
+    cursor: pointer; color: var(--color-text-muted);
+    transition: all 100ms; margin-left: -1px;
+  }
+  .seg-btn:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); margin-left: 0; }
+  .seg-btn:last-child  { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+  .seg-btn.active { background: rgba(234,179,8,0.08); border-color: var(--color-accent); color: var(--color-accent); z-index: 1; position: relative; }
+  .seg-btn:hover:not(.active) { color: var(--color-text-secondary); }
+
+  .interval-row { display: flex; align-items: center; gap: var(--spacing-sm); }
+  .time-row { display: flex; align-items: center; gap: var(--spacing-sm); }
+  .form-unit { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-muted); }
+
+  .form-actions { display: flex; gap: var(--spacing-sm); }
+</style>

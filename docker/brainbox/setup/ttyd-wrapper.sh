@@ -41,6 +41,14 @@ if 'settings_json' in d:
     wf(home + '/.claude/settings.json', d['settings_json'], 0o644)
 if 'claude_md' in d:
     wf(home + '/.claude/CLAUDE.md', d['claude_md'], 0o644)
+if 'hooks_files' in d:
+    # Profile hook scripts (secret-guard.py, error-correction-*). settings.json
+    # references them at ~/.claude/hooks/ via CLAUDE_CONFIG_DIR; write each
+    # executable so the PreToolUse/PostToolUse/Stop hooks fire.
+    hooks_dir = home + '/.claude/hooks'
+    os.makedirs(hooks_dir, mode=0o755, exist_ok=True)
+    for name, content in json.loads(d['hooks_files']).items():
+        wf(hooks_dir + '/' + os.path.basename(name), content, 0o755)
 " 2>/dev/null
 fi
 
@@ -148,6 +156,16 @@ if [ -n "$_bb_token" ] && [ -n "$_bb_hub" ]; then
     fi
 fi
 
+# CLAUDE_CODE_OAUTH_TOKEN wins over any on-disk credential. In practice Claude
+# Code prefers an on-disk .credentials.json over the env var, so a baked or
+# broker-pulled credential MASKS the injected setup-token. Remove it here — after
+# all credential-writing (baked unpack + ADR-004 live-pull) — so the env token
+# authenticates on ANY image regardless of what was baked in.
+if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    rm -f "$HOME/.claude/.credentials.json"
+    echo "ttyd-wrapper: CLAUDE_CODE_OAUTH_TOKEN set — removed on-disk credential so the env token authenticates" >&2
+fi
+
 # Attach to existing session, or create new one
 if tmux has-session -t main 2>/dev/null; then
     exec tmux attach -t main
@@ -180,9 +198,10 @@ else
             fi
             ;;
         *)
-            # Default: Claude Code
-            # --plugin-dir mirrors the host wrapper: claude --plugin-dir .../reflex
-            AGENT_CMD="claude --plugin-dir /opt/reflex/share/reflex --dangerously-skip-permissions"
+            # Default: Claude Code. The retired reflex plugin is no longer baked;
+            # the profile's own skills live at ~/.claude/skills/ (injected per
+            # profile at image build) and load without --plugin-dir.
+            AGENT_CMD="claude --dangerously-skip-permissions"
             if [ -n "$CLAUDE_MODEL" ]; then
                 AGENT_CMD="$AGENT_CMD --model \"$CLAUDE_MODEL\""
             fi
@@ -216,15 +235,85 @@ else
     # Legacy fallback: exec-injected file (old daemon, or hub unreachable).
     [ -z "$TASK_FILE" ] && [ -f "${HOME}/.brainbox/task.txt" ] && TASK_FILE="${HOME}/.brainbox/task.txt"
 
+    # Execution mode: "interactive" (default) runs the agent in the tmux REPL;
+    # "print" runs claude headless (claude -p) — it executes the task, streams
+    # output to the pane (still watchable in ttyd), records the result, then
+    # exits. Print mode applies ONLY to the claude provider with a task; every
+    # other combination falls through to the interactive path below, unchanged.
+    EXEC_MODE="${SESSION_EXEC_MODE:-interactive}"
+
     # If a task was found, pass it as the initial prompt so the agent starts
     # working immediately without any manual Enter press. After the agent
     # exits, record the result and exit the container.
     if [ -n "$TASK_FILE" ]; then
         COMPLETE=brainbox-complete
         command -v brainbox-complete >/dev/null 2>&1 || COMPLETE="${HOME}/.brainbox/complete.sh"
-        TASK_CMD="$AGENT_CMD \"\$(cat $TASK_FILE)\""
-        TASK_CMD="$TASK_CMD; $COMPLETE \"\$(cat /tmp/.claude-task-result 2>/dev/null || echo done)\"; exit"
-        tmux send-keys -t main "$TASK_CMD" Enter
+
+        if [ "$EXEC_MODE" = "print" ] && [ "${LLM_PROVIDER:-claude}" = "claude" ]; then
+            # --- Headless print mode (claude -p) -----------------------------
+            # Billing guard: in -p mode a present ANTHROPIC_API_KEY /
+            # ANTHROPIC_AUTH_TOKEN is ALWAYS used and OUTRANKS the OAuth
+            # subscription credential (no interactive approval in headless mode).
+            # Unset them so a leaked key cannot silently divert this run to
+            # per-token API billing — platform sessions must stay on the OAuth
+            # subscription. (Never pass --bare: it refuses OAuth and demands a
+            # key.)
+            if [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+                echo "ttyd-wrapper: print mode — unsetting ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN to keep OAuth subscription billing" >&2
+            fi
+
+            # Parser: pull the final result text out of the stream-json
+            # transcript. stream-json (not plain json) keeps the run visible
+            # live in ttyd; its terminating {"type":"result"} event carries the
+            # final assistant text that we hand to brainbox-complete. Non-JSON
+            # lines (e.g. stderr) are skipped.
+            cat > /tmp/claude-print-parse.py <<'PYEOF'
+import json
+result = "done"
+try:
+    with open("/tmp/.claude-print.jsonl") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            if obj.get("type") == "result" and obj.get("result"):
+                result = obj["result"]
+except Exception:
+    pass
+print(result)
+PYEOF
+
+            # Assemble the run as a standalone script so tmux launches it as the
+            # pane's own process (respawn-pane) rather than typing it in with
+            # `send-keys ... Enter` — the racy keystroke injection that can leave
+            # a task "typed but never submitted".
+            RUNNER=/tmp/claude-print-run.sh
+            {
+                echo '#!/bin/bash'
+                echo 'unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN'
+                echo "$AGENT_CMD -p --output-format stream-json --verbose \"\$(cat $TASK_FILE)\" 2>&1 | tee /tmp/.claude-print.jsonl"
+                echo "$COMPLETE \"\$(python3 /tmp/claude-print-parse.py)\""
+            } > "$RUNNER"
+            chmod +x "$RUNNER"
+
+            # remain-on-exit keeps the final output on screen in ttyd after
+            # claude -p returns; respawn-pane replaces the idle shell with the
+            # runner directly (no keystroke injection). Fall back to send-keys
+            # only if respawn-pane is unavailable (older tmux).
+            tmux setw -t main remain-on-exit on 2>/dev/null || true
+            tmux respawn-pane -t main -k "$RUNNER" 2>/dev/null \
+                || tmux send-keys -t main "$RUNNER" Enter
+        else
+            # Interactive task mode (unchanged): task typed as the first prompt,
+            # result scraped from the transcript, then the REPL exits.
+            TASK_CMD="$AGENT_CMD \"\$(cat $TASK_FILE)\""
+            TASK_CMD="$TASK_CMD; $COMPLETE \"\$(cat /tmp/.claude-task-result 2>/dev/null || echo done)\"; exit"
+            tmux send-keys -t main "$TASK_CMD" Enter
+        fi
     else
         tmux send-keys -t main "$AGENT_CMD" Enter
     fi

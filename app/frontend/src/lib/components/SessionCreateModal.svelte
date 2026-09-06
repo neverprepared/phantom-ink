@@ -68,6 +68,7 @@
   let localRecentDirs = $state<string[]>([]);
   let newTask = $state('');
   let continueFrom = $state('');
+  let newExecMode = $state('interactive'); // 'interactive' (tmux REPL) | 'print' (claude -p headless)
 
   interface DispatchCandidate {
     name: string;
@@ -232,6 +233,9 @@
         workspace_home: wsHome,
         task: newTask.trim() || undefined,
         continue_from: continueFrom || undefined,
+        // print mode needs something to execute; downgrade to interactive if the
+        // task got cleared after 'print' was picked (server also validates).
+        exec_mode: newExecMode === 'print' && (newTask.trim() || continueFrom) ? 'print' : 'interactive',
         backend: newBackend,
         runner: newRunner || undefined,
         volumes: volumes.length > 0 ? volumes : undefined,
@@ -448,6 +452,31 @@
         <label for="stask">task (optional)</label>
         <textarea id="stask" bind:value={newTask} rows="3" placeholder="Describe what the agent should do after starting..."></textarea>
         <p class="hint">if provided, the agent will start working on this immediately</p>
+      </div>
+
+      <!-- Execution mode: interactive tmux REPL vs headless claude -p -->
+      <div class="field">
+        <label for="sexecmode">execution mode</label>
+        <div class="toggle-group" id="sexecmode">
+          <button class="toggle-opt" class:active={newExecMode === 'interactive'} onclick={() => newExecMode = 'interactive'}>
+            <span class="toggle-icon">&#x2328;</span> interactive
+          </button>
+          <button
+            class="toggle-opt"
+            class:active={newExecMode === 'print'}
+            disabled={!newTask.trim() && !continueFrom}
+            onclick={() => newExecMode = 'print'}
+          >
+            <span class="toggle-icon">&#x1f5a8;</span> print
+          </button>
+        </div>
+        <p class="hint">
+          {#if newExecMode === 'print'}
+            headless <code>claude -p</code> — runs the task, streams to the terminal, records the result, then exits. requires a task; claude only.
+          {:else}
+            classic tmux terminal you can attach to and drive interactively
+          {/if}
+        </p>
       </div>
 
       <!-- Continue from a prior session's handoff -->

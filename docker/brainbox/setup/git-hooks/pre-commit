@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Global pre-commit hook (wired via `git config --global core.hooksPath`).
+# Scans staged changes with gitleaks before every commit inside the container —
+# the git-side backstop to the secret-guard.py PreToolUse hook (which guards
+# stdout). A finding blocks the commit; --redact keeps the secret out of the
+# terminal so the block itself never leaks it.
+#
+# Fails OPEN if gitleaks is missing (never brick commits in an image built
+# without it); fails CLOSED (blocks) when gitleaks runs and finds a secret.
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+    exit 0
+fi
+
+if ! gitleaks protect --staged --redact --no-banner; then
+    echo "" >&2
+    echo "gitleaks: staged changes contain a secret — commit blocked." >&2
+    echo "Remove the secret (or amend the staged diff) and retry." >&2
+    exit 1
+fi
+exit 0

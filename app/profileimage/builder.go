@@ -15,7 +15,6 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -142,6 +141,15 @@ func Build(opts BuildOptions) (BuildResult, error) {
 		return BuildResult{}, fmt.Errorf("inject env file: %w", err)
 	}
 
+	// 6b. Inject the profile's skills (the phantom-* CLI routers + others).
+	// Replaces the retired reflex plugin skill tree: these are the thin
+	// accessors this profile actually uses, wired to pbrainctl/prouterctl
+	// (installed in the base image) and the vault tokens baked above.
+	opts.progress("Injecting profile skills…")
+	if err := injectClaudeSkills(containerName, opts); err != nil {
+		return BuildResult{}, fmt.Errorf("inject skills: %w", err)
+	}
+
 	// 7. Commit while the container is still running — Docker Desktop's
 	// containerd storage driver fails to compute layer diffs on stopped
 	// containers that had directories created via exec.
@@ -169,6 +177,23 @@ func Build(opts BuildOptions) (BuildResult, error) {
 
 	opts.progress("Done.")
 	return BuildResult{Tag: tag, Digest: digest, EnvKey: envKey}, nil
+}
+
+// routerManagedVars are the brain vault credentials the phantom-router threads
+// into the credentials broker at provisioning and injects into sessions via
+// extra_env at create (see phantom-router lifecycle.py _forward_brain_creds).
+// They are deliberately NOT baked into .env.enc: a baked value would override
+// the fresh broker value when ~/.env is sourced at container start, defeating
+// server-side token rotation (a rotated vault token would need an image
+// rebuild). Same rationale as not baking .credentials.json for OAuth. New brain
+// vaults must be added here (mirrors the CL_<VAULT>_API_TOKEN naming).
+var routerManagedVars = map[string]bool{
+	"CL_BRAIN_API":        true,
+	"CL_BRAIN_VAULT":      true,
+	"CL_BRAIN_API_TOKEN":  true, // memory (default) vault
+	"CL_SKILLS_API_TOKEN": true,
+	"CL_TODO_API_TOKEN":   true,
+	"CL_AGENTS_API_TOKEN": true,
 }
 
 // hostOnlyVars are stripped from the profile env before baking into the image.
@@ -243,7 +268,19 @@ func injectEnvFile(container string, opts BuildOptions, key string) error {
 			if hostOnlyVars[varName] || varName == "WORKSPACE_PROFILE" || varName == "WORKSPACE_HOME" {
 				continue
 			}
+			// Router-managed brain creds are injected fresh via extra_env at
+			// session-create, never baked (would override + defeat rotation).
+			if routerManagedVars[varName] {
+				continue
+			}
 			line = strings.ReplaceAll(line, opts.WorkspaceHome, "/home/developer")
+			// Rewrite host-loopback endpoints so in-container clients reach the
+			// host's daemon, not the container's own loopback. The profile .env
+			// points CL_BRAIN_API (and friends) at 127.0.0.1:9998 — correct on
+			// the host, dead inside a container. host.docker.internal resolves to
+			// the runner host (automatic on OrbStack/Docker Desktop; Linux needs
+			// --add-host=host.docker.internal:host-gateway on the runner).
+			line = rewriteLoopbackForContainer(line)
 			lines = append(lines, line)
 		}
 	}
@@ -263,6 +300,75 @@ func injectEnvFile(container string, opts BuildOptions, key string) error {
 
 	if err := writeFileToContainer(container, "/home/developer/.env.enc", ciphertext, "600"); err != nil {
 		return fmt.Errorf("write .env.enc: %w", err)
+	}
+	return nil
+}
+
+// rewriteLoopbackForContainer rewrites host-loopback references in an env line's
+// value to host.docker.internal so a client running inside the container reaches
+// the service on the runner host rather than the container's own loopback. Only
+// the value after the first '=' is rewritten (never the var name), and only the
+// host portion of ://127.0.0.1 or ://localhost so ports/paths are preserved.
+func rewriteLoopbackForContainer(line string) string {
+	idx := strings.IndexByte(line, '=')
+	if idx <= 0 {
+		return line
+	}
+	name, value := line[:idx], line[idx+1:]
+	value = strings.NewReplacer(
+		"://127.0.0.1", "://host.docker.internal",
+		"://localhost", "://host.docker.internal",
+	).Replace(value)
+	return name + "=" + value
+}
+
+// injectClaudeSkills copies the profile's .claude/skills/ tree into the
+// container at /home/developer/.claude/skills/. This is the per-profile skill
+// set (the phantom-* CLI routers + zsh-scripting etc.) that replaces the retired
+// reflex plugin's baked skill tree. Top-level dotfiles (e.g. .brain-skills.json,
+// a host-side cache manifest) are skipped; everything else is copied verbatim
+// with host workspace paths rewritten. Shell/Python helpers are made executable.
+// Skips silently when the profile has no skills dir.
+func injectClaudeSkills(container string, opts BuildOptions) error {
+	skillsDir := filepath.Join(opts.WorkspaceHome, ".claude", "skills")
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		return nil // no skills dir, skip silently
+	}
+	if err := dockerExecSh(container, "mkdir -p /home/developer/.claude/skills"); err != nil {
+		return err
+	}
+	for _, top := range entries {
+		// Skip top-level dotfiles/dirs — host-side manifests, not skills.
+		if strings.HasPrefix(top.Name(), ".") {
+			continue
+		}
+		base := filepath.Join(skillsDir, top.Name())
+		if !top.IsDir() {
+			continue // skills are directories (each holds SKILL.md)
+		}
+		err := filepath.Walk(base, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil || info.IsDir() {
+				return walkErr
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			data = []byte(strings.ReplaceAll(string(data), opts.WorkspaceHome, "/home/developer"))
+			rel, err := filepath.Rel(skillsDir, path)
+			if err != nil {
+				return err
+			}
+			mode := "644"
+			if strings.HasSuffix(path, ".sh") || strings.HasSuffix(path, ".py") {
+				mode = "755"
+			}
+			return writeFileToContainer(container, "/home/developer/.claude/skills/"+rel, data, mode)
+		})
+		if err != nil {
+			return fmt.Errorf("copy skill %s: %w", top.Name(), err)
+		}
 	}
 	return nil
 }
@@ -378,12 +484,19 @@ func translateSettingsJSON(raw []byte, workspaceHome, otlpHost string) []byte {
 		}
 	}
 
-	// Strip user-level hooks: they reference host paths and host state
-	// (e.g. ${CLAUDE_CONFIG_DIR}/hooks/error-correction-stop.sh — the
-	// scripts aren't baked into the image, and CLAUDE_CONFIG_DIR is unset
-	// in containers so the command degrades to /hooks/… "not found" noise
-	// at session end). Container hooks come from the reflex plugin.
-	delete(doc, "hooks")
+	// Filter hooks to the container-safe ones. Hooks whose command resolves via
+	// ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/… point at ~/.claude/hooks/ in
+	// the container — those scripts ARE baked in (see packHookScripts) so the
+	// hooks fire, notably secret-guard.py (PreToolUse Bash). Hooks that hardcode
+	// a host absolute path (e.g. SessionStart python3 /Users/…/sync_skills.py)
+	// can't run in the container, so drop just those, leaving empty groups/events
+	// pruned rather than deleting the whole hooks block.
+	if hooks, ok := doc["hooks"].(map[string]interface{}); ok {
+		filterContainerHooks(hooks, workspaceHome)
+		if len(hooks) == 0 {
+			delete(doc, "hooks")
+		}
+	}
 
 	// Force container-required overrides.
 	doc["bypassPermissions"] = true
@@ -417,6 +530,55 @@ func translateSettingsJSON(raw []byte, workspaceHome, otlpHost string) []byte {
 	return []byte(pathReplacer.Replace(string(out)))
 }
 
+// filterContainerHooks mutates a settings.json "hooks" map in place, dropping
+// any individual hook command that can't run in a Linux container — one that
+// hardcodes a macOS absolute path or embeds the host workspace home. Empty hook
+// groups and empty events are pruned so nothing degrades to "command not found"
+// noise. Hooks referencing ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/… survive
+// (their scripts are baked into ~/.claude/hooks/ by packHookScripts).
+func filterContainerHooks(hooks map[string]interface{}, workspaceHome string) {
+	for event, raw := range hooks {
+		groups, ok := raw.([]interface{})
+		if !ok {
+			continue
+		}
+		keptGroups := groups[:0]
+		for _, g := range groups {
+			group, ok := g.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			cmds, ok := group["hooks"].([]interface{})
+			if !ok {
+				keptGroups = append(keptGroups, g)
+				continue
+			}
+			keptCmds := cmds[:0]
+			for _, c := range cmds {
+				cmd, ok := c.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				command, _ := cmd["command"].(string)
+				if isMacAbsolutePath(command) || strings.Contains(command, workspaceHome) {
+					continue // host-only hook, can't run in the container
+				}
+				keptCmds = append(keptCmds, c)
+			}
+			if len(keptCmds) == 0 {
+				continue // whole group emptied out
+			}
+			group["hooks"] = keptCmds
+			keptGroups = append(keptGroups, group)
+		}
+		if len(keptGroups) == 0 {
+			delete(hooks, event)
+			continue
+		}
+		hooks[event] = keptGroups
+	}
+}
+
 // isMacAbsolutePath returns true for absolute paths that are macOS-specific
 // and won't exist inside a Linux container.
 func isMacAbsolutePath(cmd string) bool {
@@ -435,6 +597,38 @@ func cloneMap(m map[string]interface{}) map[string]interface{} {
 	return c
 }
 
+// packHookScripts reads the profile's .claude/hooks/ directory and returns a
+// JSON object {filename: content} of the hook scripts, ready to be stored in the
+// encrypted bundle and unpacked into the container's ~/.claude/hooks/. Only
+// regular files at the top level are included; __pycache__ and any nested dirs
+// are skipped. Returns "" when the dir is absent or holds no scripts, so the
+// caller can omit the bundle key entirely.
+func packHookScripts(hooksDir string) string {
+	entries, err := os.ReadDir(hooksDir)
+	if err != nil {
+		return ""
+	}
+	files := make(map[string]string)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue // skip __pycache__ and any nested dirs
+		}
+		data, err := os.ReadFile(filepath.Join(hooksDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		files[e.Name()] = string(data)
+	}
+	if len(files) == 0 {
+		return ""
+	}
+	out, err := json.Marshal(files)
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
 // injectClaudeCredentials packs Claude auth + config into a JSON bundle, encrypts
 // with the provided key, and writes the ciphertext to /home/developer/.claude.enc.
 // ttyd-wrapper.sh decrypts at container startup using the same PROFILE_ENV_KEY.
@@ -448,39 +642,13 @@ func injectClaudeCredentials(container string, opts BuildOptions, key string) er
 
 	bundle := make(map[string]string)
 
-	// .credentials.json — Claude Code OAuth tokens. On macOS the LIVE token is
-	// in the login Keychain, and Claude Code namespaces it PER CONFIG DIR as
-	// "Claude Code-credentials-<sha256(configDir)[:8]>" — one item per profile,
-	// each with its own live access + refresh token that Claude Code rotates in
-	// place. We must read the item for THIS profile's config dir; the legacy
-	// unhashed "Claude Code-credentials" item is a stale husk (empty/rotated
-	// refresh token) and any on-disk .credentials.json is an even older leftover
-	// — baking either forces a container re-login. Fall through in order:
-	// hashed Keychain item → legacy Keychain item → on-disk file.
-	sum := sha256.Sum256([]byte(claudeConfigDir))
-	credServices := []string{
-		"Claude Code-credentials-" + hex.EncodeToString(sum[:])[:8],
-		"Claude Code-credentials",
-	}
-	for _, svc := range credServices {
-		if out, kerr := exec.Command(
-			"security", "find-generic-password", "-s", svc, "-w",
-		).Output(); kerr == nil {
-			if tok := strings.TrimSpace(string(out)); tok != "" {
-				bundle["credentials_json"] = tok
-				break
-			}
-		}
-	}
-	if _, ok := bundle["credentials_json"]; !ok {
-		if data, err := os.ReadFile(filepath.Join(claudeConfigDir, ".credentials.json")); err == nil {
-			bundle["credentials_json"] = string(data)
-		}
-	}
-	if _, ok := bundle["credentials_json"]; !ok {
-		opts.progress("warning: no Claude credentials found (Keychain lookup failed and " +
-			"no .credentials.json file) — the built image will be UNAUTHENTICATED")
-	}
+	// NOTE: we deliberately DO NOT bake .credentials.json (the interactive OAuth
+	// token) anymore. Container auth is provided at session-create via the
+	// CLAUDE_CODE_OAUTH_TOKEN env var (a long-lived `claude setup-token`). A baked
+	// .credentials.json MASKS that env token in practice, so omitting it is what
+	// makes the env-token path work — and it ends the rebuild/rotation treadmill
+	// (rotating refresh tokens invalidating each other). Auth is injected at
+	// session-create; see phantom-router lifecycle env injection.
 
 	// .claude.json — strip the host's MCP servers and bake only phantom-gateway.
 	// A missing host file still produces a config: the gateway entry is the
@@ -501,6 +669,18 @@ func injectClaudeCredentials(container string, opts BuildOptions, key string) er
 	if data, err := os.ReadFile(filepath.Join(claudeConfigDir, "CLAUDE.md")); err == nil {
 		translated := strings.ReplaceAll(string(data), opts.WorkspaceHome, "/home/developer")
 		bundle["claude_md"] = translated
+	}
+
+	// hooks/ — the profile's hook scripts (secret-guard.py, error-correction-*).
+	// settings.json references these via ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/…,
+	// which resolves to ~/.claude/hooks/ in the container, so baking the scripts
+	// there makes those hooks fire. The security-critical one is secret-guard.py
+	// (PreToolUse Bash). Stored as a JSON object {filename: content} under one
+	// bundle key; ttyd-wrapper unpacks each to ~/.claude/hooks/ and chmods +x.
+	// Host-absolute-path hooks (e.g. SessionStart sync_skills.py) live OUTSIDE
+	// this dir and are filtered out of settings.json by translateSettingsJSON.
+	if hooksJSON := packHookScripts(filepath.Join(claudeConfigDir, "hooks")); hooksJSON != "" {
+		bundle["hooks_files"] = hooksJSON
 	}
 
 	if len(bundle) == 0 {
@@ -692,7 +872,7 @@ func marshalJSON(v any) (string, error) {
 // via stdin to avoid ARG_MAX limits on large files.
 func writeFileToContainer(container, destPath string, data []byte, mode string) error {
 	encoded := base64.StdEncoding.EncodeToString(data)
-	script := fmt.Sprintf("base64 -d > %s && chmod %s %s", destPath, mode, destPath)
+	script := fmt.Sprintf("mkdir -p \"$(dirname %s)\" && base64 -d > %s && chmod %s %s", destPath, destPath, mode, destPath)
 	cmd := exec.Command("docker", "exec", "-i", container, "sh", "-c", script)
 	cmd.Stdin = strings.NewReader(encoded)
 	out, err := cmd.CombinedOutput()
