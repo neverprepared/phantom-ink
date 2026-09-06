@@ -26,6 +26,7 @@ from typing import Any, Callable, Iterable
 from pydantic import BaseModel, Field, model_validator
 
 from .store import _conn
+from .node_identity import node_id, ulid
 
 # ---------------------------------------------------------------------------
 # Canonical envelope model (v2.1)
@@ -243,10 +244,14 @@ def ingest(envelope: AgentEnvelope | dict[str, Any]) -> AgentEnvelope:
         )
         db.execute(
             """
-            INSERT INTO agent_events (id, source, type, status, parent_id, ts, envelope)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO agent_events
+                (id, source, type, status, parent_id, ts, envelope, event_ulid, node_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (env.id, env.source, env.type, status, env.parent_id, now, raw_json),
+            (
+                env.id, env.source, env.type, status, env.parent_id, now, raw_json,
+                ulid(now), node_id(),
+            ),
         )
 
     _fanout(env)

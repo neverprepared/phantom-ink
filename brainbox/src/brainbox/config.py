@@ -361,6 +361,29 @@ class RulesSettings(BaseSettings):
     stuck_running_ms: int = 300_000     # 'running' rows older than this requeue on boot
 
 
+class SyncSettings(BaseSettings):
+    """Local-first peer sync (Slice 3). OFF by default.
+
+    When enabled, the daemon exposes read-only export endpoints — GET
+    /api/sync/events (agent_events op-log, ULID cursor) and GET
+    /api/sync/owner-rows (owner-keyed rows, currently runners, epoch-ms cursor)
+    — and runs a background pull CLIENT (node_sync_client.pull_loop) that fetches
+    each peer's exports and merges them (node_sync). The client uses the
+    curl-subprocess transport, NOT httpx, because of the daemon's macOS-LAN
+    httpx regression (see CLAUDE.md). State gossip only: no work-claiming, no
+    push. Full design in docs/p2p-local-first-slice2.md.
+    """
+
+    enabled: bool = False                           # CL_SYNC__ENABLED
+    # CL_SYNC__PEERS: JSON list of '<label>=<base_url>|<token>' strings, e.g.
+    # '["m3=http://m3-64.neverprepared.com:8790|<bearer>"]'. <label> keys the
+    # per-peer cursor; <token> is optional and falls back to this node's own API
+    # key (shared-key mesh). Parsed by node_sync_client.parse_peer.
+    peers: list[str] = Field(default_factory=list)
+    batch_limit: int = 500                          # max rows per export / pull batch
+    interval_secs: int = 15                         # pull cadence (client tick)
+
+
 class OpenSearchSettings(BaseSettings):
     """Event-stream sink: a durable consumer indexes agent_events into
     OpenSearch (monthly brainbox-events-YYYY.MM indices) for history/search.
@@ -493,6 +516,7 @@ class Settings(BaseSettings):
     rules: RulesSettings = Field(default_factory=RulesSettings)
     llm: LlmSettings = Field(default_factory=LlmSettings)
     opensearch: OpenSearchSettings = Field(default_factory=OpenSearchSettings)
+    sync: SyncSettings = Field(default_factory=SyncSettings)
     path_map: dict[str, str] = Field(
         default_factory=dict
     )  # host path → container path substitutions
