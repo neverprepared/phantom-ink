@@ -171,6 +171,22 @@ func Build(opts BuildOptions) (BuildResult, error) {
 	return BuildResult{Tag: tag, Digest: digest, EnvKey: envKey}, nil
 }
 
+// routerManagedVars are the brain vault credentials the phantom-router threads
+// into the credentials broker at provisioning and injects into sessions via
+// extra_env at create (see phantom-router lifecycle.py _forward_brain_creds).
+// They are deliberately NOT baked into .env.enc: a baked value would override
+// the fresh broker value when ~/.env is sourced at container start, defeating
+// server-side token rotation (a rotated vault token would need an image
+// rebuild). New brain vaults must be added here (mirrors CL_<VAULT>_API_TOKEN).
+var routerManagedVars = map[string]bool{
+	"CL_BRAIN_API":        true,
+	"CL_BRAIN_VAULT":      true,
+	"CL_BRAIN_API_TOKEN":  true, // memory (default) vault
+	"CL_SKILLS_API_TOKEN": true,
+	"CL_TODO_API_TOKEN":   true,
+	"CL_AGENTS_API_TOKEN": true,
+}
+
 // hostOnlyVars are stripped from the profile env before baking into the image.
 // These are host-specific values that would be wrong or harmful inside a container.
 var hostOnlyVars = map[string]bool{
@@ -243,7 +259,19 @@ func injectEnvFile(container string, opts BuildOptions, key string) error {
 			if hostOnlyVars[varName] || varName == "WORKSPACE_PROFILE" || varName == "WORKSPACE_HOME" {
 				continue
 			}
+			// Router-managed brain creds ride in via extra_env at session-create,
+			// never baked — a baked value would override the fresh broker value
+			// when ~/.env is sourced at container start and defeat token rotation.
+			if routerManagedVars[varName] {
+				continue
+			}
 			line = strings.ReplaceAll(line, opts.WorkspaceHome, "/home/developer")
+			// Rewrite host-loopback endpoints so in-container clients reach the
+			// host's daemon, not the container's own loopback: 127.0.0.1:9998 is
+			// correct on the host but dead inside a container. host.docker.internal
+			// resolves to the runner host (OrbStack/Docker Desktop auto; Linux
+			// needs --add-host=host.docker.internal:host-gateway).
+			line = rewriteLoopbackForContainer(line)
 			lines = append(lines, line)
 		}
 	}
@@ -265,6 +293,24 @@ func injectEnvFile(container string, opts BuildOptions, key string) error {
 		return fmt.Errorf("write .env.enc: %w", err)
 	}
 	return nil
+}
+
+// rewriteLoopbackForContainer rewrites host-loopback references in an env line's
+// value to host.docker.internal so a client running inside the container reaches
+// the service on the runner host rather than the container's own loopback. Only
+// the value after the first '=' is rewritten (never the var name), and only the
+// host portion of ://127.0.0.1 or ://localhost so ports/paths are preserved.
+func rewriteLoopbackForContainer(line string) string {
+	idx := strings.IndexByte(line, '=')
+	if idx <= 0 {
+		return line
+	}
+	name, value := line[:idx], line[idx+1:]
+	value = strings.NewReplacer(
+		"://127.0.0.1", "://host.docker.internal",
+		"://localhost", "://host.docker.internal",
+	).Replace(value)
+	return name + "=" + value
 }
 
 // injectSSHKeys copies ~/.ssh from workspaceHome into the container.
