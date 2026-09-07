@@ -8,6 +8,7 @@
   import { timeAgo } from '../utils/format';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import VaultBrowser from './VaultBrowser.svelte';
 
   interface MeshPeer {
     id: string;
@@ -40,6 +41,19 @@
   let loaded = $state(false);
   let loadError = $state<string | null>(null);
   let refreshing = $state(false);
+
+  // Tabs: the mesh status view, plus a per-feature browser for each verbatim
+  // p2p-synced vault. Each vault tab renders VaultBrowser, which scopes to the
+  // app's ACTIVE profile (global switcher) and can move records across profiles
+  // — that's the per-profile dimension. (memory is the synth vault, not browsed here.)
+  type MeshTab = 'mesh' | 'agents' | 'skills' | 'todo';
+  const TABS: { id: MeshTab; label: string }[] = [
+    { id: 'mesh', label: 'Mesh' },
+    { id: 'agents', label: 'Agents' },
+    { id: 'skills', label: 'Skills' },
+    { id: 'todo', label: 'Todo' },
+  ];
+  let activeTab = $state<MeshTab>('mesh');
 
   let pollHandle: number | undefined;
 
@@ -86,20 +100,35 @@
       <p class="sub">The p2p phantom-brain memory mesh — this node plus every peer, with sync stats.</p>
     </div>
     <div class="head-actions">
-      {#if status}
-        <span class="node-badge">
-          <span class="node-id">{status.node_id || 'unknown'}</span>
-          <span class="sync-badge" class:on={status.sync_enabled}>
-            {status.sync_enabled ? 'sync on' : 'sync off'}
+      {#if activeTab === 'mesh'}
+        {#if status}
+          <span class="node-badge">
+            <span class="node-id">{status.node_id || 'unknown'}</span>
+            <span class="sync-badge" class:on={status.sync_enabled}>
+              {status.sync_enabled ? 'sync on' : 'sync off'}
+            </span>
           </span>
-        </span>
+        {/if}
+        <button class="btn" onclick={() => void refresh()} disabled={refreshing}>
+          {refreshing ? 'refreshing…' : 'refresh'}
+        </button>
       {/if}
-      <button class="btn" onclick={() => void refresh()} disabled={refreshing}>
-        {refreshing ? 'refreshing…' : 'refresh'}
-      </button>
     </div>
   </header>
 
+  <div class="tabs" role="tablist" aria-label="Brain mesh sections">
+    {#each TABS as t (t.id)}
+      <button
+        class="tab"
+        class:active={activeTab === t.id}
+        role="tab"
+        aria-selected={activeTab === t.id}
+        onclick={() => (activeTab = t.id)}
+      >{t.label}</button>
+    {/each}
+  </div>
+
+  {#if activeTab === 'mesh'}
   {#if !loaded}
     <Spinner />
   {:else if loadError}
@@ -184,6 +213,11 @@
       {/if}
     </section>
   {/if}
+  {:else}
+    {#key activeTab}
+      <VaultBrowser vault={activeTab} />
+    {/key}
+  {/if}
 </div>
 
 <style>
@@ -211,6 +245,15 @@
   }
   .btn:hover:not(:disabled) { color: var(--color-text-primary); }
   .btn:disabled { opacity: 0.5; cursor: default; }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--color-border-primary); margin-bottom: var(--spacing-lg); }
+  .tab {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    color: var(--color-text-muted); cursor: pointer; font-size: 0.82rem;
+    padding: 0.4rem 0.8rem; margin-bottom: -1px;
+  }
+  .tab:hover { color: var(--color-text-secondary); }
+  .tab.active { color: var(--color-text-primary); border-bottom-color: var(--color-text-primary); }
 
   .card {
     background: var(--color-bg-secondary);
