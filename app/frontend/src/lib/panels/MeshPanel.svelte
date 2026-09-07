@@ -90,7 +90,21 @@
   }
 
   const peers = $derived(status?.peers ?? []);
-  const liveCount = $derived(peers.filter((p) => p.live).length);
+
+  // Mesh-view sub-tab filters: by machine (peer node id) and by profile. Values
+  // are derived from the data, not hardcoded. Filters AND together.
+  let machineFilter = $state<string>('all');
+  let profileFilter = $state<string>('all');
+  const machines = $derived([...new Set(peers.map((p) => p.id))].sort());
+  const profiles = $derived([...new Set(peers.map((p) => p.profile))].sort());
+  const filteredPeers = $derived(
+    peers.filter(
+      (p) =>
+        (machineFilter === 'all' || p.id === machineFilter) &&
+        (profileFilter === 'all' || p.profile === profileFilter),
+    ),
+  );
+  const liveCount = $derived(filteredPeers.filter((p) => p.live).length);
 </script>
 
 <div class="mesh">
@@ -166,7 +180,7 @@
 
     <!-- Peers -->
     <section class="card peers">
-      <h2>Peers <span class="peer-count">{liveCount}/{peers.length} live</span></h2>
+      <h2>Peers <span class="peer-count">{liveCount}/{filteredPeers.length} live</span></h2>
       {#if peers.length === 0}
         <EmptyState
           title={status.sync_enabled ? 'No peers' : 'Sync disabled'}
@@ -175,6 +189,25 @@
             : 'Sync is off on this node — no peers are being tracked.'}
         />
       {:else}
+        <div class="filters">
+          <div class="filter-row">
+            <span class="filter-label">machine</span>
+            <button class="pill" class:active={machineFilter === 'all'} onclick={() => (machineFilter = 'all')}>all</button>
+            {#each machines as m (m)}
+              <button class="pill" class:active={machineFilter === m} onclick={() => (machineFilter = m)}>{m}</button>
+            {/each}
+          </div>
+          <div class="filter-row">
+            <span class="filter-label">profile</span>
+            <button class="pill" class:active={profileFilter === 'all'} onclick={() => (profileFilter = 'all')}>all</button>
+            {#each profiles as pr (pr)}
+              <button class="pill" class:active={profileFilter === pr} onclick={() => (profileFilter = pr)}>{pr}</button>
+            {/each}
+          </div>
+        </div>
+        {#if filteredPeers.length === 0}
+          <p class="no-match">No peers match the current filters.</p>
+        {:else}
         <div class="table-wrap">
           <table class="peer-table">
             <thead>
@@ -188,7 +221,7 @@
               </tr>
             </thead>
             <tbody>
-              {#each peers as p (p.id + p.profile)}
+              {#each filteredPeers as p (p.id + p.profile)}
                 <tr>
                   <td>
                     <div class="peer-id">{p.id}</div>
@@ -210,6 +243,7 @@
             </tbody>
           </table>
         </div>
+        {/if}
       {/if}
     </section>
   {/if}
@@ -270,6 +304,18 @@
   .c-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-tertiary); }
 
   .peer-count { font-size: 0.72rem; font-weight: 400; color: var(--color-text-muted); }
+
+  .filters { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--spacing-md); }
+  .filter-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .filter-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-tertiary); width: 56px; }
+  .pill {
+    background: var(--color-bg-primary); border: 1px solid var(--color-border-secondary);
+    border-radius: 999px; color: var(--color-text-muted); cursor: pointer;
+    font-size: 0.72rem; padding: 2px 10px;
+  }
+  .pill:hover { color: var(--color-text-secondary); }
+  .pill.active { color: var(--color-text-primary); border-color: var(--color-text-primary); }
+  .no-match { color: var(--color-text-muted); font-size: 0.85rem; margin: 0; }
 
   .table-wrap { overflow-x: auto; }
   .peer-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
