@@ -91,16 +91,19 @@
 
   const peers = $derived(status?.peers ?? []);
 
-  // Mesh-view sub-tab filters: by machine (peer node id) and by profile. Values
+  // Mesh-view sub-tab filters: by machine (mesh node) and by profile. Values
   // are derived from the data, not hardcoded. Filters AND together.
+  // Peer ids are <machine>-<profile>-<vault> (e.g. m3-gsa-agents), so the
+  // machine is the first segment — every peer on m3 folds into one "m3" chip.
+  const machineOf = (id: string): string => id.split('-')[0];
   let machineFilter = $state<string>('all');
   let profileFilter = $state<string>('all');
-  const machines = $derived([...new Set(peers.map((p) => p.id))].sort());
+  const machines = $derived([...new Set(peers.map((p) => machineOf(p.id)))].sort());
   const profiles = $derived([...new Set(peers.map((p) => p.profile))].sort());
   const filteredPeers = $derived(
     peers.filter(
       (p) =>
-        (machineFilter === 'all' || p.id === machineFilter) &&
+        (machineFilter === 'all' || machineOf(p.id) === machineFilter) &&
         (profileFilter === 'all' || p.profile === profileFilter),
     ),
   );
