@@ -48,6 +48,48 @@ func injectMCPServerEnv(path, topKey, envKey, server, envVar, value string) (boo
 	return true, writeJSONAtomic(path, root)
 }
 
+// upsertMCPServer creates-or-replaces a WHOLE MCP server entry (command, args,
+// env, …) under topKey in a JSON config file, preserving everything else. Unlike
+// injectMCPServerEnv (which only edits an existing server's env), this adds the
+// server if absent — and creates the file and the topKey map if they don't exist
+// yet. Returns whether the file was changed (a byte-identical entry is a no-op).
+// The write is atomic (temp file + rename).
+func upsertMCPServer(path, topKey, server string, def map[string]any) (bool, error) {
+	var root map[string]any
+	raw, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if err := json.Unmarshal(raw, &root); err != nil {
+			return false, err
+		}
+	case os.IsNotExist(err):
+		root = map[string]any{}
+	default:
+		return false, err
+	}
+	if root == nil {
+		root = map[string]any{}
+	}
+	servers, ok := root[topKey].(map[string]any)
+	if !ok {
+		servers = map[string]any{}
+		root[topKey] = servers
+	}
+	// Idempotent: skip the rewrite if the entry is already byte-identical.
+	if cur, ok := servers[server]; ok {
+		a, e1 := json.Marshal(cur)
+		b, e2 := json.Marshal(def)
+		if e1 == nil && e2 == nil && string(a) == string(b) {
+			return false, nil
+		}
+	}
+	servers[server] = def
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, err
+	}
+	return true, writeJSONAtomic(path, root)
+}
+
 // writeJSONAtomic marshals v (2-space indent) and replaces path atomically.
 func writeJSONAtomic(path string, v any) error {
 	out, err := json.MarshalIndent(v, "", "  ")

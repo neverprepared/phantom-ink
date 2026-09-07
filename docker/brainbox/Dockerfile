@@ -1,4 +1,41 @@
 # syntax=docker/dockerfile:1
+
+# =============================================================================
+# Builder stages: compile the private neverprepared CLIs from local checkouts.
+# The source arrives via buildx NAMED BUILD CONTEXTS (`--build-context
+# phantombrain=… --build-context prouterctl=…`), so nothing is cloned in-build
+# (no PAT) and nothing is committed/hosted — the binary is built exactly like
+# its own release. buildx runs each stage as the TARGET arch, so pbrainctl's
+# CGO/sqlite compiles natively. Requires BuildKit (the classic builder can't do
+# --build-context); build.sh sets DOCKER_BUILDKIT=1.
+# =============================================================================
+
+# pbrainctl — CGO because mattn/go-sqlite3 wraps the sqlite C library (gcc ships
+# in the golang image). Mirrors phantom-brain's release build: `-tags=sqlite_fts5`
+# and the internal/version stamp.
+FROM golang:1.26 AS pbrainctl-build
+ARG PBRAINCTL_VERSION=container
+ENV CGO_ENABLED=1 GOTOOLCHAIN=auto
+COPY --from=phantombrain . /src
+WORKDIR /src
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    go build -tags=sqlite_fts5 \
+      -ldflags="-s -w -X github.com/neverprepared/phantom-brain/internal/version.Version=${PBRAINCTL_VERSION}" \
+      -o /out/pbrainctl ./cmd/pbrainctl
+
+# prouterctl — pure Go, so CGO off.
+FROM golang:1.26 AS prouterctl-build
+ENV CGO_ENABLED=0 GOTOOLCHAIN=auto
+COPY --from=prouterctl . /src
+WORKDIR /src
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    go build -ldflags="-s -w" -o /out/prouterctl .
+
+# =============================================================================
+# Final brainbox image.
+# =============================================================================
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -66,7 +103,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Developer-owned static assets (COPY after useradd so developer name resolves)
 COPY --chown=developer:developer docker/brainbox/setup/.bashrc         /tmp/.bashrc.extra
 COPY --chown=developer:developer docker/brainbox/setup/ttyd-wrapper.sh /home/developer/ttyd-wrapper.sh
-COPY --chown=developer:developer reflex/plugins/reflex                  /opt/reflex/share/reflex
+# gitleaks pre-commit hook — global git hook that scans staged changes before
+# every in-container commit (the git-side backstop to the secret-guard.py
+# PreToolUse hook, which guards stdout). Wired via core.hooksPath below.
+COPY --chown=developer:developer docker/brainbox/setup/git-hooks         /opt/git-hooks
+# Skills are injected per-profile at image build (see profileimage/builder.go
+# injectClaudeSkills) — the retired reflex plugin skill tree is no longer baked.
 # brainbox-complete: records the session result via the hub session store
 COPY docker/brainbox/setup/complete.sh /usr/local/bin/brainbox-complete
 RUN chmod 755 /usr/local/bin/brainbox-complete
@@ -75,6 +117,13 @@ RUN chmod 755 /usr/local/bin/brainbox-complete
 # ollama sessions; a uv-script shebang self-installs its deps on first run.
 COPY docker/brainbox/setup/ollama-mcp.py /usr/local/bin/ollama-mcp
 RUN chmod 755 /usr/local/bin/ollama-mcp
+# Private neverprepared CLIs, built from source in the builder stages above and
+# copied in (replaces the former `brew install neverprepared/tap/{pbrainctl,
+# prouterctl}` — those repos are private so Homebrew can't fetch their release
+# tarballs unauthenticated). root:root 0755, on PATH via /usr/local/bin.
+COPY --from=pbrainctl-build  /out/pbrainctl  /usr/local/bin/pbrainctl
+COPY --from=prouterctl-build /out/prouterctl /usr/local/bin/prouterctl
+RUN chmod 755 /usr/local/bin/pbrainctl /usr/local/bin/prouterctl
 
 # =============================================================================
 # Developer: all language runtimes, tools, MCP servers, Claude Code
@@ -99,7 +148,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/home/developer/.rustup/downloads,uid=1001,gid=1001 \
     # ---- Homebrew ----------------------------------------------------------
     NONINTERACTIVE=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
-    && brew install fd fzf gh ripgrep tree yq kubectl hashicorp/tap/terraform neverprepared/tap/pbrainctl \
+    && brew install fd fzf gh gitleaks ripgrep tree yq kubectl hashicorp/tap/terraform \
     # ---- Python (uv) -------------------------------------------------------
     && curl -LsSf https://astral.sh/uv/install.sh | sh \
     && uv python install 3.12 3.11 \
@@ -129,7 +178,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
        '' \
        '# goenv' \
        'export GOENV_ROOT="$HOME/.goenv"' \
-       'eval "$(goenv init -)"' \
+       'export PATH="$GOENV_ROOT/bin:$PATH"' \
+       'command -v goenv >/dev/null 2>&1 && eval "$(goenv init -)"' \
        '' \
        '# uv shell completions' \
        'eval "$(uv generate-shell-completion bash 2>/dev/null)"' \
@@ -138,8 +188,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
        'eval "$(rustup completions bash 2>/dev/null)"' \
        >> ~/.bashrc \
     && chmod +x ~/ttyd-wrapper.sh \
-    && find /opt/reflex/share/reflex/scripts -name "*.sh" -o -name "*.py" 2>/dev/null \
-       | xargs chmod 0755 2>/dev/null || true \
+    # ---- gitleaks pre-commit hook (global) ---------------------------------
+    && chmod 0755 /opt/git-hooks/pre-commit \
+    && git config --global core.hooksPath /opt/git-hooks \
     # ---- Claude Code -------------------------------------------------------
     && curl -fsSL https://claude.ai/install.sh | bash \
     # ---- OpenAI Codex CLI (best-effort) ------------------------------------

@@ -846,6 +846,7 @@ async def provision(
     llm_provider: str = "claude",
     llm_model: str | None = None,
     llm_effort: str | None = None,
+    exec_mode: str = "interactive",
     ollama_host: str | None = None,
     codex_api_key: str | None = None,
     workspace_profile: str | None = None,
@@ -880,6 +881,7 @@ async def provision(
             llm_provider=llm_provider,
             llm_model=llm_model,
             llm_effort=llm_effort,
+            exec_mode=exec_mode,
             ollama_host=ollama_host,
             codex_api_key=codex_api_key,
             workspace_profile=workspace_profile,
@@ -954,6 +956,7 @@ async def provision(
         llm_provider=llm_provider,
         llm_model=llm_model,
         llm_effort=llm_effort,
+        exec_mode=exec_mode,
         ollama_host=ollama_host,
         codex_api_key=codex_api_key,
         workspace_profile=resolved_workspace_profile,
@@ -1138,6 +1141,10 @@ async def configure(ctx_or_name: SessionContext | str) -> SessionContext:
     # Inject effort for Claude (low | medium | high)
     if ctx.llm_provider == "claude" and ctx.llm_effort:
         resolved["CLAUDE_EFFORT"] = ctx.llm_effort
+
+    # Session run mode: ttyd-wrapper.sh reads this to choose the tmux REPL
+    # ("interactive") vs a headless `claude -p` run ("print").
+    resolved["SESSION_EXEC_MODE"] = ctx.exec_mode
 
     # Phase 1: Enable Claude Code Teams experimental feature
     if ctx.teams_enabled:
@@ -1374,6 +1381,7 @@ async def run_pipeline(
     llm_provider: str = "claude",
     llm_model: str | None = None,
     llm_effort: str | None = None,
+    exec_mode: str = "interactive",
     ollama_host: str | None = None,
     codex_api_key: str | None = None,
     workspace_profile: str | None = None,
@@ -1402,6 +1410,7 @@ async def run_pipeline(
         llm_provider=llm_provider,
         llm_model=llm_model,
         llm_effort=llm_effort,
+        exec_mode=exec_mode,
         ollama_host=ollama_host,
         codex_api_key=codex_api_key,
         workspace_profile=workspace_profile,

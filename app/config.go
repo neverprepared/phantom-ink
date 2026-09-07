@@ -20,6 +20,11 @@ const (
 	settingOTLPHost           = "otlp_host"
 	settingLocalRunnerEnabled = "local_runner_enabled"
 	settingLocalRunnerName    = "local_runner_name"
+	// settingAgentsToken is the bearer token for the phantom-brain "agents"
+	// vault, used by the Agents panel to list agent records from the mesh
+	// daemon (:9998, same backend as the Brain Mesh integration). Listing vault
+	// content is authenticated, so this token is required for that panel.
+	settingAgentsToken = "agents_token"
 	// settingPlatformNode names the fleet node whose runner drives the
 	// phantom-platform compose stack. Empty ⇒ manage the local docker daemon
 	// (app co-located with the platform, the original behaviour).

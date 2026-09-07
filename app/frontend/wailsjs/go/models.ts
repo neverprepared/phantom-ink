@@ -709,6 +709,7 @@ export namespace brainbox {
 	    runner?: string;
 	    delivery?: string;
 	    env?: Record<string, string>;
+	    exec_mode?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CreateSessionRequest(source);
@@ -736,6 +737,7 @@ export namespace brainbox {
 	        this.runner = source["runner"];
 	        this.delivery = source["delivery"];
 	        this.env = source["env"];
+	        this.exec_mode = source["exec_mode"];
 	    }
 	}
 	export class DispatchCandidate {
@@ -3526,6 +3528,49 @@ export namespace main {
 	        this.cron_expr = source["cron_expr"];
 	        this.next_fire_at = source["next_fire_at"];
 	    }
+	}
+	export class VaultRecord {
+	    sha: string;
+	    title: string;
+	    kind: string;
+	    body: string;
+	    topic?: string;
+	    tags?: string[];
+	    // Go type: time
+	    updated_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new VaultRecord(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sha = source["sha"];
+	        this.title = source["title"];
+	        this.kind = source["kind"];
+	        this.body = source["body"];
+	        this.topic = source["topic"];
+	        this.tags = source["tags"];
+	        this.updated_at = this.convertValues(source["updated_at"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }

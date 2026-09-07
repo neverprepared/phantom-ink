@@ -52,6 +52,7 @@ type CreateSessionRequest struct {
 	Runner           string            `json:"runner,omitempty"`
 	Delivery         string            `json:"delivery,omitempty"`
 	Env              map[string]string `json:"env,omitempty"`
+	ExecMode         string            `json:"exec_mode,omitempty"` // "interactive" (tmux REPL) | "print" (claude -p headless)
 }
 
 // QuerySessionRequest mirrors the POST /api/sessions/{name}/query payload.

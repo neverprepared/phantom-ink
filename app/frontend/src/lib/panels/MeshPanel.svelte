@@ -8,6 +8,7 @@
   import { timeAgo } from '../utils/format';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import VaultBrowser from './VaultBrowser.svelte';
 
   interface MeshPeer {
     id: string;
@@ -40,6 +41,19 @@
   let loaded = $state(false);
   let loadError = $state<string | null>(null);
   let refreshing = $state(false);
+
+  // Tabs: the mesh status view, plus a per-feature browser for each verbatim
+  // p2p-synced vault. Each vault tab renders VaultBrowser, which scopes to the
+  // app's ACTIVE profile (global switcher) and can move records across profiles
+  // — that's the per-profile dimension. (memory is the synth vault, not browsed here.)
+  type MeshTab = 'mesh' | 'agents' | 'skills' | 'todo';
+  const TABS: { id: MeshTab; label: string }[] = [
+    { id: 'mesh', label: 'Mesh' },
+    { id: 'agents', label: 'Agents' },
+    { id: 'skills', label: 'Skills' },
+    { id: 'todo', label: 'Todo' },
+  ];
+  let activeTab = $state<MeshTab>('mesh');
 
   let pollHandle: number | undefined;
 
@@ -76,7 +90,24 @@
   }
 
   const peers = $derived(status?.peers ?? []);
-  const liveCount = $derived(peers.filter((p) => p.live).length);
+
+  // Mesh-view sub-tab filters: by machine (mesh node) and by profile. Values
+  // are derived from the data, not hardcoded. Filters AND together.
+  // Peer ids are <machine>-<profile>-<vault> (e.g. m3-gsa-agents), so the
+  // machine is the first segment — every peer on m3 folds into one "m3" chip.
+  const machineOf = (id: string): string => id.split('-')[0];
+  let machineFilter = $state<string>('all');
+  let profileFilter = $state<string>('all');
+  const machines = $derived([...new Set(peers.map((p) => machineOf(p.id)))].sort());
+  const profiles = $derived([...new Set(peers.map((p) => p.profile))].sort());
+  const filteredPeers = $derived(
+    peers.filter(
+      (p) =>
+        (machineFilter === 'all' || machineOf(p.id) === machineFilter) &&
+        (profileFilter === 'all' || p.profile === profileFilter),
+    ),
+  );
+  const liveCount = $derived(filteredPeers.filter((p) => p.live).length);
 </script>
 
 <div class="mesh">
@@ -86,20 +117,35 @@
       <p class="sub">The p2p phantom-brain memory mesh — this node plus every peer, with sync stats.</p>
     </div>
     <div class="head-actions">
-      {#if status}
-        <span class="node-badge">
-          <span class="node-id">{status.node_id || 'unknown'}</span>
-          <span class="sync-badge" class:on={status.sync_enabled}>
-            {status.sync_enabled ? 'sync on' : 'sync off'}
+      {#if activeTab === 'mesh'}
+        {#if status}
+          <span class="node-badge">
+            <span class="node-id">{status.node_id || 'unknown'}</span>
+            <span class="sync-badge" class:on={status.sync_enabled}>
+              {status.sync_enabled ? 'sync on' : 'sync off'}
+            </span>
           </span>
-        </span>
+        {/if}
+        <button class="btn" onclick={() => void refresh()} disabled={refreshing}>
+          {refreshing ? 'refreshing…' : 'refresh'}
+        </button>
       {/if}
-      <button class="btn" onclick={() => void refresh()} disabled={refreshing}>
-        {refreshing ? 'refreshing…' : 'refresh'}
-      </button>
     </div>
   </header>
 
+  <div class="tabs" role="tablist" aria-label="Brain mesh sections">
+    {#each TABS as t (t.id)}
+      <button
+        class="tab"
+        class:active={activeTab === t.id}
+        role="tab"
+        aria-selected={activeTab === t.id}
+        onclick={() => (activeTab = t.id)}
+      >{t.label}</button>
+    {/each}
+  </div>
+
+  {#if activeTab === 'mesh'}
   {#if !loaded}
     <Spinner />
   {:else if loadError}
@@ -137,7 +183,7 @@
 
     <!-- Peers -->
     <section class="card peers">
-      <h2>Peers <span class="peer-count">{liveCount}/{peers.length} live</span></h2>
+      <h2>Peers <span class="peer-count">{liveCount}/{filteredPeers.length} live</span></h2>
       {#if peers.length === 0}
         <EmptyState
           title={status.sync_enabled ? 'No peers' : 'Sync disabled'}
@@ -146,6 +192,25 @@
             : 'Sync is off on this node — no peers are being tracked.'}
         />
       {:else}
+        <div class="filters">
+          <div class="filter-row">
+            <span class="filter-label">machine</span>
+            <button class="pill" class:active={machineFilter === 'all'} onclick={() => (machineFilter = 'all')}>all</button>
+            {#each machines as m (m)}
+              <button class="pill" class:active={machineFilter === m} onclick={() => (machineFilter = m)}>{m}</button>
+            {/each}
+          </div>
+          <div class="filter-row">
+            <span class="filter-label">profile</span>
+            <button class="pill" class:active={profileFilter === 'all'} onclick={() => (profileFilter = 'all')}>all</button>
+            {#each profiles as pr (pr)}
+              <button class="pill" class:active={profileFilter === pr} onclick={() => (profileFilter = pr)}>{pr}</button>
+            {/each}
+          </div>
+        </div>
+        {#if filteredPeers.length === 0}
+          <p class="no-match">No peers match the current filters.</p>
+        {:else}
         <div class="table-wrap">
           <table class="peer-table">
             <thead>
@@ -159,7 +224,7 @@
               </tr>
             </thead>
             <tbody>
-              {#each peers as p (p.id + p.profile)}
+              {#each filteredPeers as p (p.id + p.profile)}
                 <tr>
                   <td>
                     <div class="peer-id">{p.id}</div>
@@ -181,8 +246,14 @@
             </tbody>
           </table>
         </div>
+        {/if}
       {/if}
     </section>
+  {/if}
+  {:else}
+    {#key activeTab}
+      <VaultBrowser vault={activeTab} />
+    {/key}
   {/if}
 </div>
 
@@ -212,6 +283,15 @@
   .btn:hover:not(:disabled) { color: var(--color-text-primary); }
   .btn:disabled { opacity: 0.5; cursor: default; }
 
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--color-border-primary); margin-bottom: var(--spacing-lg); }
+  .tab {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    color: var(--color-text-muted); cursor: pointer; font-size: 0.82rem;
+    padding: 0.4rem 0.8rem; margin-bottom: -1px;
+  }
+  .tab:hover { color: var(--color-text-secondary); }
+  .tab.active { color: var(--color-text-primary); border-bottom-color: var(--color-text-primary); }
+
   .card {
     background: var(--color-bg-secondary);
     border: 1px solid var(--color-border-primary);
@@ -227,6 +307,18 @@
   .c-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-tertiary); }
 
   .peer-count { font-size: 0.72rem; font-weight: 400; color: var(--color-text-muted); }
+
+  .filters { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--spacing-md); }
+  .filter-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .filter-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-tertiary); width: 56px; }
+  .pill {
+    background: var(--color-bg-primary); border: 1px solid var(--color-border-secondary);
+    border-radius: 999px; color: var(--color-text-muted); cursor: pointer;
+    font-size: 0.72rem; padding: 2px 10px;
+  }
+  .pill:hover { color: var(--color-text-secondary); }
+  .pill.active { color: var(--color-text-primary); border-color: var(--color-text-primary); }
+  .no-match { color: var(--color-text-muted); font-size: 0.85rem; margin: 0; }
 
   .table-wrap { overflow-x: auto; }
   .peer-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }

@@ -38,6 +38,7 @@ class CreateSessionRequest(BaseModel):
     delivery: str | None = None  # passed through to runner
     runner: str | None = None  # Runner name to dispatch this session to (None = local execution)
     env: dict[str, str] | None = None  # Caller-supplied env vars from originating host profile
+    exec_mode: str = "interactive"  # session run mode: "interactive" (tmux REPL) | "print" (claude -p headless)
 
     @field_validator("name")
     @classmethod
@@ -71,6 +72,28 @@ class CreateSessionRequest(BaseModel):
             return validate_role(v)
         except ValidationError as e:
             raise ValueError(str(e)) from e
+
+    @model_validator(mode="after")
+    def validate_exec_mode_field(self) -> CreateSessionRequest:
+        """Print mode runs `claude -p` headless — it needs something to execute
+        and is claude-only. Reject nonsensical combinations early so a bad
+        request fails at the API, not silently in the container wrapper (which
+        also defensively falls back to interactive)."""
+        if self.exec_mode not in ("interactive", "print"):
+            raise ValueError(
+                f"exec_mode must be 'interactive' or 'print', got {self.exec_mode!r}"
+            )
+        if self.exec_mode == "print":
+            has_work = bool(self.task and self.task.strip()) or bool(self.continue_from)
+            if not has_work:
+                raise ValueError(
+                    "exec_mode='print' requires a task (or continue_from) to execute"
+                )
+            if self.llm_provider != "claude":
+                raise ValueError(
+                    "exec_mode='print' is only supported for llm_provider='claude'"
+                )
+        return self
 
     @model_validator(mode="after")
     def validate_volumes_and_normalize(self) -> CreateSessionRequest:

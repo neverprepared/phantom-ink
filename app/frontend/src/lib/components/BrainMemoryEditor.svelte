@@ -27,7 +27,9 @@
   let tokensLoading = $state(false);
   let vaultTokens = $state<VaultToken[]>([]);
   let sessionURL = $state('');
+  let hostApiUrl = $state(''); // host-reachable brain URL (from Go: base_url host + :9998)
   let revealed = $state<Set<string>>(new Set());
+  let addingMcp = $state<Set<string>>(new Set()); // vaults mid-write to .claude.json
 
   async function load() {
     loading = true;
@@ -75,6 +77,7 @@
       const res = await a.GetBrainProfileTokens(profile);
       vaultTokens = res?.tokens ?? [];
       sessionURL = res?.session_url ?? '';
+      hostApiUrl = await a.BrainHostAPI();
       tokensLoaded = true;
     } catch (e) {
       notifications.error(`load vault tokens failed: ${e}`);
@@ -133,10 +136,21 @@
     );
   }
 
-  // The host-reachable endpoint: host.docker.internal only resolves inside a
-  // container, so swap it for localhost for a host-run MCP client.
-  function hostApi(): string {
-    return sessionURL.replace('host.docker.internal', 'localhost');
+  // Write the phantom-brain-<vault> server straight into this profile's
+  // .claude.json (no copy-paste). The Go side resolves the host-reachable brain
+  // URL + this vault's token and upserts the entry.
+  async function addToClaudeMcp(vault: string) {
+    const a = await getApi();
+    if (!a) return;
+    const next = new Set(addingMcp); next.add(vault); addingMcp = next;
+    try {
+      const path = await a.AddBrainMCP(profile, vault);
+      notifications.success(`phantom-brain-${vault} added to ${path} — restart Claude Code in ${profile} to load it`);
+    } catch (e) {
+      notifications.error(`add to Claude MCP failed: ${e}`);
+    } finally {
+      const s = new Set(addingMcp); s.delete(vault); addingMcp = s;
+    }
   }
 </script>
 
@@ -178,11 +192,12 @@
               {#if revealed.has(t.vault)}
                 <div class="tok-env">
                   <div class="tok-env-head">
-                    <span>{profile}/{t.vault} — host <span class="tok-note">(localhost, laptop/desktop)</span></span>
-                    <button class="tok-x" onclick={() => copyText(mcpConfig(t, hostApi()), 'host MCP config')}>copy config</button>
+                    <span>{profile}/{t.vault} — host <span class="tok-note">(laptop/desktop)</span></span>
+                    <button class="tok-x" disabled={addingMcp.has(t.vault)} onclick={() => addToClaudeMcp(t.vault)}>{addingMcp.has(t.vault) ? 'adding…' : 'add to Claude MCP'}</button>
+                    <button class="tok-x" onclick={() => copyText(mcpConfig(t, hostApiUrl), 'host MCP config')}>copy config</button>
                   </div>
-                  <pre class="tok-pre">{mcpConfig(t, hostApi())}</pre>
-                  {#if sessionURL !== hostApi()}
+                  <pre class="tok-pre">{mcpConfig(t, hostApiUrl)}</pre>
+                  {#if sessionURL && sessionURL !== hostApiUrl}
                     <div class="tok-env-head">
                       <span>{profile}/{t.vault} — in-container <span class="tok-note">(session agent)</span></span>
                       <button class="tok-x" onclick={() => copyText(mcpConfig(t, sessionURL), 'in-container MCP config')}>copy config</button>
