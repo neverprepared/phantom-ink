@@ -8,6 +8,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"phantom-ink/brainbox"
 	"phantom-ink/profileimage"
@@ -144,9 +145,12 @@ func (a *App) SyncProfileBundleNow(profileName string) (brainbox.BundlePutResult
 	return a.syncProfileBundle(profileName, prof.WorkspaceHome, nil)
 }
 
-// syncProfileBundle is the shared capture+upload path used by both the
-// Sync-now binding and the image-rebuild hook. Returns an error the caller
-// decides how to treat (rebuild: warn-and-continue; Sync now: surface).
+// syncProfileBundle is the shared sync path used by both the Sync-now binding
+// and the image-rebuild hook. It performs TWO independent mirrors for the
+// profile — the env store and the file bundle — so a single action keeps both
+// in step (no "which sync?" ambiguity). Returns an error the caller decides how
+// to treat (rebuild: warn-and-continue; Sync now: surface); a failure in one
+// mirror does not skip the other, and both failures are reported together.
 func (a *App) syncProfileBundle(profileName, workspaceHome string, progress func(string)) (brainbox.BundlePutResult, error) {
 	report := func(msg string) {
 		if progress != nil {
@@ -156,6 +160,49 @@ func (a *App) syncProfileBundle(profileName, workspaceHome string, progress func
 	if a.db == nil {
 		return brainbox.BundlePutResult{}, errNoDB
 	}
+
+	result := brainbox.BundlePutResult{Profile: profileName}
+	var errs []string
+
+	// 1. Env-store mirror — independent of file-bundle sources, so an env-only
+	// profile (e.g. just a GITHUB_TOKEN in .env.secrets) still syncs. Matches
+	// env-sync.sh: raw merge of .env + .env.secrets (secrets win). The hub
+	// endpoint proxies to the broker with its own server-side operator key, so
+	// the app only presents its hub api_key.
+	if env, err := profileimage.MergeEnvFiles(workspaceHome); err != nil {
+		errs = append(errs, fmt.Sprintf("read env files: %v", err))
+	} else if len(env) > 0 {
+		envRes, err := a.client.PutProfileEnv(profileName, env)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("mirror env: %v", err))
+		} else {
+			result.EnvCount = envRes.Count
+			report(fmt.Sprintf("env: mirrored %d var(s)", envRes.Count))
+		}
+	} else {
+		report("env: no .env/.env.secrets vars found")
+	}
+
+	// 2. File bundle — enabled catalog/custom sources captured + uploaded.
+	if bundleRes, uploaded, err := a.uploadProfileBundle(profileName, workspaceHome, report); err != nil {
+		errs = append(errs, err.Error())
+	} else if uploaded {
+		bundleRes.EnvCount = result.EnvCount // preserve the env mirror's count
+		result = bundleRes
+	}
+
+	if len(errs) > 0 {
+		return result, fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return result, nil
+}
+
+// uploadProfileBundle captures the profile's enabled bundle sources and uploads
+// the tar. Returns uploaded=false with a nil error when there is nothing to
+// upload (no sources enabled, or no matching files on this machine) — the
+// caller may still have mirrored env, so "nothing to bundle" is not a failure.
+// Real capture/upload errors are returned.
+func (a *App) uploadProfileBundle(profileName, workspaceHome string, report func(string)) (brainbox.BundlePutResult, bool, error) {
 	var sources []profileimage.ResolvedSource
 	customEnv := map[string]map[string]string{}
 	for _, r := range a.db.GetBundleSources(profileName) {
@@ -184,24 +231,26 @@ func (a *App) syncProfileBundle(profileName, workspaceHome string, progress func
 		}
 	}
 	if len(sources) == 0 {
-		return brainbox.BundlePutResult{}, fmt.Errorf("no bundle sources enabled for %s", profileName)
+		report("bundle: no sources enabled — skipped")
+		return brainbox.BundlePutResult{}, false, nil
 	}
 
 	res, err := profileimage.CollectBundle(profileName, workspaceHome, sources, customEnv, appVersion())
 	if err != nil {
-		return brainbox.BundlePutResult{}, fmt.Errorf("collect bundle: %w", err)
+		return brainbox.BundlePutResult{}, false, fmt.Errorf("collect bundle: %w", err)
 	}
 	for _, w := range res.Warnings {
 		report("bundle: " + w)
 	}
 	if len(res.Manifest.Entries) == 0 {
-		return brainbox.BundlePutResult{}, fmt.Errorf("no credential files found for the enabled sources")
+		report("bundle: no credential files found — skipped")
+		return brainbox.BundlePutResult{}, false, nil
 	}
 	out, err := a.client.PutProfileBundle(profileName, res.TarGz, appVersion())
 	if err != nil {
-		return brainbox.BundlePutResult{}, fmt.Errorf("upload bundle: %w", err)
+		return brainbox.BundlePutResult{}, false, fmt.Errorf("upload bundle: %w", err)
 	}
-	return out, nil
+	return out, true, nil
 }
 
 // sourceDetected reports whether any of a source's files exist right now
