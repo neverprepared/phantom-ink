@@ -40,6 +40,7 @@
   let loaded = $state(false);
   let loadError = $state<string | null>(null);
   let needsToken = $state(false);
+  let tokenRejected = $state(false); // a token is stored but the daemon returned 401
   let refreshing = $state(false);
   let selectedSha = $state<string | null>(null);
   let tokenInput = $state('');
@@ -116,12 +117,21 @@
       records = (list ?? []).slice().sort((x, y) => (y.updated_at ?? '').localeCompare(x.updated_at ?? ''));
       loadError = null;
       needsToken = false;
+      tokenRejected = false;
       if (selectedSha && !records.some((r) => r.sha === selectedSha)) selectedSha = null;
       if (!selectedSha && records.length > 0) selectedSha = records[0].sha;
     } catch (e: any) {
       const msg = e?.message ?? String(e);
-      if (msg.includes('vault token for profile')) { needsToken = true; loadError = null; }
-      else loadError = msg;
+      const noToken = msg.includes('vault token for profile'); // nothing stored yet
+      const rejected = msg.includes('token rejected');         // 401: stored token is wrong/stale
+      if (noToken || rejected) {
+        // Both cases need the operator to (re)enter a token, so surface the input.
+        needsToken = true;
+        tokenRejected = rejected;
+        loadError = null;
+      } else {
+        loadError = msg;
+      }
     } finally {
       loaded = true;
       refreshing = false;
@@ -204,7 +214,13 @@
     <Spinner />
   {:else if needsToken}
     <section class="card token-setup">
-      <h2>Connect the {vault} vault</h2>
+      <h2>{tokenRejected ? 'Re-enter' : 'Connect'} the {vault} vault</h2>
+      {#if tokenRejected}
+        <p class="token-help">
+          The stored <code>{vault}</code>-vault token was <strong>rejected (401)</strong> — it's out
+          of sync with the mesh daemon. Paste the current token to replace it.
+        </p>
+      {/if}
       <p class="token-help">
         Paste the <code>{vault}</code> vault bearer token. It's stored locally and sent as an
         <code>Authorization: Bearer</code> header to the mesh daemon ({DEFAULT_URL}). Same daemon as
