@@ -102,12 +102,16 @@ func (a *App) ImportEnvFile() (string, error) {
 	return string(data), nil
 }
 
-// ReadProfileHostEnv reads a profile's host .env
-// (~/workspaces/profiles/<name>/.env) as raw text — the "load host .env"
-// convenience in the gateway env editor. The editor parses + merges it into
-// reviewable rows the operator trims before saving; Save (SetGatewayEnv) is what
-// provisions the profile's broker namespace. Kept a read-only convenience so
-// nothing is pushed to the broker without an explicit review + save.
+// ReadProfileHostEnv reads a profile's host .env AND .env.secrets
+// (~/workspaces/profiles/<name>/{.env,.env.secrets}) as raw text — the "load
+// host .env" convenience in the gateway env editor. .env.secrets holds the
+// 1Password-resolved secrets (e.g. GITHUB_TOKEN) and is appended AFTER .env so
+// the editor's merge lets a secret override the plain value on key overlap.
+// The editor parses + merges the text into reviewable rows the operator trims
+// before saving; Save (SetGatewayEnv) is what provisions the profile's broker
+// namespace. Kept a read-only convenience so nothing is pushed to the broker
+// without an explicit review + save. Either file may be absent (an env-only
+// profile may have only .env.secrets); it errors only when neither exists.
 func (a *App) ReadProfileHostEnv(profile string) (string, error) {
 	prof, err := a.findProfile(profile)
 	if err != nil {
@@ -116,10 +120,32 @@ func (a *App) ReadProfileHostEnv(profile string) (string, error) {
 	if prof.WorkspaceHome == "" {
 		return "", fmt.Errorf("profile %q has no workspace home", profile)
 	}
-	path := filepath.Join(prof.WorkspaceHome, ".env")
-	data, err := os.ReadFile(path)
+	text, err := readHostEnvText(prof.WorkspaceHome)
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", path, err)
+		return "", fmt.Errorf("profile %q: %w", profile, err)
 	}
-	return string(data), nil
+	return text, nil
+}
+
+// readHostEnvText concatenates a workspace's .env and .env.secrets as raw text,
+// .env first so .env.secrets wins on key overlap in the editor's downstream
+// merge. Either file may be absent; it errors only when neither exists.
+func readHostEnvText(workspaceHome string) (string, error) {
+	var parts []string
+	var missing []string
+	for _, name := range []string{".env", ".env.secrets"} {
+		data, err := os.ReadFile(filepath.Join(workspaceHome, name))
+		if err != nil {
+			if os.IsNotExist(err) {
+				missing = append(missing, name)
+				continue
+			}
+			return "", fmt.Errorf("read %s: %w", name, err)
+		}
+		parts = append(parts, string(data))
+	}
+	if len(parts) == 0 {
+		return "", fmt.Errorf("no %s", strings.Join(missing, " or "))
+	}
+	return strings.Join(parts, "\n"), nil
 }
