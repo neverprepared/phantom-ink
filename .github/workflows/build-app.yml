@@ -10,6 +10,13 @@ on:
       - 'app/v*'
   workflow_dispatch:
 
+# The tag build publishes a GitHub Release (softprops/action-gh-release), which
+# needs write access to repo contents. Default GITHUB_TOKEN is read-only here,
+# so the release step 403s ("Resource not accessible by integration") without
+# this. Scoped to the whole workflow; only the release step actually writes.
+permissions:
+  contents: write
+
 concurrency:
   group: app-${{ github.ref }}
   cancel-in-progress: true
