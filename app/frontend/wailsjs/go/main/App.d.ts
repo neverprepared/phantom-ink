@@ -509,3 +509,5 @@ export function UsableAgents():Promise<Array<main.DetectedAgent>>;
 export function ValidateGitHubToken(arg1:string):Promise<main.GitHubTokenStatus>;
 
 export function ValidateLoopTemplate(arg1:string):Promise<brainbox.LoopTemplateValidation>;
+
+export function VaultAuthStatus():Promise<Array<main.VaultAuth>>;
