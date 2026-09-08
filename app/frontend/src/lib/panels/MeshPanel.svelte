@@ -34,6 +34,16 @@
     peers: MeshPeer[];
     metrics: MeshMetrics;
   }
+  // Per-vault AUTH reachability for the active profile — whether the stored
+  // bearer token actually authenticates against the daemon. This is separate
+  // from GetMeshStatus (unauthenticated transport/sync); a peer can be live
+  // while our token is missing or rejected (401).
+  interface VaultAuth {
+    vault: string;
+    has_token: boolean;
+    ok: boolean;
+    detail: string;
+  }
 
   const DEFAULT_URL = 'http://127.0.0.1:9998';
 
@@ -41,6 +51,7 @@
   let loaded = $state(false);
   let loadError = $state<string | null>(null);
   let refreshing = $state(false);
+  let vaultAuth = $state<VaultAuth[]>([]);
 
   // Tabs: the mesh status view, plus a per-feature browser for each verbatim
   // p2p-synced vault. Each vault tab renders VaultBrowser, which scopes to the
@@ -76,6 +87,33 @@
       loaded = true;
       refreshing = false;
     }
+    // Auth reachability is independent of the transport status — probe it
+    // separately so a mesh-status failure doesn't hide the token state (and
+    // vice versa). Best-effort: leave the last snapshot on error.
+    try {
+      vaultAuth = ((await (a as any).VaultAuthStatus()) as VaultAuth[]) ?? [];
+    } catch {
+      /* keep previous auth snapshot */
+    }
+  }
+
+  // Auth-indicator helpers, shared by the tab dots and the overview summary.
+  const authFor = (vault: string): VaultAuth | undefined =>
+    vaultAuth.find((v) => v.vault === vault);
+  function authClass(vault: string): string {
+    const a = authFor(vault);
+    if (!a) return '';
+    if (a.ok) return 'auth-ok';
+    return a.has_token ? 'auth-fail' : 'auth-none';
+  }
+  function authTitle(vault: string): string {
+    const a = authFor(vault);
+    if (!a) return '';
+    if (a.ok) return `${vault}: token authenticates`;
+    return a.has_token ? `${vault}: ${a.detail}` : `${vault}: no token set`;
+  }
+  function authGlyph(a: VaultAuth): string {
+    return a.ok ? '✓' : a.has_token ? '✗' : '—';
   }
 
   // Metrics helpers — daemon emits strings; keep display robust to junk.
@@ -126,6 +164,16 @@
             </span>
           </span>
         {/if}
+        {#if vaultAuth.length}
+          <span class="auth-summary" title="vault token auth for the active profile">
+            <span class="auth-label">auth</span>
+            {#each vaultAuth as va (va.vault)}
+              <span class="auth-chip {authClass(va.vault)}" title={authTitle(va.vault)}>
+                {va.vault}&nbsp;{authGlyph(va)}
+              </span>
+            {/each}
+          </span>
+        {/if}
         <button class="btn" onclick={() => void refresh()} disabled={refreshing}>
           {refreshing ? 'refreshing…' : 'refresh'}
         </button>
@@ -141,7 +189,11 @@
         role="tab"
         aria-selected={activeTab === t.id}
         onclick={() => (activeTab = t.id)}
-      >{t.label}</button>
+      >{t.label}{#if t.id !== 'mesh' && authFor(t.id)}<span
+            class="auth-dot {authClass(t.id)}"
+            title={authTitle(t.id)}
+            aria-hidden="true"
+          ></span>{/if}</button>
     {/each}
   </div>
 
@@ -291,6 +343,29 @@
   }
   .tab:hover { color: var(--color-text-secondary); }
   .tab.active { color: var(--color-text-primary); border-bottom-color: var(--color-text-primary); }
+  /* Per-vault auth-reachability dot on each vault tab. */
+  .auth-dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    margin-left: 6px; vertical-align: middle;
+    background: var(--color-text-tertiary);
+  }
+  .auth-dot.auth-ok { background: var(--color-success); }
+  .auth-dot.auth-fail { background: var(--color-error); }
+  .auth-dot.auth-none { background: var(--color-text-tertiary); }
+  /* One-line auth summary in the mesh-tab header. */
+  .auth-summary { display: inline-flex; align-items: center; gap: 6px; margin-left: 4px; }
+  .auth-label {
+    font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--color-text-tertiary);
+  }
+  .auth-chip {
+    font-family: var(--font-mono); font-size: 0.68rem; padding: 1px 6px;
+    border-radius: 999px; border: 1px solid var(--color-border-secondary);
+    color: var(--color-text-muted); white-space: nowrap;
+  }
+  .auth-chip.auth-ok { color: var(--color-success); border-color: var(--color-success); }
+  .auth-chip.auth-fail { color: var(--color-error); border-color: var(--color-error); }
+  .auth-chip.auth-none { color: var(--color-text-tertiary); }
 
   .card {
     background: var(--color-bg-secondary);

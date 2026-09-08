@@ -111,6 +111,65 @@ func (a *App) GetVaultRecords(vault string) ([]VaultRecord, error) {
 	return a.listVaultRecords(vault, token)
 }
 
+// VaultAuth is the AUTH-reachability of one vault for the active profile — a
+// bearer-token check against the mesh daemon, distinct from the unauthenticated
+// transport/sync status in GetMeshStatus.
+type VaultAuth struct {
+	Vault    string `json:"vault"`
+	HasToken bool   `json:"has_token"`
+	OK       bool   `json:"ok"`     // daemon accepted the token
+	Detail   string `json:"detail"` // "ok" | "no token" | "rejected (401)" | "HTTP N" | "daemon unreachable"
+}
+
+// VaultAuthStatus probes the active profile's bearer token against the mesh
+// daemon for each browsable vault, so the mesh view can show whether auth
+// works — not just whether peers are syncing. One cheap head-only limit-1
+// request per vault.
+func (a *App) VaultAuthStatus() []VaultAuth {
+	vaults := []string{"skills", "agents", "todo"}
+	profile := a.activeProfileName()
+	out := make([]VaultAuth, 0, len(vaults))
+	for _, v := range vaults {
+		va := VaultAuth{Vault: v}
+		token := a.tokenFor(v, profile)
+		if token == "" {
+			va.Detail = "no token"
+			out = append(out, va)
+			continue
+		}
+		va.HasToken = true
+		va.OK, va.Detail = a.probeVaultAuth(v, token)
+		out = append(out, va)
+	}
+	return out
+}
+
+// probeVaultAuth does a minimal authenticated request and classifies the result.
+func (a *App) probeVaultAuth(vault, token string) (bool, string) {
+	endpoint := a.meshURL() + "/api/brain/records?head=true&limit=1"
+	if k := vaultKind(vault); k != "" {
+		endpoint += "&kind=" + k
+	}
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return false, "request error"
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := (&http.Client{Timeout: 8 * time.Second}).Do(req)
+	if err != nil {
+		return false, "daemon unreachable"
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized:
+		return false, "rejected (401)"
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return true, "ok"
+	default:
+		return false, fmt.Sprintf("HTTP %d", resp.StatusCode)
+	}
+}
+
 func (a *App) listVaultRecords(vault, token string) ([]VaultRecord, error) {
 	url := a.meshURL()
 	endpoint := url + "/api/brain/records?head=true&limit=500"

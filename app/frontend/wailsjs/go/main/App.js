@@ -1013,3 +1013,7 @@ export function ValidateGitHubToken(arg1) {
 export function ValidateLoopTemplate(arg1) {
   return window['go']['main']['App']['ValidateLoopTemplate'](arg1);
 }
+
+export function VaultAuthStatus() {
+  return window['go']['main']['App']['VaultAuthStatus']();
+}

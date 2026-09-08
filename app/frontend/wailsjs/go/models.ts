@@ -3545,6 +3545,24 @@ export namespace main {
 	        this.next_fire_at = source["next_fire_at"];
 	    }
 	}
+	export class VaultAuth {
+	    vault: string;
+	    has_token: boolean;
+	    ok: boolean;
+	    detail: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new VaultAuth(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.vault = source["vault"];
+	        this.has_token = source["has_token"];
+	        this.ok = source["ok"];
+	        this.detail = source["detail"];
+	    }
+	}
 	export class VaultRecord {
 	    sha: string;
 	    title: string;
