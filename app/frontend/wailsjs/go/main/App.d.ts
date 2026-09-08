@@ -506,4 +506,6 @@ export function UpsertPool(arg1:string,arg2:Array<string>,arg3:string):Promise<b
 
 export function UsableAgents():Promise<Array<main.DetectedAgent>>;
 
+export function ValidateGitHubToken(arg1:string):Promise<main.GitHubTokenStatus>;
+
 export function ValidateLoopTemplate(arg1:string):Promise<brainbox.LoopTemplateValidation>;

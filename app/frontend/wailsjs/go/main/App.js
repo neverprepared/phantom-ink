@@ -1006,6 +1006,10 @@ export function UsableAgents() {
   return window['go']['main']['App']['UsableAgents']();
 }
 
+export function ValidateGitHubToken(arg1) {
+  return window['go']['main']['App']['ValidateGitHubToken'](arg1);
+}
+
 export function ValidateLoopTemplate(arg1) {
   return window['go']['main']['App']['ValidateLoopTemplate'](arg1);
 }

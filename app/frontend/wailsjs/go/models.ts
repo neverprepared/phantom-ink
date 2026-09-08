@@ -2897,6 +2897,22 @@ export namespace main {
 	        this.scheduled_for = source["scheduled_for"];
 	    }
 	}
+	export class GitHubTokenStatus {
+	    valid: boolean;
+	    checked: boolean;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GitHubTokenStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.valid = source["valid"];
+	        this.checked = source["checked"];
+	        this.message = source["message"];
+	    }
+	}
 	export class HubStateView {
 	    agents: brainbox.AgentDefinition[];
 	    tasks: HubTask[];
