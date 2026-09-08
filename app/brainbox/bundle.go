@@ -31,6 +31,10 @@ type BundlePutResult struct {
 	CapturedAt string   `json:"captured_at"`
 	Sources    []string `json:"sources"`
 	Size       int64    `json:"size"`
+	// EnvCount is populated app-side (not by the daemon bundle endpoint): the
+	// number of env vars mirrored to the profile's broker store in the same
+	// Sync-now action. It is 0 in a bare PutProfileBundle response.
+	EnvCount int `json:"env_count"`
 }
 
 // doRaw sends a non-JSON body and decodes a JSON response into result.
