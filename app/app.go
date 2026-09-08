@@ -141,6 +141,10 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}()
 
+	// Keep each profile's curated gateway env values fresh from its host
+	// .env/.env.secrets (rotate a secret in 1Password → sessions get it).
+	a.startEnvRefreshWatcher()
+
 	// Start the agent-event-bus outbox. Producers (queue, loop executor) append
 	// envelopes; the flush loop ships batches to brainbox /api/agent_events with
 	// exponential backoff. Brainbox dedups by envelope id.
