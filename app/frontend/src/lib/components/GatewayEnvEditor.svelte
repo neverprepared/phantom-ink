@@ -122,11 +122,14 @@
     showPaste = false;
   }
 
-  // Load this profile's host .env (~/workspaces/profiles/<name>/.env) straight
-  // into the list — no file navigation. Merges into reviewable rows; nothing is
-  // sent to the broker until you trim + save (Save is what provisions the
-  // profile's namespace). The host .env is a superset (many host-path vars) —
-  // trim to the secrets/keys the gateway actually needs before saving.
+  // Load this profile's host .env AND .env.secrets
+  // (~/workspaces/profiles/<name>/{.env,.env.secrets}) straight into the list —
+  // no file navigation. .env.secrets carries the 1Password-resolved secrets
+  // (e.g. GITHUB_TOKEN) and wins over .env on key overlap. Merges into
+  // reviewable rows; nothing is sent to the broker until you trim + save (Save
+  // is what provisions the profile's namespace). The host files are a superset
+  // (many host-path vars) — trim to the secrets/keys the gateway actually needs
+  // before saving.
   async function loadHostEnv() {
     const a = await getApi();
     if (!a) return;
@@ -267,7 +270,7 @@
 
       <div class="gw-actions">
         <button class="gw-btn" onclick={addRow}>+ variable</button>
-        <button class="gw-btn" onclick={loadHostEnv} title="Load this profile's host .env (~/workspaces/profiles/{profile}/.env) into the list to review + save">load host .env</button>
+        <button class="gw-btn" onclick={loadHostEnv} title="Load this profile's host .env + .env.secrets (~/workspaces/profiles/{profile}/) into the list to review + save; .env.secrets (1Password-resolved) wins on overlap">load host env</button>
         <button class="gw-btn" onclick={importFromFile} title="Import a .env file (merges into the list)">import .env</button>
         <button class="gw-btn" class:active={showPaste} onclick={() => (showPaste = !showPaste)} title="Paste .env contents">paste</button>
         <button class="gw-btn primary" onclick={save} disabled={saving || !loaded} title={loaded ? '' : 'current secrets not loaded — reopen the card'}>{saving ? 'saving…' : 'save'}</button>

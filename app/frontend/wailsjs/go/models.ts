@@ -454,12 +454,11 @@ export namespace brainbox {
 	    captured_at: string;
 	    sources: string[];
 	    size: number;
-	    env_count: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new BundlePutResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.profile = source["profile"];
@@ -468,7 +467,6 @@ export namespace brainbox {
 	        this.captured_at = source["captured_at"];
 	        this.sources = source["sources"];
 	        this.size = source["size"];
-	        this.env_count = source["env_count"];
 	    }
 	}
 	export class ChannelParticipant {

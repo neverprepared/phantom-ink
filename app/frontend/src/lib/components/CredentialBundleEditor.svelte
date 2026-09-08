@@ -113,10 +113,7 @@
     if (!a) { syncing = false; return; }
     try {
       const res = await a.SyncProfileBundleNow(profile);
-      const parts = [];
-      if (res.sources?.length) parts.push(`bundle: ${res.sources.join(', ')}`);
-      parts.push(`env: ${res.env_count ?? 0} var(s)`);
-      notifications.success(`Synced — ${parts.join(' · ')}`);
+      notifications.success(`Bundle synced: ${res.sources?.join(', ') ?? ''}`);
       meta = (await a.GetProfileBundleMeta(profile)) as Meta;
     } catch (err: any) {
       notifications.error(`Bundle sync failed: ${err?.message ?? err}`);
