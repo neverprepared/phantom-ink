@@ -186,6 +186,19 @@
     try {
       await a.SetGatewayEnv(profile, env);
       notifications.success(`Saved ${Object.keys(env).length} secret(s) for ${profile}`);
+      // Delivery != validity: if a GITHUB_TOKEN was saved, confirm GitHub
+      // accepts it so an expired/typo'd token surfaces here, not later when a
+      // private clone 401s. Best-effort + non-blocking; only a definitive
+      // rejection warns (silent on valid / unreachable / inconclusive).
+      const gh = env['GITHUB_TOKEN'];
+      if (gh) {
+        try {
+          const st = await a.ValidateGitHubToken(gh);
+          if (st.checked && !st.valid) {
+            notifications.warning(`GITHUB_TOKEN saved, but ${st.message}`);
+          }
+        } catch { /* validation is best-effort */ }
+      }
     } catch (err: any) {
       notifications.error(`Save failed: ${err?.message ?? err}`);
     } finally {
