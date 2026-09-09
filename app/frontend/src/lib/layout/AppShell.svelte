@@ -19,6 +19,7 @@
   import SettingsPanel from '../panels/SettingsPanel.svelte';
   import DashboardPanel from '../panels/DashboardPanel.svelte';
   import StreamPanel from '../panels/StreamPanel.svelte';
+  import TimelinePanel from '../panels/TimelinePanel.svelte';
   import EventLogPanel from '../panels/EventLogPanel.svelte';
   import FilesPanel from '../panels/FilesPanel.svelte';
 
@@ -96,6 +97,8 @@
         <ConversationsPanel />
       {:else if currentPanel.value === 'automations'}
         <AutomationsPanel />
+      {:else if currentPanel.value === 'timeline'}
+        <TimelinePanel />
       {:else if currentPanel.value === 'jobs'}
         <JobsPanel />
       {:else if currentPanel.value === 'mesh'}
