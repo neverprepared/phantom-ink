@@ -28,6 +28,9 @@
   let loading = $state(true);
   let busyServices = $state<Set<string>>(new Set());
   let expandedServices = $state<Set<string>>(new Set());
+  // The compose-services group is demoted to a collapsed section, collapsed by
+  // default, below the primary platform stack.
+  let servicesExpanded = $state(false);
   let editingService = $state<string | null>(null);
   let editURL = $state('');
 
@@ -243,12 +246,13 @@
 
 <div class="panel" aria-busy={loading}>
   <header class="panel-header">
-    <h1 class="page-title">integrations</h1>
+    <h1 class="page-title">infrastructure</h1>
     {#if loading}<Spinner />{/if}
   </header>
 
-  <!-- Platform service stack: status + start/stop/restart -->
-  <PlatformServicesCard />
+  <!-- Platform service stack (primary): status + start/stop/restart. Open by
+       default — this is the at-a-glance health of the platform. -->
+  <PlatformServicesCard startExpanded />
 
   <!-- On-demand integrations (ADR-003): place compose stacks on fleet nodes -->
   <IntegrationsCard />
@@ -351,10 +355,20 @@
     {/if}
   </div>
 
-  <!-- Service cards -->
-  {#if loading}
+  <!-- Compose services (secondary): local/remote stacks incl Ollama. Collapsed
+       by default — demoted below the primary platform stack. -->
+  <div class="service-card">
+    <div class="card-top">
+      <button class="card-identity" onclick={() => servicesExpanded = !servicesExpanded}>
+        <svg class="expand-chevron" class:expanded={servicesExpanded} xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+        <span class="svc-name">Services</span>
+        {#if !loading}<span class="svc-status">{services.filter(s => s.running).length}/{services.length}</span>{/if}
+      </button>
+    </div>
+    {#if servicesExpanded}
+    {#if loading}
     <div class="loading">checking services...</div>
-  {:else}
+    {:else}
     <div class="service-list">
       {#each services as svc (svc.name)}
         {@const busy = busyServices.has(svc.name)}
@@ -466,7 +480,9 @@
         </div>
       {/each}
     </div>
-  {/if}
+    {/if}
+    {/if}
+  </div>
 </div>
 
 <style>
