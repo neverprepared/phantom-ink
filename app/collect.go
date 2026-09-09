@@ -37,6 +37,10 @@ type CollectJob struct {
 	// time-of-day scheduling (overrides interval_s when set)
 	RunAt string `json:"run_at"` // "HH:MM", e.g. "08:30"
 	Days  string `json:"days"`   // "daily" | "weekdays"
+	// one-shot absolute schedule: fire exactly once at this wall-clock time
+	// (epoch ms), after which the scheduler deletes the job. Takes precedence
+	// over run_at / interval_s. nil for recurring jobs.
+	RunOnceAtMs *int64 `json:"run_once_at_ms"`
 	// Source identifies where the job was created. "widget" means it is
 	// owned by a dashboard widget; "" means user-created via the Jobs panel.
 	Source string `json:"source"`
@@ -92,16 +96,20 @@ type scriptEntry struct {
 
 const collectJobCols = `id, profile, name, command, interval_s, enabled, default_actions,
 	last_run_at, last_error, created_at,
-	target_type, target_id, target_prompt, run_at, days, source, owner_widget_id`
+	target_type, target_id, target_prompt, run_at, days, source, owner_widget_id, run_once_at_ms`
 
 func scanCollectJob(s rowScanner) (CollectJob, error) {
 	var j CollectJob
 	var lastRunAt sql.NullInt64
+	var runOnceAtMs sql.NullInt64
 	err := s.Scan(&j.ID, &j.Profile, &j.Name, &j.Command, &j.IntervalS,
 		&j.Enabled, &j.DefaultActions, &lastRunAt, &j.LastError, &j.CreatedAt,
-		&j.TargetType, &j.TargetID, &j.TargetPrompt, &j.RunAt, &j.Days, &j.Source, &j.OwnerWidgetID)
+		&j.TargetType, &j.TargetID, &j.TargetPrompt, &j.RunAt, &j.Days, &j.Source, &j.OwnerWidgetID, &runOnceAtMs)
 	if lastRunAt.Valid {
 		j.LastRunAt = &lastRunAt.Int64
+	}
+	if runOnceAtMs.Valid {
+		j.RunOnceAtMs = &runOnceAtMs.Int64
 	}
 	return j, err
 }
@@ -148,8 +156,8 @@ func (db *DB) UpsertCollectJob(j CollectJob) error {
 	_, err := db.conn.Exec(`
 		INSERT INTO collect_jobs
 			(id, profile, name, command, interval_s, enabled, default_actions, last_error, created_at,
-			 target_type, target_id, target_prompt, run_at, days, source, owner_widget_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)
+			 target_type, target_id, target_prompt, run_at, days, source, owner_widget_id, run_once_at_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			profile         = excluded.profile,
 			name            = excluded.name,
@@ -163,10 +171,11 @@ func (db *DB) UpsertCollectJob(j CollectJob) error {
 			run_at          = excluded.run_at,
 			days            = excluded.days,
 			source          = excluded.source,
-			owner_widget_id = excluded.owner_widget_id`,
+			owner_widget_id = excluded.owner_widget_id,
+			run_once_at_ms  = excluded.run_once_at_ms`,
 		j.ID, j.Profile, j.Name, j.Command, j.IntervalS, boolToInt(j.Enabled),
 		j.DefaultActions, j.CreatedAt,
-		j.TargetType, j.TargetID, j.TargetPrompt, j.RunAt, j.Days, j.Source, j.OwnerWidgetID)
+		j.TargetType, j.TargetID, j.TargetPrompt, j.RunAt, j.Days, j.Source, j.OwnerWidgetID, j.RunOnceAtMs)
 	return err
 }
 
@@ -489,6 +498,12 @@ func (s *collectScheduler) tick() {
 // Time-of-day jobs (run_at != "") fire once per day within the matching minute.
 // Interval jobs (run_at == "") fire when enough time has passed since last run.
 func collectJobIsDue(job CollectJob, now time.Time) bool {
+	// One-shot ("run once at T"): fire exactly once when the wall clock reaches
+	// T. LastRunAt guards the window between firing and the scheduler deleting
+	// the job (the inflight lock prevents concurrent double-fire).
+	if job.RunOnceAtMs != nil {
+		return job.LastRunAt == nil && now.UnixMilli() >= *job.RunOnceAtMs
+	}
 	if job.RunAt != "" {
 		if job.Days == "weekdays" {
 			wd := now.Weekday()
@@ -532,6 +547,16 @@ func (s *collectScheduler) runJob(job CollectJob) {
 	}
 	if err := s.app.db.markCollectJobRun(job.ID, now, errStr); err != nil {
 		fmt.Fprintf(os.Stderr, "collect: mark run %s: %v\n", job.ID, err)
+	}
+	// One-shot jobs fire exactly once, then remove themselves so they don't
+	// linger in the Collectors list. markCollectJobRun above already set
+	// last_run_at, so even if this delete fails the due-check won't re-fire it.
+	if job.RunOnceAtMs != nil {
+		if err := s.app.db.DeleteCollectJob(job.ID); err != nil {
+			fmt.Fprintf(os.Stderr, "collect: delete one-shot job %s: %v\n", job.ID, err)
+		} else {
+			s.app.emitCollectUpdate(job.Profile)
+		}
 	}
 	for _, e := range entries {
 		if err := s.app.db.UpsertCollectedEntry(e); err != nil {
@@ -727,7 +752,7 @@ func (a *App) SaveCollectJob(job CollectJob) (CollectJob, error) {
 	if job.TargetType == "" {
 		job.TargetType = "shell"
 	}
-	if job.IntervalS <= 0 && job.RunAt == "" {
+	if job.IntervalS <= 0 && job.RunAt == "" && job.RunOnceAtMs == nil {
 		job.IntervalS = 300
 	}
 	if err := a.db.UpsertCollectJob(job); err != nil {

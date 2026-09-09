@@ -407,6 +407,12 @@ var migrations = []migration{
 			PRIMARY KEY (profile, name)
 		);
 	`},
+	// v26: one-shot ("run once at T") collect jobs. Absolute wall-clock fire
+	// time in epoch ms; when set, the scheduler fires the job exactly once and
+	// then deletes it. NULL for recurring (interval / time-of-day) jobs.
+	{version: 26, fn: func(conn *sql.DB) error {
+		return addColumnIfMissing(conn, "collect_jobs", "run_once_at_ms", "INTEGER")
+	}},
 }
 
 func (db *DB) migrate() error {
