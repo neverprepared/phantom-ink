@@ -8,6 +8,8 @@ export function AddBrainMCP(arg1:string,arg2:string):Promise<string>;
 
 export function AddChannelParticipant(arg1:string,arg2:brainbox.ChannelParticipantRequest):Promise<brainbox.Channel>;
 
+export function ArchiveConversation(arg1:string,arg2:string):Promise<brainbox.Conversation>;
+
 export function AssistLoopTemplate(arg1:brainbox.LoopAssistRequest):Promise<brainbox.LoopAssistResult>;
 
 export function AttentionOpenTarget(arg1:string):Promise<main.OpenTarget>;
@@ -41,6 +43,8 @@ export function CreateArtifactFolder(arg1:string,arg2:string,arg3:string):Promis
 export function CreateBrainSkill(arg1:string,arg2:string):Promise<brainbox.BrainSkillWriteResult>;
 
 export function CreateChannel(arg1:brainbox.CreateChannelRequest):Promise<brainbox.Channel>;
+
+export function CreateConversation(arg1:brainbox.CreateConversationRequest):Promise<brainbox.Conversation>;
 
 export function CreateProfile(arg1:string):Promise<main.Profile>;
 
@@ -137,6 +141,8 @@ export function GetConfig():Promise<main.Config>;
 export function GetContainerDiskUsage():Promise<Array<main.ContainerDiskStat>>;
 
 export function GetContainerMetrics():Promise<Array<brainbox.ContainerMetrics>>;
+
+export function GetConversation(arg1:string,arg2:string):Promise<brainbox.Conversation>;
 
 export function GetDashboardLayout(arg1:string):Promise<string>;
 
@@ -270,6 +276,10 @@ export function ListCollectJobs(arg1:string):Promise<Array<main.CollectJob>>;
 
 export function ListCollectedEntries(arg1:string,arg2:string,arg3:string):Promise<Array<main.CollectedEntry>>;
 
+export function ListConversationMessages(arg1:string,arg2:string,arg3:string):Promise<Array<brainbox.ConversationMessage>>;
+
+export function ListConversations(arg1:string,arg2:boolean):Promise<Array<brainbox.Conversation>>;
+
 export function ListGatewayServers():Promise<Array<brainbox.GatewayServer>>;
 
 export function ListHubTasks(arg1:string,arg2:string):Promise<Array<main.HubTask>>;
@@ -321,6 +331,8 @@ export function OutboxPending():Promise<number>;
 export function PlaceIntegration(arg1:string,arg2:string,arg3:string):Promise<main.IntegrationPlacementOutcome>;
 
 export function PostChannelMessage(arg1:string,arg2:brainbox.PostChannelMessageRequest):Promise<brainbox.ChannelMessage>;
+
+export function PostConversationMessage(arg1:string,arg2:string,arg3:brainbox.PostConversationMessageRequest):Promise<brainbox.ConversationMessage>;
 
 export function PresignArtifactURL(arg1:string,arg2:string,arg3:string,arg4:number):Promise<brainbox.ArtifactPresignedURL>;
 
@@ -444,6 +456,8 @@ export function SubmitTask(arg1:brainbox.SubmitTaskRequest):Promise<main.HubTask
 
 export function SubmitTaskAndWait(arg1:brainbox.WaitForTaskRequest):Promise<brainbox.WaitForTaskResponse>;
 
+export function SubscribeConversation(arg1:string,arg2:string):Promise<void>;
+
 export function SyncProfileBundleNow(arg1:string):Promise<brainbox.BundlePutResult>;
 
 export function TailLogs(arg1:string,arg2:number):Promise<Array<opensearch.LogEntry>>;
@@ -453,6 +467,8 @@ export function TestGatewayTools(arg1:string):Promise<brainbox.GatewayToolsResul
 export function TestRuleEvent(arg1:Record<string, any>,arg2:Record<string, any>):Promise<brainbox.RuleTestResult>;
 
 export function TestRulePattern(arg1:Record<string, any>,arg2:number):Promise<brainbox.RuleTestResult>;
+
+export function UnsubscribeConversation(arg1:string):Promise<void>;
 
 export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promise<brainbox.AgentDefinition>;
 

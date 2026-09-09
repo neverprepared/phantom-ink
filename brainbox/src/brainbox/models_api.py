@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -300,3 +301,45 @@ class MintProfileTokenRequest(BaseModel):
                 "letters, numbers, '.', '_', or '-'"
             )
         return stripped
+
+
+# ---------------------------------------------------------------------------
+# Conversations (multi-agent Chat) — the new engine that supersedes channels.
+# ---------------------------------------------------------------------------
+
+
+class ConversationParticipantRequest(BaseModel):
+    """A participant spec in CreateConversationRequest.
+
+    ``kind='persona'`` is the lightweight LLM participant PR1 drives through the
+    complete() seam: ``model_target`` selects the provider/model and
+    ``role_prompt`` is its system prompt. ``kind='session'`` is accepted so a
+    record written today stays valid once promotion lands (PR4), but nothing
+    drives session participants yet.
+    """
+
+    name: str = Field(..., min_length=1, max_length=128)
+    kind: Literal["human", "persona", "session"] = "persona"
+    model_target: dict | None = Field(
+        None, description="ModelTarget shape: {provider, model, effort}"
+    )
+    role_prompt: str | None = Field(None, description="System prompt for a persona")
+    cooldown_s: float | None = Field(
+        None, description="Minimum seconds between this persona's turns (PR2)"
+    )
+
+
+class CreateConversationRequest(BaseModel):
+    """Request model for POST /api/conversations."""
+
+    title: str = Field(..., min_length=1, max_length=200)
+    profile: str = Field(..., min_length=1, description="Workspace profile that owns the room")
+    participants: list[ConversationParticipantRequest] = Field(default_factory=list)
+
+
+class PostConversationMessageRequest(BaseModel):
+    """Request model for POST /api/conversations/{id}/messages."""
+
+    author: str = Field(..., min_length=1, max_length=128, description="Human sender's name")
+    content: str = Field(..., min_length=1)
+    addressed_to: str | None = Field(None, description="Participant name, or None for the room")
