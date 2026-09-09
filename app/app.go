@@ -22,12 +22,13 @@ import (
 
 // App is the Wails-bound struct. All exported methods become callable from JS.
 type App struct {
-	ctx        context.Context
-	mu         sync.RWMutex // protects config
-	config     *Config
-	db         *DB
-	client     *brainbox.Client
-	sse        *brainbox.SSEListener
+	ctx              context.Context
+	mu               sync.RWMutex // protects config
+	config           *Config
+	db               *DB
+	client           *brainbox.Client
+	sse              *brainbox.SSEListener
+	conversations    *brainbox.ConversationStreams
 	collectScheduler *collectScheduler
 	collectStop      context.CancelFunc
 	localRunner      *localRunner
@@ -117,6 +118,10 @@ func (a *App) startup(ctx context.Context) {
 		}
 	})
 	a.sse.Start()
+
+	// Per-conversation SSE bridge (multi-agent Chat). Opened lazily per room by
+	// SubscribeConversation; nothing streams until a conversation is selected.
+	a.conversations = newConversationBridge(a)
 
 	// Seed the agents catalog in the background — version probes can block
 	// briefly and we don't want to delay window paint.
@@ -210,6 +215,9 @@ func (a *App) shutdown(_ context.Context) {
 	}
 	if a.sse != nil {
 		a.sse.Stop()
+	}
+	if a.conversations != nil {
+		a.conversations.UnsubscribeAll()
 	}
 	if a.db != nil {
 		if err := a.db.Close(); err != nil {
@@ -354,10 +362,11 @@ func (a *App) restartViaDaemon() error {
 
 // findBrainboxProject locates the brainbox Python project (the directory
 // containing pyproject.toml that declares name = "brainbox"). Tries, in order:
-//   1. The running daemon's cwd and its ancestors
-//   2. <WorkspacesRoot>/<profile>/code/phantom-ink/brainbox for every profile
-//   3. $HOME/workspaces/profiles/*/code/phantom-ink/brainbox
-//   4. $HOME/code/phantom-ink/brainbox
+//  1. The running daemon's cwd and its ancestors
+//  2. <WorkspacesRoot>/<profile>/code/phantom-ink/brainbox for every profile
+//  3. $HOME/workspaces/profiles/*/code/phantom-ink/brainbox
+//  4. $HOME/code/phantom-ink/brainbox
+//
 // Returns "" if none look right. Existence + a pyproject.toml that names
 // the project "brainbox" are both required.
 func (a *App) findBrainboxProject() string {
@@ -415,7 +424,7 @@ func (a *App) findBrainboxProject() string {
 // a pyproject.toml declaring name = "brainbox". Empty string if none.
 func walkForBrainboxRoot(start string) string {
 	dir := start
-	for i := 0; i < 8; i++ {  // bounded ascent
+	for i := 0; i < 8; i++ { // bounded ascent
 		py := filepath.Join(dir, "pyproject.toml")
 		if data, err := os.ReadFile(py); err == nil {
 			if strings.Contains(string(data), `name = "brainbox"`) {

@@ -22,6 +22,7 @@ def reset_hub_state():
     from brainbox.event_rules import reset_for_tests as _reset_event_rules
     from brainbox.os_sink import reset_for_tests as _reset_os_sink
     from brainbox.llm import reset_for_tests as _reset_llm
+    from brainbox.conversation_runtime import reset_for_tests as _reset_conversations
 
     def _reset():
         _auth._api_key = ""
@@ -40,6 +41,7 @@ def reset_hub_state():
         _reset_event_rules()  # clears wakeup/rate windows/inflight
         _reset_os_sink()  # clears sink task/listener/client cache
         _reset_llm()  # clears llm-seam metering listeners + backend registry
+        _reset_conversations()  # clears per-conversation SSE subscribers + streamer
         reset_store_for_tests()  # fresh in-memory DB per test
 
     _reset()

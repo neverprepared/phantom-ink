@@ -48,11 +48,13 @@ from .models_api import (
     CompleteChannelRequest,
     CreateAgentRequest,
     CreateChannelRequest,
+    CreateConversationRequest,
     CreateSessionRequest,
     DeleteSessionRequest,
     ExecSessionRequest,
     MintProfileTokenRequest,
     PostChannelMessageRequest,
+    PostConversationMessageRequest,
     QuerySessionRequest,
     StartSessionRequest,
     StopSessionRequest,
@@ -101,6 +103,8 @@ from .channels import (
     remove_participant as channel_remove_participant,
 )
 from .models import ChannelParticipant
+from . import conversation_runtime
+from . import conversation_store as conversations
 from .models_api import OllamaChatRequest, OllamaPullRequest
 from .ollama import (
     OllamaError,
@@ -175,6 +179,9 @@ def _audit_log(
 _sse_queues: set[asyncio.Queue] = set()
 _sse_drops: int = 0
 _channel_queues: dict[str, set[asyncio.Queue]] = {}
+# Strong references to in-flight persona replies. asyncio only holds a weak ref
+# to a running task, so without this a reply can be garbage-collected mid-stream.
+_persona_reply_tasks: set[asyncio.Task] = set()
 
 
 def _broadcast_sse(data: str) -> None:
@@ -4097,6 +4104,177 @@ async def hub_channel_stream(channel_id: str, request: Request, _key=Depends(req
             pass
         finally:
             _channel_queues.get(channel_id, set()).discard(q)
+
+    return EventSourceResponse(event_generator())
+
+
+# ---------------------------------------------------------------------------
+# Conversations — the multi-agent Chat engine (PR1).
+#
+# Runs ALONGSIDE the legacy /api/hub/channels routes above; the two share no
+# state. Channels are retired in PR4 (see the design spec §11).
+#
+# Every route here takes an explicit `profile` and passes it to the store, which
+# filters on it in SQL. A request scoped to one profile cannot read or write
+# another's conversations — enforcement is server-side, not a UI convention.
+# ---------------------------------------------------------------------------
+
+
+def _require_profile(profile: str | None) -> str:
+    """Conversations are always profile-scoped; an unscoped request is a bug,
+    not a wildcard. Reject it loudly instead of silently reading everything."""
+    value = (profile or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="profile is required")
+    return value
+
+
+async def _load_conversation(conversation_id: str, profile: str):
+    conv = await conversations.async_get_conversation(conversation_id, profile=profile)
+    if conv is None:
+        # Deliberately identical to a genuine miss: never confirm that a
+        # conversation exists in some other profile.
+        raise HTTPException(
+            status_code=404, detail=f"Conversation '{conversation_id}' not found"
+        )
+    return conv
+
+
+@app.post("/api/conversations")
+async def create_conversation_route(
+    body: CreateConversationRequest, _key=Depends(require_api_key)
+):
+    conv = await conversations.async_create_conversation(
+        profile=body.profile,
+        title=body.title,
+        participants=[p.model_dump() for p in body.participants],
+    )
+    _broadcast_sse(
+        json.dumps({"action": "conversation.created", "conversation_id": conv.id})
+    )
+    return conv.model_dump()
+
+
+@app.get("/api/conversations")
+async def list_conversations_route(
+    profile: str = Query(..., description="Workspace profile that owns the rooms"),
+    include_archived: bool = Query(True),
+    _key=Depends(require_api_key),
+):
+    convs = await conversations.async_list_conversations(
+        profile=_require_profile(profile), include_archived=include_archived
+    )
+    return [c.model_dump() for c in convs]
+
+
+@app.get("/api/conversations/{conversation_id}")
+async def get_conversation_route(
+    conversation_id: str,
+    profile: str = Query(...),
+    _key=Depends(require_api_key),
+):
+    conv = await _load_conversation(conversation_id, _require_profile(profile))
+    return conv.model_dump()
+
+
+@app.post("/api/conversations/{conversation_id}/archive")
+async def archive_conversation_route(
+    conversation_id: str,
+    profile: str = Query(...),
+    _key=Depends(require_api_key),
+):
+    try:
+        conv = await conversations.async_archive_conversation(
+            conversation_id, profile=_require_profile(profile)
+        )
+    except conversations.ProfileScopeError:
+        raise HTTPException(
+            status_code=404, detail=f"Conversation '{conversation_id}' not found"
+        )
+    _broadcast_sse(
+        json.dumps({"action": "conversation.archived", "conversation_id": conversation_id})
+    )
+    return conv.model_dump()
+
+
+@app.get("/api/conversations/{conversation_id}/messages")
+async def list_conversation_messages_route(
+    conversation_id: str,
+    profile: str = Query(...),
+    since_id: str | None = Query(default=None),
+    _key=Depends(require_api_key),
+):
+    scoped = _require_profile(profile)
+    await _load_conversation(conversation_id, scoped)
+    msgs = await conversations.async_list_messages(
+        conversation_id, profile=scoped, since_id=since_id
+    )
+    return [m.model_dump() for m in msgs]
+
+
+@app.post("/api/conversations/{conversation_id}/messages")
+async def post_conversation_message_route(
+    conversation_id: str,
+    body: PostConversationMessageRequest,
+    profile: str = Query(...),
+    _key=Depends(require_api_key),
+):
+    """Post a human message, then let the conversation's persona answer.
+
+    The reply runs as a background task: the POST returns as soon as the human
+    message is durable, and the persona's tokens arrive on the per-conversation
+    SSE stream. Blocking the POST on the completion is what made the old engine
+    feel dead.
+    """
+    scoped = _require_profile(profile)
+    conv = await _load_conversation(conversation_id, scoped)
+    if conv.status != "active":
+        raise HTTPException(
+            status_code=400, detail=f"Conversation '{conversation_id}' is archived"
+        )
+
+    msg = await conversations.async_add_message(
+        conversation_id=conversation_id,
+        profile=scoped,
+        author=body.author,
+        content=body.content,
+        addressed_to=body.addressed_to,
+    )
+    conversation_runtime.publish_message(msg)
+    _broadcast_sse(
+        json.dumps({"action": "conversation.message", "conversation_id": conversation_id})
+    )
+
+    task = asyncio.create_task(conversation_runtime.maybe_reply(conv, msg))
+    _persona_reply_tasks.add(task)
+    task.add_done_callback(_persona_reply_tasks.discard)
+
+    return msg.model_dump()
+
+
+@app.get("/api/conversations/{conversation_id}/stream")
+async def conversation_stream_route(
+    conversation_id: str,
+    profile: str = Query(...),
+    _key=Depends(require_api_key),
+):
+    """Per-conversation SSE: message.created / message.delta / message.done /
+    thinking. Subscribed for the life of an open conversation — this is what
+    replaces the frontend's 5-second poll."""
+    scoped = _require_profile(profile)
+    await _load_conversation(conversation_id, scoped)
+
+    q = conversation_runtime.subscribe(conversation_id)
+
+    async def event_generator():
+        try:
+            yield {"data": json.dumps({"event": "connected", "conversation_id": conversation_id})}
+            while True:
+                yield {"data": await q.get()}
+        except asyncio.CancelledError:
+            pass
+        finally:
+            conversation_runtime.unsubscribe(conversation_id, q)
 
     return EventSourceResponse(event_generator())
 

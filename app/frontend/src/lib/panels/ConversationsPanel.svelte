@@ -1,107 +1,170 @@
 <script lang="ts">
+  /**
+   * Conversations panel — the multi-agent Chat surface.
+   *
+   * Rewired in PR1 onto the new conversation engine: records live in the
+   * local-first store (profile-scoped, ULID-keyed) and updates arrive on a
+   * per-conversation SSE stream bridged through the Go layer as the
+   * `conversation:event` Wails event. The 5-second poll this panel used to run
+   * is gone — a persona's reply renders token by token as it is generated.
+   *
+   * The panel shell (list / room / composer) is unchanged; only the data plane
+   * underneath it was replaced.
+   */
   import { getApi } from '../utils/api';
-  import { onMount } from 'svelte';
-  import { brainboxEvents } from '../events.svelte';
+  import { onMount, untrack } from 'svelte';
   import { notifications } from '../notifications.svelte';
   import { profileState, panelFocus } from '../stores.svelte';
-  import Modal from '../components/Modal.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Spinner from '../components/Spinner.svelte';
-  import ConversationCreateModal from '../components/ConversationCreateModal.svelte';
+  import NewConversationModal from '../components/NewConversationModal.svelte';
 
   interface Participant {
     name: string;
-    type: string;
-    session_name?: string;
-    ollama_model?: string;
-    system_prompt?: string;
+    kind: string;
+    model_target?: Record<string, any>;
+    role_prompt?: string;
+    cooldown_s?: number;
     joined_at: number;
   }
 
-  interface Channel {
+  interface Conversation {
     id: string;
-    name: string;
-    participants: Participant[];
+    profile: string;
+    title: string;
     status: string;
+    participants: Participant[];
     created_at: number;
-    completed_at?: number;
-    completed_by?: string;
-    parent_task_id?: string;
-    workspace_profile?: string;
+    updated_at: number;
   }
 
-  interface ChannelMessage {
+  interface ConversationMessage {
     id: string;
-    channel_id: string;
-    from_participant: string;
+    conversation_id: string;
+    author: string;
+    kind: string;
     content: string;
-    summary?: string;
     addressed_to?: string;
-    type: string;
-    timestamp: number;
+    in_reply_to?: string;
+    created_at: number;
+    /** True between message.created and message.done — renders a live caret. */
+    streaming?: boolean;
   }
 
   // --- State ---
-  let channels = $state<Channel[]>([]);
-  let selected = $state<Channel | null>(null);
-  let messages = $state<ChannelMessage[]>([]);
-  let lastMessageId = $state<string | null>(null);
+  let conversations = $state<Conversation[]>([]);
+  let selected = $state<Conversation | null>(null);
+  let messages = $state<ConversationMessage[]>([]);
   let loading = $state(true);
-  let messagesLoading = $state(false);
   let draft = $state('');
   let myName = $state('user');
   let isSending = $state(false);
-  let isCompleting = $state(false);
-  let confirmDeleteId = $state<string | null>(null);
+  let isArchiving = $state(false);
+  let thinkingAuthor = $state<string | null>(null);
+  let confirmArchiveId = $state<string | null>(null);
   let selectedIds = $state<Set<string>>(new Set());
-  let isBatchDeleting = $state(false);
+  let isBatchArchiving = $state(false);
+  let showCreateModal = $state(false);
 
-  let filteredChannels = $derived.by(() => {
-    if (!profileState.active) return channels;
-    const target = profileState.active.name.toLowerCase();
-    return channels.filter(c => (c.workspace_profile ?? '').toLowerCase() === target);
-  });
+  const activeProfile = $derived(profileState.active?.name ?? '');
 
-  const allSelected = $derived(filteredChannels.length > 0 && filteredChannels.every(c => selectedIds.has(c.id)));
+  const allSelected = $derived(
+    conversations.length > 0 && conversations.every(c => selectedIds.has(c.id)),
+  );
   const someSelected = $derived(selectedIds.size > 0);
 
   let activeCollapsed = $state(false);
-  let completedCollapsed = $state(false);
-  const activeChannels = $derived(filteredChannels.filter(c => c.status !== 'completed'));
-  const completedChannels = $derived(filteredChannels.filter(c => c.status === 'completed'));
+  let archivedCollapsed = $state(false);
+  const activeConversations = $derived(conversations.filter(c => c.status !== 'archived'));
+  const archivedConversations = $derived(conversations.filter(c => c.status === 'archived'));
 
-  // Create channel modal
-  let showCreateModal = $state(false);
-  // Add-participant modal — opened from a live conversation's header to
-  // attach another running session post-creation.
-  let showAddParticipantModal = $state(false);
-  let addParticipantCandidates = $state<any[]>([]);
-  let addParticipantSelection = $state<string>(''); // session name to add
-  // Session names to pre-seed the create modal's participant roster with
-  // (from panelFocus.startConversationWith). Empty = seed from all running.
-  let createSeed = $state<string[]>([]);
-
-  // --- SSE subscription ---
-  $effect(() => {
-    const lastEvent = brainboxEvents.last;
-    if (!lastEvent) return;
-    try {
-      const parsed = typeof lastEvent === 'string' ? JSON.parse(lastEvent) : lastEvent;
-      const action = parsed?.action ?? parsed?.event;
-      if (action === 'channel.message' && parsed.channel_id === selected?.id) {
-        loadMessages();
-      } else if (action === 'channel.created' || action === 'channel.completed') {
-        loadChannels();
+  // --- Per-conversation SSE ---
+  // Frames arrive as {event, conversation_id, data}. The stream is opened by
+  // the Go layer on select and closed on deselect, so a frame for another room
+  // should never arrive — the id is still checked, because a stale frame from a
+  // just-closed room must not scribble into the newly opened one.
+  function handleFrame(frame: any) {
+    if (!frame || frame.conversation_id !== selected?.id) return;
+    const data = frame.data ?? {};
+    switch (frame.event) {
+      case 'thinking':
+        thinkingAuthor = data.author ?? null;
+        break;
+      case 'message.created': {
+        const msg = data.message as ConversationMessage | undefined;
+        if (!msg) break;
+        if (messages.some(m => m.id === msg.id)) break;
+        messages = [...messages, { ...msg, streaming: msg.content === '' }];
+        break;
       }
-    } catch { /* ignore */ }
+      case 'message.delta': {
+        const { id, delta } = data as { id: string; delta: string };
+        messages = messages.map(m =>
+          m.id === id ? { ...m, content: m.content + (delta ?? ''), streaming: true } : m,
+        );
+        break;
+      }
+      case 'message.done': {
+        const msg = data.message as ConversationMessage | undefined;
+        if (!msg) break;
+        thinkingAuthor = null;
+        const known = messages.some(m => m.id === msg.id);
+        messages = known
+          ? messages.map(m => (m.id === msg.id ? { ...msg, streaming: false } : m))
+          : [...messages, { ...msg, streaming: false }];
+        break;
+      }
+      case 'error': {
+        // Drop the half-written bubble rather than leaving it spinning forever.
+        thinkingAuthor = null;
+        const id = (data as { id?: string }).id;
+        if (id) messages = messages.filter(m => m.id !== id);
+        notifications.error(`${data.author ?? 'persona'} failed to reply: ${data.reason ?? 'unknown error'}`);
+        break;
+      }
+      default:
+        break; // 'connected' and anything the backend adds later
+    }
+  }
+
+  onMount(() => {
+    // Arriving via the Sessions panel's "talk" button: open the create modal.
+    // The seeded session names are consumed but not used as participants —
+    // session participants are the PR4 promotion path, not a PR1 roster entry.
+    if (panelFocus.consumeConversationSeed().length > 0) showCreateModal = true;
+
+    const rt = (window as any).runtime;
+    rt?.EventsOn?.('conversation:event', handleFrame);
+    return () => {
+      rt?.EventsOff?.('conversation:event');
+      void unsubscribeCurrent();
+    };
   });
 
-  // --- Data loading ---
-  async function loadChannels() {
+  async function subscribe(conversationId: string) {
     const a = await getApi();
-    if (!a) { loading = false; return; }
     try {
-      channels = (await a.ListChannels(profileState.active?.name ?? '')) ?? [];
+      await a?.SubscribeConversation(conversationId, activeProfile);
+    } catch (err: any) {
+      notifications.error(`Live updates unavailable: ${err?.message ?? err}`);
+    }
+  }
+
+  async function unsubscribeCurrent() {
+    const current = selected?.id;
+    if (!current) return;
+    const a = await getApi();
+    try {
+      await a?.UnsubscribeConversation(current);
+    } catch { /* closing a stream must never surface an error */ }
+  }
+
+  // --- Data loading ---
+  async function loadConversations() {
+    const a = await getApi();
+    if (!a || !activeProfile) { loading = false; return; }
+    try {
+      conversations = (await a.ListConversations(activeProfile, true)) ?? [];
     } catch (err: any) {
       notifications.error(`Failed to load conversations: ${err?.message ?? err}`);
     } finally {
@@ -109,204 +172,114 @@
     }
   }
 
-  async function loadMessages() {
-    if (!selected) return;
-    messagesLoading = true;
-    const a = await getApi();
-    if (!a) { messagesLoading = false; return; }
-    try {
-      const newMsgs = (await a.GetChannelMessages(selected.id, lastMessageId ?? '')) ?? [];
-      if (newMsgs.length > 0) {
-        messages = [...messages, ...newMsgs];
-        lastMessageId = newMsgs[newMsgs.length - 1].id;
-      }
-    } catch (err) {
-      notifications.error('Failed to fetch messages: ' + err.message);
-    } finally {
-      messagesLoading = false;
-    }
-  }
-
-  async function selectChannel(channel: Channel) {
-    selected = channel;
-    messages = [];
-    lastMessageId = null;
-    // Load all messages
+  async function loadMessages(conversationId: string) {
     const a = await getApi();
     if (!a) return;
     try {
-      messages = (await a.GetChannelMessages(channel.id, '')) ?? [];
-      if (messages.length > 0) {
-        lastMessageId = messages[messages.length - 1].id;
-      }
-    } catch (err) {
-      notifications.error('Failed to load messages: ' + err.message);
+      messages = ((await a.ListConversationMessages(conversationId, activeProfile, '')) ?? [])
+        .map(m => ({ ...m, streaming: false }));
+    } catch (err: any) {
+      notifications.error(`Failed to load messages: ${err?.message ?? err}`);
     }
   }
 
-  // Polling fallback: refresh every 5s when a channel is selected
-  $effect(() => {
-    if (!selected || selected.status !== 'active') return;
-    const interval = setInterval(loadMessages, 5000);
-    return () => clearInterval(interval);
-  });
+  async function selectConversation(conv: Conversation) {
+    if (selected?.id === conv.id) return;
+    await unsubscribeCurrent();
+    selected = conv;
+    messages = [];
+    thinkingAuthor = null;
+    await loadMessages(conv.id);
+    await subscribe(conv.id);
+  }
 
   $effect(() => {
-    profileState.active; // re-run when active profile changes
+    profileState.active; // re-run when the active profile changes
+    // untrack: the reset below reads `selected` and then writes it. Left
+    // tracked, that write would re-dirty the effect and spin it forever.
+    untrack(() => { void resetForProfile(); });
+  });
+
+  async function resetForProfile() {
+    await unsubscribeCurrent();
     selected = null;
     messages = [];
-    lastMessageId = null;
-    void loadChannels();
-  });
-
-  onMount(() => {
-    // If we got here via panelFocus.startConversationWith(...), open the
-    // create modal pre-seeded with those sessions.
-    const seed = panelFocus.consumeConversationSeed();
-    if (seed.length > 0) {
-      openCreateModal(seed);
-    }
-  });
-
-  // --- Create channel ---
-  // When opening the modal we pre-populate one participant row per currently-
-  // running session in the active profile, so the user can uncheck/remove
-  // rather than build the list from scratch. Falls back to a single empty row
-  // when there are no running sessions to seed from.
-  function openCreateModal(seedSessions: string[] = []) {
-    createSeed = seedSessions;
-    showCreateModal = true;
+    thinkingAuthor = null;
+    selectedIds = new Set();
+    await loadConversations();
   }
 
-  // --- Live participant management (post-creation) ---
-
-  async function openAddParticipant() {
-    if (!selected) return;
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const all = ((await a.GetSessions(profileState.active?.name ?? '')) ?? []) as any[];
-      const activeProfile = profileState.active?.name?.toLowerCase() ?? '';
-      const inChannel = new Set(selected.participants.map(p => p.name));
-      addParticipantCandidates = all
-        .filter((s: any) => s.active)
-        .filter((s: any) => !activeProfile || (s.workspace_profile ?? '').toLowerCase() === activeProfile)
-        .filter((s: any) => !inChannel.has(s.name));
-      addParticipantSelection = addParticipantCandidates[0]?.name ?? '';
-      showAddParticipantModal = true;
-    } catch (err: any) {
-      notifications.error(`Failed to load sessions: ${err?.message ?? err}`);
-    }
-  }
-
-  async function handleAddParticipant() {
-    if (!selected || !addParticipantSelection) return;
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const updated = await a.AddChannelParticipant(selected.id, {
-        name: addParticipantSelection,
-        type: 'session',
-        session_name: addParticipantSelection,
-        ollama_model: '',
-        system_prompt: '',
-      });
-      selected = updated;
-      // Refresh the list so the participant-count badge updates.
-      channels = channels.map(c => c.id === updated.id ? updated : c);
-      showAddParticipantModal = false;
-      notifications.success(`${addParticipantSelection} joined the conversation`);
-    } catch (err: any) {
-      notifications.error(`Failed to add: ${err?.message ?? err}`);
-    }
-  }
-
-  async function handleRemoveParticipant(name: string) {
-    if (!selected) return;
-    if (!confirm(`Remove ${name} from this conversation?`)) return;
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const updated = await a.RemoveChannelParticipant(selected.id, name);
-      selected = updated;
-      channels = channels.map(c => c.id === updated.id ? updated : c);
-      notifications.success(`${name} removed`);
-    } catch (err: any) {
-      notifications.error(`Failed to remove: ${err?.message ?? err}`);
-    }
-  }
-
-  async function handleCreated(channel: any) {
+  // --- Create ---
+  async function handleCreated(conv: Conversation) {
     showCreateModal = false;
-    await loadChannels();
-    await selectChannel(channel);
+    await loadConversations();
+    await selectConversation(conv);
   }
 
-  // --- Send message ---
+  // --- Send ---
   async function handleSend() {
     if (!draft.trim() || !selected || isSending) return;
     isSending = true;
     const a = await getApi();
     if (!a) { isSending = false; return; }
     try {
-      // Parse @mention from draft
+      // A leading @mention addresses one participant.
       const addressed = draft.match(/^@(\S+)/)?.[1] ?? undefined;
-      const content = draft.trim();
-      await a.PostChannelMessage(selected.id, {
-        from_participant: myName,
-        content,
+      await a.PostConversationMessage(selected.id, activeProfile, {
+        author: myName,
+        content: draft.trim(),
         addressed_to: addressed,
-      });
+      } as any);
       draft = '';
-      await loadMessages();
+      // The posted message arrives on the stream — no refetch needed.
     } catch (err: any) {
-      notifications.error(`Failed to send: ${err}`);
+      notifications.error(`Failed to send: ${err?.message ?? err}`);
     } finally {
       isSending = false;
     }
   }
 
-  async function handleComplete() {
-    if (!selected || isCompleting) return;
-    isCompleting = true;
+  async function handleArchive() {
+    if (!selected || isArchiving) return;
+    isArchiving = true;
     const a = await getApi();
-    if (!a) { isCompleting = false; return; }
+    if (!a) { isArchiving = false; return; }
     try {
-      await a.CompleteChannel(selected.id, { by: myName, reason: 'Conversation ended by user' });
-      notifications.success('Conversation ended');
-      await loadChannels();
-      // Refresh selected to show updated status
-      const updated = channels.find(c => c.id === selected!.id);
-      if (updated) selected = updated;
+      const updated = await a.ArchiveConversation(selected.id, activeProfile);
+      selected = updated as unknown as Conversation;
+      conversations = conversations.map(c => (c.id === updated.id ? (updated as unknown as Conversation) : c));
+      notifications.success('Conversation archived');
     } catch (err: any) {
-      notifications.error(`Failed to end channel: ${err}`);
+      notifications.error(`Failed to archive: ${err?.message ?? err}`);
     } finally {
-      isCompleting = false;
+      isArchiving = false;
     }
   }
 
-  function requestDelete(ch: Channel, e: MouseEvent) {
+  function requestArchive(conv: Conversation, e: MouseEvent) {
     e.stopPropagation();
-    confirmDeleteId = ch.id;
+    confirmArchiveId = conv.id;
   }
 
-  function cancelDelete(e: MouseEvent) {
+  function cancelArchive(e: MouseEvent) {
     e.stopPropagation();
-    confirmDeleteId = null;
+    confirmArchiveId = null;
   }
 
-  async function confirmDelete(ch: Channel, e: MouseEvent) {
+  async function confirmArchive(conv: Conversation, e: MouseEvent) {
     e.stopPropagation();
-    confirmDeleteId = null;
+    confirmArchiveId = null;
     const a = await getApi();
     if (!a) return;
     try {
-      await a.DeleteChannel(ch.id);
-      notifications.success(`Conversation "${ch.name}" deleted`);
-      if (selected?.id === ch.id) { selected = null; messages = []; lastMessageId = null; }
-      await loadChannels();
+      await a.ArchiveConversation(conv.id, activeProfile);
+      notifications.success(`Conversation "${conv.title}" archived`);
+      await loadConversations();
+      if (selected?.id === conv.id) {
+        selected = conversations.find(c => c.id === conv.id) ?? null;
+      }
     } catch (err: any) {
-      notifications.error(`Failed to delete channel: ${err}`);
+      notifications.error(`Failed to archive: ${err?.message ?? err}`);
     }
   }
 
@@ -324,29 +297,34 @@
   }
 
   function toggleSelectAll() {
-    selectedIds = allSelected ? new Set() : new Set(filteredChannels.map(c => c.id));
+    selectedIds = allSelected ? new Set() : new Set(conversations.map(c => c.id));
   }
 
-  async function handleBatchDelete() {
-    if (selectedIds.size === 0 || isBatchDeleting) return;
-    isBatchDeleting = true;
+  async function handleBatchArchive() {
+    if (selectedIds.size === 0 || isBatchArchiving) return;
+    isBatchArchiving = true;
     const a = await getApi();
-    if (!a) { isBatchDeleting = false; return; }
+    if (!a) { isBatchArchiving = false; return; }
     const ids = [...selectedIds];
     let failed = 0;
     for (const id of ids) {
       try {
-        await a.DeleteChannel(id);
-        if (selected?.id === id) { selected = null; messages = []; lastMessageId = null; }
+        await a.ArchiveConversation(id, activeProfile);
       } catch {
         failed++;
       }
     }
     selectedIds = new Set();
-    isBatchDeleting = false;
-    if (failed > 0) notifications.error(`${failed} channel(s) failed to delete`);
-    else notifications.success(`${ids.length} channel(s) deleted`);
-    await loadChannels();
+    isBatchArchiving = false;
+    if (failed > 0) notifications.error(`${failed} conversation(s) failed to archive`);
+    else notifications.success(`${ids.length} conversation(s) archived`);
+    await loadConversations();
+  }
+
+  function participantIcon(kind: string) {
+    if (kind === 'session') return '💻';
+    if (kind === 'persona') return '🤖';
+    return '👤';
   }
 
   function formatTime(ts: number) {
@@ -359,119 +337,86 @@
     <h1 class="page-title">conversations</h1>
     <div class="header-actions">
       {#if loading}<Spinner />{/if}
-      <button class="btn primary" onclick={() => openCreateModal()}>+ new conversation</button>
+      <button class="btn primary" onclick={() => showCreateModal = true}>+ new conversation</button>
     </div>
   </header>
   <div class="channels-layout">
-  <!-- Left: channel list -->
+  <!-- Left: conversation list -->
   <div class="channel-list">
     <div class="list-header">
       {#if someSelected}
         <input type="checkbox" class="select-all-cb" checked={allSelected} onclick={toggleSelectAll} title="Select all" />
         <span class="list-title">{selectedIds.size} selected</span>
-        <button class="btn-batch-delete" onclick={handleBatchDelete} disabled={isBatchDeleting} title="Delete selected">
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-          {isBatchDeleting ? 'Deleting…' : 'Delete'}
+        <button class="btn-batch-delete" onclick={handleBatchArchive} disabled={isBatchArchiving} title="Archive selected">
+          {isBatchArchiving ? 'Archiving…' : 'Archive'}
         </button>
       {:else}
-        <span class="list-title">channels</span>
+        <span class="list-title">rooms</span>
         {#if loading}<Spinner size={12} />{/if}
       {/if}
     </div>
 
     {#if loading}
       <div class="list-empty">Loading…</div>
-    {:else if filteredChannels.length === 0}
+    {:else if !activeProfile}
+      <div class="list-empty">Select a workspace profile</div>
+    {:else if conversations.length === 0}
       <div class="list-empty">No conversations yet</div>
     {:else}
       <div class="channel-sections">
-        {#if activeChannels.length > 0}
-          <button class="section-toggle" onclick={() => activeCollapsed = !activeCollapsed}>
-            <svg class="section-chevron" class:collapsed={activeCollapsed} xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
-            active
-            <span class="section-count">{activeChannels.length}</span>
-          </button>
-          {#if !activeCollapsed}
-            <ul class="channel-items">
-              {#each activeChannels as ch (ch.id)}
-                <li class="channel-item-row" class:row-selecting={someSelected}>
-                  <input
-                    type="checkbox"
-                    class="row-cb"
-                    checked={selectedIds.has(ch.id)}
-                    onclick={(e) => { e.stopPropagation(); toggleSelect(ch.id); }}
-                  />
-                  {#if confirmDeleteId === ch.id}
-                    <div class="delete-confirm">
-                      <span>Delete?</span>
-                      <button class="btn-confirm-yes" onclick={(e) => confirmDelete(ch, e)}>Yes</button>
-                      <button class="btn-confirm-no" onclick={cancelDelete}>No</button>
-                    </div>
-                  {:else}
-                    <button
-                      class="channel-item"
-                      class:active={selected?.id === ch.id}
-                      onclick={() => selectChannel(ch)}
-                    >
-                      <span class="status-dot" class:completed={ch.status === 'completed'}></span>
-                      <span class="channel-name">{ch.name}</span>
-                      <span class="participant-count">{ch.participants.length}</span>
-                    </button>
-                    <button class="btn-delete-channel" onclick={(e) => requestDelete(ch, e)} title="Delete conversation">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-                    </button>
-                  {/if}
-                </li>
-              {/each}
-            </ul>
+        {#each [{ label: 'active', rooms: activeConversations, collapsed: activeCollapsed }, { label: 'archived', rooms: archivedConversations, collapsed: archivedCollapsed }] as section (section.label)}
+          {#if section.rooms.length > 0}
+            <button
+              class="section-toggle"
+              onclick={() => section.label === 'active' ? (activeCollapsed = !activeCollapsed) : (archivedCollapsed = !archivedCollapsed)}
+            >
+              <svg class="section-chevron" class:collapsed={section.collapsed} xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+              {section.label}
+              <span class="section-count">{section.rooms.length}</span>
+            </button>
+            {#if !section.collapsed}
+              <ul class="channel-items">
+                {#each section.rooms as conv (conv.id)}
+                  <li class="channel-item-row" class:row-selecting={someSelected}>
+                    <input
+                      type="checkbox"
+                      class="row-cb"
+                      checked={selectedIds.has(conv.id)}
+                      onclick={(e) => { e.stopPropagation(); toggleSelect(conv.id); }}
+                    />
+                    {#if confirmArchiveId === conv.id}
+                      <div class="delete-confirm">
+                        <span>Archive?</span>
+                        <button class="btn-confirm-yes" onclick={(e) => confirmArchive(conv, e)}>Yes</button>
+                        <button class="btn-confirm-no" onclick={cancelArchive}>No</button>
+                      </div>
+                    {:else}
+                      <button
+                        class="channel-item"
+                        class:active={selected?.id === conv.id}
+                        onclick={() => selectConversation(conv)}
+                      >
+                        <span class="status-dot" class:completed={conv.status === 'archived'}></span>
+                        <span class="channel-name">{conv.title}</span>
+                        <span class="participant-count">{conv.participants.length}</span>
+                      </button>
+                      {#if conv.status !== 'archived'}
+                        <button class="btn-delete-channel" onclick={(e) => requestArchive(conv, e)} title="Archive conversation" aria-label="Archive {conv.title}">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg>
+                        </button>
+                      {/if}
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
           {/if}
-        {/if}
-        {#if completedChannels.length > 0}
-          <button class="section-toggle" onclick={() => completedCollapsed = !completedCollapsed}>
-            <svg class="section-chevron" class:collapsed={completedCollapsed} xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
-            completed
-            <span class="section-count">{completedChannels.length}</span>
-          </button>
-          {#if !completedCollapsed}
-            <ul class="channel-items">
-              {#each completedChannels as ch (ch.id)}
-                <li class="channel-item-row" class:row-selecting={someSelected}>
-                  <input
-                    type="checkbox"
-                    class="row-cb"
-                    checked={selectedIds.has(ch.id)}
-                    onclick={(e) => { e.stopPropagation(); toggleSelect(ch.id); }}
-                  />
-                  {#if confirmDeleteId === ch.id}
-                    <div class="delete-confirm">
-                      <span>Delete?</span>
-                      <button class="btn-confirm-yes" onclick={(e) => confirmDelete(ch, e)}>Yes</button>
-                      <button class="btn-confirm-no" onclick={cancelDelete}>No</button>
-                    </div>
-                  {:else}
-                    <button
-                      class="channel-item"
-                      class:active={selected?.id === ch.id}
-                      onclick={() => selectChannel(ch)}
-                    >
-                      <span class="status-dot" class:completed={ch.status === 'completed'}></span>
-                      <span class="channel-name">{ch.name}</span>
-                      <span class="participant-count">{ch.participants.length}</span>
-                    </button>
-                    <button class="btn-delete-channel" onclick={(e) => requestDelete(ch, e)} title="Delete conversation">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-                    </button>
-                  {/if}
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        {/if}
+        {/each}
       </div>
     {/if}
   </div>
 
-  <!-- Right: channel view -->
+  <!-- Right: conversation view -->
   <div class="channel-view">
     {#if !selected}
       <EmptyState
@@ -481,29 +426,18 @@
     {:else}
       <div class="channel-header">
         <div class="channel-meta">
-          <span class="channel-title">#{selected.name}</span>
-          <span class="channel-status" class:completed={selected.status === 'completed'}>
+          <span class="channel-title">#{selected.title}</span>
+          <span class="channel-status" class:completed={selected.status === 'archived'}>
             {selected.status}
           </span>
         </div>
         <div class="participant-list">
-          {#each selected.participants as p}
-            <span class="participant-chip" title={p.type}>
-              {p.type === 'session' ? '💻' : p.type === 'ollama' ? '🤖' : '👤'}
+          {#each selected.participants as p (p.name)}
+            <span class="participant-chip" title={p.kind}>
+              {participantIcon(p.kind)}
               {p.name}
-              {#if selected.status !== 'completed' && p.name !== myName}
-                <button
-                  class="participant-remove"
-                  onclick={() => handleRemoveParticipant(p.name)}
-                  title="Remove from conversation"
-                  aria-label="Remove {p.name}"
-                >×</button>
-              {/if}
             </span>
           {/each}
-          {#if selected.status !== 'completed'}
-            <button class="add-participant-btn" onclick={openAddParticipant} title="Add a running session">+ add session</button>
-          {/if}
         </div>
       </div>
 
@@ -512,20 +446,20 @@
           <div class="no-messages">No messages yet. Start the conversation.</div>
         {:else}
           {#each messages as msg (msg.id)}
-            <div class="message" class:completion={msg.type === 'completion'} class:mine={msg.from_participant === myName}>
+            <div class="message" class:mine={msg.author === myName}>
               <div class="message-header">
-                <span class="msg-from">{msg.from_participant}</span>
+                <span class="msg-from">{msg.author}</span>
                 {#if msg.addressed_to}
                   <span class="msg-addressed">→ @{msg.addressed_to}</span>
                 {/if}
-                <span class="msg-time">{formatTime(msg.timestamp)}</span>
+                <span class="msg-time">{formatTime(msg.created_at)}</span>
               </div>
-              <div class="message-content">{msg.content}</div>
-              {#if msg.summary && msg.from_participant !== myName}
-                <div class="message-summary">Summary: {msg.summary}</div>
-              {/if}
+              <div class="message-content">{msg.content}{#if msg.streaming}<span class="stream-caret"></span>{/if}</div>
             </div>
           {/each}
+        {/if}
+        {#if thinkingAuthor}
+          <div class="thinking-row">{thinkingAuthor} is thinking…</div>
         {/if}
       </div>
 
@@ -548,15 +482,15 @@
               <button class="btn-send" onclick={handleSend} disabled={isSending || !draft.trim()}>
                 Send
               </button>
-              <button class="btn-end" onclick={handleComplete} disabled={isCompleting}>
-                End
+              <button class="btn-end" onclick={handleArchive} disabled={isArchiving}>
+                Archive
               </button>
             </div>
           </div>
         </div>
       {:else}
         <div class="channel-ended">
-          Conversation ended{selected.completed_by ? ` by ${selected.completed_by}` : ''}.
+          Conversation archived.
         </div>
       {/if}
     {/if}
@@ -564,38 +498,39 @@
   </div>
 </div>
 
-<!-- Create channel modal -->
 {#if showCreateModal}
-  <ConversationCreateModal
-    seed={createSeed}
+  <NewConversationModal
+    myName={myName}
     onClose={() => showCreateModal = false}
     onCreated={handleCreated}
   />
 {/if}
 
-{#if showAddParticipantModal}
-  <Modal onClose={() => showAddParticipantModal = false}>
-    <div class="modal-body">
-      <h2>Add session to conversation</h2>
-      {#if addParticipantCandidates.length === 0}
-        <p class="hint">No other running sessions in the active profile.</p>
-      {:else}
-        <label class="field-label" for="ap-select">Session</label>
-        <select id="ap-select" class="field-input" bind:value={addParticipantSelection}>
-          {#each addParticipantCandidates as s (s.name)}
-            <option value={s.name}>{s.session_name ?? s.name}</option>
-          {/each}
-        </select>
-      {/if}
-      <div class="modal-actions">
-        <button class="btn-cancel" onclick={() => showAddParticipantModal = false}>Cancel</button>
-        <button class="btn-primary" onclick={handleAddParticipant} disabled={!addParticipantSelection}>Add</button>
-      </div>
-    </div>
-  </Modal>
-{/if}
-
 <style>
+  /* Live-token affordances: a caret on the message being streamed and a
+     one-line "…is thinking" row while a persona composes. */
+  .stream-caret {
+    display: inline-block;
+    width: 0.5em;
+    height: 1em;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    background: currentColor;
+    opacity: 0.7;
+    animation: stream-blink 1s steps(2, start) infinite;
+  }
+
+  @keyframes stream-blink {
+    to { visibility: hidden; }
+  }
+
+  .thinking-row {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    font-style: italic;
+    opacity: 0.6;
+  }
+
   .channels-layout {
     display: grid;
     grid-template-columns: 220px 1fr;
@@ -630,21 +565,7 @@
     color: var(--color-text-tertiary);
   }
 
-  .btn-icon {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--color-text-secondary);
-    display: flex;
-    align-items: center;
-    padding: 4px;
-    border-radius: var(--radius-sm);
-  }
 
-  .btn-icon:hover {
-    background: rgba(255,255,255,0.07);
-    color: var(--color-text-primary);
-  }
 
   .list-empty {
     padding: 16px;
@@ -869,20 +790,6 @@
     align-items: center;
     gap: 4px;
   }
-  .participant-remove {
-    background: none; border: none; padding: 0 0 0 2px;
-    color: var(--color-text-tertiary); cursor: pointer;
-    font-size: 14px; line-height: 1;
-  }
-  .participant-remove:hover { color: var(--color-error); }
-  .add-participant-btn {
-    background: none;
-    border: 1px dashed var(--color-border-secondary);
-    border-radius: 99px;
-    padding: 2px 8px; font-size: 11px;
-    color: var(--color-text-tertiary); cursor: pointer;
-  }
-  .add-participant-btn:hover { color: var(--color-accent); border-color: var(--color-accent); }
 
   /* Messages */
   .messages {
@@ -913,11 +820,6 @@
     background: rgba(59,130,246,0.05);
   }
 
-  .message.completion {
-    border-style: dashed;
-    opacity: 0.7;
-    font-style: italic;
-  }
 
   .message-header {
     display: flex;
@@ -950,14 +852,6 @@
     word-break: break-word;
   }
 
-  .message-summary {
-    margin-top: 6px;
-    font-size: 11px;
-    color: var(--color-text-tertiary);
-    font-style: italic;
-    border-top: 1px solid var(--color-border-primary);
-    padding-top: 4px;
-  }
 
   /* Composer */
   .composer {
@@ -1066,56 +960,11 @@
   }
 
   /* Modal */
-  .modal-body {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
 
-  .field-label {
-    font-size: 12px;
-    color: var(--color-text-secondary);
-    display: block;
-    margin-bottom: 4px;
-  }
 
-  .field-input {
-    width: 100%;
-    padding: 8px 12px;
-    font-size: 13px;
-    background: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-md);
-    color: var(--color-text-primary);
-    box-sizing: border-box;
-  }
 
-  .btn-cancel {
-    padding: 7px 16px;
-    background: none;
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-md);
-    color: var(--color-text-secondary);
-    font-size: 13px;
-    cursor: pointer;
-    font-family: inherit;
-  }
 
-  .btn-primary {
-    padding: 7px 16px;
-    background: var(--color-info);
-    border: none;
-    border-radius: var(--radius-md);
-    color: white;
-    font-size: 13px;
-    cursor: pointer;
-    font-family: inherit;
-  }
 
-  .btn-primary:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
 
   .conversations-root {
     display: flex;

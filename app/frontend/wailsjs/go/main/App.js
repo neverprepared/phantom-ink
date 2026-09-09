@@ -10,6 +10,10 @@ export function AddChannelParticipant(arg1, arg2) {
   return window['go']['main']['App']['AddChannelParticipant'](arg1, arg2);
 }
 
+export function ArchiveConversation(arg1,arg2) {
+  return window['go']['main']['App']['ArchiveConversation'](arg1,arg2);
+}
+
 export function AssistLoopTemplate(arg1) {
   return window['go']['main']['App']['AssistLoopTemplate'](arg1);
 }
@@ -76,6 +80,10 @@ export function CreateBrainSkill(arg1, arg2) {
 
 export function CreateChannel(arg1) {
   return window['go']['main']['App']['CreateChannel'](arg1);
+}
+
+export function CreateConversation(arg1) {
+  return window['go']['main']['App']['CreateConversation'](arg1);
 }
 
 export function CreateProfile(arg1) {
@@ -268,6 +276,10 @@ export function GetContainerDiskUsage() {
 
 export function GetContainerMetrics() {
   return window['go']['main']['App']['GetContainerMetrics']();
+}
+
+export function GetConversation(arg1,arg2) {
+  return window['go']['main']['App']['GetConversation'](arg1,arg2);
 }
 
 export function GetDashboardLayout(arg1) {
@@ -534,6 +546,14 @@ export function ListCollectedEntries(arg1, arg2, arg3) {
   return window['go']['main']['App']['ListCollectedEntries'](arg1, arg2, arg3);
 }
 
+export function ListConversationMessages(arg1,arg2,arg3) {
+  return window['go']['main']['App']['ListConversationMessages'](arg1,arg2,arg3);
+}
+
+export function ListConversations(arg1,arg2) {
+  return window['go']['main']['App']['ListConversations'](arg1,arg2);
+}
+
 export function ListGatewayServers() {
   return window['go']['main']['App']['ListGatewayServers']();
 }
@@ -636,6 +656,10 @@ export function PlaceIntegration(arg1, arg2, arg3) {
 
 export function PostChannelMessage(arg1, arg2) {
   return window['go']['main']['App']['PostChannelMessage'](arg1, arg2);
+}
+
+export function PostConversationMessage(arg1,arg2,arg3) {
+  return window['go']['main']['App']['PostConversationMessage'](arg1,arg2,arg3);
 }
 
 export function PresignArtifactURL(arg1, arg2, arg3, arg4) {
@@ -882,6 +906,10 @@ export function SubmitTaskAndWait(arg1) {
   return window['go']['main']['App']['SubmitTaskAndWait'](arg1);
 }
 
+export function SubscribeConversation(arg1,arg2) {
+  return window['go']['main']['App']['SubscribeConversation'](arg1,arg2);
+}
+
 export function SyncProfileBundleNow(arg1) {
   return window['go']['main']['App']['SyncProfileBundleNow'](arg1);
 }
@@ -900,6 +928,10 @@ export function TestRuleEvent(arg1, arg2) {
 
 export function TestRulePattern(arg1, arg2) {
   return window['go']['main']['App']['TestRulePattern'](arg1, arg2);
+}
+
+export function UnsubscribeConversation(arg1) {
+  return window['go']['main']['App']['UnsubscribeConversation'](arg1);
 }
 
 export function UpdateAgent(arg1, arg2) {
