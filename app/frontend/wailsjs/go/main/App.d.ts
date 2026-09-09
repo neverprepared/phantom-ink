@@ -14,8 +14,6 @@ export function AttentionOpenTarget(arg1:string):Promise<main.OpenTarget>;
 
 export function AttentionRespond(arg1:string,arg2:string):Promise<void>;
 
-export function AttentionRetry(arg1:string):Promise<void>;
-
 export function BackupDatabase(arg1:string):Promise<string>;
 
 export function BrainHostAPI():Promise<string>;
@@ -29,8 +27,6 @@ export function BuildProfileImage(arg1:main.ProfileImageBuildRequest):Promise<vo
 export function CancelHubTask(arg1:string):Promise<void>;
 
 export function CancelLiveLoop(arg1:string,arg2:string):Promise<brainbox.LiveLoop>;
-
-export function CancelTask(arg1:string):Promise<void>;
 
 export function ClearProfileServerOverride(arg1:string,arg2:string):Promise<void>;
 
@@ -53,8 +49,6 @@ export function CreateSession(arg1:brainbox.CreateSessionRequest):Promise<brainb
 export function DeleteAgent(arg1:string):Promise<void>;
 
 export function DeleteArtifactObject(arg1:string,arg2:string):Promise<void>;
-
-export function DeleteAutomationRule(arg1:string):Promise<void>;
 
 export function DeleteBrainSkill(arg1:string,arg2:string):Promise<brainbox.BrainSkillWriteResult>;
 
@@ -84,10 +78,6 @@ export function DeleteRule(arg1:string):Promise<void>;
 
 export function DeleteRunner(arg1:string):Promise<void>;
 
-export function DeleteSchedule(arg1:string):Promise<void>;
-
-export function DeleteSequence(arg1:string):Promise<void>;
-
 export function DeleteSession(arg1:string):Promise<brainbox.SessionActionResponse>;
 
 export function DeleteTrustRule(arg1:string,arg2:string):Promise<void>;
@@ -101,8 +91,6 @@ export function DownloadArtifactObject(arg1:string,arg2:string,arg3:string):Prom
 export function DryRunLoopTemplate(arg1:string,arg2:Record<string, any>):Promise<Record<string, any>>;
 
 export function EnableLocalRunner(arg1:string):Promise<void>;
-
-export function EnqueueTask(arg1:main.EnqueueTaskRequest):Promise<string>;
 
 export function ExportBrainVault(arg1:string,arg2:string):Promise<string>;
 
@@ -228,11 +216,7 @@ export function GetSessionsMetricsHistory():Promise<Record<string, Array<brainbo
 
 export function GetSystemInfo():Promise<main.SystemInfo>;
 
-export function GetTask(arg1:string):Promise<main.TaskRow>;
-
 export function GetTaskLineage(arg1:string):Promise<Array<main.HubTask>>;
-
-export function GetTaskStats(arg1:number):Promise<main.TaskStats>;
 
 export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;
 
@@ -273,8 +257,6 @@ export function ListArtifactsBuckets(arg1:string):Promise<Array<brainbox.Artifac
 export function ListArtifactsFolder(arg1:string,arg2:string):Promise<brainbox.ArtifactListing>;
 
 export function ListAttention(arg1:string):Promise<Array<main.AttentionItem>>;
-
-export function ListAutomationRules(arg1:string):Promise<Array<main.AutomationRule>>;
 
 export function ListBackups():Promise<Array<string>>;
 
@@ -322,17 +304,7 @@ export function ListRules(arg1:string):Promise<Array<brainbox.Rule>>;
 
 export function ListRunners():Promise<Array<brainbox.Runner>>;
 
-export function ListSchedules(arg1:string):Promise<Array<main.ScheduleRow>>;
-
-export function ListSequenceRuns(arg1:string,arg2:number):Promise<Array<main.SequenceRunRow>>;
-
-export function ListSequences():Promise<Array<main.Sequence>>;
-
 export function ListServices():Promise<Array<main.ServiceStatus>>;
-
-export function ListTasks(arg1:string,arg2:string,arg3:number):Promise<Array<main.TaskRow>>;
-
-export function ListUpcomingFires(arg1:number):Promise<Array<main.UpcomingFire>>;
 
 export function MinioIntegrationEnabled():Promise<boolean>;
 
@@ -390,8 +362,6 @@ export function RestoreProfile(arg1:string):Promise<void>;
 
 export function RetryRuleExecution(arg1:number):Promise<brainbox.RuleExecution>;
 
-export function RetryTask(arg1:string):Promise<void>;
-
 export function RevokeProfileToken(arg1:string):Promise<void>;
 
 export function RunCollectJobNow(arg1:string):Promise<void>;
@@ -400,10 +370,6 @@ export function RunMetricScript(arg1:string,arg2:string):Promise<string>;
 
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
 
-export function RunSequence(arg1:string,arg2:string,arg3:string):Promise<string>;
-
-export function SaveAutomationRule(arg1:main.AutomationRule):Promise<void>;
-
 export function SaveCollectJob(arg1:main.CollectJob):Promise<main.CollectJob>;
 
 export function SaveCustomBundleSource(arg1:string,arg2:string,arg3:string):Promise<void>;
@@ -411,10 +377,6 @@ export function SaveCustomBundleSource(arg1:string,arg2:string,arg3:string):Prom
 export function SaveDashboardLayout(arg1:string,arg2:string):Promise<void>;
 
 export function SaveRule(arg1:brainbox.Rule):Promise<brainbox.Rule>;
-
-export function SaveSchedule(arg1:main.ScheduleRow):Promise<main.ScheduleRow>;
-
-export function SaveSequence(arg1:main.Sequence):Promise<main.Sequence>;
 
 export function ScanDiskUsage():Promise<main.DiskOverview>;
 

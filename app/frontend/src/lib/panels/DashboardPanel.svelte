@@ -29,8 +29,6 @@
   // --- Data state ---
   let sessions    = $state<any[]>([]);
   let hubTasks    = $state<any[]>([]);
-  let fires       = $state<any[]>([]);
-  let taskStats   = $state<any>(null);
   let dockerStats = $state<any[]>([]);
   let localProcs  = $state<any[]>([]);
   let runners     = $state<any[]>([]);
@@ -188,13 +186,13 @@
   // Sync computed data into shared store so widget components can read reactively
   $effect(() => {
     dashboardDataStore.value = {
-      sessions, hubTasks, fires, taskStats,
+      sessions, hubTasks,
       dockerStats: filteredDockerStats,
       localProcs: filteredLocal,
       systemInfo, actionItems,
       activeSessions: activeSessions.length,
-      runningTasks: runningHubTasks.length + (taskStats?.running ?? 0),
-      failedTasks: failedHubTasks.length + (taskStats?.failed ?? 0),
+      runningTasks: runningHubTasks.length,
+      failedTasks: failedHubTasks.length,
       attentionItems: attentionStore.count,
       offlineRunners,
       peakQueue1h,
@@ -601,19 +599,15 @@
     if (!a) return;
     if (!silent) loading = true; else refreshing = true;
     try {
-      const [s, tasks, f, ts, ds, procs, rs] = await Promise.all([
+      const [s, tasks, ds, procs, rs] = await Promise.all([
         safe(a.GetSessions(profileState.active?.name ?? '') as Promise<any>, [], 'GetSessions'),
         safe(a.ListHubTasks('', profileState.active?.name ?? '') as Promise<any>, [], 'ListHubTasks'),
-        safe(a.ListUpcomingFires(5) as Promise<any>, [], 'ListUpcomingFires'),
-        safe(a.GetTaskStats(24) as Promise<any>, null, 'GetTaskStats'),
         safe(a.GetDockerStats() as Promise<any>, [], 'GetDockerStats'),
         safe(a.FindClaudeProcesses() as Promise<any>, [], 'FindClaudeProcesses'),
         safe(a.ListRunners() as Promise<any>, [], 'ListRunners'),
       ]);
       sessions    = s ?? [];
       hubTasks    = tasks ?? [];
-      fires       = f ?? [];
-      taskStats   = ts;
       dockerStats = ds ?? [];
       localProcs  = procs ?? [];
       runners     = rs ?? [];
