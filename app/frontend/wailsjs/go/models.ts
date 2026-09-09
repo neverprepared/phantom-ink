@@ -2478,40 +2478,6 @@ export namespace main {
 	        this.runner_name = source["runner_name"];
 	    }
 	}
-	export class AutomationRule {
-	    id: string;
-	    profile: string;
-	    name: string;
-	    description: string;
-	    enabled: boolean;
-	    trigger_type: string;
-	    trigger_config: string;
-	    action_type: string;
-	    action_config: string;
-	    created_at: number;
-	    last_triggered_at?: number;
-	    trigger_count: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new AutomationRule(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.profile = source["profile"];
-	        this.name = source["name"];
-	        this.description = source["description"];
-	        this.enabled = source["enabled"];
-	        this.trigger_type = source["trigger_type"];
-	        this.trigger_config = source["trigger_config"];
-	        this.action_type = source["action_type"];
-	        this.action_config = source["action_config"];
-	        this.created_at = source["created_at"];
-	        this.last_triggered_at = source["last_triggered_at"];
-	        this.trigger_count = source["trigger_count"];
-	    }
-	}
 	export class BaseImageBuildRequest {
 	    profile: string;
 	    no_cache: boolean;
@@ -2871,34 +2837,6 @@ export namespace main {
 		    return a;
 		}
 	}
-	export class EnqueueTaskRequest {
-	    loop_id: string;
-	    input: string;
-	    cwd: string;
-	    priority: number;
-	    max_attempts: number;
-	    trigger: string;
-	    parent_task_id: string;
-	    workspace_profile: string;
-	    scheduled_for: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new EnqueueTaskRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.loop_id = source["loop_id"];
-	        this.input = source["input"];
-	        this.cwd = source["cwd"];
-	        this.priority = source["priority"];
-	        this.max_attempts = source["max_attempts"];
-	        this.trigger = source["trigger"];
-	        this.parent_task_id = source["parent_task_id"];
-	        this.workspace_profile = source["workspace_profile"];
-	        this.scheduled_for = source["scheduled_for"];
-	    }
-	}
 	export class GitHubTokenStatus {
 	    valid: boolean;
 	    checked: boolean;
@@ -3251,38 +3189,6 @@ export namespace main {
 	        this.env_key = source["env_key"];
 	    }
 	}
-	export class ScheduleRow {
-	    id: string;
-	    loop_id: string;
-	    cron_expr: string;
-	    input: string;
-	    cwd: string;
-	    enabled: boolean;
-	    workspace_profile: string;
-	    created_at: string;
-	    updated_at: string;
-	    last_fired_at: string;
-	    next_fire_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ScheduleRow(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.loop_id = source["loop_id"];
-	        this.cron_expr = source["cron_expr"];
-	        this.input = source["input"];
-	        this.cwd = source["cwd"];
-	        this.enabled = source["enabled"];
-	        this.workspace_profile = source["workspace_profile"];
-	        this.created_at = source["created_at"];
-	        this.updated_at = source["updated_at"];
-	        this.last_fired_at = source["last_fired_at"];
-	        this.next_fire_at = source["next_fire_at"];
-	    }
-	}
 	export class SecretKeyStatus {
 	    key: string;
 	    has_value: boolean;
@@ -3299,116 +3205,6 @@ export namespace main {
 	        this.source = source["source"];
 	    }
 	}
-	export class SequenceFollowup {
-	    loop_id: string;
-	    input_from: string;
-	    input_literal: string;
-	    cwd: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new SequenceFollowup(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.loop_id = source["loop_id"];
-	        this.input_from = source["input_from"];
-	        this.input_literal = source["input_literal"];
-	        this.cwd = source["cwd"];
-	    }
-	}
-	export class SequenceStep {
-	    type: string;
-	    agent_id: string;
-	    prompt_template: string;
-	    cwd: string;
-	    executor: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new SequenceStep(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.type = source["type"];
-	        this.agent_id = source["agent_id"];
-	        this.prompt_template = source["prompt_template"];
-	        this.cwd = source["cwd"];
-	        this.executor = source["executor"];
-	    }
-	}
-	export class Sequence {
-	    id: string;
-	    name: string;
-	    description: string;
-	    steps: SequenceStep[];
-	    cwd: string;
-	    on_success: SequenceFollowup[];
-	    files: string[];
-	    workspace_profile: string;
-	    created_at: string;
-	    updated_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Sequence(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.description = source["description"];
-	        this.steps = this.convertValues(source["steps"], SequenceStep);
-	        this.cwd = source["cwd"];
-	        this.on_success = this.convertValues(source["on_success"], SequenceFollowup);
-	        this.files = source["files"];
-	        this.workspace_profile = source["workspace_profile"];
-	        this.created_at = source["created_at"];
-	        this.updated_at = source["updated_at"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-	
-	export class SequenceRunRow {
-	    id: string;
-	    loop_id: string;
-	    started_at: string;
-	    finished_at: string;
-	    status: string;
-	    log_json: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new SequenceRunRow(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.loop_id = source["loop_id"];
-	        this.started_at = source["started_at"];
-	        this.finished_at = source["finished_at"];
-	        this.status = source["status"];
-	        this.log_json = source["log_json"];
-	    }
-	}
-	
 	export class ServiceStatus {
 	    name: string;
 	    label: string;
@@ -3459,92 +3255,6 @@ export namespace main {
 	        this.cpu_cores = source["cpu_cores"];
 	        this.mem_total_bytes = source["mem_total_bytes"];
 	        this.mem_total_gib = source["mem_total_gib"];
-	    }
-	}
-	export class TaskRow {
-	    id: string;
-	    loop_id: string;
-	    status: string;
-	    priority: number;
-	    input: string;
-	    cwd: string;
-	    trigger: string;
-	    parent_task_id: string;
-	    workspace_profile: string;
-	    enqueued_at: string;
-	    scheduled_for: string;
-	    started_at: string;
-	    finished_at: string;
-	    attempts: number;
-	    max_attempts: number;
-	    last_error: string;
-	    result_run_id: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new TaskRow(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.loop_id = source["loop_id"];
-	        this.status = source["status"];
-	        this.priority = source["priority"];
-	        this.input = source["input"];
-	        this.cwd = source["cwd"];
-	        this.trigger = source["trigger"];
-	        this.parent_task_id = source["parent_task_id"];
-	        this.workspace_profile = source["workspace_profile"];
-	        this.enqueued_at = source["enqueued_at"];
-	        this.scheduled_for = source["scheduled_for"];
-	        this.started_at = source["started_at"];
-	        this.finished_at = source["finished_at"];
-	        this.attempts = source["attempts"];
-	        this.max_attempts = source["max_attempts"];
-	        this.last_error = source["last_error"];
-	        this.result_run_id = source["result_run_id"];
-	    }
-	}
-	export class TaskStats {
-	    window_hours: number;
-	    pending: number;
-	    running: number;
-	    succeeded: number;
-	    failed: number;
-	    cancelled: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new TaskStats(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.window_hours = source["window_hours"];
-	        this.pending = source["pending"];
-	        this.running = source["running"];
-	        this.succeeded = source["succeeded"];
-	        this.failed = source["failed"];
-	        this.cancelled = source["cancelled"];
-	    }
-	}
-	export class UpcomingFire {
-	    schedule_id: string;
-	    loop_id: string;
-	    loop_name: string;
-	    cron_expr: string;
-	    next_fire_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new UpcomingFire(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.schedule_id = source["schedule_id"];
-	        this.loop_id = source["loop_id"];
-	        this.loop_name = source["loop_name"];
-	        this.cron_expr = source["cron_expr"];
-	        this.next_fire_at = source["next_fire_at"];
 	    }
 	}
 	export class VaultAuth {

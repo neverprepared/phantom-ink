@@ -40,7 +40,7 @@ func atMillis(ms int64) *int { v := int(ms); return &v }
 // brainbox. Best-effort: a missing outbox (DB not open yet) is silently
 // dropped so producers don't have to nil-check.
 //
-// Most callers prefer the typed helpers (emitTaskEnvelope, emitSequenceEnvelope)
+// Callers use the typed helpers (emitCollectedEntryEnvelope, recordAction)
 // below; this is the bare interface for ad-hoc events.
 func (a *App) emitEnvelope(env outbox.Envelope) {
 	if a == nil || a.outbox == nil {
@@ -51,174 +51,10 @@ func (a *App) emitEnvelope(env outbox.Envelope) {
 	}
 }
 
-// taskEnvelopeStatus maps the local queue's task status strings into the
-// agent-bus envelope status enum (contract.EnvelopeStatus — the single generated
-// source, no bare status literals). Local "succeeded" becomes "done" so the bus
-// uses one universal completion term. An unrecognised local status falls back to
-// active (in-progress) rather than passing the raw string through — an off-enum
-// value would now fail schema conformance.
-func taskEnvelopeStatus(taskStatus string) contract.EnvelopeStatus {
-	switch taskStatus {
-	case TaskPending:
-		return contract.EnvelopeStatusUpcoming
-	case TaskRunning:
-		return contract.EnvelopeStatusActive
-	case TaskSucceeded:
-		return contract.EnvelopeStatusDone
-	case TaskFailed:
-		return contract.EnvelopeStatusFailed
-	case TaskCancelled:
-		return contract.EnvelopeStatusDone
-	}
-	return contract.EnvelopeStatusActive
-}
-
-// taskEnvelopeType returns the dotted envelope `type` for a task status.
-func taskEnvelopeType(taskStatus string) string {
-	switch taskStatus {
-	case TaskPending:
-		return "task.queued"
-	case TaskRunning:
-		return "task.running"
-	case TaskSucceeded:
-		return "task.succeeded"
-	case TaskFailed:
-		return "task.failed"
-	case TaskCancelled:
-		return "task.cancelled"
-	}
-	return "task." + taskStatus
-}
-
 // envelopeSource is the producer identifier used in every envelope this app
 // emits. Brainbox treats it as part of the envelope's provenance and the UI
 // uses it for source filtering.
 const envelopeSource = "wails-app@local"
-
-// sequenceEnvelopeStatus maps the loop event's status field into the generated
-// envelope status enum used across the bus. Unknown states fall back to active
-// so the emitted value always conforms to the contract enum.
-func sequenceEnvelopeStatus(loopStatus string) contract.EnvelopeStatus {
-	switch loopStatus {
-	case "running":
-		return contract.EnvelopeStatusActive
-	case "success":
-		return contract.EnvelopeStatusDone
-	case "failed":
-		return contract.EnvelopeStatusFailed
-	}
-	return contract.EnvelopeStatusActive
-}
-
-// sequenceContext is the retry context the AttentionRetry handler needs to
-// re-enqueue a failed loop run. Threaded through emitSequenceEnvelope so the
-// failure envelope carries it in metadata.
-type sequenceContext struct {
-	Input string
-	Cwd   string
-}
-
-// emitSequenceEnvelope converts a SequenceRunEvent into one (or two) bus envelopes:
-//   - run:start / run:done → envelope id=loop:<runID>
-//   - step:start / step:done → envelope id=loop-step:<runID>:<index>,
-//     with parent_id=loop:<runID>
-//
-// Stable IDs ensure brainbox upserts the same row across state transitions
-// and dedup keeps at-least-once delivery safe. The sequenceContext is embedded
-// in run-level envelope metadata so AttentionRetry can rebuild the
-// EnqueueTaskRequest without a separate side table.
-func (a *App) emitSequenceEnvelope(ev SequenceRunEvent, workspace string, cc sequenceContext) {
-	if a == nil || a.outbox == nil {
-		return
-	}
-	now := nowMillis()
-	loopTitle := sequenceNameOrID(a.db, ev.SequenceID)
-	envStatus := sequenceEnvelopeStatus(ev.Status)
-
-	switch ev.Phase {
-	case "run:start":
-		a.emitEnvelope(outbox.Envelope{
-			ID:        "loop:" + ev.RunID,
-			Kind:      "event",
-			Source:    ptr(envelopeSource),
-			Type:      ptr("loop.run.start"),
-			Status:    statusPtr(contract.EnvelopeStatusActive),
-			Title:     loopTitle,
-			Subtitle:  ptr("loop run"),
-			Workspace: optStr(workspace),
-			Tags:      []string{"loop"},
-			StartAt:   atMillis(now),
-			Metadata: map[string]interface{}{
-				"loop_id": ev.SequenceID,
-				"input":   cc.Input,
-				"cwd":     cc.Cwd,
-			},
-		})
-	case "run:done":
-		meta := map[string]interface{}{
-			"loop_id": ev.SequenceID,
-			"input":   cc.Input,
-			"cwd":     cc.Cwd,
-		}
-		if ev.Error != "" {
-			meta["error"] = ev.Error
-		}
-		a.emitEnvelope(outbox.Envelope{
-			ID:        "loop:" + ev.RunID,
-			Kind:      "event",
-			Source:    ptr(envelopeSource),
-			Type:      ptr("loop.run.done"),
-			Status:    statusPtr(envStatus),
-			Title:     loopTitle,
-			Subtitle:  ptr("loop run"),
-			Workspace: optStr(workspace),
-			Tags:      []string{"loop"},
-			EndAt:     atMillis(now),
-			Metadata:  meta,
-		})
-	case "step:start":
-		a.emitEnvelope(outbox.Envelope{
-			ID:        fmt.Sprintf("loop-step:%s:%d", ev.RunID, ev.StepIndex),
-			Kind:      "event",
-			Source:    ptr(envelopeSource),
-			Type:      ptr("loop.step.start"),
-			Status:    statusPtr(contract.EnvelopeStatusActive),
-			Title:     fmt.Sprintf("Step %d · %s", ev.StepIndex+1, ev.AgentID),
-			Workspace: optStr(workspace),
-			ParentID:  ptr("loop:" + ev.RunID),
-			Tags:      []string{"loop", "step"},
-			StartAt:   atMillis(now),
-			Metadata: map[string]interface{}{
-				"loop_id":    ev.SequenceID,
-				"step_index": ev.StepIndex,
-				"agent_id":   ev.AgentID,
-			},
-		})
-	case "step:done":
-		meta := map[string]interface{}{
-			"loop_id":    ev.SequenceID,
-			"step_index": ev.StepIndex,
-			"agent_id":   ev.AgentID,
-			"exit_code":  ev.ExitCode,
-		}
-		if ev.Error != "" {
-			meta["error"] = ev.Error
-		}
-		a.emitEnvelope(outbox.Envelope{
-			ID:        fmt.Sprintf("loop-step:%s:%d", ev.RunID, ev.StepIndex),
-			Kind:      "event",
-			Source:    ptr(envelopeSource),
-			Type:      ptr("loop.step.done"),
-			Status:    statusPtr(envStatus),
-			Title:     fmt.Sprintf("Step %d · %s", ev.StepIndex+1, ev.AgentID),
-			Workspace: optStr(workspace),
-			ParentID:  ptr("loop:" + ev.RunID),
-			Tags:      []string{"loop", "step"},
-			EndAt:     atMillis(now),
-			Metadata:  meta,
-		})
-	}
-}
 
 func nowMillis() int64 {
 	return timeNowUnixMilli()

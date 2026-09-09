@@ -22,10 +22,6 @@ export function AttentionRespond(arg1, arg2) {
   return window['go']['main']['App']['AttentionRespond'](arg1, arg2);
 }
 
-export function AttentionRetry(arg1) {
-  return window['go']['main']['App']['AttentionRetry'](arg1);
-}
-
 export function BackupDatabase(arg1) {
   return window['go']['main']['App']['BackupDatabase'](arg1);
 }
@@ -52,10 +48,6 @@ export function CancelHubTask(arg1) {
 
 export function CancelLiveLoop(arg1, arg2) {
   return window['go']['main']['App']['CancelLiveLoop'](arg1, arg2);
-}
-
-export function CancelTask(arg1) {
-  return window['go']['main']['App']['CancelTask'](arg1);
 }
 
 export function ClearProfileServerOverride(arg1, arg2) {
@@ -100,10 +92,6 @@ export function DeleteAgent(arg1) {
 
 export function DeleteArtifactObject(arg1, arg2) {
   return window['go']['main']['App']['DeleteArtifactObject'](arg1, arg2);
-}
-
-export function DeleteAutomationRule(arg1) {
-  return window['go']['main']['App']['DeleteAutomationRule'](arg1);
 }
 
 export function DeleteBrainSkill(arg1, arg2) {
@@ -162,14 +150,6 @@ export function DeleteRunner(arg1) {
   return window['go']['main']['App']['DeleteRunner'](arg1);
 }
 
-export function DeleteSchedule(arg1) {
-  return window['go']['main']['App']['DeleteSchedule'](arg1);
-}
-
-export function DeleteSequence(arg1) {
-  return window['go']['main']['App']['DeleteSequence'](arg1);
-}
-
 export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
 }
@@ -196,10 +176,6 @@ export function DryRunLoopTemplate(arg1, arg2) {
 
 export function EnableLocalRunner(arg1) {
   return window['go']['main']['App']['EnableLocalRunner'](arg1);
-}
-
-export function EnqueueTask(arg1) {
-  return window['go']['main']['App']['EnqueueTask'](arg1);
 }
 
 export function ExportBrainVault(arg1, arg2) {
@@ -354,10 +330,6 @@ export function GetLoopTemplateSchema() {
   return window['go']['main']['App']['GetLoopTemplateSchema']();
 }
 
-export function GetMatchingRules(arg1, arg2) {
-  return window['go']['main']['App']['GetMatchingRules'](arg1, arg2);
-}
-
 export function GetMeshStatus() {
   return window['go']['main']['App']['GetMeshStatus']();
 }
@@ -454,16 +426,8 @@ export function GetSystemInfo() {
   return window['go']['main']['App']['GetSystemInfo']();
 }
 
-export function GetTask(arg1) {
-  return window['go']['main']['App']['GetTask'](arg1);
-}
-
 export function GetTaskLineage(arg1) {
   return window['go']['main']['App']['GetTaskLineage'](arg1);
-}
-
-export function GetTaskStats(arg1) {
-  return window['go']['main']['App']['GetTaskStats'](arg1);
 }
 
 export function GetTraceDetail(arg1) {
@@ -544,10 +508,6 @@ export function ListArtifactsFolder(arg1, arg2) {
 
 export function ListAttention(arg1) {
   return window['go']['main']['App']['ListAttention'](arg1);
-}
-
-export function ListAutomationRules(arg1) {
-  return window['go']['main']['App']['ListAutomationRules'](arg1);
 }
 
 export function ListBackups() {
@@ -642,28 +602,8 @@ export function ListRunners() {
   return window['go']['main']['App']['ListRunners']();
 }
 
-export function ListSchedules(arg1) {
-  return window['go']['main']['App']['ListSchedules'](arg1);
-}
-
-export function ListSequenceRuns(arg1, arg2) {
-  return window['go']['main']['App']['ListSequenceRuns'](arg1, arg2);
-}
-
-export function ListSequences() {
-  return window['go']['main']['App']['ListSequences']();
-}
-
 export function ListServices() {
   return window['go']['main']['App']['ListServices']();
-}
-
-export function ListTasks(arg1, arg2, arg3) {
-  return window['go']['main']['App']['ListTasks'](arg1, arg2, arg3);
-}
-
-export function ListUpcomingFires(arg1) {
-  return window['go']['main']['App']['ListUpcomingFires'](arg1);
 }
 
 export function MinioIntegrationEnabled() {
@@ -778,10 +718,6 @@ export function RetryRuleExecution(arg1) {
   return window['go']['main']['App']['RetryRuleExecution'](arg1);
 }
 
-export function RetryTask(arg1) {
-  return window['go']['main']['App']['RetryTask'](arg1);
-}
-
 export function RevokeProfileToken(arg1) {
   return window['go']['main']['App']['RevokeProfileToken'](arg1);
 }
@@ -798,14 +734,6 @@ export function RunPreflightChecks() {
   return window['go']['main']['App']['RunPreflightChecks']();
 }
 
-export function RunSequence(arg1, arg2, arg3) {
-  return window['go']['main']['App']['RunSequence'](arg1, arg2, arg3);
-}
-
-export function SaveAutomationRule(arg1) {
-  return window['go']['main']['App']['SaveAutomationRule'](arg1);
-}
-
 export function SaveCollectJob(arg1) {
   return window['go']['main']['App']['SaveCollectJob'](arg1);
 }
@@ -820,14 +748,6 @@ export function SaveDashboardLayout(arg1, arg2) {
 
 export function SaveRule(arg1) {
   return window['go']['main']['App']['SaveRule'](arg1);
-}
-
-export function SaveSchedule(arg1) {
-  return window['go']['main']['App']['SaveSchedule'](arg1);
-}
-
-export function SaveSequence(arg1) {
-  return window['go']['main']['App']['SaveSequence'](arg1);
 }
 
 export function ScanDiskUsage() {
@@ -980,10 +900,6 @@ export function TestRuleEvent(arg1, arg2) {
 
 export function TestRulePattern(arg1, arg2) {
   return window['go']['main']['App']['TestRulePattern'](arg1, arg2);
-}
-
-export function TriggerRule(arg1, arg2, arg3) {
-  return window['go']['main']['App']['TriggerRule'](arg1, arg2, arg3);
 }
 
 export function UpdateAgent(arg1, arg2) {
