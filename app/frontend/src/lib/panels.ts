@@ -53,6 +53,12 @@ export const panels: Panel[] = [
     icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
   },
   {
+    id: 'timeline',
+    label: 'Timeline',
+    shortcut: '⌘6',
+    icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="3" x2="12" y2="21"/><circle cx="12" cy="7" r="2"/><circle cx="12" cy="17" r="2"/><line x1="12" y1="12" x2="20" y2="12"/><line x1="4" y1="12" x2="12" y2="12"/></svg>`,
+  },
+  {
     id: 'jobs',
     label: 'Jobs',
     shortcut: '⌘7',

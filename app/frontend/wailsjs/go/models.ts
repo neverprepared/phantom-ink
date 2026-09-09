@@ -3128,6 +3128,34 @@ export namespace main {
 	        this.ref = source["ref"];
 	    }
 	}
+	export class PlannedItem {
+	    id: string;
+	    source: string;
+	    source_id: string;
+	    title: string;
+	    profile: string;
+	    fire_at_ms: number;
+	    recurrence: string;
+	    draggable: boolean;
+	    kind: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PlannedItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.source = source["source"];
+	        this.source_id = source["source_id"];
+	        this.title = source["title"];
+	        this.profile = source["profile"];
+	        this.fire_at_ms = source["fire_at_ms"];
+	        this.recurrence = source["recurrence"];
+	        this.draggable = source["draggable"];
+	        this.kind = source["kind"];
+	    }
+	}
 	export class PlatformExternal {
 	    name: string;
 	    label: string;
@@ -3525,6 +3553,30 @@ export namespace main {
 	        this.succeeded = source["succeeded"];
 	        this.failed = source["failed"];
 	        this.cancelled = source["cancelled"];
+	    }
+	}
+	export class TimelineEvent {
+	    id: string;
+	    title: string;
+	    type: string;
+	    status: string;
+	    start_at_ms: number;
+	    end_at_ms: number;
+	    source_id: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TimelineEvent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.title = source["title"];
+	        this.type = source["type"];
+	        this.status = source["status"];
+	        this.start_at_ms = source["start_at_ms"];
+	        this.end_at_ms = source["end_at_ms"];
+	        this.source_id = source["source_id"];
 	    }
 	}
 	export class UpcomingFire {
