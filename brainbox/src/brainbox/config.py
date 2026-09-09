@@ -436,6 +436,28 @@ class LlmSettings(BaseSettings):
     cost_per_mtok_out: float = 0.0              # CL_LLM__COST_PER_MTOK_OUT (approx; 0 = disabled)
 
 
+class ConversationSettings(BaseSettings):
+    """Turn-taking policy for the multi-agent Chat engine (design spec §5).
+
+    All three are tunables, not invariants — they exist so the room's feel can
+    be changed without a code change:
+
+    - ``concurrency_cap`` — how many personas may reply in one round. The spec's
+      default is 1–2; 2 lets a room feel like a conversation while still
+      preventing a pile-on.
+    - ``max_consecutive_agent_turns`` — the quiet-detector. After this many
+      agent-only turns the room waits for a human. Set 0 to disable the detector
+      entirely (agents then stop only when no persona passes the gate — do this
+      knowingly).
+    - ``default_cooldown_s`` — the per-persona cooldown used when a participant
+      record does not set its own ``cooldown_s``.
+    """
+
+    concurrency_cap: int = 2            # CL_CONVERSATIONS__CONCURRENCY_CAP
+    max_consecutive_agent_turns: int = 4  # CL_CONVERSATIONS__MAX_CONSECUTIVE_AGENT_TURNS
+    default_cooldown_s: float = 20.0    # CL_CONVERSATIONS__DEFAULT_COOLDOWN_S
+
+
 class Settings(BaseSettings):
     role: str = "assistant"
     image: str = ""
@@ -515,6 +537,7 @@ class Settings(BaseSettings):
     docker: DockerSettings = Field(default_factory=DockerSettings)
     rules: RulesSettings = Field(default_factory=RulesSettings)
     llm: LlmSettings = Field(default_factory=LlmSettings)
+    conversations: ConversationSettings = Field(default_factory=ConversationSettings)
     opensearch: OpenSearchSettings = Field(default_factory=OpenSearchSettings)
     sync: SyncSettings = Field(default_factory=SyncSettings)
     path_map: dict[str, str] = Field(

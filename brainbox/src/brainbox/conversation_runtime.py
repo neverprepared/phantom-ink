@@ -23,11 +23,12 @@ The wire contract, in the order a client sees it for one reply::
 once and append deltas into it — no placeholder reconciliation. A human message
 takes the same path with no deltas between created and done.
 
-PR1 scope: one human talking to ONE persona. There is no turn orchestrator, no
-relevance gate and no multi-persona fan-out here — that is PR2 (see
-``docs/superpowers/specs/2026-09-09-multi-agent-chat-design.md`` §5). The seam
-this module leaves for it is ``_stream_completion``: swap the whole reply driver
-without touching the API or the store.
+Who speaks, and when, is NOT decided here — that is
+``conversation_orchestrator`` (relevance gate, cooldown, concurrency cap,
+quiet-detector, ``@address``; design spec §5). This module is the mechanism the
+orchestrator drives: hand it a persona and it produces one streamed, persisted
+reply. ``_stream_completion`` stays the swap point for a natively streaming
+completion seam.
 """
 
 from __future__ import annotations
@@ -55,6 +56,10 @@ EV_MESSAGE_DELTA = "message.delta"
 EV_MESSAGE_DONE = "message.done"
 EV_THINKING = "thinking"
 EV_ERROR = "error"
+# The room has nothing more to add and is waiting for a human (design spec §5
+# quiet-detector). Emitted by the orchestrator; defined here because this module
+# owns the wire contract.
+EV_QUIET = "quiet"
 
 # How many frames a slow subscriber may fall behind before frames are dropped
 # for it. Bounded so one stalled client cannot grow memory without limit.
@@ -128,12 +133,6 @@ def publish_message(msg: Message, *, created: bool = True) -> None:
 
 # Context window control: how many prior messages the persona prompt carries.
 HISTORY_LIMIT = 30
-
-
-def first_persona(conv: Conversation) -> Participant | None:
-    """The single persona PR1 drives. Multi-persona selection is PR2's
-    orchestrator; until then the first persona in the roster answers."""
-    return next((p for p in conv.participants if p.kind == "persona"), None)
 
 
 def build_prompt(conv: Conversation, persona: Participant, history: list[Message]) -> list[dict]:
@@ -269,26 +268,3 @@ async def stream_persona_reply(
     )
     publish(conversation_id, EV_MESSAGE_DONE, {"message": msg.model_dump()})
     return msg
-
-
-async def maybe_reply(conv: Conversation, trigger: Message) -> Message | None:
-    """Post-human-message hook: let the conversation's persona answer.
-
-    PR1's whole turn policy — one persona, always replies to a human message
-    that isn't addressed to someone else. PR2 replaces this function with the
-    self-gated orchestrator (relevance gate, cooldown, concurrency cap, quiet
-    detector).
-    """
-    persona = first_persona(conv)
-    if persona is None:
-        return None
-    if trigger.addressed_to and trigger.addressed_to != persona.name:
-        return None
-    if trigger.author == persona.name:
-        return None
-    return await stream_persona_reply(
-        conv.id,
-        profile=conv.profile,
-        persona=persona,
-        in_reply_to=trigger.id,
-    )

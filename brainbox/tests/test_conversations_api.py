@@ -1,4 +1,4 @@
-"""Tests for the conversation REST + SSE surface (multi-agent Chat, PR1).
+"""Tests for the conversation REST + SSE surface (multi-agent Chat).
 
 Covers:
   - CRUD routes (create / list / get / archive / messages)
@@ -28,18 +28,36 @@ PROFILE = "personal"
 
 
 class FakeBackend:
-    """Minimal llm backend that answers with a fixed string."""
+    """Minimal llm backend that answers with a fixed string.
+
+    It serves BOTH calls the conversation engine makes: the orchestrator's cheap
+    relevance gate (recognised by its system prompt) gets a JSON verdict, and the
+    persona reply gets the fixed answer. ``calls`` records only the reply
+    prompts, so assertions about what a persona was shown are unaffected by the
+    gate traffic in front of it.
+    """
 
     name = "ollama"
 
-    def __init__(self, answer="Hello there friend"):
+    def __init__(self, answer="Hello there friend", gate=True, confidence=0.9):
         self.answer = answer
+        self.gate = gate
+        self.confidence = confidence
         self.calls: list[list[dict]] = []
+        self.gate_calls: list[list[dict]] = []
 
     def estimates_cost(self):
         return False
 
+    @staticmethod
+    def _is_gate(messages):
+        return "whether one participant" in (messages[0].get("content", "") if messages else "")
+
     async def complete(self, messages, *, model, ctx, profile):
+        if self._is_gate(messages):
+            self.gate_calls.append(messages)
+            verdict = json.dumps({"respond": self.gate, "confidence": self.confidence})
+            return Completion(text=verdict, backend=self.name, model=model or "fake")
         self.calls.append(messages)
         return Completion(text=self.answer, backend=self.name, model=model or "fake")
 
@@ -325,6 +343,10 @@ class TestSseContract:
         assert names[:2] == ["message.created", "message.done"]
         assert names[2] == "thinking"
         assert names[3] == "message.created"
+        # The reply chains into a second round, where sage is on cooldown and
+        # nobody else can speak — so the room signs off with `quiet`.
+        assert names[-1] == "quiet"
+        frames, names = frames[:-1], names[:-1]
         assert names[-1] == "message.done"
         assert set(names[4:-1]) == {"message.delta"}
 
@@ -396,3 +418,82 @@ class TestSseContract:
         assert runtime.subscriber_count(conv["id"]) == 0
         # Publishing to a room with no subscribers is a no-op, not an error.
         runtime.publish(conv["id"], runtime.EV_THINKING, {"author": "sage"})
+
+
+class TestParticipantRoutes:
+    """The persona-management write path (PR2)."""
+
+    async def test_add_and_remove_a_persona(self, c):
+        conv = await _create(c)
+        resp = await c.post(
+            f"/api/conversations/{conv['id']}/participants",
+            params={"profile": PROFILE},
+            json={
+                "name": "scribe",
+                "kind": "persona",
+                "role_prompt": "Take notes.",
+                "cooldown_s": 5,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert [p["name"] for p in resp.json()["participants"]] == ["user", "sage", "scribe"]
+
+        resp = await c.delete(
+            f"/api/conversations/{conv['id']}/participants/scribe",
+            params={"profile": PROFILE},
+        )
+        assert resp.status_code == 200
+        assert [p["name"] for p in resp.json()["participants"]] == ["user", "sage"]
+
+    async def test_adding_an_existing_name_edits_that_persona(self, c):
+        conv = await _create(c)
+        resp = await c.post(
+            f"/api/conversations/{conv['id']}/participants",
+            params={"profile": PROFILE},
+            json={"name": "sage", "kind": "persona", "role_prompt": "Be blunt.", "cooldown_s": 0},
+        )
+        roster = resp.json()["participants"]
+        assert [p["name"] for p in roster] == ["user", "sage"]
+        assert roster[-1]["role_prompt"] == "Be blunt."
+        # An explicit 0 must survive as 0 — it means "never cool down", which is
+        # a different instruction from "unset, use the default".
+        assert roster[-1]["cooldown_s"] == 0
+
+    async def test_removing_an_unknown_participant_is_404(self, c):
+        conv = await _create(c)
+        resp = await c.delete(
+            f"/api/conversations/{conv['id']}/participants/ghost",
+            params={"profile": PROFILE},
+        )
+        assert resp.status_code == 404
+
+    async def test_participant_writes_are_profile_scoped(self, c):
+        conv = await _create(c, profile="work")
+        resp = await c.post(
+            f"/api/conversations/{conv['id']}/participants",
+            params={"profile": PROFILE},
+            json={"name": "intruder", "kind": "persona"},
+        )
+        assert resp.status_code == 404
+        resp = await c.delete(
+            f"/api/conversations/{conv['id']}/participants/sage",
+            params={"profile": PROFILE},
+        )
+        assert resp.status_code == 404
+
+    async def test_an_added_persona_can_answer_the_next_message(self, c, fake_llm):
+        """The roster is live: a persona added mid-room speaks from the next turn."""
+        conv = await _create(c, persona=False)
+        await c.post(
+            f"/api/conversations/{conv['id']}/participants",
+            params={"profile": PROFILE},
+            json={"name": "scribe", "kind": "persona", "cooldown_s": 0},
+        )
+        await c.post(
+            f"/api/conversations/{conv['id']}/messages",
+            params={"profile": PROFILE},
+            json={"author": "user", "content": "hello"},
+        )
+        await _drain_replies()
+        assert [m.author for m in cs.list_messages(conv["id"], profile=PROFILE)][1] == "scribe"
+

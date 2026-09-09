@@ -46,6 +46,7 @@ from .log import get_logger, setup_logging
 from .models import RatchetRequest, TaskCreate, Token
 from .models_api import (
     CompleteChannelRequest,
+    ConversationParticipantRequest,
     CreateAgentRequest,
     CreateChannelRequest,
     CreateConversationRequest,
@@ -103,6 +104,7 @@ from .channels import (
     remove_participant as channel_remove_participant,
 )
 from .models import ChannelParticipant
+from . import conversation_orchestrator
 from . import conversation_runtime
 from . import conversation_store as conversations
 from .models_api import OllamaChatRequest, OllamaPullRequest
@@ -4219,12 +4221,13 @@ async def post_conversation_message_route(
     profile: str = Query(...),
     _key=Depends(require_api_key),
 ):
-    """Post a human message, then let the conversation's persona answer.
+    """Post a message, then hand the room to the turn orchestrator.
 
-    The reply runs as a background task: the POST returns as soon as the human
-    message is durable, and the persona's tokens arrive on the per-conversation
-    SSE stream. Blocking the POST on the completion is what made the old engine
-    feel dead.
+    The orchestrator runs as a background task: the POST returns as soon as the
+    message is durable, and every persona's tokens arrive on the
+    per-conversation SSE stream. Blocking the POST on the completions is what
+    made the old engine feel dead — and with multi-persona rounds it would now
+    block for as long as the whole chain talks.
     """
     scoped = _require_profile(profile)
     conv = await _load_conversation(conversation_id, scoped)
@@ -4245,11 +4248,69 @@ async def post_conversation_message_route(
         json.dumps({"action": "conversation.message", "conversation_id": conversation_id})
     )
 
-    task = asyncio.create_task(conversation_runtime.maybe_reply(conv, msg))
+    task = asyncio.create_task(conversation_orchestrator.on_message(conv, msg))
     _persona_reply_tasks.add(task)
     task.add_done_callback(_persona_reply_tasks.discard)
 
     return msg.model_dump()
+
+
+@app.post("/api/conversations/{conversation_id}/participants")
+async def add_conversation_participant_route(
+    conversation_id: str,
+    body: ConversationParticipantRequest,
+    profile: str = Query(...),
+    _key=Depends(require_api_key),
+):
+    """Add or update one participant (the persona-management UI's write path).
+
+    Posting an existing name replaces that participant, so editing a persona's
+    model, role prompt or cooldown is the same call as adding it.
+    """
+    scoped = _require_profile(profile)
+    try:
+        conv = await conversations.async_add_participant(
+            conversation_id, profile=scoped, participant=body.model_dump()
+        )
+    except conversations.ProfileScopeError:
+        raise HTTPException(
+            status_code=404, detail=f"Conversation '{conversation_id}' not found"
+        )
+    _broadcast_sse(
+        json.dumps(
+            {"action": "conversation.participants", "conversation_id": conversation_id}
+        )
+    )
+    return conv.model_dump()
+
+
+@app.delete("/api/conversations/{conversation_id}/participants/{name}")
+async def remove_conversation_participant_route(
+    conversation_id: str,
+    name: str,
+    profile: str = Query(...),
+    _key=Depends(require_api_key),
+):
+    """Remove a participant. Their messages stay — history is append-only."""
+    scoped = _require_profile(profile)
+    try:
+        conv = await conversations.async_remove_participant(
+            conversation_id, profile=scoped, name=name
+        )
+    except conversations.ProfileScopeError:
+        raise HTTPException(
+            status_code=404, detail=f"Conversation '{conversation_id}' not found"
+        )
+    except KeyError:
+        raise HTTPException(
+            status_code=404, detail=f"Participant '{name}' not found"
+        )
+    _broadcast_sse(
+        json.dumps(
+            {"action": "conversation.participants", "conversation_id": conversation_id}
+        )
+    )
+    return conv.model_dump()
 
 
 @app.get("/api/conversations/{conversation_id}/stream")

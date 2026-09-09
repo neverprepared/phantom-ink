@@ -191,3 +191,71 @@ class TestProfileScoping:
             conversation_id=conv.id, profile="personal", author="user", content="secret"
         )
         assert cs.list_messages(conv.id, profile="work") == []
+
+
+class TestParticipantManagement:
+    """Roster edits on a live room (PR2's persona-management path)."""
+
+    def test_add_appends_a_persona(self):
+        conv = _conv()
+        updated = cs.add_participant(
+            conv.id,
+            profile="personal",
+            participant={
+                "name": "scribe",
+                "kind": "persona",
+                "role_prompt": "Take notes.",
+                "cooldown_s": 5,
+            },
+        )
+        assert [p.name for p in updated.participants] == ["user", "sage", "scribe"]
+        assert updated.participants[-1].role_prompt == "Take notes."
+        assert updated.participants[-1].cooldown_s == 5
+
+    def test_adding_an_existing_name_updates_in_place(self):
+        conv = _conv()
+        updated = cs.add_participant(
+            conv.id,
+            profile="personal",
+            participant={"name": "SAGE", "kind": "persona", "role_prompt": "Be blunt."},
+        )
+        # One entry, not two: the name is the addressing key for @mentions and
+        # for the orchestrator's cooldown bookkeeping.
+        assert len([p for p in updated.participants if p.name.casefold() == "sage"]) == 1
+        assert updated.participants[-1].role_prompt == "Be blunt."
+
+    def test_add_bumps_updated_at_and_persists(self):
+        conv = _conv()
+        cs.add_participant(
+            conv.id, profile="personal", participant={"name": "scribe", "kind": "persona"}
+        )
+        reread = cs.get_conversation(conv.id, profile="personal")
+        assert [p.name for p in reread.participants] == ["user", "sage", "scribe"]
+        assert reread.updated_at >= conv.updated_at
+
+    def test_remove_drops_the_participant_but_keeps_history(self):
+        conv = _conv()
+        cs.add_message(
+            conversation_id=conv.id, profile="personal", author="sage", content="my turn"
+        )
+        updated = cs.remove_participant(conv.id, profile="personal", name="sage")
+        assert [p.name for p in updated.participants] == ["user"]
+        assert [m.author for m in cs.list_messages(conv.id, profile="personal")] == ["sage"]
+
+    def test_remove_of_an_unknown_name_raises(self):
+        conv = _conv()
+        with pytest.raises(KeyError):
+            cs.remove_participant(conv.id, profile="personal", name="ghost")
+
+    def test_participant_writes_are_profile_scoped(self):
+        conv = _conv(profile="personal")
+        with pytest.raises(cs.ProfileScopeError):
+            cs.add_participant(
+                conv.id, profile="work", participant={"name": "intruder", "kind": "persona"}
+            )
+        with pytest.raises(cs.ProfileScopeError):
+            cs.remove_participant(conv.id, profile="work", name="sage")
+        assert [p.name for p in cs.get_conversation(conv.id, profile="personal").participants] == [
+            "user",
+            "sage",
+        ]

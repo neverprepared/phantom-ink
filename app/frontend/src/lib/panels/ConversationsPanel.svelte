@@ -2,14 +2,16 @@
   /**
    * Conversations panel — the multi-agent Chat surface.
    *
-   * Rewired in PR1 onto the new conversation engine: records live in the
+   * Rewired onto the conversation engine: records live in the
    * local-first store (profile-scoped, ULID-keyed) and updates arrive on a
    * per-conversation SSE stream bridged through the Go layer as the
    * `conversation:event` Wails event. The 5-second poll this panel used to run
    * is gone — a persona's reply renders token by token as it is generated.
    *
-   * The panel shell (list / room / composer) is unchanged; only the data plane
-   * underneath it was replaced.
+   * PR2 adds the multi-persona surface on top: a persona-management modal
+   * (add / edit / remove personas on a live room) and an @address affordance in
+   * the composer, plus the `quiet` frame the turn orchestrator emits when the
+   * room has stopped talking and is waiting for a human.
    */
   import { getApi } from '../utils/api';
   import { onMount, untrack } from 'svelte';
@@ -18,6 +20,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import Spinner from '../components/Spinner.svelte';
   import NewConversationModal from '../components/NewConversationModal.svelte';
+  import PersonaManager from '../components/PersonaManager.svelte';
 
   interface Participant {
     name: string;
@@ -65,6 +68,13 @@
   let selectedIds = $state<Set<string>>(new Set());
   let isBatchArchiving = $state(false);
   let showCreateModal = $state(false);
+  let showPersonaManager = $state(false);
+  /**
+   * Why the room stopped talking, from the orchestrator's `quiet` frame. Held
+   * per room and cleared on the next message so it always describes the tail of
+   * the conversation, never a stale earlier lull.
+   */
+  let quietReason = $state<string | null>(null);
 
   const activeProfile = $derived(profileState.active?.name ?? '');
 
@@ -93,6 +103,7 @@
       case 'message.created': {
         const msg = data.message as ConversationMessage | undefined;
         if (!msg) break;
+        quietReason = null;
         if (messages.some(m => m.id === msg.id)) break;
         messages = [...messages, { ...msg, streaming: msg.content === '' }];
         break;
@@ -112,6 +123,13 @@
         messages = known
           ? messages.map(m => (m.id === msg.id ? { ...msg, streaming: false } : m))
           : [...messages, { ...msg, streaming: false }];
+        break;
+      }
+      case 'quiet': {
+        // The turn orchestrator has nothing more to add — the room is waiting
+        // for a human. Shown so a silent room reads as "your move", not "broken".
+        thinkingAuthor = null;
+        quietReason = (data as { reason?: string }).reason ?? 'quiet';
         break;
       }
       case 'error': {
@@ -189,6 +207,7 @@
     selected = conv;
     messages = [];
     thinkingAuthor = null;
+    quietReason = null;
     await loadMessages(conv.id);
     await subscribe(conv.id);
   }
@@ -205,6 +224,7 @@
     selected = null;
     messages = [];
     thinkingAuthor = null;
+    quietReason = null;
     selectedIds = new Set();
     await loadConversations();
   }
@@ -216,6 +236,21 @@
     await selectConversation(conv);
   }
 
+  // --- @address ---
+  // A leading @mention is the wire-level `addressed_to`: the orchestrator lets
+  // that persona bypass its relevance gate and keeps everyone else silent for
+  // the message. The chips below the composer are just a way to type it.
+  const addressedName = $derived(draft.match(/^@(\S+)/)?.[1] ?? null);
+
+  const addressablePersonas = $derived(
+    (selected?.participants ?? []).filter(p => p.kind === 'persona'),
+  );
+
+  function toggleAddress(name: string) {
+    const rest = draft.replace(/^@\S+\s*/, '');
+    draft = addressedName?.toLowerCase() === name.toLowerCase() ? rest : `@${name} ${rest}`;
+  }
+
   // --- Send ---
   async function handleSend() {
     if (!draft.trim() || !selected || isSending) return;
@@ -223,14 +258,14 @@
     const a = await getApi();
     if (!a) { isSending = false; return; }
     try {
-      // A leading @mention addresses one participant.
-      const addressed = draft.match(/^@(\S+)/)?.[1] ?? undefined;
+      const addressed = addressedName ?? undefined;
       await a.PostConversationMessage(selected.id, activeProfile, {
         author: myName,
         content: draft.trim(),
         addressed_to: addressed,
       } as any);
       draft = '';
+      quietReason = null;
       // The posted message arrives on the stream — no refetch needed.
     } catch (err: any) {
       notifications.error(`Failed to send: ${err?.message ?? err}`);
@@ -319,6 +354,11 @@
     if (failed > 0) notifications.error(`${failed} conversation(s) failed to archive`);
     else notifications.success(`${ids.length} conversation(s) archived`);
     await loadConversations();
+  }
+
+  function handleRosterUpdated(conv: Conversation) {
+    selected = conv;
+    conversations = conversations.map(c => (c.id === conv.id ? conv : c));
   }
 
   function participantIcon(kind: string) {
@@ -438,6 +478,11 @@
               {p.name}
             </span>
           {/each}
+          {#if selected.status === 'active'}
+            <button class="btn-personas" onclick={() => showPersonaManager = true}>
+              manage personas
+            </button>
+          {/if}
         </div>
       </div>
 
@@ -460,6 +505,12 @@
         {/if}
         {#if thinkingAuthor}
           <div class="thinking-row">{thinkingAuthor} is thinking…</div>
+        {:else if quietReason}
+          <div class="quiet-row">
+            {quietReason === 'max_consecutive_agent_turns'
+              ? 'The agents have been talking to each other — your turn.'
+              : 'No one has more to add — waiting for you.'}
+          </div>
         {/if}
       </div>
 
@@ -469,6 +520,24 @@
             <label class="my-name-label" for="my-name">As:</label>
             <input id="my-name" class="my-name-input" bind:value={myName} placeholder="your name" />
           </div>
+          {#if addressablePersonas.length > 0}
+            <div class="address-row">
+              <span class="address-label">Address:</span>
+              {#each addressablePersonas as p (p.name)}
+                <button
+                  class="address-chip"
+                  class:active={addressedName?.toLowerCase() === p.name.toLowerCase()}
+                  onclick={() => toggleAddress(p.name)}
+                  title="Address @{p.name} — they answer, everyone else stays quiet"
+                >
+                  @{p.name}
+                </button>
+              {/each}
+              {#if addressedName && !addressablePersonas.some(p => p.name.toLowerCase() === addressedName?.toLowerCase())}
+                <span class="address-unknown">@{addressedName} is not in this room</span>
+              {/if}
+            </div>
+          {/if}
           <div class="composer-row">
             <textarea
               class="draft-input"
@@ -498,6 +567,16 @@
   </div>
 </div>
 
+{#if showPersonaManager && selected}
+  <PersonaManager
+    conversationId={selected.id}
+    profile={activeProfile}
+    participants={selected.participants}
+    onClose={() => showPersonaManager = false}
+    onUpdated={handleRosterUpdated}
+  />
+{/if}
+
 {#if showCreateModal}
   <NewConversationModal
     myName={myName}
@@ -523,6 +602,66 @@
   @keyframes stream-blink {
     to { visibility: hidden; }
   }
+
+  .quiet-row {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    font-style: italic;
+    opacity: 0.45;
+  }
+
+  .address-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding: 0 0 0.3rem;
+  }
+
+  .address-label {
+    font-size: 0.68rem;
+    opacity: 0.5;
+    margin-right: 0.15rem;
+  }
+
+  .address-chip {
+    font: inherit;
+    font-size: 0.68rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 10px;
+    border: 1px solid var(--color-border-primary, #333);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    opacity: 0.7;
+  }
+
+  .address-chip:hover { opacity: 1; }
+
+  .address-chip.active {
+    opacity: 1;
+    border-color: var(--accent, #3b82f6);
+    color: var(--accent, #3b82f6);
+  }
+
+  .address-unknown {
+    font-size: 0.68rem;
+    opacity: 0.5;
+  }
+
+  .btn-personas {
+    font: inherit;
+    font-size: 0.68rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 10px;
+    border: 1px dashed var(--color-border-primary, #333);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    opacity: 0.7;
+  }
+
+  .btn-personas:hover { opacity: 1; }
 
   .thinking-row {
     padding: 0.25rem 0.5rem;
