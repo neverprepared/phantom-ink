@@ -94,8 +94,14 @@
     return { added, updated };
   }
 
+  // Router-managed brain ENDPOINT keys must not be curated here: their host
+  // value (CL_BRAIN_API=127.0.0.1) is dead inside a container; the router
+  // injects the correct session-facing endpoint fresh. Per-vault *_TOKEN vars
+  // are NOT excluded — they're the unified tokens, correct in the host .env.
+  const BRAIN_ENDPOINT_VARS = new Set(['CL_BRAIN_API', 'CL_BRAIN_VAULT']);
+
   function applyImport(text: string) {
-    const pairs = parseDotenv(text);
+    const pairs = parseDotenv(text).filter(([k]) => !BRAIN_ENDPOINT_VARS.has(k));
     if (pairs.length === 0) {
       notifications.warning('No KEY=VALUE lines found to import');
       return;

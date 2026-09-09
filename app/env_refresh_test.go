@@ -52,6 +52,61 @@ func TestRefreshCuratedValues(t *testing.T) {
 	}
 }
 
+func TestRefreshCuratedValues_SkipsBrainEndpoint(t *testing.T) {
+	// The brain ENDPOINT keys must never be refreshed from the host .env (its
+	// 127.0.0.1 is dead inside a container); the per-vault token DOES refresh.
+	store := map[string]string{
+		"CL_BRAIN_API":       "http://host.docker.internal:9998",
+		"CL_BRAIN_VAULT":     "memory",
+		"CL_BRAIN_API_TOKEN": "old-tok",
+	}
+	host := map[string]string{
+		"CL_BRAIN_API":       "http://127.0.0.1:9998",
+		"CL_BRAIN_VAULT":     "other",
+		"CL_BRAIN_API_TOKEN": "new-tok",
+	}
+	next, changed := refreshCuratedValues(store, host)
+
+	if next["CL_BRAIN_API"] != "http://host.docker.internal:9998" {
+		t.Errorf("CL_BRAIN_API refreshed from host (got %q); must be left alone", next["CL_BRAIN_API"])
+	}
+	if next["CL_BRAIN_VAULT"] != "memory" {
+		t.Errorf("CL_BRAIN_VAULT refreshed from host (got %q); must be left alone", next["CL_BRAIN_VAULT"])
+	}
+	if next["CL_BRAIN_API_TOKEN"] != "new-tok" {
+		t.Errorf("CL_BRAIN_API_TOKEN = %q, want new-tok (tokens ride along)", next["CL_BRAIN_API_TOKEN"])
+	}
+	if !reflect.DeepEqual(changed, []string{"CL_BRAIN_API_TOKEN"}) {
+		t.Fatalf("changed = %v, want [CL_BRAIN_API_TOKEN]", changed)
+	}
+}
+
+func TestSetGatewayEnv_StripsBrainEndpoint(t *testing.T) {
+	a, putEnv := envStubApp(t, map[string]string{})
+	err := a.SetGatewayEnv("personal", map[string]string{
+		"CL_BRAIN_API":       "http://127.0.0.1:9998",
+		"CL_BRAIN_VAULT":     "memory",
+		"CL_BRAIN_API_TOKEN": "tok",
+		"GITHUB_TOKEN":       "gh",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := *putEnv
+	if _, ok := got["CL_BRAIN_API"]; ok {
+		t.Error("CL_BRAIN_API must be stripped before persisting")
+	}
+	if _, ok := got["CL_BRAIN_VAULT"]; ok {
+		t.Error("CL_BRAIN_VAULT must be stripped before persisting")
+	}
+	if got["CL_BRAIN_API_TOKEN"] != "tok" {
+		t.Error("per-vault token must survive (it's the unified token)")
+	}
+	if got["GITHUB_TOKEN"] != "gh" {
+		t.Error("unrelated secrets must survive")
+	}
+}
+
 // stub broker: GET returns the given store; PUT captures the new env.
 func envStubApp(t *testing.T, store map[string]string) (*App, *map[string]string) {
 	t.Helper()

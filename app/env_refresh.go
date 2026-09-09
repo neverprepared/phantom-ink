@@ -21,6 +21,19 @@ const envRefreshInterval = 30 * time.Second
 
 var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+// brainEndpointVars are router-managed brain ENDPOINT keys that must NEVER be
+// curated/refreshed into a profile's gateway-secrets store from its host .env.
+// Their host value is the host-facing endpoint (CL_BRAIN_API=127.0.0.1:9998 —
+// correct only for host-side pbrainctl); injected into a container it resolves
+// to the container's own loopback and the brain daemon is unreachable. The
+// router injects the correct session-facing endpoint (host.docker.internal)
+// fresh at session create. The per-vault *_TOKEN vars are deliberately NOT here:
+// they are the unified tokens and correct in the host .env, so they may ride.
+var brainEndpointVars = map[string]bool{
+	"CL_BRAIN_API":   true,
+	"CL_BRAIN_VAULT": true,
+}
+
 // parseDotenvText parses .env-style text into a KEY=VALUE map. Semantics match
 // the gateway editor's frontend parseDotenv so a value refreshed here is
 // byte-identical to one loaded + saved through the UI: strip a leading
@@ -65,6 +78,12 @@ func refreshCuratedValues(store, host map[string]string) (map[string]string, []s
 	next := make(map[string]string, len(store))
 	var changed []string
 	for k, v := range store {
+		// Never refresh a router-managed endpoint key from the host .env — its
+		// host value (127.0.0.1) is wrong inside a container. Keep as-is.
+		if brainEndpointVars[k] {
+			next[k] = v
+			continue
+		}
 		if hv, ok := host[k]; ok && hv != v {
 			next[k] = hv
 			changed = append(changed, k)
