@@ -354,10 +354,6 @@ export function GetLoopTemplateSchema() {
   return window['go']['main']['App']['GetLoopTemplateSchema']();
 }
 
-export function GetMatchingRules(arg1, arg2) {
-  return window['go']['main']['App']['GetMatchingRules'](arg1, arg2);
-}
-
 export function GetMeshStatus() {
   return window['go']['main']['App']['GetMeshStatus']();
 }
@@ -980,10 +976,6 @@ export function TestRuleEvent(arg1, arg2) {
 
 export function TestRulePattern(arg1, arg2) {
   return window['go']['main']['App']['TestRulePattern'](arg1, arg2);
-}
-
-export function TriggerRule(arg1, arg2, arg3) {
-  return window['go']['main']['App']['TriggerRule'](arg1, arg2, arg3);
 }
 
 export function UpdateAgent(arg1, arg2) {

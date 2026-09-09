@@ -39,14 +39,6 @@ func (db *DB) ListAutomationRules(profile string) ([]AutomationRule, error) {
 	return scanAutomationRules(rows)
 }
 
-func (db *DB) GetAutomationRule(id string) (AutomationRule, bool) {
-	r, err := scanAutomationRule(db.conn.QueryRow(`SELECT `+automationRuleCols+` FROM automation_rules WHERE id = ?`, id))
-	if err != nil {
-		return AutomationRule{}, false
-	}
-	return r, true
-}
-
 func (db *DB) UpsertAutomationRule(r AutomationRule) error {
 	if r.TriggerConfig == "" {
 		r.TriggerConfig = "{}"

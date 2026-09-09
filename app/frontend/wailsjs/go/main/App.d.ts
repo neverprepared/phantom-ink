@@ -180,8 +180,6 @@ export function GetLoopTemplate(arg1:string):Promise<brainbox.LoopTemplate>;
 
 export function GetLoopTemplateSchema():Promise<Record<string, any>>;
 
-export function GetMatchingRules(arg1:string,arg2:string):Promise<Array<main.AutomationRule>>;
-
 export function GetMeshStatus():Promise<main.MeshStatus>;
 
 export function GetMessageLog():Promise<Array<brainbox.Message>>;
@@ -493,8 +491,6 @@ export function TestGatewayTools(arg1:string):Promise<brainbox.GatewayToolsResul
 export function TestRuleEvent(arg1:Record<string, any>,arg2:Record<string, any>):Promise<brainbox.RuleTestResult>;
 
 export function TestRulePattern(arg1:Record<string, any>,arg2:number):Promise<brainbox.RuleTestResult>;
-
-export function TriggerRule(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promise<brainbox.AgentDefinition>;
 
