@@ -347,3 +347,106 @@ func TestConversationStreamsAreIndependentPerRoom(t *testing.T) {
 		t.Error("closing one room must not close another")
 	}
 }
+
+// --------------------------------------------------------------------------
+// Participant management (PR2 — the persona-management UI's write path)
+// --------------------------------------------------------------------------
+
+func TestAddConversationParticipantPostsSpec(t *testing.T) {
+	var gotPath, gotProfile string
+	var gotBody AddConversationParticipantRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		gotProfile = r.URL.Query().Get("profile")
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(Conversation{
+			ID:           "01A",
+			Participants: []ConversationParticipant{{Name: "sage", Kind: "persona"}},
+		})
+	}))
+	defer srv.Close()
+
+	cooldown := 12.5
+	conv, err := NewClient(srv.URL, "").AddConversationParticipant("01A", "personal",
+		AddConversationParticipantRequest{
+			Name:        "sage",
+			Kind:        "persona",
+			ModelTarget: map[string]any{"provider": "ollama", "model": "qwen3:8b"},
+			RolePrompt:  "Be terse.",
+			CooldownS:   &cooldown,
+		})
+	if err != nil {
+		t.Fatalf("AddConversationParticipant: %v", err)
+	}
+	if gotPath != "/api/conversations/01A/participants" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotProfile != "personal" {
+		t.Errorf("profile = %q", gotProfile)
+	}
+	if gotBody.Name != "sage" || gotBody.RolePrompt != "Be terse." {
+		t.Errorf("body = %+v", gotBody)
+	}
+	// A pointer cooldown is what lets 0 ("never cool down") travel; a plain
+	// float64 with omitempty would drop it and silently mean "use the default".
+	if gotBody.CooldownS == nil || *gotBody.CooldownS != 12.5 {
+		t.Errorf("cooldown_s = %v, want 12.5", gotBody.CooldownS)
+	}
+	if len(conv.Participants) != 1 {
+		t.Errorf("roster = %+v", conv.Participants)
+	}
+}
+
+func TestAddConversationParticipantSendsZeroCooldown(t *testing.T) {
+	var raw map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&raw)
+		_ = json.NewEncoder(w).Encode(Conversation{ID: "01A"})
+	}))
+	defer srv.Close()
+
+	zero := 0.0
+	_, err := NewClient(srv.URL, "").AddConversationParticipant("01A", "personal",
+		AddConversationParticipantRequest{Name: "sage", Kind: "persona", CooldownS: &zero})
+	if err != nil {
+		t.Fatalf("AddConversationParticipant: %v", err)
+	}
+	if v, ok := raw["cooldown_s"]; !ok || v.(float64) != 0 {
+		t.Errorf("cooldown_s = %v (present=%v), want an explicit 0", v, ok)
+	}
+}
+
+func TestRemoveConversationParticipantEscapesName(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		gotMethod = r.Method
+		_ = json.NewEncoder(w).Encode(Conversation{ID: "01A"})
+	}))
+	defer srv.Close()
+
+	if _, err := NewClient(srv.URL, "").RemoveConversationParticipant("01A", "personal", "a/b"); err != nil {
+		t.Fatalf("RemoveConversationParticipant: %v", err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Errorf("method = %q, want DELETE", gotMethod)
+	}
+	if gotPath != "/api/conversations/01A/participants/a%2Fb" {
+		t.Errorf("path = %q, want the name percent-escaped", gotPath)
+	}
+}
+
+func TestParticipantErrorsSurfaceStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"detail":"Participant 'ghost' not found"}`))
+	}))
+	defer srv.Close()
+
+	if _, err := NewClient(srv.URL, "").RemoveConversationParticipant("01A", "personal", "ghost"); err == nil {
+		t.Fatal("expected an error for a 404")
+	}
+}

@@ -80,6 +80,23 @@ func (a *App) PostConversationMessage(id, profile string, req brainbox.PostConve
 	return a.client.PostConversationMessage(id, profile, req)
 }
 
+// AddConversationParticipant adds or updates a persona on a live room (the
+// persona-management UI's write path) and returns the updated roster.
+func (a *App) AddConversationParticipant(id, profile string, req brainbox.AddConversationParticipantRequest) (brainbox.Conversation, error) {
+	if err := a.requireClient(); err != nil {
+		return brainbox.Conversation{}, err
+	}
+	return a.client.AddConversationParticipant(id, profile, req)
+}
+
+// RemoveConversationParticipant removes a participant by name.
+func (a *App) RemoveConversationParticipant(id, profile, name string) (brainbox.Conversation, error) {
+	if err := a.requireClient(); err != nil {
+		return brainbox.Conversation{}, err
+	}
+	return a.client.RemoveConversationParticipant(id, profile, name)
+}
+
 // SubscribeConversation opens the per-conversation SSE bridge. Frames are
 // re-emitted to the frontend as "conversation:event" with the parsed payload.
 // Calling it again for the same conversation replaces the subscription.

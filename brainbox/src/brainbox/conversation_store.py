@@ -207,6 +207,55 @@ def touch_conversation(conversation_id: str, *, profile: str) -> None:
         )
 
 
+def _write_participants(conversation_id: str, profile: str, roster: list[Participant]) -> Conversation:
+    now = _now_ms()
+    with _conn() as c:
+        row = c.execute(
+            "UPDATE conversations SET participants_json = %s, updated_at = %s "
+            "WHERE id = %s AND profile = %s AND deleted_at IS NULL RETURNING *",
+            (json.dumps([p.model_dump() for p in roster]), now, conversation_id, profile),
+        ).fetchone()
+    if row is None:
+        raise ProfileScopeError(f"conversation '{conversation_id}' not found in profile '{profile}'")
+    return _row_to_conversation(row)
+
+
+def add_participant(
+    conversation_id: str,
+    *,
+    profile: str,
+    participant: Participant | dict[str, Any],
+) -> Conversation:
+    """Add (or replace by name) one participant on a live conversation.
+
+    Names are the addressing key for ``@mentions`` and for the orchestrator's
+    cooldown bookkeeping, so they are unique per room: adding an existing name
+    updates that participant rather than creating a second one the roster could
+    never tell apart.
+    """
+    parsed = participant if isinstance(participant, Participant) else Participant(**participant)
+    conv = get_conversation(conversation_id, profile=profile)
+    if conv is None:
+        raise ProfileScopeError(f"conversation '{conversation_id}' not found in profile '{profile}'")
+    key = parsed.name.strip().casefold()
+    roster = [p for p in conv.participants if p.name.strip().casefold() != key]
+    roster.append(parsed)
+    return _write_participants(conversation_id, profile, roster)
+
+
+def remove_participant(conversation_id: str, *, profile: str, name: str) -> Conversation:
+    """Remove a participant by name. Their existing messages stay — history is
+    append-only, and a departed persona's turns are still part of the room."""
+    conv = get_conversation(conversation_id, profile=profile)
+    if conv is None:
+        raise ProfileScopeError(f"conversation '{conversation_id}' not found in profile '{profile}'")
+    key = name.strip().casefold()
+    roster = [p for p in conv.participants if p.name.strip().casefold() != key]
+    if len(roster) == len(conv.participants):
+        raise KeyError(name)
+    return _write_participants(conversation_id, profile, roster)
+
+
 def delete_conversation(conversation_id: str, *, profile: str) -> None:
     """Tombstone a conversation (and its messages) rather than removing rows,
     so the delete survives a P2P merge."""
@@ -334,6 +383,14 @@ async def async_list_conversations(**kwargs: Any) -> list[Conversation]:
 
 async def async_archive_conversation(conversation_id: str, *, profile: str) -> Conversation:
     return await asyncio.to_thread(archive_conversation, conversation_id, profile=profile)
+
+
+async def async_add_participant(conversation_id: str, **kwargs: Any) -> Conversation:
+    return await asyncio.to_thread(lambda: add_participant(conversation_id, **kwargs))
+
+
+async def async_remove_participant(conversation_id: str, **kwargs: Any) -> Conversation:
+    return await asyncio.to_thread(lambda: remove_participant(conversation_id, **kwargs))
 
 
 async def async_add_message(**kwargs: Any) -> Message:

@@ -10,22 +10,6 @@ def _conv(participants):
     return Conversation(profile="personal", title="room", participants=participants)
 
 
-class TestPersonaSelection:
-    def test_first_persona_wins(self):
-        conv = _conv(
-            [
-                Participant(name="user", kind="human"),
-                Participant(name="sage", kind="persona"),
-                Participant(name="scribe", kind="persona"),
-            ]
-        )
-        assert runtime.first_persona(conv).name == "sage"
-
-    def test_no_persona_returns_none(self):
-        conv = _conv([Participant(name="user", kind="human")])
-        assert runtime.first_persona(conv) is None
-
-
 class TestBuildPrompt:
     def _history(self):
         return [

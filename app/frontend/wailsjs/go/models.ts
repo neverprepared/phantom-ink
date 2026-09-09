@@ -694,6 +694,26 @@ export namespace brainbox {
 	        this.node_id = source["node_id"];
 	    }
 	}
+	export class AddConversationParticipantRequest {
+	    name: string;
+	    kind: string;
+	    model_target?: Record<string, any>;
+	    role_prompt?: string;
+	    cooldown_s?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AddConversationParticipantRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.kind = source["kind"];
+	        this.model_target = source["model_target"];
+	        this.role_prompt = source["role_prompt"];
+	        this.cooldown_s = source["cooldown_s"];
+	    }
+	}
 	export class ConversationParticipantRequest {
 	    name: string;
 	    kind: string;

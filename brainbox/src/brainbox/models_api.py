@@ -325,7 +325,11 @@ class ConversationParticipantRequest(BaseModel):
     )
     role_prompt: str | None = Field(None, description="System prompt for a persona")
     cooldown_s: float | None = Field(
-        None, description="Minimum seconds between this persona's turns (PR2)"
+        None,
+        description=(
+            "Minimum seconds between this persona's turns; None uses "
+            "settings.conversations.default_cooldown_s"
+        ),
     )
 
 

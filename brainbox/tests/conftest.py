@@ -23,6 +23,7 @@ def reset_hub_state():
     from brainbox.os_sink import reset_for_tests as _reset_os_sink
     from brainbox.llm import reset_for_tests as _reset_llm
     from brainbox.conversation_runtime import reset_for_tests as _reset_conversations
+    from brainbox.conversation_orchestrator import reset_for_tests as _reset_turn_orchestrator
 
     def _reset():
         _auth._api_key = ""
@@ -42,6 +43,7 @@ def reset_hub_state():
         _reset_os_sink()  # clears sink task/listener/client cache
         _reset_llm()  # clears llm-seam metering listeners + backend registry
         _reset_conversations()  # clears per-conversation SSE subscribers + streamer
+        _reset_turn_orchestrator()  # restores the default relevance gate
         reset_store_for_tests()  # fresh in-memory DB per test
 
     _reset()

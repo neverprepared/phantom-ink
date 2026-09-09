@@ -67,6 +67,17 @@ type ConversationParticipantRequest struct {
 	CooldownS   float64        `json:"cooldown_s,omitempty"`
 }
 
+// AddConversationParticipantRequest is the payload for adding or updating one
+// participant on a live conversation. Posting an existing name replaces that
+// participant, so "edit persona" and "add persona" are the same call.
+type AddConversationParticipantRequest struct {
+	Name        string         `json:"name"`
+	Kind        string         `json:"kind"`
+	ModelTarget map[string]any `json:"model_target,omitempty"`
+	RolePrompt  string         `json:"role_prompt,omitempty"`
+	CooldownS   *float64       `json:"cooldown_s,omitempty"`
+}
+
 // PostConversationMessageRequest is the payload for posting a human message.
 type PostConversationMessageRequest struct {
 	Author      string `json:"author"`
@@ -140,6 +151,23 @@ func (c *Client) ListConversationMessages(id, profile, sinceID string) ([]Conver
 func (c *Client) PostConversationMessage(id, profile string, req PostConversationMessageRequest) (ConversationMessage, error) {
 	var out ConversationMessage
 	err := c.post(conversationPath("/"+url.PathEscape(id)+"/messages", profile, nil), req, &out)
+	return out, err
+}
+
+// AddConversationParticipant adds (or updates by name) a participant and
+// returns the updated room.
+func (c *Client) AddConversationParticipant(id, profile string, req AddConversationParticipantRequest) (Conversation, error) {
+	var out Conversation
+	err := c.post(conversationPath("/"+url.PathEscape(id)+"/participants", profile, nil), req, &out)
+	return out, err
+}
+
+// RemoveConversationParticipant removes a participant by name. Their messages
+// stay — a room's history is append-only.
+func (c *Client) RemoveConversationParticipant(id, profile, name string) (Conversation, error) {
+	var out Conversation
+	path := conversationPath("/"+url.PathEscape(id)+"/participants/"+url.PathEscape(name), profile, nil)
+	err := c.delete(path, &out)
 	return out, err
 }
 

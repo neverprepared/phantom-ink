@@ -10,6 +10,10 @@ export function AddChannelParticipant(arg1, arg2) {
   return window['go']['main']['App']['AddChannelParticipant'](arg1, arg2);
 }
 
+export function AddConversationParticipant(arg1,arg2,arg3) {
+  return window['go']['main']['App']['AddConversationParticipant'](arg1,arg2,arg3);
+}
+
 export function ArchiveConversation(arg1,arg2) {
   return window['go']['main']['App']['ArchiveConversation'](arg1,arg2);
 }
@@ -700,6 +704,10 @@ export function ReadProfileHostEnv(arg1) {
 
 export function RebuildBaseImage(arg1) {
   return window['go']['main']['App']['RebuildBaseImage'](arg1);
+}
+
+export function RemoveConversationParticipant(arg1,arg2,arg3) {
+  return window['go']['main']['App']['RemoveConversationParticipant'](arg1,arg2,arg3);
 }
 
 export function RemoveChannelParticipant(arg1, arg2) {
