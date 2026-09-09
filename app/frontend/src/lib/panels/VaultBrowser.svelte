@@ -10,6 +10,7 @@
   import { profileState } from '../stores.svelte';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import TodoActions from '../components/TodoActions.svelte';
 
   interface VaultRecord {
     sha: string;
@@ -300,6 +301,13 @@
                 {#if transferring}<span class="t-msg">working…</span>{/if}
                 {#if transferMsg}<span class="t-msg" class:err={transferMsg.startsWith('Failed')}>{transferMsg}</span>{/if}
               </div>
+            {/if}
+            {#if vault === 'todo'}
+              <TodoActions
+                record={{ sha: selected.sha, title: selected.title, body: selected.body }}
+                profile={activeProfile}
+                onChanged={() => void refresh()}
+              />
             {/if}
           </div>
           <pre class="body">{selected.body}</pre>

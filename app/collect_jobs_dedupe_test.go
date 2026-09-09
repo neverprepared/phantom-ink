@@ -26,7 +26,8 @@ CREATE TABLE collect_jobs (
   run_at TEXT NOT NULL DEFAULT '',
   days TEXT NOT NULL DEFAULT '',
   source TEXT NOT NULL DEFAULT '',
-  owner_widget_id TEXT NOT NULL DEFAULT ''
+  owner_widget_id TEXT NOT NULL DEFAULT '',
+  run_once_at_ms INTEGER
 );`
 
 func newTestDB(t *testing.T) *DB {

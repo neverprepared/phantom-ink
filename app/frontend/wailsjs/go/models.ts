@@ -2566,6 +2566,7 @@ export namespace main {
 	    target_prompt: string;
 	    run_at: string;
 	    days: string;
+	    run_once_at_ms?: number;
 	    source: string;
 	    owner_widget_id: string;
 	
@@ -2590,6 +2591,7 @@ export namespace main {
 	        this.target_prompt = source["target_prompt"];
 	        this.run_at = source["run_at"];
 	        this.days = source["days"];
+	        this.run_once_at_ms = source["run_once_at_ms"];
 	        this.source = source["source"];
 	        this.owner_widget_id = source["owner_widget_id"];
 	    }
