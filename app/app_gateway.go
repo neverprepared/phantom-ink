@@ -42,6 +42,14 @@ func (a *App) SetGatewayEnv(profile string, env map[string]string) error {
 	if env == nil {
 		env = map[string]string{}
 	}
+	// Router-managed brain ENDPOINT keys must never be curated here: their
+	// host-facing value (CL_BRAIN_API=127.0.0.1) is dead inside a container, and
+	// the router injects the correct session-facing endpoint fresh. Stripping
+	// them from this full-overwrite also removes any legacy value from the
+	// broker. (Per-vault *_TOKEN vars are the unified tokens and DO belong here.)
+	for k := range brainEndpointVars {
+		delete(env, k)
+	}
 	return a.client.SetGatewayProfileEnv(profile, env)
 }
 
