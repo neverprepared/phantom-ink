@@ -6,8 +6,8 @@ import (
 )
 
 // Types and client methods for the multi-agent Chat engine (brainbox
-// /api/conversations). This is the successor to the channels API in
-// channels.go; both exist during the phased migration and share no state.
+// /api/conversations). PR4 retired the channels API this superseded, so these
+// are the only chat calls the app makes.
 //
 // Every call carries an explicit profile — the server scopes each read and
 // write to it, so an omitted or wrong profile is a 4xx, not a wildcard.
@@ -124,6 +124,8 @@ func (c *Client) CreateConversation(req CreateConversationRequest) (Conversation
 }
 
 // ArchiveConversation flips a room to archived; its messages stay readable.
+// A nil body closes the room with no closing note, which is what the app's
+// archive button does.
 func (c *Client) ArchiveConversation(id, profile string) (Conversation, error) {
 	var out Conversation
 	err := c.post(conversationPath("/"+url.PathEscape(id)+"/archive", profile, nil), nil, &out)
@@ -176,26 +178,30 @@ func (c *Client) RemoveConversationParticipant(id, profile, name string) (Conver
 // /api/conversations/{id}/messages/{mid}/promote).
 //
 // Target picks the surface: "memory" and "todo" write a record into that
-// phantom-brain vault for the profile; "task" submits a hub task. The
+// phantom-brain vault for the profile; "task" submits a hub task; "session"
+// submits that same task AND joins the resulting container session to the room
+// as a kind="session" participant that reports its progress back. The
 // credentials are resolved SERVER-SIDE per profile — nothing secret travels in
 // this struct.
 type PromoteMessageRequest struct {
-	Target    string   `json:"target"` // "memory" | "todo" | "task"
+	Target    string   `json:"target"` // "memory" | "todo" | "task" | "session"
 	Title     string   `json:"title,omitempty"`
 	Note      string   `json:"note,omitempty"`
 	Tags      []string `json:"tags,omitempty"`
-	AgentName string   `json:"agent_name,omitempty"` // target="task"
-	RepoURL   string   `json:"repo_url,omitempty"`   // target="task"
+	AgentName string   `json:"agent_name,omitempty"` // target="task" | "session"
+	RepoURL   string   `json:"repo_url,omitempty"`   // target="task" | "session"
 }
 
 // PromoteMessageResult is what the promote route returns. Vault targets fill
-// SHA; a task fills TaskID.
+// SHA; a task or session fills TaskID, and a session also names the
+// participant it joined the room under — the handle to address or dismiss it.
 type PromoteMessageResult struct {
-	OK     bool   `json:"ok"`
-	Target string `json:"target"`
-	SHA    string `json:"sha,omitempty"`
-	TaskID string `json:"task_id,omitempty"`
-	Detail string `json:"detail,omitempty"`
+	OK          bool   `json:"ok"`
+	Target      string `json:"target"`
+	SHA         string `json:"sha,omitempty"`
+	TaskID      string `json:"task_id,omitempty"`
+	Participant string `json:"participant,omitempty"`
+	Detail      string `json:"detail,omitempty"`
 }
 
 // PromoteConversationMessage promotes one message to memory, a todo, or a hub

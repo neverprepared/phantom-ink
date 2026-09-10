@@ -4,7 +4,8 @@ Covers:
 - require_capability() dependency (auth.py)
 - BRAINBOX_TOKEN_ID injection (lifecycle.py — env resolution layer)
 - POST /api/hub/tasks capability gate
-- POST /api/hub/channels/{id}/messages membership + from_participant override
+- POST /api/conversations/{id}/messages membership + author override
+  (carried over from the retired channel message route in PR4)
 """
 
 from __future__ import annotations
@@ -143,7 +144,7 @@ class TestRequireCapability:
 
 
 # ---------------------------------------------------------------------------
-# API endpoint tests (hub/tasks and hub/channels)
+# API endpoint tests (hub/tasks and conversations)
 # ---------------------------------------------------------------------------
 
 
@@ -204,95 +205,128 @@ class TestHubTasksCapabilityGate:
     async def test_bearer_without_capability_is_denied(self, client, token_without_capability):
         """Session token lacking task_submit gets 403."""
         resp = await client.post(
-            "/api/hub/tasks",
-            json={"description": "test", "agent_name": "worker"},
-            headers={"authorization": f"Bearer {token_without_capability.token_id}",
-                     "x-api-key": ""},
-        )
+        "/api/hub/tasks",
+        json={"description": "test", "agent_name": "worker"},
+        headers={"authorization": f"Bearer {token_without_capability.token_id}",
+                 "x-api-key": ""},
+    )
         assert resp.status_code == 403
 
 
-class TestChannelMessagesIdentityGate:
-    async def test_api_key_can_post_as_any_participant(self, client):
-        """App (API key) can post as any from_participant (no identity override)."""
-        from brainbox.channels import create_channel
-        from brainbox.models import ChannelParticipant
-        channel = create_channel("test", [
-            ChannelParticipant(name="alice", type="session", session_name="sess-alice"),
-        ])
-        resp = await client.post(
-            f"/api/hub/channels/{channel.id}/messages",
-            json={"from_participant": "alice", "content": "hello"},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["from_participant"] == "alice"
+class TestConversationMessageIdentityGate:
+    """A session posting into a room is who its TOKEN says it is.
 
-    async def test_bearer_without_membership_is_rejected(self, client, token_with_capability):
-        """Session token not in channel gets 403."""
-        from brainbox.channels import create_channel
-        from brainbox.models import ChannelParticipant
-        channel = create_channel("test", [
-            ChannelParticipant(name="alice", type="session", session_name="sess-alice"),
-        ])
-        resp = await client.post(
-            f"/api/hub/channels/{channel.id}/messages",
-            json={"from_participant": "alice", "content": "hi"},
-            headers={"authorization": f"Bearer {token_with_capability.token_id}",
-                     "x-api-key": ""},
-        )
-        assert resp.status_code == 403
+    These four cases were written against the channels engine's message route
+    and survive its retirement unchanged in intent: PR4 moved them onto
+    ``POST /api/conversations/{id}/messages``, which enforces the same two
+    rules — the author is overridden with the token's proven identity, and a
+    session that is not a participant is refused.
+    """
 
-    async def test_bearer_from_participant_override_replaces_false_claim(self, client):
-        """A token-bearing agent claiming another participant's name gets their identity replaced."""
+    @pytest.fixture()
+    def real_conversation_auth(self):
+        """Drop conftest's blanket override so the real capability dependency
+        (and therefore the real identity derivation) runs."""
+        from brainbox.api import (
+            app,
+            _require_conversations_read,
+            _require_conversations_write,
+        )
+
+        guards = (_require_conversations_read, _require_conversations_write)
+        saved = {g: app.dependency_overrides.pop(g, None) for g in guards}
+        yield
+        for g, prev in saved.items():
+            if prev is not None:
+                app.dependency_overrides[g] = prev
+
+    def _room(self, participants):
+        from brainbox import conversation_store as cs
+
+        return cs.create_conversation(
+            profile="personal", title="room", participants=participants
+        )
+
+    def _link_task(self, token, *, session_name=None, profile="personal"):
         import brainbox.router as router_module
-        from brainbox.channels import create_channel
-        from brainbox.models import ChannelParticipant, Task, TaskStatus
+        from brainbox.models import Task, TaskStatus
 
-        # Set up: agent "bob" in the channel with session "sess-bob"
-        token = _issue_token("bob", ["hub_messaging"])
         now = int(time.time() * 1000)
         task = Task(
             id=token.task_id,
             description="work",
-            agent_name="bob",
+            agent_name=token.agent_name,
             status=TaskStatus.RUNNING,
             created_at=now,
             updated_at=now,
-            session_name="sess-bob",
+            session_name=session_name,
+            workspace_profile=profile,
         )
         router_module._tasks[task.id] = task
+        return task
 
-        channel = create_channel("test", [
-            ChannelParticipant(name="alice", type="session", session_name="sess-alice"),
-            ChannelParticipant(name="sess-bob", type="session", session_name="sess-bob"),
-        ])
-
-        # Bob claims to be alice — the override must replace it with "sess-bob"
+    async def test_api_key_can_post_as_any_participant(self, client):
+        """The app (API key) is full trust: it posts as the human it serves."""
+        conv = self._room([{"name": "alice", "kind": "human"}])
         resp = await client.post(
-            f"/api/hub/channels/{channel.id}/messages",
-            json={"from_participant": "alice", "content": "not alice"},
+            f"/api/conversations/{conv.id}/messages",
+            params={"profile": "personal"},
+            json={"author": "alice", "content": "hello"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["author"] == "alice"
+        assert resp.json()["kind"] == "message"
+
+    async def test_bearer_without_membership_is_rejected(
+        self, client, token_with_capability, real_conversation_auth
+    ):
+        """A session token naming a room it never joined gets 403."""
+        self._link_task(token_with_capability, session_name="sess-super")
+        conv = self._room([{"name": "alice", "kind": "human"}])
+        resp = await client.post(
+            f"/api/conversations/{conv.id}/messages",
+            params={"profile": "personal"},
+            json={"author": "alice", "content": "hi"},
+            headers={
+                "authorization": f"Bearer {token_with_capability.token_id}",
+                "x-api-key": "",
+            },
+        )
+        assert resp.status_code == 403
+
+    async def test_bearer_author_override_replaces_false_claim(
+        self, client, real_conversation_auth
+    ):
+        """A session claiming another participant's name has it replaced."""
+        token = _issue_token("bob", ["hub_messaging"])
+        self._link_task(token, session_name="sess-bob")
+        conv = self._room([
+            {"name": "alice", "kind": "human"},
+            {"name": "sess-bob", "kind": "session"},
+        ])
+        resp = await client.post(
+            f"/api/conversations/{conv.id}/messages",
+            params={"profile": "personal"},
+            json={"author": "alice", "content": "not alice"},
             headers={"authorization": f"Bearer {token.token_id}", "x-api-key": ""},
         )
         assert resp.status_code == 200
-        assert resp.json()["from_participant"] == "sess-bob"
+        assert resp.json()["author"] == "sess-bob"
+        # A session's turn is marked as one, so the room can tell it apart.
+        assert resp.json()["kind"] == "session"
 
-    async def test_bearer_from_participant_override_uses_agent_name_when_no_session(self, client):
-        """When token has no linked task session, falls back to token.agent_name as identity."""
-        from brainbox.channels import create_channel
-        from brainbox.models import ChannelParticipant
-
-        # Token with no task_id → no session name → identity = agent_name
+    async def test_bearer_author_override_uses_agent_name_when_no_session(
+        self, client, real_conversation_auth
+    ):
+        """No container session yet → the identity is the agent name."""
         token = _issue_token("carol", ["hub_messaging"])
-        # Don't create a Task, so get_task returns None
-
-        channel = create_channel("test", [
-            ChannelParticipant(name="carol", type="session", session_name=None),
-        ])
-
+        self._link_task(token, session_name=None)
+        conv = self._room([{"name": "carol", "kind": "session"}])
         resp = await client.post(
-            f"/api/hub/channels/{channel.id}/messages",
-            json={"from_participant": "impostor", "content": "hi"},
+            f"/api/conversations/{conv.id}/messages",
+            params={"profile": "personal"},
+            json={"author": "impostor", "content": "hi"},
             headers={"authorization": f"Bearer {token.token_id}", "x-api-key": ""},
         )
         assert resp.status_code == 200
-        assert resp.json()["from_participant"] == "carol"
+        assert resp.json()["author"] == "carol"

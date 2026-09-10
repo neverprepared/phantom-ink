@@ -89,7 +89,10 @@ func (a *App) AddConversationParticipant(id, profile string, req brainbox.AddCon
 	return a.client.AddConversationParticipant(id, profile, req)
 }
 
-// RemoveConversationParticipant removes a participant by name.
+// RemoveConversationParticipant removes a participant by name. For a promoted
+// kind="session" participant this is the dismiss action: brainbox also drops
+// the task-to-room link, so nothing further from that session lands in the
+// room. The task itself keeps running — dismissing is not cancelling.
 func (a *App) RemoveConversationParticipant(id, profile, name string) (brainbox.Conversation, error) {
 	if err := a.requireClient(); err != nil {
 		return brainbox.Conversation{}, err
@@ -98,8 +101,9 @@ func (a *App) RemoveConversationParticipant(id, profile, name string) (brainbox.
 }
 
 // PromoteConversationMessage promotes one message into the platform: "memory"
-// (the profile's brain memory vault), "todo" (its phantom-todo vault), or
-// "task" (a hub task). This is the frontend's per-message promote menu.
+// (the profile's brain memory vault), "todo" (its phantom-todo vault), "task"
+// (a hub task), or "session" (a hub task whose container joins the room and
+// reports back). This is the frontend's per-message promote menu.
 //
 // The Go layer is a passthrough on purpose — brainbox resolves the profile's
 // vault credentials server-side, so no token is handled here.

@@ -547,62 +547,6 @@ def envelope_from_hub_task(event: str, task: Any) -> AgentEnvelope:
     )
 
 
-def envelope_from_channel(event: str, data: Any) -> AgentEnvelope | None:
-    """Translate a channel event into the unified envelope.
-
-    channel.message returns None — it is the only high-frequency event on the
-    hub, and pushing every chat message through the durable bus (and through
-    rule evaluation) invites rule storms for no attention-model gain. SSE
-    delivery of messages is unaffected.
-    """
-    if event == "channel.message":
-        return None
-
-    if isinstance(data, dict):
-        ch_id = data.get("channel_id")
-        if not ch_id:
-            return None
-        from . import channels as _channels_mod
-
-        ch = _channels_mod.get_channel(ch_id)
-        metadata = {k: v for k, v in data.items() if k != "channel_id" and not hasattr(v, "model_dump")}
-        return AgentEnvelope(
-            id=f"channel:{ch_id}",
-            kind="event",
-            source="brainbox-hub",
-            type=event,
-            status=("done" if ch and ch.status == "completed" else "active") if ch else None,
-            title=ch.name if ch else ch_id,
-            workspace=getattr(ch, "workspace_profile", None) if ch else None,
-            parent_id=(
-                f"hub-task:{ch.parent_task_id}" if ch and getattr(ch, "parent_task_id", None) else None
-            ),
-            tags=["channel"],
-            metadata=metadata,
-        )
-
-    ch = data
-    ch_id = getattr(ch, "id", None)
-    if not ch_id:
-        return None
-    return AgentEnvelope(
-        id=f"channel:{ch_id}",
-        kind="event",
-        source="brainbox-hub",
-        type=event,
-        status="done" if getattr(ch, "status", "") == "completed" else "active",
-        title=getattr(ch, "name", ch_id),
-        workspace=getattr(ch, "workspace_profile", None),
-        parent_id=(
-            f"hub-task:{ch.parent_task_id}" if getattr(ch, "parent_task_id", None) else None
-        ),
-        start_at=getattr(ch, "created_at", None),
-        end_at=getattr(ch, "completed_at", None),
-        tags=["channel"],
-        metadata={"participants": len(getattr(ch, "participants", []) or [])},
-    )
-
-
 # The bus key for a conversation. Every envelope a conversation produces —
 # created, each finalized message, archived — carries THIS id, so `agent_state`
 # holds exactly one row per room (the timeline entity) while `agent_events`
@@ -629,9 +573,8 @@ def envelope_from_conversation(
     ``conversation_store.Conversation``; ``msg`` is the finalized
     ``Message`` for ``conversation.message``.
 
-    Unlike ``envelope_from_channel``, a *message* DOES produce an envelope here:
-    that is the point — the room is a timeline entity whose newest turn is its
-    current state. The upsert on a stable id means N messages produce one
+    A *message* DOES produce an envelope here — that is the point: the room is
+    a timeline entity whose newest turn is its current state. The upsert on a stable id means N messages produce one
     `agent_state` row, not N, so the frequency cost is in `agent_events`
     (append-only, which is what an audit log is for) and not in the attention
     view.

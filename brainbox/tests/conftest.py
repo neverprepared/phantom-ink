@@ -7,11 +7,10 @@ import pytest
 def reset_hub_state():
     """Reset all module-level hub state before and after each test.
 
-    Covers: auth, registry, runners, channels, router. Hub background tasks
-    are never started in unit tests so they don't need resetting.
+    Covers: auth, registry, runners, router, conversations. Hub background
+    tasks are never started in unit tests so they don't need resetting.
     """
     import brainbox.auth as _auth
-    import brainbox.channels as _ch
     import brainbox.registry as _reg
     import brainbox.router as _router
     from brainbox.runners import reset_registry_for_tests
@@ -24,6 +23,7 @@ def reset_hub_state():
     from brainbox.llm import reset_for_tests as _reset_llm
     from brainbox.conversation_runtime import reset_for_tests as _reset_conversations
     from brainbox.conversation_orchestrator import reset_for_tests as _reset_turn_orchestrator
+    from brainbox.conversation_session import reset_for_tests as _reset_conversation_sessions
 
     def _reset():
         _auth._api_key = ""
@@ -31,10 +31,6 @@ def reset_hub_state():
         _reg._tokens.clear()
         _reg._role_prompts.clear()
         reset_registry_for_tests()  # clears _singleton + _pairing_singleton
-        _ch._channels.clear()
-        _ch._messages.clear()
-        _ch._listeners.clear()
-        _ch._ollama_last_read.clear()
         _router._tasks.clear()
         _router._listeners.clear()
         _reset_scheduler()
@@ -44,6 +40,7 @@ def reset_hub_state():
         _reset_llm()  # clears llm-seam metering listeners + backend registry
         _reset_conversations()  # clears per-conversation SSE subscribers + streamer
         _reset_turn_orchestrator()  # restores the default relevance gate
+        _reset_conversation_sessions()  # clears promoted-session task<->room links
         reset_store_for_tests()  # fresh in-memory DB per test
 
     _reset()

@@ -144,24 +144,6 @@ def get_task(task_id: str) -> Task | None:
     return _tasks.get(task_id)
 
 
-def _add_channel_to_task(task_id: str, channel_id: str) -> None:
-    task = _tasks.get(task_id)
-    if task and channel_id not in task.channel_ids:
-        task.channel_ids.append(channel_id)
-
-
-def on_channel_completed(task_id: str, channel_id: str, summary: str) -> None:
-    """Called by channels.complete_channel when a task-linked channel finishes."""
-    task = _tasks.get(task_id)
-    if not task:
-        return
-    log.info(
-        "router.channel_completed",
-        metadata={"task_id": task_id, "channel_id": channel_id},
-    )
-    _emit("task.signal", task)
-
-
 def list_tasks(
     *,
     status: str | None = None,

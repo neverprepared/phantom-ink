@@ -8,8 +8,8 @@
    * persona per room; the roster field stays a list so PR2 can add more without
    * reshaping the record.
    *
-   * The old channel modal (ConversationCreateModal.svelte) still serves the
-   * legacy channels engine and is removed with it in PR4.
+   * The old channel modal (ConversationCreateModal.svelte) went out with the
+   * channels engine in PR4; this is the only create surface.
    */
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';

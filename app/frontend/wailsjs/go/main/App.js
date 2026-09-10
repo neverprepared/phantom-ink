@@ -6,9 +6,6 @@ export function AddBrainMCP(arg1, arg2) {
   return window['go']['main']['App']['AddBrainMCP'](arg1, arg2);
 }
 
-export function AddChannelParticipant(arg1, arg2) {
-  return window['go']['main']['App']['AddChannelParticipant'](arg1, arg2);
-}
 
 export function AddConversationParticipant(arg1,arg2,arg3) {
   return window['go']['main']['App']['AddConversationParticipant'](arg1,arg2,arg3);
@@ -62,9 +59,6 @@ export function ClearProfileServerOverride(arg1, arg2) {
   return window['go']['main']['App']['ClearProfileServerOverride'](arg1, arg2);
 }
 
-export function CompleteChannel(arg1, arg2) {
-  return window['go']['main']['App']['CompleteChannel'](arg1, arg2);
-}
 
 export function CopyVaultRecord(arg1, arg2, arg3) {
   return window['go']['main']['App']['CopyVaultRecord'](arg1, arg2, arg3);
@@ -82,9 +76,6 @@ export function CreateBrainSkill(arg1, arg2) {
   return window['go']['main']['App']['CreateBrainSkill'](arg1, arg2);
 }
 
-export function CreateChannel(arg1) {
-  return window['go']['main']['App']['CreateChannel'](arg1);
-}
 
 export function CreateConversation(arg1) {
   return window['go']['main']['App']['CreateConversation'](arg1);
@@ -114,9 +105,6 @@ export function DeleteBundleSource(arg1, arg2) {
   return window['go']['main']['App']['DeleteBundleSource'](arg1, arg2);
 }
 
-export function DeleteChannel(arg1) {
-  return window['go']['main']['App']['DeleteChannel'](arg1);
-}
 
 export function DeleteCollectJob(arg1) {
   return window['go']['main']['App']['DeleteCollectJob'](arg1);
@@ -262,13 +250,7 @@ export function GetBrainSkill(arg1, arg2) {
   return window['go']['main']['App']['GetBrainSkill'](arg1, arg2);
 }
 
-export function GetChannel(arg1) {
-  return window['go']['main']['App']['GetChannel'](arg1);
-}
 
-export function GetChannelMessages(arg1, arg2) {
-  return window['go']['main']['App']['GetChannelMessages'](arg1, arg2);
-}
 
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
@@ -538,9 +520,6 @@ export function ListBundleSources(arg1) {
   return window['go']['main']['App']['ListBundleSources'](arg1);
 }
 
-export function ListChannels(arg1) {
-  return window['go']['main']['App']['ListChannels'](arg1);
-}
 
 export function ListCollectJobs(arg1) {
   return window['go']['main']['App']['ListCollectJobs'](arg1);
@@ -658,9 +637,6 @@ export function PlaceIntegration(arg1, arg2, arg3) {
   return window['go']['main']['App']['PlaceIntegration'](arg1, arg2, arg3);
 }
 
-export function PostChannelMessage(arg1, arg2) {
-  return window['go']['main']['App']['PostChannelMessage'](arg1, arg2);
-}
 
 export function PostConversationMessage(arg1,arg2,arg3) {
   return window['go']['main']['App']['PostConversationMessage'](arg1,arg2,arg3);
@@ -714,9 +690,6 @@ export function RemoveConversationParticipant(arg1,arg2,arg3) {
   return window['go']['main']['App']['RemoveConversationParticipant'](arg1,arg2,arg3);
 }
 
-export function RemoveChannelParticipant(arg1, arg2) {
-  return window['go']['main']['App']['RemoveChannelParticipant'](arg1, arg2);
-}
 
 export function RenameArtifactObject(arg1, arg2, arg3) {
   return window['go']['main']['App']['RenameArtifactObject'](arg1, arg2, arg3);

@@ -11,6 +11,12 @@ reaches it:
 - ``todo``   → the profile's phantom-brain **todo** vault, same endpoint, that
   vault's own token. Verbatim: the todo is stored exactly as authored.
 - ``task``   → a hub task via ``router.submit_task`` — in-process, no HTTP hop.
+- ``session``→ that same hub task PLUS a link back into the room: the container
+  session joins as a ``kind='session'`` participant and streams its progress
+  and results into the conversation (see ``conversation_session``). This is the
+  design spec's §6 promotion path, and it is explicit by construction — a
+  session exists because a human promoted a message, never because a
+  participant record was written.
 
 **Credentials are resolved server-side, per profile, and never taken from the
 request.** The brain API + per-vault bearer tokens come out of the encrypted
@@ -38,7 +44,7 @@ from .models_api import PromoteMessageRequest
 
 log = get_logger()
 
-PromoteTarget = Literal["memory", "todo", "task"]
+PromoteTarget = Literal["memory", "todo", "task", "session"]
 
 # Which phantom-brain vault each vault-backed target writes to.
 VAULT_FOR_TARGET: dict[str, str] = {"memory": "memory", "todo": "todo"}
@@ -72,9 +78,12 @@ PromoteRequest = PromoteMessageRequest
 class PromoteResult(BaseModel):
     ok: bool
     target: PromoteTarget
-    # Vault targets return the record's SHA; task returns the hub task id.
+    # Vault targets return the record's SHA; task and session return the hub
+    # task id. A session additionally returns the participant name it joined
+    # the room under — the handle a client needs to address or dismiss it.
     sha: str | None = None
     task_id: str | None = None
+    participant: str | None = None
     detail: str = ""
 
 
@@ -241,6 +250,37 @@ async def _promote_to_task(
     )
 
 
+async def _promote_to_session(
+    *, profile: str, conv: Any, msg: Any, body: PromoteRequest
+) -> PromoteResult:
+    """Spin a container session for this message and wire it into the room.
+
+    The heavy lifting (seed brief, ``submit_task``, participant, link, the
+    announcement message) lives in ``conversation_session``; this is only the
+    dispatch arm and the error mapping. A refused submission is the caller's
+    problem — surfacing it here is exactly what makes explicit promotion better
+    than the silent per-participant bootstrap it replaces.
+    """
+    from . import conversation_session
+
+    try:
+        link = await conversation_session.promote_to_session(
+            profile=profile, conv=conv, msg=msg, body=body
+        )
+    except ValueError as exc:
+        raise PromoteError(str(exc)) from exc
+    return PromoteResult(
+        ok=True,
+        target=body.target,
+        task_id=link.task_id,
+        participant=link.participant,
+        detail=(
+            f"session '{link.participant}' (agent '{link.agent_name}') joined "
+            f"conversation '{conv.title}' in profile '{profile}'"
+        ),
+    )
+
+
 async def promote_message(
     *, profile: str, conv: Any, msg: Any, body: PromoteRequest
 ) -> PromoteResult:
@@ -252,6 +292,8 @@ async def promote_message(
         result = await _promote_to_vault(vault, profile=profile, conv=conv, msg=msg, body=body)
     elif body.target == "task":
         result = await _promote_to_task(profile=profile, conv=conv, msg=msg, body=body)
+    elif body.target == "session":
+        result = await _promote_to_session(profile=profile, conv=conv, msg=msg, body=body)
     else:  # pragma: no cover - PromoteTarget is a closed Literal
         raise PromoteError(f"unknown promote target '{body.target}'")
 

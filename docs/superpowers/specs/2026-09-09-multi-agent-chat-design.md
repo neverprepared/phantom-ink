@@ -107,6 +107,6 @@ Per-conversation SSE carrying: `message.created`, `message.delta` (tokens), `mes
 - **PR1** — ConversationStore (local-first) + REST CRUD + per-conversation SSE streaming + human↔single-persona via `complete()`. Rewire the panel to stream; drop polling. *Proves streaming, kills the latency floor.*
 - **PR2** — Multi-persona + self-gated TurnOrchestrator (relevance gate, cooldown, cap, quiet-detector, `@address`). Persona-management UI.
 - **PR3** — Bus envelopes + server-side profile enforcement + promote-message-to-brain/todo/task.
-- **PR4** — Promote-to-session (persona → real work → results back); retire the old channels engine; migrate the `channel_*` MCP tools.
+- **PR4** — Promote-to-session (persona → real work → results back); retire the old channels engine; migrate the `channel_*` MCP tools. **Landed**: the `channels` module, its `/api/hub/channels` routes, the Ollama watcher, the per-participant Docker bootstrap and the JSON flush of channel state are gone; `channel_read/send/complete/join` keep their names and call `/api/conversations/...`, authenticating as the session so the server derives its identity and profile from the task token.
 
 Each PR depends on the previous one; they must land in order.

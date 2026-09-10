@@ -1,47 +1,13 @@
-"""Tests for agent_store envelope converters (channel/hub-task)."""
+"""Tests for agent_store envelope converters (hub-task).
+
+The channel converter these tests used to cover went out with the channels
+engine in PR4; conversation envelopes are covered by test_conversation_bus.py.
+"""
 
 from __future__ import annotations
 
-import brainbox.channels as channels
-from brainbox.agent_store import (
-    envelope_from_channel,
-    envelope_from_hub_task,
-)
-from brainbox.models import ChannelParticipant, Task, TaskStatus
-
-
-class TestChannelConverter:
-    def _channel(self, **kwargs):
-        return channels.create_channel(
-            "review", [ChannelParticipant(name="alice", type="user")], **kwargs
-        )
-
-    def test_created(self):
-        ch = self._channel(workspace_profile="personal", parent_task_id="task-9")
-        env = envelope_from_channel("channel.created", ch)
-        assert env.id == f"channel:{ch.id}"
-        assert env.status == "active"
-        assert env.workspace == "personal"
-        assert env.parent_id == "hub-task:task-9"
-        assert env.metadata["participants"] == 1
-
-    def test_completed(self):
-        ch = self._channel()
-        ch.status = "completed"
-        env = envelope_from_channel("channel.completed", ch)
-        assert env.status == "done"
-
-    def test_message_is_excluded_from_durable_bus(self):
-        assert envelope_from_channel("channel.message", {"channel_id": "c1"}) is None
-
-    def test_participant_event_dict_shape(self):
-        ch = self._channel()
-        env = envelope_from_channel(
-            "channel.participant_removed", {"channel_id": ch.id, "name": "alice"}
-        )
-        assert env.id == f"channel:{ch.id}"
-        assert env.type == "channel.participant_removed"
-        assert env.metadata["name"] == "alice"
+from brainbox.agent_store import envelope_from_hub_task
+from brainbox.models import Task, TaskStatus
 
 
 class TestHubTaskProvenance:
