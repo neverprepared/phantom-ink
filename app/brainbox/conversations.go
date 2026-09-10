@@ -171,6 +171,48 @@ func (c *Client) RemoveConversationParticipant(id, profile, name string) (Conver
 	return out, err
 }
 
+// PromoteMessageRequest is the payload for promoting one conversation message
+// into the platform (brainbox POST
+// /api/conversations/{id}/messages/{mid}/promote).
+//
+// Target picks the surface: "memory" and "todo" write a record into that
+// phantom-brain vault for the profile; "task" submits a hub task. The
+// credentials are resolved SERVER-SIDE per profile — nothing secret travels in
+// this struct.
+type PromoteMessageRequest struct {
+	Target    string   `json:"target"` // "memory" | "todo" | "task"
+	Title     string   `json:"title,omitempty"`
+	Note      string   `json:"note,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+	AgentName string   `json:"agent_name,omitempty"` // target="task"
+	RepoURL   string   `json:"repo_url,omitempty"`   // target="task"
+}
+
+// PromoteMessageResult is what the promote route returns. Vault targets fill
+// SHA; a task fills TaskID.
+type PromoteMessageResult struct {
+	OK     bool   `json:"ok"`
+	Target string `json:"target"`
+	SHA    string `json:"sha,omitempty"`
+	TaskID string `json:"task_id,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// PromoteConversationMessage promotes one message to memory, a todo, or a hub
+// task. Profile-scoped like every other conversation call: a message in another
+// profile reads as "not found".
+func (c *Client) PromoteConversationMessage(
+	id, messageID, profile string, req PromoteMessageRequest,
+) (PromoteMessageResult, error) {
+	var out PromoteMessageResult
+	path := conversationPath(
+		"/"+url.PathEscape(id)+"/messages/"+url.PathEscape(messageID)+"/promote",
+		profile, nil,
+	)
+	err := c.post(path, req, &out)
+	return out, err
+}
+
 // ConversationStreamURL is the per-conversation SSE endpoint.
 func (c *Client) ConversationStreamURL(id, profile string) string {
 	return c.BaseURL() + conversationPath("/"+url.PathEscape(id)+"/stream", profile, nil)

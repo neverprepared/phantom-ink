@@ -346,6 +346,8 @@ export function ProfileTokenCapabilities():Promise<Array<string>>;
 
 export function ProfileTokenProfiles():Promise<Array<string>>;
 
+export function PromoteConversationMessage(arg1:string,arg2:string,arg3:string,arg4:brainbox.PromoteMessageRequest):Promise<brainbox.PromoteMessageResult>;
+
 export function PullOllamaModel(arg1:string):Promise<string>;
 
 export function PurgeBackup(arg1:string):Promise<void>;

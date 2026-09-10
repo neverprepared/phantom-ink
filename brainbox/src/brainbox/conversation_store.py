@@ -340,6 +340,23 @@ def add_message(
     return msg
 
 
+def get_message(
+    message_id: str, *, conversation_id: str, profile: str
+) -> Message | None:
+    """One message by id, or None if it is missing, tombstoned, in another
+    conversation, or owned by another profile. Same store-level invariant as
+    every other read: the profile is in the SQL, so a cross-profile fetch is a
+    miss and not a leak."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT * FROM conversation_messages "
+            "WHERE id = %s AND conversation_id = %s AND profile = %s "
+            "AND deleted_at IS NULL",
+            (message_id, conversation_id, profile),
+        ).fetchone()
+    return _row_to_message(row) if row else None
+
+
 def list_messages(
     conversation_id: str,
     *,
@@ -399,3 +416,7 @@ async def async_add_message(**kwargs: Any) -> Message:
 
 async def async_list_messages(conversation_id: str, **kwargs: Any) -> list[Message]:
     return await asyncio.to_thread(lambda: list_messages(conversation_id, **kwargs))
+
+
+async def async_get_message(message_id: str, **kwargs: Any) -> Message | None:
+    return await asyncio.to_thread(lambda: get_message(message_id, **kwargs))
