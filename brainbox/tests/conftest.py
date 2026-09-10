@@ -80,14 +80,29 @@ def _override_api_key_auth():
     real capability path (test_profile_tokens) pop this override explicitly.
     """
     try:
-        from brainbox.api import app, _require_agent_events_write
+        from brainbox.api import (
+            app,
+            _require_agent_events_write,
+            _require_conversations_read,
+            _require_conversations_write,
+        )
         from brainbox.auth import require_api_key
 
+        # Returning None means "authenticated, but no bearer token" — the same
+        # thing the API-key path returns — so the conversation routes keep
+        # deriving their profile from the request. Tests that exercise the
+        # token-scoped derivation pop these overrides explicitly (see
+        # test_conversation_profile_scope.py).
+        conversation_guards = (_require_conversations_read, _require_conversations_write)
         app.dependency_overrides[require_api_key] = lambda: None
         app.dependency_overrides[_require_agent_events_write] = lambda: None
+        for guard in conversation_guards:
+            app.dependency_overrides[guard] = lambda: None
         yield
         app.dependency_overrides.pop(require_api_key, None)
         app.dependency_overrides.pop(_require_agent_events_write, None)
+        for guard in conversation_guards:
+            app.dependency_overrides.pop(guard, None)
     except ImportError:
         # If brainbox.api can't be imported (e.g., missing optional deps),
         # skip the override — tests that don't import app won't need it

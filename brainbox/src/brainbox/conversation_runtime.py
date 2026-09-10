@@ -1,6 +1,6 @@
 """Conversation runtime — per-conversation SSE fanout and the persona reply path.
 
-Two responsibilities, both deliberately small:
+Three responsibilities, all deliberately small:
 
 1. **Fanout** — a per-conversation pub/sub of SSE frames. Subscribers (the
    ``/api/conversations/{id}/stream`` endpoint) get a bounded queue; publishers
@@ -11,6 +11,12 @@ Two responsibilities, both deliberately small:
    streamed reply through the ``complete()`` seam
    (``brainbox.llm``), emitting deltas as they arrive and persisting the
    finalized message at the end.
+
+3. **Bus emission** — a finalized message also becomes an agent-event-bus
+   envelope keyed ``conversation:<conversation_id>`` (design spec §8), so a room
+   shows up in Stream/Timeline as a single timeline entity whose newest turn is
+   its current state. The envelope goes through the SAME ``agent_store.ingest``
+   every other producer uses; there is no second bus.
 
 The wire contract, in the order a client sees it for one reply::
 
@@ -125,6 +131,62 @@ def publish_message(msg: Message, *, created: bool = True) -> None:
     if created:
         publish(msg.conversation_id, EV_MESSAGE_CREATED, payload)
     publish(msg.conversation_id, EV_MESSAGE_DONE, payload)
+
+
+# ---------------------------------------------------------------------------
+# Agent event bus (design spec §8)
+# ---------------------------------------------------------------------------
+
+# The conversation lifecycle events that reach the bus. All three share one
+# envelope id (``conversation:<id>``), so the room upserts in place.
+BUS_CREATED = "conversation.created"
+BUS_MESSAGE = "conversation.message"
+BUS_ARCHIVED = "conversation.archived"
+BUS_PROMOTED = "conversation.promoted"
+
+
+async def emit_bus_envelope(
+    event: str,
+    conv: Conversation,
+    msg: Message | None = None,
+    *,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Publish one conversation envelope onto the agent event bus.
+
+    Best-effort by design: the store is the source of truth for a conversation,
+    so a bus hiccup must never fail (or roll back) a message that is already
+    durable. Failures are logged, not raised — same posture as the hub-task and
+    channel producers in ``api.lifespan``.
+    """
+    from . import agent_store
+
+    try:
+        env = agent_store.envelope_from_conversation(event, conv, msg, extra=extra)
+        await agent_store.async_ingest(env)
+    except Exception as exc:
+        log.warning(
+            "conversation.bus_ingest_failed",
+            metadata={
+                "conversation_id": getattr(conv, "id", None),
+                "event": event,
+                "reason": str(exc),
+            },
+        )
+
+
+async def finalize_message(
+    msg: Message, conv: Conversation, *, created: bool = True
+) -> None:
+    """The single choke point for "this message is final".
+
+    Fans the message out to the room's SSE subscribers AND emits its bus
+    envelope. Both the human POST path and the persona reply path end here, so
+    there is exactly one place where a finalized message becomes visible to the
+    rest of the platform.
+    """
+    publish_message(msg, created=created)
+    await emit_bus_envelope(BUS_MESSAGE, conv, msg)
 
 
 # ---------------------------------------------------------------------------
@@ -266,5 +328,7 @@ async def stream_persona_reply(
         in_reply_to=in_reply_to,
         message_id=message_id,
     )
-    publish(conversation_id, EV_MESSAGE_DONE, {"message": msg.model_dump()})
+    # created was already published above (the shell), so only `done` + the bus
+    # envelope remain.
+    await finalize_message(msg, conv, created=False)
     return msg

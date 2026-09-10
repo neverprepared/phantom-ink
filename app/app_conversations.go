@@ -97,6 +97,19 @@ func (a *App) RemoveConversationParticipant(id, profile, name string) (brainbox.
 	return a.client.RemoveConversationParticipant(id, profile, name)
 }
 
+// PromoteConversationMessage promotes one message into the platform: "memory"
+// (the profile's brain memory vault), "todo" (its phantom-todo vault), or
+// "task" (a hub task). This is the frontend's per-message promote menu.
+//
+// The Go layer is a passthrough on purpose — brainbox resolves the profile's
+// vault credentials server-side, so no token is handled here.
+func (a *App) PromoteConversationMessage(id, messageID, profile string, req brainbox.PromoteMessageRequest) (brainbox.PromoteMessageResult, error) {
+	if err := a.requireClient(); err != nil {
+		return brainbox.PromoteMessageResult{}, err
+	}
+	return a.client.PromoteConversationMessage(id, messageID, profile, req)
+}
+
 // SubscribeConversation opens the per-conversation SSE bridge. Frames are
 // re-emitted to the frontend as "conversation:event" with the parsed payload.
 // Calling it again for the same conversation replaces the subscription.

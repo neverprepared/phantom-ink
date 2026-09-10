@@ -56,6 +56,7 @@ from .models_api import (
     MintProfileTokenRequest,
     PostChannelMessageRequest,
     PostConversationMessageRequest,
+    PromoteMessageRequest,
     QuerySessionRequest,
     StartSessionRequest,
     StopSessionRequest,
@@ -105,6 +106,7 @@ from .channels import (
 )
 from .models import ChannelParticipant
 from . import conversation_orchestrator
+from . import conversation_promote
 from . import conversation_runtime
 from . import conversation_store as conversations
 from .models_api import OllamaChatRequest, OllamaPullRequest
@@ -4131,6 +4133,49 @@ def _require_profile(profile: str | None) -> str:
     return value
 
 
+# Conversation auth (PR3). Bound to named objects rather than inline
+# ``Depends(require_capability(...))`` so the test suite can override these
+# exact dependencies (see tests/conftest.py) — the same pattern the
+# agent_events ingest guard uses.
+#
+# ``require_capability`` accepts EITHER the shared API key (full trust, which is
+# how the desktop app calls in) OR a Bearer token carrying the capability. This
+# is strictly additive: before PR3 these routes were API-key-only, so no caller
+# that worked yesterday is rejected today.
+_require_conversations_read = require_capability("conversations:read")
+_require_conversations_write = require_capability("conversations:write")
+
+
+def _scoped_profile(token: Token | None, requested: str | None) -> str:
+    """The profile a request is allowed to act in — derived from the CALLER,
+    not trusted from the wire.
+
+    A Bearer-token caller is bound to the profile its token was minted for
+    (``Token.workspace_profile``): the request's own ``profile`` value is
+    ignored when it agrees and REFUSED when it does not, so a token cannot
+    reach another profile's rooms by asking nicely. 403 (not 404) is
+    deliberate here — the caller authenticated, and telling it that its token
+    is scoped elsewhere leaks nothing about whether the room exists.
+
+    The shared API key is full trust by construction (it is the operator's own
+    key, and the desktop app is the only holder), so for that path the
+    request-supplied profile remains the source — there is no narrower caller
+    identity to derive one from.
+    """
+    if token is not None and token.workspace_profile:
+        asked = (requested or "").strip()
+        if asked and asked != token.workspace_profile:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "token is scoped to profile "
+                    f"'{token.workspace_profile}'; it cannot act in '{asked}'"
+                ),
+            )
+        return token.workspace_profile
+    return _require_profile(requested)
+
+
 async def _load_conversation(conversation_id: str, profile: str):
     conv = await conversations.async_get_conversation(conversation_id, profile=profile)
     if conv is None:
@@ -4144,15 +4189,19 @@ async def _load_conversation(conversation_id: str, profile: str):
 
 @app.post("/api/conversations")
 async def create_conversation_route(
-    body: CreateConversationRequest, _key=Depends(require_api_key)
+    body: CreateConversationRequest,
+    token: Token | None = Depends(_require_conversations_write),
 ):
     conv = await conversations.async_create_conversation(
-        profile=body.profile,
+        profile=_scoped_profile(token, body.profile),
         title=body.title,
         participants=[p.model_dump() for p in body.participants],
     )
     _broadcast_sse(
         json.dumps({"action": "conversation.created", "conversation_id": conv.id})
+    )
+    await conversation_runtime.emit_bus_envelope(
+        conversation_runtime.BUS_CREATED, conv
     )
     return conv.model_dump()
 
@@ -4161,10 +4210,10 @@ async def create_conversation_route(
 async def list_conversations_route(
     profile: str = Query(..., description="Workspace profile that owns the rooms"),
     include_archived: bool = Query(True),
-    _key=Depends(require_api_key),
+    token: Token | None = Depends(_require_conversations_read),
 ):
     convs = await conversations.async_list_conversations(
-        profile=_require_profile(profile), include_archived=include_archived
+        profile=_scoped_profile(token, profile), include_archived=include_archived
     )
     return [c.model_dump() for c in convs]
 
@@ -4173,9 +4222,9 @@ async def list_conversations_route(
 async def get_conversation_route(
     conversation_id: str,
     profile: str = Query(...),
-    _key=Depends(require_api_key),
+    token: Token | None = Depends(_require_conversations_read),
 ):
-    conv = await _load_conversation(conversation_id, _require_profile(profile))
+    conv = await _load_conversation(conversation_id, _scoped_profile(token, profile))
     return conv.model_dump()
 
 
@@ -4183,11 +4232,11 @@ async def get_conversation_route(
 async def archive_conversation_route(
     conversation_id: str,
     profile: str = Query(...),
-    _key=Depends(require_api_key),
+    token: Token | None = Depends(_require_conversations_write),
 ):
     try:
         conv = await conversations.async_archive_conversation(
-            conversation_id, profile=_require_profile(profile)
+            conversation_id, profile=_scoped_profile(token, profile)
         )
     except conversations.ProfileScopeError:
         raise HTTPException(
@@ -4195,6 +4244,9 @@ async def archive_conversation_route(
         )
     _broadcast_sse(
         json.dumps({"action": "conversation.archived", "conversation_id": conversation_id})
+    )
+    await conversation_runtime.emit_bus_envelope(
+        conversation_runtime.BUS_ARCHIVED, conv
     )
     return conv.model_dump()
 
@@ -4204,9 +4256,9 @@ async def list_conversation_messages_route(
     conversation_id: str,
     profile: str = Query(...),
     since_id: str | None = Query(default=None),
-    _key=Depends(require_api_key),
+    token: Token | None = Depends(_require_conversations_read),
 ):
-    scoped = _require_profile(profile)
+    scoped = _scoped_profile(token, profile)
     await _load_conversation(conversation_id, scoped)
     msgs = await conversations.async_list_messages(
         conversation_id, profile=scoped, since_id=since_id
@@ -4219,7 +4271,7 @@ async def post_conversation_message_route(
     conversation_id: str,
     body: PostConversationMessageRequest,
     profile: str = Query(...),
-    _key=Depends(require_api_key),
+    token: Token | None = Depends(_require_conversations_write),
 ):
     """Post a message, then hand the room to the turn orchestrator.
 
@@ -4229,7 +4281,7 @@ async def post_conversation_message_route(
     made the old engine feel dead — and with multi-persona rounds it would now
     block for as long as the whole chain talks.
     """
-    scoped = _require_profile(profile)
+    scoped = _scoped_profile(token, profile)
     conv = await _load_conversation(conversation_id, scoped)
     if conv.status != "active":
         raise HTTPException(
@@ -4243,7 +4295,9 @@ async def post_conversation_message_route(
         content=body.content,
         addressed_to=body.addressed_to,
     )
-    conversation_runtime.publish_message(msg)
+    # One choke point for "final": SSE fanout + the conversation:<id> bus
+    # envelope (design spec §8).
+    await conversation_runtime.finalize_message(msg, conv)
     _broadcast_sse(
         json.dumps({"action": "conversation.message", "conversation_id": conversation_id})
     )
@@ -4255,19 +4309,71 @@ async def post_conversation_message_route(
     return msg.model_dump()
 
 
+@app.post("/api/conversations/{conversation_id}/messages/{message_id}/promote")
+async def promote_conversation_message_route(
+    conversation_id: str,
+    message_id: str,
+    body: PromoteMessageRequest,
+    profile: str = Query(...),
+    token: Token | None = Depends(_require_conversations_write),
+):
+    """Promote one message into the platform: memory, todo, or a hub task.
+
+    A room is where thinking happens; this is how a turn becomes durable work
+    (design spec §8). Every target is an EXISTING surface —
+    ``conversation_promote`` holds the dispatch and the per-profile credential
+    resolution; nothing new is invented here.
+
+    Profile-scoped end to end: the profile comes from the caller's auth context,
+    the message is loaded with that profile in the SQL filter (a message in
+    another profile is a 404, identical to a genuine miss), and the downstream
+    vault credentials are that profile's. ``PromoteError`` is an operational
+    condition (unconfigured vault token, downstream reject), so it maps to 400 —
+    not a 500.
+    """
+    scoped = _scoped_profile(token, profile)
+    conv = await _load_conversation(conversation_id, scoped)
+    msg = await conversations.async_get_message(
+        message_id, conversation_id=conversation_id, profile=scoped
+    )
+    if msg is None:
+        raise HTTPException(status_code=404, detail=f"Message '{message_id}' not found")
+
+    try:
+        result = await conversation_promote.promote_message(
+            profile=scoped, conv=conv, msg=msg, body=body
+        )
+    except conversation_promote.PromoteError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # The promotion is itself part of the room's story — same envelope id, so it
+    # lands on the conversation's timeline entity rather than a new one.
+    await conversation_runtime.emit_bus_envelope(
+        conversation_runtime.BUS_PROMOTED,
+        conv,
+        msg,
+        extra={
+            "promote_target": result.target,
+            "promoted_sha": result.sha,
+            "promoted_task_id": result.task_id,
+        },
+    )
+    return result.model_dump()
+
+
 @app.post("/api/conversations/{conversation_id}/participants")
 async def add_conversation_participant_route(
     conversation_id: str,
     body: ConversationParticipantRequest,
     profile: str = Query(...),
-    _key=Depends(require_api_key),
+    token: Token | None = Depends(_require_conversations_write),
 ):
     """Add or update one participant (the persona-management UI's write path).
 
     Posting an existing name replaces that participant, so editing a persona's
     model, role prompt or cooldown is the same call as adding it.
     """
-    scoped = _require_profile(profile)
+    scoped = _scoped_profile(token, profile)
     try:
         conv = await conversations.async_add_participant(
             conversation_id, profile=scoped, participant=body.model_dump()
@@ -4289,10 +4395,10 @@ async def remove_conversation_participant_route(
     conversation_id: str,
     name: str,
     profile: str = Query(...),
-    _key=Depends(require_api_key),
+    token: Token | None = Depends(_require_conversations_write),
 ):
     """Remove a participant. Their messages stay — history is append-only."""
-    scoped = _require_profile(profile)
+    scoped = _scoped_profile(token, profile)
     try:
         conv = await conversations.async_remove_participant(
             conversation_id, profile=scoped, name=name
@@ -4317,12 +4423,12 @@ async def remove_conversation_participant_route(
 async def conversation_stream_route(
     conversation_id: str,
     profile: str = Query(...),
-    _key=Depends(require_api_key),
+    token: Token | None = Depends(_require_conversations_read),
 ):
     """Per-conversation SSE: message.created / message.delta / message.done /
     thinking. Subscribed for the life of an open conversation — this is what
     replaces the frontend's 5-second poll."""
-    scoped = _require_profile(profile)
+    scoped = _scoped_profile(token, profile)
     await _load_conversation(conversation_id, scoped)
 
     q = conversation_runtime.subscribe(conversation_id)

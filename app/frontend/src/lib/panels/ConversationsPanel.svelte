@@ -12,6 +12,11 @@
    * (add / edit / remove personas on a live room) and an @address affordance in
    * the composer, plus the `quiet` frame the turn orchestrator emits when the
    * room has stopped talking and is waiting for a human.
+   *
+   * PR3 adds the per-message promote menu: a turn worth keeping becomes a
+   * memory (brain `learn`), a todo (phantom-todo vault), or a hub task —
+   * server-side, profile-scoped, through existing platform surfaces. The menu
+   * is deliberately per-MESSAGE: what gets promoted is one turn, not the room.
    */
   import { getApi } from '../utils/api';
   import { onMount, untrack } from 'svelte';
@@ -208,6 +213,7 @@
     messages = [];
     thinkingAuthor = null;
     quietReason = null;
+    promoteMenuFor = null;
     await loadMessages(conv.id);
     await subscribe(conv.id);
   }
@@ -271,6 +277,49 @@
       notifications.error(`Failed to send: ${err?.message ?? err}`);
     } finally {
       isSending = false;
+    }
+  }
+
+  // --- Promote a message (PR3) ---
+  // Targets are the platform's own surfaces; the Go/brainbox side resolves the
+  // profile's vault credentials, so nothing secret passes through here.
+  type PromoteTarget = 'memory' | 'todo' | 'task';
+  const PROMOTE_LABELS: Record<PromoteTarget, string> = {
+    memory: 'to memory',
+    todo: 'to todo',
+    task: 'to task',
+  };
+  /** Which message's promote menu is open (only ever one). */
+  let promoteMenuFor = $state<string | null>(null);
+  /** `<messageId>:<target>` while that promotion is in flight. */
+  let promoting = $state<string | null>(null);
+
+  function togglePromoteMenu(id: string) {
+    promoteMenuFor = promoteMenuFor === id ? null : id;
+  }
+
+  async function promoteMessage(msg: ConversationMessage, target: PromoteTarget) {
+    if (!selected || promoting) return;
+    promoteMenuFor = null;
+    promoting = `${msg.id}:${target}`;
+    const a = await getApi();
+    if (!a) { promoting = null; return; }
+    try {
+      const res: any = await (a as any).PromoteConversationMessage(
+        selected.id,
+        msg.id,
+        activeProfile,
+        { target },
+      );
+      // The server's own detail is the honest report — it names the vault or
+      // the agent the promotion actually reached.
+      notifications.success(
+        res?.detail ? `Promoted ${PROMOTE_LABELS[target]}: ${res.detail}` : `Promoted ${PROMOTE_LABELS[target]}`,
+      );
+    } catch (err: any) {
+      notifications.error(`Promote ${PROMOTE_LABELS[target]} failed: ${err?.message ?? err}`);
+    } finally {
+      promoting = null;
     }
   }
 
@@ -498,6 +547,31 @@
                   <span class="msg-addressed">→ @{msg.addressed_to}</span>
                 {/if}
                 <span class="msg-time">{formatTime(msg.created_at)}</span>
+                {#if !msg.streaming && msg.content.trim()}
+                  <div class="promote">
+                    <button
+                      class="promote-trigger"
+                      title="Promote this message: to memory, a todo, or a task"
+                      aria-label="Promote this message"
+                      aria-expanded={promoteMenuFor === msg.id}
+                      onclick={() => togglePromoteMenu(msg.id)}
+                    >⋯</button>
+                    {#if promoteMenuFor === msg.id}
+                      <div class="promote-menu" role="menu">
+                        {#each Object.entries(PROMOTE_LABELS) as [target, label] (target)}
+                          <button
+                            class="promote-item"
+                            role="menuitem"
+                            disabled={promoting !== null}
+                            onclick={() => promoteMessage(msg, target as PromoteTarget)}
+                          >
+                            {promoting === `${msg.id}:${target}` ? `${label}…` : label}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
               </div>
               <div class="message-content">{msg.content}{#if msg.streaming}<span class="stream-caret"></span>{/if}</div>
             </div>
@@ -989,6 +1063,67 @@
     color: var(--color-text-primary);
     white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  /* Per-message promote menu (PR3). Anchored to the message header and
+     revealed on hover/focus so a wall of turns stays quiet. */
+  .promote {
+    position: relative;
+    margin-left: 6px;
+  }
+
+  .promote-trigger {
+    font: inherit;
+    line-height: 1;
+    padding: 0 4px;
+    border: none;
+    background: transparent;
+    color: var(--color-text-tertiary);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+
+  .message:hover .promote-trigger,
+  .promote-trigger:focus-visible,
+  .promote-trigger[aria-expanded='true'] {
+    opacity: 1;
+  }
+
+  .promote-menu {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    min-width: 110px;
+    padding: 4px;
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md, 6px);
+    background: var(--color-bg-secondary, #1a1a1a);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+  }
+
+  .promote-item {
+    font: inherit;
+    font-size: 11px;
+    text-align: left;
+    padding: 4px 8px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--color-text-primary);
+    cursor: pointer;
+  }
+
+  .promote-item:hover:not(:disabled) {
+    background: rgba(255,255,255,0.06);
+  }
+
+  .promote-item:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 
 

@@ -686,6 +686,10 @@ export function ProfileTokenProfiles() {
   return window['go']['main']['App']['ProfileTokenProfiles']();
 }
 
+export function PromoteConversationMessage(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['PromoteConversationMessage'](arg1, arg2, arg3, arg4);
+}
+
 export function PullOllamaModel(arg1) {
   return window['go']['main']['App']['PullOllamaModel'](arg1);
 }

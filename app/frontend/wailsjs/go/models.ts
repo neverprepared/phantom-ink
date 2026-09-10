@@ -768,6 +768,48 @@ export namespace brainbox {
 		    return a;
 		}
 	}
+	export class PromoteMessageRequest {
+	    target: string;
+	    title?: string;
+	    note?: string;
+	    tags?: string[];
+	    agent_name?: string;
+	    repo_url?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new PromoteMessageRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.target = source["target"];
+	        this.title = source["title"];
+	        this.note = source["note"];
+	        this.tags = source["tags"];
+	        this.agent_name = source["agent_name"];
+	        this.repo_url = source["repo_url"];
+	    }
+	}
+	export class PromoteMessageResult {
+	    ok: boolean;
+	    target: string;
+	    sha?: string;
+	    task_id?: string;
+	    detail?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new PromoteMessageResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.target = source["target"];
+	        this.sha = source["sha"];
+	        this.task_id = source["task_id"];
+	        this.detail = source["detail"];
+	    }
+	}
 	export class PostConversationMessageRequest {
 	    author: string;
 	    content: string;

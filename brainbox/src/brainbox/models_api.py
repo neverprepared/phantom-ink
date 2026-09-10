@@ -347,3 +347,25 @@ class PostConversationMessageRequest(BaseModel):
     author: str = Field(..., min_length=1, max_length=128, description="Human sender's name")
     content: str = Field(..., min_length=1)
     addressed_to: str | None = Field(None, description="Participant name, or None for the room")
+
+
+class PromoteMessageRequest(BaseModel):
+    """Request model for POST /api/conversations/{id}/messages/{mid}/promote.
+
+    ``target`` picks the platform surface the message becomes: ``memory`` and
+    ``todo`` write a record into that phantom-brain vault for the caller's
+    profile; ``task`` submits a hub task. Everything else is optional — the
+    message supplies the content, and the profile comes from the caller's auth
+    context (never from the body).
+    """
+
+    target: Literal["memory", "todo", "task"]
+    title: str | None = Field(
+        None, max_length=200, description="Override the derived record/task title"
+    )
+    note: str | None = Field(
+        None, description="Extra context appended to the promoted body"
+    )
+    tags: list[str] = Field(default_factory=list)
+    agent_name: str = Field("worker", description="target='task' only: which hub agent runs it")
+    repo_url: str | None = Field(None, description="target='task' only: repo to clone")
