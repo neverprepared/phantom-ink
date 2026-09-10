@@ -8,6 +8,11 @@
    * roster — name, model, role prompt, cooldown — over
    * Add/RemoveConversationParticipant.
    *
+   * PR4 adds a Sessions section: promoted container sessions (kind="session")
+   * are participants too, but they are not editable here — they are driven by
+   * their own container. The one control they get is Dismiss, which detaches
+   * the session from the room without stopping its work.
+   *
    * Editing is the same call as adding: the server replaces a participant with
    * a matching name, so clicking a persona loads it into the form and saving
    * updates it in place.
@@ -59,7 +64,8 @@
   let cooldown = $state('');
 
   const personas = $derived(roster.filter(p => p.kind === 'persona'));
-  const humans = $derived(roster.filter(p => p.kind !== 'persona'));
+  const sessions = $derived(roster.filter(p => p.kind === 'session'));
+  const humans = $derived(roster.filter(p => p.kind !== 'persona' && p.kind !== 'session'));
   const canSave = $derived(name.trim().length > 0 && !busy);
 
   onMount(() => { void loadModels(); });
@@ -137,9 +143,13 @@
       rosterOverride = (conv as any).participants ?? roster;
       onUpdated(conv);
       if (editing === p.name) resetForm();
-      notifications.success(`Persona "${p.name}" removed`);
+      notifications.success(
+        p.kind === 'session'
+          ? `Session "${p.name}" dismissed — its work keeps running`
+          : `Persona "${p.name}" removed`,
+      );
     } catch (err: any) {
-      notifications.error(`Failed to remove persona: ${err?.message ?? err}`);
+      notifications.error(`Failed to remove ${p.kind === 'session' ? 'session' : 'persona'}: ${err?.message ?? err}`);
     } finally {
       busy = false;
     }
@@ -175,6 +185,34 @@
               </span>
             {:else}
               <button class="btn-remove" onclick={() => removing = p.name} disabled={busy} aria-label="Remove {p.name}">
+                ×
+              </button>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
+    {#if sessions.length > 0}
+      <div class="section-label">Sessions</div>
+      <p class="hint">
+        Promoted from a message — a real container doing real work, reporting back
+        into this room. Dismissing one detaches it here; it does not stop the work.
+      </p>
+      <ul class="roster">
+        {#each sessions as p (p.name)}
+          <li class="roster-row">
+            <span class="roster-main roster-static">
+              <span class="roster-name">💻 {p.name}</span>
+              <span class="roster-meta">promoted session</span>
+            </span>
+            {#if removing === p.name}
+              <span class="confirm">
+                <button class="btn-yes" onclick={() => handleRemove(p)} disabled={busy}>Dismiss</button>
+                <button class="btn-no" onclick={() => removing = null}>Cancel</button>
+              </span>
+            {:else}
+              <button class="btn-remove" onclick={() => removing = p.name} disabled={busy} aria-label="Dismiss {p.name}">
                 ×
               </button>
             {/if}
@@ -247,6 +285,11 @@
     padding: 0.35rem 0.5rem;
   }
   .roster-row.editing { border-color: var(--accent, #3b82f6); }
+  /* A session row is not editable — it names a container, not a config. */
+  .roster-static {
+    cursor: default;
+  }
+
   .roster-main {
     flex: 1;
     display: flex;

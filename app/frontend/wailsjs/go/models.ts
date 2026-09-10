@@ -469,135 +469,7 @@ export namespace brainbox {
 	        this.size = source["size"];
 	    }
 	}
-	export class ChannelParticipant {
-	    name: string;
-	    type: string;
-	    session_name?: string;
-	    ollama_model?: string;
-	    system_prompt?: string;
-	    joined_at: number;
 	
-	    static createFrom(source: any = {}) {
-	        return new ChannelParticipant(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.type = source["type"];
-	        this.session_name = source["session_name"];
-	        this.ollama_model = source["ollama_model"];
-	        this.system_prompt = source["system_prompt"];
-	        this.joined_at = source["joined_at"];
-	    }
-	}
-	export class Channel {
-	    id: string;
-	    name: string;
-	    participants: ChannelParticipant[];
-	    status: string;
-	    created_at: number;
-	    completed_at?: number;
-	    completed_by?: string;
-	    parent_task_id?: string;
-	    workspace_profile?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Channel(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.participants = this.convertValues(source["participants"], ChannelParticipant);
-	        this.status = source["status"];
-	        this.created_at = source["created_at"];
-	        this.completed_at = source["completed_at"];
-	        this.completed_by = source["completed_by"];
-	        this.parent_task_id = source["parent_task_id"];
-	        this.workspace_profile = source["workspace_profile"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-	export class ChannelMessage {
-	    id: string;
-	    channel_id: string;
-	    from_participant: string;
-	    content: string;
-	    summary?: string;
-	    addressed_to?: string;
-	    type: string;
-	    timestamp: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new ChannelMessage(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.channel_id = source["channel_id"];
-	        this.from_participant = source["from_participant"];
-	        this.content = source["content"];
-	        this.summary = source["summary"];
-	        this.addressed_to = source["addressed_to"];
-	        this.type = source["type"];
-	        this.timestamp = source["timestamp"];
-	    }
-	}
-	
-	export class ChannelParticipantRequest {
-	    name: string;
-	    type: string;
-	    session_name?: string;
-	    ollama_model?: string;
-	    system_prompt?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ChannelParticipantRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.type = source["type"];
-	        this.session_name = source["session_name"];
-	        this.ollama_model = source["ollama_model"];
-	        this.system_prompt = source["system_prompt"];
-	    }
-	}
-	export class CompleteChannelRequest {
-	    by: string;
-	    reason?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new CompleteChannelRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.by = source["by"];
-	        this.reason = source["reason"];
-	    }
-	}
 	export class ConversationParticipant {
 	    name: string;
 	    kind: string;
@@ -879,42 +751,6 @@ export namespace brainbox {
 	        this.codex_model = source["codex_model"];
 	        this.ollama_model = source["ollama_model"];
 	    }
-	}
-	export class CreateChannelRequest {
-	    name: string;
-	    participants: ChannelParticipantRequest[];
-	    parent_task_id?: string;
-	    workspace_profile?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new CreateChannelRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.participants = this.convertValues(source["participants"], ChannelParticipantRequest);
-	        this.parent_task_id = source["parent_task_id"];
-	        this.workspace_profile = source["workspace_profile"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class CreateSessionRequest {
 	    name: string;
@@ -1743,24 +1579,6 @@ export namespace brainbox {
 	        this.policy = source["policy"];
 	    }
 	}
-	export class PostChannelMessageRequest {
-	    from_participant: string;
-	    content: string;
-	    summary?: string;
-	    addressed_to?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new PostChannelMessageRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.from_participant = source["from_participant"];
-	        this.content = source["content"];
-	        this.summary = source["summary"];
-	        this.addressed_to = source["addressed_to"];
-	    }
-	}
 	export class ProfileServerState {
 	    name: string;
 	    zone: string;
@@ -2539,7 +2357,7 @@ export namespace main {
 	    job_id: string;
 	    spawned_by: string;
 	    child_task_ids: string[];
-	    channel_ids: string[];
+	    conversation_ids: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new HubTask(source);
@@ -2565,7 +2383,7 @@ export namespace main {
 	        this.job_id = source["job_id"];
 	        this.spawned_by = source["spawned_by"];
 	        this.child_task_ids = source["child_task_ids"];
-	        this.channel_ids = source["channel_ids"];
+	        this.conversation_ids = source["conversation_ids"];
 	    }
 	}
 	export class AgentJobDetail {

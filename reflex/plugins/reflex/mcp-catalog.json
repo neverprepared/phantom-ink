@@ -278,7 +278,7 @@
       }
     },
     "brainbox": {
-      "description": "PhantomInk platform — sandboxed sessions, hub tasks, playbooks, git worktrees, channels, repos, and artifacts",
+      "description": "PhantomInk platform — sandboxed sessions, hub tasks, playbooks, git worktrees, conversations, repos, and artifacts",
       "category": "development",
       "url": "https://github.com/neverprepared/ink-bunny",
       "requires": [],

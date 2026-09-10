@@ -25,7 +25,7 @@ type Task struct {
 	JobID            string      `json:"job_id"`
 	SpawnedBy        string      `json:"spawned_by"`       // task ID of the parent that spawned this one
 	ChildTaskIDs     []string    `json:"child_task_ids"`   // task IDs of children spawned by this task
-	ChannelIDs       []string    `json:"channel_ids"`      // channels spawned by this task
+	ConversationIDs  []string    `json:"conversation_ids"` // conversations this task participates in
 }
 
 // AgentDefinition represents a registered agent definition.

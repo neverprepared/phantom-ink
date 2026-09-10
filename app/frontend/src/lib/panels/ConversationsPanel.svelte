@@ -17,6 +17,13 @@
    * memory (brain `learn`), a todo (phantom-todo vault), or a hub task —
    * server-side, profile-scoped, through existing platform surfaces. The menu
    * is deliberately per-MESSAGE: what gets promoted is one turn, not the room.
+   *
+   * PR4 adds the fourth target — "to session" — which spins a real container
+   * session on that message, joins it to the room as a kind="session"
+   * participant, and streams its progress back in as session messages. It is
+   * explicit and user-triggered by design: nothing bootstraps a container just
+   * because a participant record exists. A promoted session can be dismissed
+   * from the roster, which detaches it without killing its work.
    */
   import { getApi } from '../utils/api';
   import { onMount, untrack } from 'svelte';
@@ -283,11 +290,12 @@
   // --- Promote a message (PR3) ---
   // Targets are the platform's own surfaces; the Go/brainbox side resolves the
   // profile's vault credentials, so nothing secret passes through here.
-  type PromoteTarget = 'memory' | 'todo' | 'task';
+  type PromoteTarget = 'memory' | 'todo' | 'task' | 'session';
   const PROMOTE_LABELS: Record<PromoteTarget, string> = {
     memory: 'to memory',
     todo: 'to todo',
     task: 'to task',
+    session: 'to session',
   };
   /** Which message's promote menu is open (only ever one). */
   let promoteMenuFor = $state<string | null>(null);
@@ -311,11 +319,20 @@
         activeProfile,
         { target },
       );
-      // The server's own detail is the honest report — it names the vault or
-      // the agent the promotion actually reached.
+      // The server's own detail is the honest report — it names the vault, the
+      // agent, or the session participant the promotion actually reached.
       notifications.success(
         res?.detail ? `Promoted ${PROMOTE_LABELS[target]}: ${res.detail}` : `Promoted ${PROMOTE_LABELS[target]}`,
       );
+      if (target === 'session') {
+        // The new kind="session" participant is in the roster the server just
+        // wrote; re-read the room so it appears immediately. Its own progress
+        // arrives on the SSE stream like any other turn.
+        try {
+          const conv = await a.GetConversation(selected.id, activeProfile);
+          handleRosterUpdated(conv as unknown as Conversation);
+        } catch { /* the roster refreshes on the next open regardless */ }
+      }
     } catch (err: any) {
       notifications.error(`Promote ${PROMOTE_LABELS[target]} failed: ${err?.message ?? err}`);
     } finally {
@@ -551,7 +568,7 @@
                   <div class="promote">
                     <button
                       class="promote-trigger"
-                      title="Promote this message: to memory, a todo, or a task"
+                      title="Promote this message: to memory, a todo, a task, or a live session"
                       aria-label="Promote this message"
                       aria-expanded={promoteMenuFor === msg.id}
                       onclick={() => togglePromoteMenu(msg.id)}

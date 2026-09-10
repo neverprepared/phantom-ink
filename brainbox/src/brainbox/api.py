@@ -12,7 +12,7 @@ import time
 import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import docker
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket
@@ -45,16 +45,14 @@ from .validation import (
 from .log import get_logger, setup_logging
 from .models import RatchetRequest, TaskCreate, Token
 from .models_api import (
-    CompleteChannelRequest,
+    ArchiveConversationRequest,
     ConversationParticipantRequest,
     CreateAgentRequest,
-    CreateChannelRequest,
     CreateConversationRequest,
     CreateSessionRequest,
     DeleteSessionRequest,
     ExecSessionRequest,
     MintProfileTokenRequest,
-    PostChannelMessageRequest,
     PostConversationMessageRequest,
     PromoteMessageRequest,
     QuerySessionRequest,
@@ -92,22 +90,10 @@ from .langfuse_client import (
     list_traces as langfuse_list_traces,
 )
 from .messages import get_message_log, get_messages, route as route_message
-from .channels import (
-    add_participant as channel_add_participant,
-    complete_channel,
-    create_channel,
-    delete_channel,
-    get_channel,
-    get_messages as channel_get_messages,
-    list_channels,
-    on_event as channel_on_event,
-    post_message as channel_post_message,
-    remove_participant as channel_remove_participant,
-)
-from .models import ChannelParticipant
 from . import conversation_orchestrator
 from . import conversation_promote
 from . import conversation_runtime
+from . import conversation_session
 from . import conversation_store as conversations
 from .models_api import OllamaChatRequest, OllamaPullRequest
 from .ollama import (
@@ -182,7 +168,6 @@ def _audit_log(
 
 _sse_queues: set[asyncio.Queue] = set()
 _sse_drops: int = 0
-_channel_queues: dict[str, set[asyncio.Queue]] = {}
 # Strong references to in-flight persona replies. asyncio only holds a weak ref
 # to a running task, so without this a reply can be garbage-collected mid-stream.
 _persona_reply_tasks: set[asyncio.Task] = set()
@@ -202,15 +187,6 @@ def _broadcast_sse(data: str) -> None:
                     "sse.queue_full",
                     metadata={"total_drops": _sse_drops, "connected_clients": len(_sse_queues)},
                 )
-
-
-def _broadcast_to_channel(channel_id: str, data: str) -> None:
-    for q in list(_channel_queues.get(channel_id, set())):
-        try:
-            q.put_nowait(data)
-        except asyncio.QueueFull:
-            pass
-    _broadcast_sse(json.dumps({"action": "channel.message", "channel_id": channel_id}))
 
 
 # ---------------------------------------------------------------------------
@@ -338,21 +314,11 @@ async def lifespan(app: FastAPI):
 
     on_event(_on_hub_task_event)
 
-    # Widen durable bus coverage: channel lifecycle events also become
-    # envelopes in agent_events so the rules consumer sees them. Converters
-    # returning None (e.g. channel.message) are skipped; the SSE listeners
-    # below are untouched.
-    def _ingest_converted(converter):
-        def _listener(event: str, data: object) -> None:
-            try:
-                env = converter(event, data)
-                if env is not None:
-                    agent_store.ingest(env)
-            except Exception as exc:
-                log.warning("agent_bus.ingest_failed", metadata={"event": event, "reason": str(exc)})
-        return _listener
-
-    channel_on_event(_ingest_converted(agent_store.envelope_from_channel))
+    # Promoted sessions report back into the room that spawned them: a task
+    # lifecycle event on a LINKED task becomes a kind='session' message in its
+    # conversation (design spec §6). Unlinked tasks are ignored, so this costs
+    # a dict lookup for every other task on the hub.
+    on_event(conversation_session.on_task_event)
 
     # Bridge LLM-request-plane metering (brainbox.llm seam) onto the agent bus as
     # kind='metric' envelopes. One record per complete() call — success or failure
@@ -391,26 +357,6 @@ async def lifespan(app: FastAPI):
             pass
 
     agent_store.on_event(_on_agent_envelope)
-
-    # Forward channel events to per-channel SSE queues
-    def _on_channel_event(event: str, data: object) -> None:
-        if event == "channel.message":
-            cid = data.get("channel_id") if isinstance(data, dict) else None  # type: ignore[union-attr]
-            msg = data.get("message") if isinstance(data, dict) else None  # type: ignore[union-attr]
-            if cid:
-                payload = json.dumps({
-                    "event": event,
-                    "channel_id": cid,
-                    "message": msg.model_dump() if hasattr(msg, "model_dump") else msg,
-                })
-                _broadcast_to_channel(cid, payload)
-        elif event in ("channel.created", "channel.completed"):
-            _broadcast_sse(json.dumps({
-                "action": event,
-                "data": data.model_dump() if hasattr(data, "model_dump") else data,
-            }))
-
-    channel_on_event(_on_channel_event)
 
     # Start Docker events watcher
     global _docker_events_task, _metrics_sample_task, _sync_pull_task
@@ -3658,465 +3604,11 @@ async def hub_message_log(_key=Depends(require_api_key)):
 
 
 # ---------------------------------------------------------------------------
-# Group chat channels
-# ---------------------------------------------------------------------------
-
-
-async def _bootstrap_session_in_channel(
-    participant: ChannelParticipant,
-    channel: Any,
-    *,
-    note: str = "",
-) -> None:
-    """Drop a CHANNEL.md into the session's container and nudge Claude (via
-    tmux) to start participating. Called both when a channel is first created
-    AND when a session is added to an already-live channel — without this
-    bootstrap, the session has no idea it's been included and won't respond.
-
-    `note` is appended to the tmux prompt so e.g. late joins can say
-    "you've been added to an in-progress conversation, catch up first."
-    Errors are logged but don't bubble — bootstrap failure shouldn't block
-    the channel mutation that triggered it.
-    """
-    if participant.type != "session" or not participant.session_name:
-        return
-
-    api_port = settings.api_port
-    api_key_val = get_api_key()
-    bootstrap = (
-        f"# Group Channel: {channel.name}\n\n"
-        f"You are **{participant.name}** in a group discussion.\n\n"
-        f"**Channel ID:** `{channel.id}`\n"
-        f"**API URL:** `http://host.docker.internal:{api_port}`\n"
-        f"**Your API key:** `{api_key_val}`\n\n"
-        "## How to participate\n\n"
-        "Use these MCP tools (already available in your session):\n"
-        f'- `channel_read(channel_id="{channel.id}", since_id=<last_id>)` — get new messages\n'
-        f'- `channel_send(channel_id="{channel.id}", content=<msg>, summary=<brief>)` — post a message\n'
-        f'- `channel_complete(channel_id="{channel.id}", reason=<why>)` — signal discussion is done\n\n'
-        "## Rules\n"
-        "1. Poll `channel_read` every few seconds to check for new messages\n"
-        "2. Respond to broadcast messages and messages addressed to @" + participant.name + "\n"
-        "3. When sending, always include `summary=` with a 1-2 sentence brief of your key point\n"
-        "4. Use `addressed_to=` to direct a response at a specific participant\n"
-        "5. Call `channel_complete` when you believe the discussion has concluded\n"
-    )
-    if participant.system_prompt:
-        bootstrap += f"6. Your role: {participant.system_prompt}\n"
-
-    try:
-        client = _docker()
-        container_name = _find_container_name(client, participant.session_name)
-        container = client.containers.get(container_name)
-        loop = asyncio.get_running_loop()
-        import io
-        import tarfile
-
-        # Pre-flight: confirm tmux session 'main' is actually live in the
-        # container. If we skip this check and the session isn't there,
-        # `tmux send-keys` exits non-zero but `exec_run` reports it as
-        # a normal completion — leading to a false-positive bootstrap_sent
-        # log while the agent never actually receives anything.
-        check_res = await loop.run_in_executor(
-            None,
-            lambda c=container: c.exec_run(
-                ["tmux", "has-session", "-t", "main"],
-                user="developer",
-            ),
-        )
-        if check_res.exit_code != 0:
-            log.warning(
-                "channel.bootstrap_exec_failed",
-                metadata={
-                    "session": participant.session_name,
-                    "channel_id": channel.id,
-                    "reason": (
-                        "no tmux session 'main' in container — the agent "
-                        "isn't running yet. Open the session's terminal "
-                        "once to spawn it, or wait for the container to "
-                        "finish booting, then retry."
-                    ),
-                    "tmux_has_session_exit": check_res.exit_code,
-                },
-            )
-            return
-
-        content_bytes = bootstrap.encode("utf-8")
-        tarstream = io.BytesIO()
-        with tarfile.open(fileobj=tarstream, mode="w") as tar:
-            info = tarfile.TarInfo(name="CHANNEL.md")
-            info.size = len(content_bytes)
-            tar.addfile(info, io.BytesIO(content_bytes))
-        tarstream.seek(0)
-        await loop.run_in_executor(
-            None,
-            lambda c=container, ts=tarstream: c.put_archive("/home/developer", ts),
-        )
-
-        tmux_prompt = (
-            f"Read /home/developer/CHANNEL.md carefully. "
-            f"You are now a participant in group channel '{channel.name}' (ID: {channel.id}). "
-            f"Begin participating autonomously: use channel_read to poll for messages, "
-            f"respond using channel_send (always include a summary=), and call channel_complete "
-            f"when the discussion has concluded. "
-            f"{note}"
-            f"Start now by reading the channel and introducing yourself."
-        )
-        # Type the prompt as literal text, then press Enter as a separate
-        # tmux call with a brief pause between. Claude Code v2.x's TUI
-        # treats a single send-keys batch like a bracketed paste and
-        # consumes the trailing Enter as part of the paste rather than as
-        # a submit keystroke. Splitting the send into two operations gives
-        # the TUI a chance to leave paste mode before the Enter arrives.
-        type_res = await loop.run_in_executor(
-            None,
-            lambda c=container, prompt=tmux_prompt: c.exec_run(
-                ["tmux", "send-keys", "-t", "main", "-l", prompt],
-                user="developer",
-            ),
-        )
-        if type_res.exit_code != 0:
-            stderr = (type_res.output or b"").decode("utf-8", errors="replace").strip()
-            log.warning(
-                "channel.bootstrap_exec_failed",
-                metadata={
-                    "session": participant.session_name,
-                    "channel_id": channel.id,
-                    "reason": f"tmux send-keys (text) failed (exit {type_res.exit_code}): {stderr or 'unknown'}",
-                },
-            )
-            return
-
-        await asyncio.sleep(0.3)
-
-        send_res = await loop.run_in_executor(
-            None,
-            lambda c=container: c.exec_run(
-                ["tmux", "send-keys", "-t", "main", "Enter"],
-                user="developer",
-            ),
-        )
-        if send_res.exit_code != 0:
-            stderr = (send_res.output or b"").decode("utf-8", errors="replace").strip()
-            log.warning(
-                "channel.bootstrap_exec_failed",
-                metadata={
-                    "session": participant.session_name,
-                    "channel_id": channel.id,
-                    "reason": f"tmux send-keys (Enter) failed (exit {send_res.exit_code}): {stderr or 'unknown'}",
-                },
-            )
-            return
-
-        log.info(
-            "channel.bootstrap_sent",
-            metadata={"session": participant.session_name, "channel_id": channel.id},
-        )
-    except Exception as exc:
-        log.warning(
-            "channel.bootstrap_exec_failed",
-            metadata={"session": participant.session_name, "reason": str(exc)},
-        )
-
-
-@app.post("/api/hub/channels")
-async def hub_create_channel(body: CreateChannelRequest, request: Request, _key=Depends(require_api_key)):
-    """Create a group chat channel and bootstrap session participants."""
-    participants = [
-        ChannelParticipant(
-            name=p.name,
-            type=p.type,
-            session_name=p.session_name,
-            ollama_model=p.ollama_model,
-            system_prompt=p.system_prompt,
-        )
-        for p in body.participants
-    ]
-    channel = create_channel(
-        body.name,
-        participants,
-        parent_task_id=body.parent_task_id,
-        workspace_profile=body.workspace_profile,
-    )
-
-    if body.parent_task_id:
-        from .router import _add_channel_to_task
-        _add_channel_to_task(body.parent_task_id, channel.id)
-
-    for p in participants:
-        await _bootstrap_session_in_channel(p, channel)
-
-    return channel.model_dump()
-
-
-@app.get("/api/hub/channels")
-async def hub_list_channels(
-    workspace_profile: str | None = None,
-    _key=Depends(require_api_key),
-):
-    return [c.model_dump() for c in list_channels(workspace_profile=workspace_profile)]
-
-
-@app.get("/api/hub/channels/{channel_id}")
-async def hub_get_channel(channel_id: str, _key=Depends(require_api_key)):
-    channel = get_channel(channel_id)
-    if not channel:
-        raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' not found")
-    return channel.model_dump()
-
-
-@app.delete("/api/hub/channels/{channel_id}")
-async def hub_delete_channel(channel_id: str, _key=Depends(require_api_key)):
-    try:
-        delete_channel(channel_id)
-        _broadcast_sse(json.dumps({"action": "channel.deleted", "channel_id": channel_id}))
-        return {"ok": True}
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-
-
-@app.post("/api/hub/channels/{channel_id}/participants")
-async def hub_add_channel_participant(
-    channel_id: str,
-    body: ChannelParticipant,
-    _key=Depends(require_api_key),
-):
-    """Add a session as a participant in an already-created channel.
-
-    Returns the updated channel. 404 if the channel doesn't exist; 400 if
-    the participant is already in the channel or the channel is completed.
-    """
-    try:
-        channel = channel_add_participant(channel_id, body)
-        _broadcast_sse(json.dumps({"action": "channel.participant_added", "channel_id": channel_id}))
-        # Critical: bootstrap the session so it actually starts participating.
-        # Without this, the participant row exists but the container never
-        # learns about the channel and never polls / responds.
-        await _bootstrap_session_in_channel(
-            body,
-            channel,
-            note=(
-                "Note: you've been added to an in-progress conversation. "
-                "Use channel_read to catch up on prior messages before responding. "
-            ),
-        )
-        return channel.model_dump()
-    except ValueError as exc:
-        msg = str(exc)
-        status = 404 if "not found" in msg else 400
-        raise HTTPException(status_code=status, detail=msg)
-
-
-@app.post("/api/hub/channels/{channel_id}/join")
-async def hub_join_channel(
-    channel_id: str,
-    token: Token = Depends(require_token),
-):
-    """Session self-join: register as a channel participant using bearer token identity.
-
-    Idempotent — safe to call if already a member. The session identity is
-    derived from the bearer token; no body is needed. Requires the
-    'hub_messaging' capability.
-    """
-    from .channels import join_channel
-    from .router import get_task as _get_task
-
-    if "hub_messaging" not in token.capabilities:
-        raise HTTPException(
-            status_code=403,
-            detail="Token lacks required capability: 'hub_messaging'",
-        )
-
-    task = _get_task(token.task_id) if token.task_id else None
-    session_name = (task.session_name if task else None) or token.agent_name
-
-    try:
-        channel = join_channel(channel_id, session_name=session_name)
-        if task and channel.id not in task.channel_ids:
-            task.channel_ids.append(channel.id)
-            if channel.parent_task_id is None:
-                channel.parent_task_id = task.id
-        _broadcast_sse(
-            json.dumps({"action": "channel.participant_joined", "channel_id": channel_id, "session": session_name})
-        )
-        return channel.model_dump()
-    except ValueError as exc:
-        msg = str(exc)
-        status = 404 if "not found" in msg else 400
-        raise HTTPException(status_code=status, detail=msg)
-
-
-@app.delete("/api/hub/channels/{channel_id}/participants/{name}")
-async def hub_remove_channel_participant(
-    channel_id: str,
-    name: str,
-    _key=Depends(require_api_key),
-):
-    """Remove a participant from a channel by name. The participant stops
-    receiving messages but historical messages they posted stay in the log.
-    """
-    try:
-        channel = channel_remove_participant(channel_id, name)
-        _broadcast_sse(json.dumps({"action": "channel.participant_removed", "channel_id": channel_id, "name": name}))
-        return channel.model_dump()
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-
-
-@app.get("/api/hub/channels/{channel_id}/messages")
-async def hub_get_channel_messages(
-    channel_id: str,
-    since_id: str | None = Query(default=None),
-    _key=Depends(require_api_key),
-):
-    channel = get_channel(channel_id)
-    if not channel:
-        raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' not found")
-    msgs = channel_get_messages(channel_id, since_id=since_id)
-    return [m.model_dump() for m in msgs]
-
-
-@app.get("/api/hub/channels/{channel_id}/wait")
-async def hub_wait_channel_activity(
-    channel_id: str,
-    since_id: str | None = Query(default=None),
-    timeout: float = Query(default=30.0, ge=1.0, le=120.0),
-    _key=Depends(require_api_key),
-):
-    """Long-poll: block until a new message arrives or channel completes.
-
-    Returns immediately if there are already messages after since_id or the
-    channel is already completed. Otherwise waits up to `timeout` seconds.
-    """
-    channel = get_channel(channel_id)
-    if channel is None:
-        raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' not found")
-
-    msgs = channel_get_messages(channel_id, since_id=since_id)
-    if msgs or channel.status == "completed":
-        return {
-            "messages": [m.model_dump() for m in msgs],
-            "completed": channel.status == "completed",
-            "completion_reason": channel.completed_by,
-        }
-
-    wakeup = asyncio.Event()
-
-    def _listener(event: str, data: object) -> None:
-        if event in ("channel.message", "channel.completed"):
-            payload = data if isinstance(data, dict) else {}
-            cid = payload.get("channel_id") or (data.id if hasattr(data, "id") else None)
-            if cid == channel_id:
-                wakeup.set()
-
-    import brainbox.channels as _ch_module
-    _ch_module._listeners.append(_listener)
-    try:
-        await asyncio.wait_for(wakeup.wait(), timeout=timeout)
-    except asyncio.TimeoutError:
-        pass
-    finally:
-        try:
-            _ch_module._listeners.remove(_listener)
-        except ValueError:
-            pass
-
-    msgs = channel_get_messages(channel_id, since_id=since_id)
-    channel = get_channel(channel_id)
-    return {
-        "messages": [m.model_dump() for m in msgs],
-        "completed": channel.status == "completed" if channel else True,
-        "completion_reason": channel.completed_by if channel else None,
-    }
-
-
-@app.post("/api/hub/channels/{channel_id}/messages")
-async def hub_post_channel_message(
-    channel_id: str,
-    body: PostChannelMessageRequest,
-    token: Token | None = Depends(require_capability("hub_messaging")),
-):
-    channel = get_channel(channel_id)
-    if not channel:
-        raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' not found")
-
-    # Session-token path: override from_participant with token identity and enforce membership.
-    from_participant = body.from_participant
-    if token is not None:
-        # Derive participant name from session_name (the token's task maps to a session)
-        from .router import get_task as _get_task
-        task = _get_task(token.task_id) if token.task_id else None
-        session_name = task.session_name if task else None
-        member_names = {p.name for p in channel.participants}
-        member_sessions = {p.session_name for p in channel.participants if p.session_name}
-        # Accept if the token's agent name or session name matches a participant
-        identity = session_name or token.agent_name
-        if identity not in member_names and (not session_name or session_name not in member_sessions):
-            raise HTTPException(
-                status_code=403,
-                detail=f"Session '{identity}' is not a member of channel '{channel_id}'",
-            )
-        # Override the claimed from_participant with the token's verified identity
-        from_participant = identity
-
-    try:
-        msg = channel_post_message(
-            channel_id,
-            from_participant=from_participant,
-            content=body.content,
-            summary=body.summary,
-            addressed_to=body.addressed_to,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    return msg.model_dump()
-
-
-@app.post("/api/hub/channels/{channel_id}/complete")
-async def hub_complete_channel(
-    channel_id: str,
-    body: CompleteChannelRequest,
-    _key=Depends(require_api_key),
-):
-    channel = get_channel(channel_id)
-    if not channel:
-        raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' not found")
-    try:
-        updated = complete_channel(channel_id, by=body.by, reason=body.reason)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    return updated.model_dump()
-
-
-@app.get("/api/hub/channels/{channel_id}/stream")
-async def hub_channel_stream(channel_id: str, request: Request, _key=Depends(require_api_key)):
-    """SSE stream for a single channel — delivers new messages in real-time."""
-    channel = get_channel(channel_id)
-    if not channel:
-        raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' not found")
-
-    q: asyncio.Queue = asyncio.Queue(maxsize=100)
-    _channel_queues.setdefault(channel_id, set()).add(q)
-
-    async def event_generator():
-        try:
-            yield {"data": "connected"}
-            while True:
-                data = await q.get()
-                yield {"data": data}
-        except asyncio.CancelledError:
-            pass
-        finally:
-            _channel_queues.get(channel_id, set()).discard(q)
-
-    return EventSourceResponse(event_generator())
-
-
-# ---------------------------------------------------------------------------
-# Conversations — the multi-agent Chat engine (PR1).
+# Conversations — the multi-agent Chat engine.
 #
-# Runs ALONGSIDE the legacy /api/hub/channels routes above; the two share no
-# state. Channels are retired in PR4 (see the design spec §11).
+# PR4 retired the in-memory /api/hub/channels engine these routes were designed
+# to replace; this is now the ONLY chat surface, and the repointed channel_*
+# MCP tools call in here.
 #
 # Every route here takes an explicit `profile` and passes it to the store, which
 # filters on it in SQL. A request scoped to one profile cannot read or write
@@ -4133,17 +3625,49 @@ def _require_profile(profile: str | None) -> str:
     return value
 
 
+# The capability a container session's task token already carries (every agent
+# definition in agents/*.json grants it). A promoted session participates in a
+# room through the repointed channel_* MCP tools, which authenticate with that
+# task token — so it is accepted alongside conversations:*. Widening here rather
+# than re-minting session tokens keeps the promotion path working with tokens
+# the hub already issues, and the profile is still DERIVED (never asserted) —
+# see ``_scoped_profile``.
+SESSION_PARTICIPANT_CAPABILITY = "hub_messaging"
+
+
+def _require_conversation_capability(capability: str) -> Callable:
+    """``require_capability`` widened to accept a session's own task token.
+
+    Falls back ONLY on a 403 (authenticated but under-privileged); a 401 stays a
+    401, so an unauthenticated request is still rejected the same way.
+    """
+    strict = require_capability(capability)
+
+    def _dep(request: Request) -> Token | None:
+        try:
+            return strict(request)
+        except HTTPException as exc:
+            if exc.status_code != 403:
+                raise
+            token = get_bearer_token(request)
+            if token and SESSION_PARTICIPANT_CAPABILITY in token.capabilities:
+                return token
+            raise
+
+    return _dep
+
+
 # Conversation auth (PR3). Bound to named objects rather than inline
 # ``Depends(require_capability(...))`` so the test suite can override these
 # exact dependencies (see tests/conftest.py) — the same pattern the
 # agent_events ingest guard uses.
 #
-# ``require_capability`` accepts EITHER the shared API key (full trust, which is
-# how the desktop app calls in) OR a Bearer token carrying the capability. This
-# is strictly additive: before PR3 these routes were API-key-only, so no caller
+# The guard accepts EITHER the shared API key (full trust, which is how the
+# desktop app calls in) OR a Bearer token carrying the capability. This is
+# strictly additive: before PR3 these routes were API-key-only, so no caller
 # that worked yesterday is rejected today.
-_require_conversations_read = require_capability("conversations:read")
-_require_conversations_write = require_capability("conversations:write")
+_require_conversations_read = _require_conversation_capability("conversations:read")
+_require_conversations_write = _require_conversation_capability("conversations:write")
 
 
 def _scoped_profile(token: Token | None, requested: str | None) -> str:
@@ -4157,23 +3681,77 @@ def _scoped_profile(token: Token | None, requested: str | None) -> str:
     deliberate here — the caller authenticated, and telling it that its token
     is scoped elsewhere leaks nothing about whether the room exists.
 
+    A session's TASK token carries no ``workspace_profile`` of its own, so its
+    profile is derived from the task it was minted for — the profile that
+    submitted the work. Same rule, one hop further: still the caller's identity,
+    never the request body.
+
     The shared API key is full trust by construction (it is the operator's own
     key, and the desktop app is the only holder), so for that path the
     request-supplied profile remains the source — there is no narrower caller
     identity to derive one from.
     """
-    if token is not None and token.workspace_profile:
+    bound = _token_profile(token) if token is not None else ""
+    if bound:
         asked = (requested or "").strip()
-        if asked and asked != token.workspace_profile:
+        if asked and asked != bound:
             raise HTTPException(
                 status_code=403,
                 detail=(
                     "token is scoped to profile "
-                    f"'{token.workspace_profile}'; it cannot act in '{asked}'"
+                    f"'{bound}'; it cannot act in '{asked}'"
                 ),
             )
-        return token.workspace_profile
+        return bound
     return _require_profile(requested)
+
+
+def _token_profile(token: Token) -> str:
+    """The profile a token is bound to, or "" when it is bound to none.
+
+    A profile token says so directly. A session's task token does not, so the
+    task it names is consulted — that task's ``workspace_profile`` is the
+    profile that asked for the work, which is exactly the room the session
+    belongs in. An unknown task yields "" and the caller falls back to the
+    request's own profile (unchanged pre-PR4 behaviour).
+    """
+    if token.workspace_profile:
+        return token.workspace_profile
+    if not token.task_id:
+        return ""
+    from .router import get_task as _get_task
+
+    task = _get_task(token.task_id)
+    return (getattr(task, "workspace_profile", None) or "") if task else ""
+
+
+def _is_session_token(token: Token | None) -> bool:
+    """True when the caller is a container session using its own task token.
+
+    A profile token (minted for the desktop app or an operator) is NOT a
+    session, even though it may carry conversations:write — the distinguishing
+    mark is being bound to a task rather than to a profile.
+    """
+    return bool(token is not None and token.task_id and not token.workspace_profile)
+
+
+def _session_identity(token: Token) -> str:
+    """The participant name a session joins under.
+
+    Its container session name when the task has one (that is what an operator
+    sees in the sessions list), otherwise the agent name — the same derivation
+    the retired channel join used, so a promoted session keeps the identity it
+    already knows itself by. A session promoted from this room already has a
+    participant under its promoted name; that link is preferred so a
+    ``channel_join`` call does not create a second participant for one session.
+    """
+    link = conversation_session.link_for_task(token.task_id) if token.task_id else None
+    if link is not None:
+        return link.participant
+    from .router import get_task as _get_task
+
+    task = _get_task(token.task_id) if token.task_id else None
+    return (getattr(task, "session_name", None) or "") or token.agent_name
 
 
 async def _load_conversation(conversation_id: str, profile: str):
@@ -4231,12 +3809,34 @@ async def get_conversation_route(
 @app.post("/api/conversations/{conversation_id}/archive")
 async def archive_conversation_route(
     conversation_id: str,
-    profile: str = Query(...),
+    body: ArchiveConversationRequest | None = None,
+    profile: str = Query(default=None),
     token: Token | None = Depends(_require_conversations_write),
 ):
+    """Close a room. An optional ``{by, reason}`` body appends a final
+    ``kind='session'`` message before archiving, so the log says WHY it ended —
+    this is what the repointed ``channel_complete`` tool sends, and it is one
+    call so a room can never end up archived with no closing note (or noted and
+    left open)."""
+    scoped = _scoped_profile(token, profile)
+    if body is not None and (body.reason or "").strip():
+        conv = await _load_conversation(conversation_id, scoped)
+        # Only an ACTIVE room gets a closing note: re-archiving is idempotent,
+        # but appending a second "we're done" to a room that already ended is
+        # not, and history is append-only.
+        if conv.status != "active":
+            return conv.model_dump()
+        note = await conversations.async_add_message(
+            conversation_id=conversation_id,
+            profile=scoped,
+            author=body.by or "system",
+            content=body.reason.strip(),
+            kind="session",
+        )
+        await conversation_runtime.finalize_message(note, conv)
     try:
         conv = await conversations.async_archive_conversation(
-            conversation_id, profile=_scoped_profile(token, profile)
+            conversation_id, profile=scoped
         )
     except conversations.ProfileScopeError:
         raise HTTPException(
@@ -4254,7 +3854,7 @@ async def archive_conversation_route(
 @app.get("/api/conversations/{conversation_id}/messages")
 async def list_conversation_messages_route(
     conversation_id: str,
-    profile: str = Query(...),
+    profile: str = Query(default=None),
     since_id: str | None = Query(default=None),
     token: Token | None = Depends(_require_conversations_read),
 ):
@@ -4270,7 +3870,7 @@ async def list_conversation_messages_route(
 async def post_conversation_message_route(
     conversation_id: str,
     body: PostConversationMessageRequest,
-    profile: str = Query(...),
+    profile: str = Query(default=None),
     token: Token | None = Depends(_require_conversations_write),
 ):
     """Post a message, then hand the room to the turn orchestrator.
@@ -4288,12 +3888,39 @@ async def post_conversation_message_route(
             status_code=400, detail=f"Conversation '{conversation_id}' is archived"
         )
 
+    # A message posted with a session's own task token is that session
+    # reporting in — stored as kind='session' so the room (and the persona
+    # prompt builder, which includes both kinds) can tell a container's output
+    # from a human's typing.
+    #
+    # Its author is OVERRIDDEN with the identity its token proves, and it must
+    # already be a participant. Both rules are carried over verbatim from the
+    # retired channel message route: a session cannot post under a name it does
+    # not own, and cannot speak into a room it never joined (``channel_join``
+    # is one call away). The shared API key keeps full trust — the desktop app
+    # posts on behalf of the human sitting in front of it.
+    kind = "message"
+    author = body.author
+    if _is_session_token(token):
+        kind = "session"
+        author = _session_identity(token)
+        key = author.strip().casefold()
+        if not any(p.name.strip().casefold() == key for p in conv.participants):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Session '{author}' is not a participant in conversation "
+                    f"'{conversation_id}'"
+                ),
+            )
+
     msg = await conversations.async_add_message(
         conversation_id=conversation_id,
         profile=scoped,
-        author=body.author,
+        author=author,
         content=body.content,
         addressed_to=body.addressed_to,
+        kind=kind,
     )
     # One choke point for "final": SSE fanout + the conversation:<id> bus
     # envelope (design spec §8).
@@ -4397,7 +4024,13 @@ async def remove_conversation_participant_route(
     profile: str = Query(...),
     token: Token | None = Depends(_require_conversations_write),
 ):
-    """Remove a participant. Their messages stay — history is append-only."""
+    """Remove a participant. Their messages stay — history is append-only.
+
+    For a promoted ``kind='session'`` participant this IS the dismiss action:
+    the room stops carrying it and its task↔room link is dropped, so nothing
+    further from that session lands here. The task itself is left alone —
+    dismissing a participant is not the same decision as killing running work.
+    """
     scoped = _scoped_profile(token, profile)
     try:
         conv = await conversations.async_remove_participant(
@@ -4411,6 +4044,64 @@ async def remove_conversation_participant_route(
         raise HTTPException(
             status_code=404, detail=f"Participant '{name}' not found"
         )
+    conversation_session.unlink_participant(conversation_id, name)
+    _broadcast_sse(
+        json.dumps(
+            {"action": "conversation.participants", "conversation_id": conversation_id}
+        )
+    )
+    return conv.model_dump()
+
+
+@app.post("/api/conversations/{conversation_id}/join")
+async def join_conversation_route(
+    conversation_id: str,
+    profile: str = Query(default=None),
+    token: Token = Depends(require_token),
+):
+    """Session self-join, by bearer-token identity (the repointed
+    ``channel_join``).
+
+    Bearer-only on purpose: the whole point is that the caller's identity — not
+    a name it types — decides which participant it becomes, exactly as the old
+    channel join did. The name is the session's own (its container name, or the
+    agent name when the task has no session yet), and the join is idempotent.
+    """
+    if (
+        SESSION_PARTICIPANT_CAPABILITY not in token.capabilities
+        and "conversations:write" not in token.capabilities
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Token lacks required capability: "
+                f"'{SESSION_PARTICIPANT_CAPABILITY}'"
+            ),
+        )
+    scoped = _scoped_profile(token, profile)
+    conv = await _load_conversation(conversation_id, scoped)
+    if conv.status != "active":
+        raise HTTPException(
+            status_code=400, detail=f"Conversation '{conversation_id}' is archived"
+        )
+
+    name = _session_identity(token)
+    key = name.strip().casefold()
+    already = any(p.name.strip().casefold() == key for p in conv.participants)
+    conv = await conversations.async_add_participant(
+        conversation_id,
+        profile=scoped,
+        participant={"name": name, "kind": "session"},
+    )
+    if not already:
+        msg = await conversations.async_add_message(
+            conversation_id=conversation_id,
+            profile=scoped,
+            author=name,
+            content=f"{name} joined the conversation.",
+            kind="join",
+        )
+        await conversation_runtime.finalize_message(msg, conv)
     _broadcast_sse(
         json.dumps(
             {"action": "conversation.participants", "conversation_id": conversation_id}

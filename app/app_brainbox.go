@@ -114,7 +114,7 @@ type HubTask struct {
 	JobID            string   `json:"job_id"`
 	SpawnedBy        string   `json:"spawned_by"`
 	ChildTaskIDs     []string `json:"child_task_ids"`
-	ChannelIDs       []string `json:"channel_ids"`
+	ConversationIDs  []string `json:"conversation_ids"`
 }
 
 // HubStateView mirrors brainbox.HubState but with HubTask in place of the
@@ -145,7 +145,7 @@ func normalizeHubTask(t brainbox.Task) HubTask {
 		JobID:            t.JobID,
 		SpawnedBy:        t.SpawnedBy,
 		ChildTaskIDs:     t.ChildTaskIDs,
-		ChannelIDs:       t.ChannelIDs,
+		ConversationIDs:  t.ConversationIDs,
 	}
 }
 
@@ -373,50 +373,4 @@ func (a *App) GetTraceDetail(traceID string) (brainbox.TraceDetail, error) {
 	return a.client.GetTraceDetail(traceID)
 }
 
-// ListChannels returns all group chat channels.
-func (a *App) ListChannels(workspaceProfile string) ([]brainbox.Channel, error) {
-	return a.client.ListChannels(workspaceProfile)
-}
-
-// GetChannel returns a single channel by ID.
-func (a *App) GetChannel(id string) (brainbox.Channel, error) {
-	return a.client.GetChannel(id)
-}
-
-// CreateChannel creates a new group chat channel.
-func (a *App) CreateChannel(req brainbox.CreateChannelRequest) (brainbox.Channel, error) {
-	return a.client.CreateChannel(req)
-}
-
-// GetChannelMessages returns messages for a channel, optionally since a given message ID.
-func (a *App) GetChannelMessages(id, sinceID string) ([]brainbox.ChannelMessage, error) {
-	return a.client.GetChannelMessages(id, sinceID)
-}
-
-// PostChannelMessage posts a message to a channel.
-func (a *App) PostChannelMessage(id string, req brainbox.PostChannelMessageRequest) (brainbox.ChannelMessage, error) {
-	return a.client.PostChannelMessage(id, req)
-}
-
-// CompleteChannel signals that a channel discussion is complete.
-func (a *App) CompleteChannel(id string, req brainbox.CompleteChannelRequest) (brainbox.Channel, error) {
-	return a.client.CompleteChannel(id, req)
-}
-
-// DeleteChannel deletes a channel and all its messages.
-func (a *App) DeleteChannel(id string) error {
-	return a.client.DeleteChannel(id)
-}
-
-// AddChannelParticipant attaches a session (or other participant) to an
-// existing conversation. The UI uses this to drop agents into live channels.
-func (a *App) AddChannelParticipant(id string, req brainbox.ChannelParticipantRequest) (brainbox.Channel, error) {
-	return a.client.AddChannelParticipant(id, req)
-}
-
-// RemoveChannelParticipant detaches a participant by name. Their past
-// messages stay in the log.
-func (a *App) RemoveChannelParticipant(id, name string) (brainbox.Channel, error) {
-	return a.client.RemoveChannelParticipant(id, name)
-}
 

@@ -153,3 +153,49 @@ func TestConversationPathAlwaysCarriesProfile(t *testing.T) {
 		t.Errorf("profile missing from %q", got)
 	}
 }
+
+// Promote-to-session (PR4). The wire shape gains one field the other targets
+// never fill: the participant name the session joined the room under, which is
+// the handle the UI needs to address or dismiss it.
+func TestPromoteConversationMessageToSessionReturnsTheParticipant(t *testing.T) {
+	var gotBody PromoteMessageRequest
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(PromoteMessageResult{
+			OK: true, Target: "session", TaskID: "task-77", Participant: "worker-9f2c1a",
+			Detail: "session joined",
+		})
+	}))
+	defer srv.Close()
+
+	res, err := NewClient(srv.URL, "").PromoteConversationMessage(
+		"01CONV", "01MSG", "work",
+		PromoteMessageRequest{Target: "session", AgentName: "worker"},
+	)
+	if err != nil {
+		t.Fatalf("PromoteConversationMessage: %v", err)
+	}
+	if gotPath != "/api/conversations/01CONV/messages/01MSG/promote" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotBody.Target != "session" || gotBody.AgentName != "worker" {
+		t.Errorf("body = %+v", gotBody)
+	}
+	if res.TaskID != "task-77" || res.Participant != "worker-9f2c1a" {
+		t.Errorf("result = %+v", res)
+	}
+}
+
+// A vault promote must not grow a participant field — omitempty keeps the
+// session-only handle out of results that have no session.
+func TestPromoteMessageResultOmitsParticipantWhenAbsent(t *testing.T) {
+	raw, err := json.Marshal(PromoteMessageResult{OK: true, Target: "memory", SHA: "abc"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "participant") {
+		t.Errorf("result JSON carries a participant field: %s", raw)
+	}
+}

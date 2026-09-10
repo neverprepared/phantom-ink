@@ -170,7 +170,12 @@ def _request_as_session(
         return _request(method, path, body, timeout)
 
     url = f"{_api_url()}{path}"
-    data = json.dumps(body).encode() if body is not None else b"{}"
+    # A GET carrying a request body is malformed and some proxies drop it, so
+    # the empty-object default is only for methods that take one.
+    if method.upper() in ("GET", "HEAD", "DELETE"):
+        data = None
+    else:
+        data = json.dumps(body).encode() if body is not None else b"{}"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {token_id}",
@@ -667,25 +672,58 @@ def multiclaude_status() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Group chat channel tools
+# Conversation tools (historically "channels")
+#
+# The tool NAMES are deliberately unchanged: a promoted container session
+# already knows channel_read / channel_send / channel_complete / channel_join,
+# and PR4 repointed them at the conversation engine
+# (``/api/conversations/...``) when the in-memory channels hub was deleted. The
+# ``channel_id`` argument is a conversation id (a ULID); everything else about
+# the contract a session sees is the same.
+#
+# All four authenticate as the SESSION (its task bearer token) when one is
+# available, because that is what tells the server which participant — and
+# which workspace profile — the caller is. The optional ``profile`` argument is
+# for an operator calling with the shared API key, which carries no such
+# identity; in a profile-bound MCP it is forced to that profile.
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
-def channel_read(channel_id: str, since_id: str | None = None) -> list[dict[str, Any]]:
-    """Read new messages from a group channel. Poll every few seconds.
+def _conversation_path(suffix: str, profile: str, **params: str) -> str:
+    """Build a conversation URL, attaching the profile only when we have one.
 
-    Returns messages since since_id (or all messages if omitted).
-    Each message has: id, from_participant, content, summary, addressed_to, type, timestamp.
+    Omitting it is correct for a session token: the server derives the profile
+    from the token's task, and sending a *wrong* one is a 403 rather than a
+    silent cross-profile read.
+    """
+    query = {k: v for k, v in params.items() if v}
+    resolved = _resolve_profile(profile)
+    if resolved:
+        query["profile"] = resolved
+    if not query:
+        return suffix
+    return suffix + "?" + urllib.parse.urlencode(query)
+
+
+@mcp.tool()
+def channel_read(
+    channel_id: str, since_id: str | None = None, profile: str = ""
+) -> list[dict[str, Any]]:
+    """Read new messages from a conversation. Poll every few seconds.
+
+    Returns messages since since_id (or all messages if omitted). Each message
+    has: id, conversation_id, author, kind, content, addressed_to, in_reply_to,
+    created_at. Ids are ULIDs, so the last id you received is the next since_id.
 
     Args:
-        channel_id: The channel ID to read from
+        channel_id: The conversation ID to read from
         since_id: Return only messages after this message ID (use the last id you received)
+        profile: Workspace profile (only needed when not calling as a session)
     """
-    path = f"/api/hub/channels/{channel_id}/messages"
-    if since_id:
-        path += f"?since_id={since_id}"
-    return _request("GET", path)
+    path = _conversation_path(
+        f"/api/conversations/{channel_id}/messages", profile, since_id=since_id or ""
+    )
+    return _request_as_session("GET", path)
 
 
 @mcp.tool()
@@ -695,56 +733,71 @@ def channel_send(
     content: str,
     summary: str | None = None,
     addressed_to: str | None = None,
+    profile: str = "",
 ) -> dict[str, Any]:
-    """Send a message to a group channel.
+    """Send a message to a conversation.
+
+    Posted as the calling session, so the room shows it as a session turn.
 
     Args:
-        channel_id: The channel ID to post to
-        from_participant: Your participant name in this channel
+        channel_id: The conversation ID to post to
+        from_participant: Your participant name in this conversation
         content: The message content
-        summary: Brief 1-2 sentence summary of your key point (used for context management)
+        summary: Brief 1-2 sentence summary, prepended to the content when given
         addressed_to: Participant name for a directed message, omit for broadcast
     """
+    # The conversation store has no separate summary column — history is the
+    # message text. A supplied summary is prepended rather than dropped, so the
+    # brief a session took the trouble to write still reaches the room.
     body: dict[str, Any] = {
-        "from_participant": from_participant,
-        "content": content,
+        "author": from_participant,
+        "content": f"**{summary.strip()}**\n\n{content}" if summary and summary.strip() else content,
     }
-    if summary:
-        body["summary"] = summary
     if addressed_to:
         body["addressed_to"] = addressed_to
-    return _request("POST", f"/api/hub/channels/{channel_id}/messages", body)
+    return _request_as_session(
+        "POST", _conversation_path(f"/api/conversations/{channel_id}/messages", profile), body
+    )
 
 
 @mcp.tool()
-def channel_complete(channel_id: str, by: str, reason: str | None = None) -> dict[str, Any]:
-    """Signal that a group channel discussion is complete.
+def channel_complete(
+    channel_id: str, by: str, reason: str | None = None, profile: str = ""
+) -> dict[str, Any]:
+    """Signal that a conversation is finished — archives the room.
 
-    Call this when you believe the conversation has reached a conclusion.
+    Call this when you believe the discussion has reached a conclusion. The
+    reason is appended as a closing message before the room is archived, so the
+    log says why it ended. An archived room is still readable; it just takes no
+    new messages.
 
     Args:
-        channel_id: The channel ID to complete
+        channel_id: The conversation ID to archive
         by: Your participant name
         reason: Optional reason or summary of the conclusion
     """
     body: dict[str, Any] = {"by": by}
     if reason:
         body["reason"] = reason
-    return _request("POST", f"/api/hub/channels/{channel_id}/complete", body)
+    return _request_as_session(
+        "POST", _conversation_path(f"/api/conversations/{channel_id}/archive", profile), body
+    )
 
 
 @mcp.tool()
-def channel_join(channel_id: str) -> dict[str, Any]:
-    """Join a group channel as a participant using this session's identity.
+def channel_join(channel_id: str, profile: str = "") -> dict[str, Any]:
+    """Join a conversation as a participant using this session's identity.
 
     Idempotent — safe to call if already a member. Your identity is derived
     automatically from BRAINBOX_TOKEN_ID; no participant name is needed.
     Requires the session to have the 'hub_messaging' capability.
 
     Args:
-        channel_id: The channel ID to join
+        channel_id: The conversation ID to join
     """
-    return _request_as_session("POST", f"/api/hub/channels/{channel_id}/join")
+    return _request_as_session(
+        "POST", _conversation_path(f"/api/conversations/{channel_id}/join", profile)
+    )
 
 
 # ---------------------------------------------------------------------------

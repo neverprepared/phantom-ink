@@ -1,5 +1,7 @@
 """Promote a conversation message → memory / todo / task (PR3, spec §8).
 
+The ``session`` target (PR4) lives in test_conversation_session.py.
+
 Every downstream is mocked: the two vault targets through an httpx
 ``MockTransport`` (so the real request the brain daemon would receive is
 asserted — URL, bearer, payload), and the task target by standing in for the
@@ -384,7 +386,7 @@ class TestPromoteRoute:
         resp = await c.post(
             f"/api/conversations/{conv['id']}/messages/{msg.id}/promote",
             params={"profile": PROFILE},
-            json={"target": "session"},  # PR4, not PR3
+            json={"target": "slack"},  # not a promotion surface
         )
         assert resp.status_code == 422
 
