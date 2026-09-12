@@ -6,7 +6,6 @@ import {opensearch} from '../models';
 
 export function AddBrainMCP(arg1:string,arg2:string):Promise<string>;
 
-
 export function AddConversationParticipant(arg1:string,arg2:string,arg3:brainbox.AddConversationParticipantRequest):Promise<brainbox.Conversation>;
 
 export function ArchiveConversation(arg1:string,arg2:string):Promise<brainbox.Conversation>;
@@ -33,7 +32,6 @@ export function CancelLiveLoop(arg1:string,arg2:string):Promise<brainbox.LiveLoo
 
 export function ClearProfileServerOverride(arg1:string,arg2:string):Promise<void>;
 
-
 export function CopyVaultRecord(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function CreateAgent(arg1:brainbox.CreateAgentRequest):Promise<brainbox.AgentDefinition>;
@@ -41,7 +39,6 @@ export function CreateAgent(arg1:brainbox.CreateAgentRequest):Promise<brainbox.A
 export function CreateArtifactFolder(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function CreateBrainSkill(arg1:string,arg2:string):Promise<brainbox.BrainSkillWriteResult>;
-
 
 export function CreateConversation(arg1:brainbox.CreateConversationRequest):Promise<brainbox.Conversation>;
 
@@ -56,7 +53,6 @@ export function DeleteArtifactObject(arg1:string,arg2:string):Promise<void>;
 export function DeleteBrainSkill(arg1:string,arg2:string):Promise<brainbox.BrainSkillWriteResult>;
 
 export function DeleteBundleSource(arg1:string,arg2:string):Promise<void>;
-
 
 export function DeleteCollectJob(arg1:string):Promise<void>;
 
@@ -87,6 +83,8 @@ export function DeleteTrustRule(arg1:string,arg2:string):Promise<void>;
 export function DisableLocalRunner():Promise<void>;
 
 export function DismissAttention(arg1:string):Promise<void>;
+
+export function DispatchRepoTask(arg1:main.DispatchRepoRequest):Promise<brainbox.Task>;
 
 export function DownloadArtifactObject(arg1:string,arg2:string,arg3:string):Promise<string>;
 
@@ -129,8 +127,6 @@ export function GetBrainProfile(arg1:string):Promise<brainbox.BrainProfileInfo>;
 export function GetBrainProfileTokens(arg1:string):Promise<brainbox.BrainProfileTokens>;
 
 export function GetBrainSkill(arg1:string,arg2:string):Promise<brainbox.BrainSkillDetail>;
-
-
 
 export function GetConfig():Promise<main.Config>;
 
@@ -232,6 +228,8 @@ export function GetVaultToken(arg1:string):Promise<string>;
 
 export function GetWidgetCount(arg1:string,arg2:string):Promise<number>;
 
+export function GitHubOverview(arg1:string):Promise<main.CodeOverview>;
+
 export function HeadArtifactObject(arg1:string,arg2:string):Promise<brainbox.ArtifactObjectHead>;
 
 export function ImportBrainVault(arg1:string,arg2:string):Promise<string>;
@@ -265,7 +263,6 @@ export function ListBackups():Promise<Array<string>>;
 export function ListBrainSkills(arg1:string):Promise<Array<brainbox.BrainSkill>>;
 
 export function ListBundleSources(arg1:string):Promise<Array<main.BundleSourceView>>;
-
 
 export function ListCollectJobs(arg1:string):Promise<Array<main.CollectJob>>;
 
@@ -325,7 +322,6 @@ export function OutboxPending():Promise<number>;
 
 export function PlaceIntegration(arg1:string,arg2:string,arg3:string):Promise<main.IntegrationPlacementOutcome>;
 
-
 export function PostConversationMessage(arg1:string,arg2:string,arg3:brainbox.PostConversationMessageRequest):Promise<brainbox.ConversationMessage>;
 
 export function PresignArtifactURL(arg1:string,arg2:string,arg3:string,arg4:number):Promise<brainbox.ArtifactPresignedURL>;
@@ -351,7 +347,6 @@ export function ReadProfileHostEnv(arg1:string):Promise<string>;
 export function RebuildBaseImage(arg1:main.BaseImageBuildRequest):Promise<void>;
 
 export function RemoveConversationParticipant(arg1:string,arg2:string,arg3:string):Promise<brainbox.Conversation>;
-
 
 export function RenameArtifactObject(arg1:string,arg2:string,arg3:string):Promise<void>;
 
