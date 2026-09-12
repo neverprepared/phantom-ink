@@ -1,5 +1,25 @@
 export namespace brainbox {
 	
+	export class AddConversationParticipantRequest {
+	    name: string;
+	    kind: string;
+	    model_target?: Record<string, any>;
+	    role_prompt?: string;
+	    cooldown_s?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AddConversationParticipantRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.kind = source["kind"];
+	        this.model_target = source["model_target"];
+	        this.role_prompt = source["role_prompt"];
+	        this.cooldown_s = source["cooldown_s"];
+	    }
+	}
 	export class AgentDefinition {
 	    name: string;
 	    image: string;
@@ -469,7 +489,24 @@ export namespace brainbox {
 	        this.size = source["size"];
 	    }
 	}
+	export class ContainerMetrics {
+	    name: string;
+	    cpu_percent: number;
+	    memory_bytes: number;
+	    uptime: string;
 	
+	    static createFrom(source: any = {}) {
+	        return new ContainerMetrics(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.cpu_percent = source["cpu_percent"];
+	        this.memory_bytes = source["memory_bytes"];
+	        this.uptime = source["uptime"];
+	    }
+	}
 	export class ConversationParticipant {
 	    name: string;
 	    kind: string;
@@ -566,26 +603,7 @@ export namespace brainbox {
 	        this.node_id = source["node_id"];
 	    }
 	}
-	export class AddConversationParticipantRequest {
-	    name: string;
-	    kind: string;
-	    model_target?: Record<string, any>;
-	    role_prompt?: string;
-	    cooldown_s?: number;
 	
-	    static createFrom(source: any = {}) {
-	        return new AddConversationParticipantRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.kind = source["kind"];
-	        this.model_target = source["model_target"];
-	        this.role_prompt = source["role_prompt"];
-	        this.cooldown_s = source["cooldown_s"];
-	    }
-	}
 	export class ConversationParticipantRequest {
 	    name: string;
 	    kind: string;
@@ -604,116 +622,6 @@ export namespace brainbox {
 	        this.model_target = source["model_target"];
 	        this.role_prompt = source["role_prompt"];
 	        this.cooldown_s = source["cooldown_s"];
-	    }
-	}
-	export class CreateConversationRequest {
-	    title: string;
-	    profile: string;
-	    participants: ConversationParticipantRequest[];
-	
-	    static createFrom(source: any = {}) {
-	        return new CreateConversationRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.title = source["title"];
-	        this.profile = source["profile"];
-	        this.participants = this.convertValues(source["participants"], ConversationParticipantRequest);
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-	export class PromoteMessageRequest {
-	    target: string;
-	    title?: string;
-	    note?: string;
-	    tags?: string[];
-	    agent_name?: string;
-	    repo_url?: string;
-
-	    static createFrom(source: any = {}) {
-	        return new PromoteMessageRequest(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.target = source["target"];
-	        this.title = source["title"];
-	        this.note = source["note"];
-	        this.tags = source["tags"];
-	        this.agent_name = source["agent_name"];
-	        this.repo_url = source["repo_url"];
-	    }
-	}
-	export class PromoteMessageResult {
-	    ok: boolean;
-	    target: string;
-	    sha?: string;
-	    task_id?: string;
-	    detail?: string;
-
-	    static createFrom(source: any = {}) {
-	        return new PromoteMessageResult(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.ok = source["ok"];
-	        this.target = source["target"];
-	        this.sha = source["sha"];
-	        this.task_id = source["task_id"];
-	        this.detail = source["detail"];
-	    }
-	}
-	export class PostConversationMessageRequest {
-	    author: string;
-	    content: string;
-	    addressed_to?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new PostConversationMessageRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.author = source["author"];
-	        this.content = source["content"];
-	        this.addressed_to = source["addressed_to"];
-	    }
-	}
-	export class ContainerMetrics {
-	    name: string;
-	    cpu_percent: number;
-	    memory_bytes: number;
-	    uptime: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ContainerMetrics(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.cpu_percent = source["cpu_percent"];
-	        this.memory_bytes = source["memory_bytes"];
-	        this.uptime = source["uptime"];
 	    }
 	}
 	export class CreateAgentRequest {
@@ -751,6 +659,40 @@ export namespace brainbox {
 	        this.codex_model = source["codex_model"];
 	        this.ollama_model = source["ollama_model"];
 	    }
+	}
+	export class CreateConversationRequest {
+	    title: string;
+	    profile: string;
+	    participants: ConversationParticipantRequest[];
+	
+	    static createFrom(source: any = {}) {
+	        return new CreateConversationRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.title = source["title"];
+	        this.profile = source["profile"];
+	        this.participants = this.convertValues(source["participants"], ConversationParticipantRequest);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class CreateSessionRequest {
 	    name: string;
@@ -1579,6 +1521,22 @@ export namespace brainbox {
 	        this.policy = source["policy"];
 	    }
 	}
+	export class PostConversationMessageRequest {
+	    author: string;
+	    content: string;
+	    addressed_to?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PostConversationMessageRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.author = source["author"];
+	        this.content = source["content"];
+	        this.addressed_to = source["addressed_to"];
+	    }
+	}
 	export class ProfileServerState {
 	    name: string;
 	    zone: string;
@@ -1645,6 +1603,50 @@ export namespace brainbox {
 	        this.revoked = source["revoked"];
 	        this.revoked_at = source["revoked_at"];
 	        this.last_used = source["last_used"];
+	    }
+	}
+	export class PromoteMessageRequest {
+	    target: string;
+	    title?: string;
+	    note?: string;
+	    tags?: string[];
+	    agent_name?: string;
+	    repo_url?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PromoteMessageRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.target = source["target"];
+	        this.title = source["title"];
+	        this.note = source["note"];
+	        this.tags = source["tags"];
+	        this.agent_name = source["agent_name"];
+	        this.repo_url = source["repo_url"];
+	    }
+	}
+	export class PromoteMessageResult {
+	    ok: boolean;
+	    target: string;
+	    sha?: string;
+	    task_id?: string;
+	    participant?: string;
+	    detail?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PromoteMessageResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.target = source["target"];
+	        this.sha = source["sha"];
+	        this.task_id = source["task_id"];
+	        this.participant = source["participant"];
+	        this.detail = source["detail"];
 	    }
 	}
 	
@@ -2147,6 +2149,54 @@ export namespace brainbox {
 	        this.pool = source["pool"];
 	    }
 	}
+	export class Task {
+	    id: string;
+	    description: string;
+	    agent_name: string;
+	    status: string;
+	    repo_url: any;
+	    created_at: any;
+	    updated_at: any;
+	    result: any;
+	    error: any;
+	    session_name: string;
+	    workspace_profile: string;
+	    runner_name: string;
+	    backend: string;
+	    docker_host: string;
+	    ssh_host: string;
+	    job_id: string;
+	    spawned_by: string;
+	    child_task_ids: string[];
+	    conversation_ids: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Task(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.description = source["description"];
+	        this.agent_name = source["agent_name"];
+	        this.status = source["status"];
+	        this.repo_url = source["repo_url"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	        this.result = source["result"];
+	        this.error = source["error"];
+	        this.session_name = source["session_name"];
+	        this.workspace_profile = source["workspace_profile"];
+	        this.runner_name = source["runner_name"];
+	        this.backend = source["backend"];
+	        this.docker_host = source["docker_host"];
+	        this.ssh_host = source["ssh_host"];
+	        this.job_id = source["job_id"];
+	        this.spawned_by = source["spawned_by"];
+	        this.child_task_ids = source["child_task_ids"];
+	        this.conversation_ids = source["conversation_ids"];
+	    }
+	}
 	
 	export class Trace {
 	    id: string;
@@ -2313,6 +2363,95 @@ export namespace brainbox {
 	        this.status = source["status"];
 	        this.result = source["result"];
 	        this.error = source["error"];
+	    }
+	}
+
+}
+
+export namespace githubclient {
+	
+	export class Issue {
+	    repo_full_name: string;
+	    number: number;
+	    title: string;
+	    state: string;
+	    html_url: string;
+	    updated_at: string;
+	    user: string;
+	    draft: boolean;
+	    is_pull_request: boolean;
+	    reason: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Issue(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.repo_full_name = source["repo_full_name"];
+	        this.number = source["number"];
+	        this.title = source["title"];
+	        this.state = source["state"];
+	        this.html_url = source["html_url"];
+	        this.updated_at = source["updated_at"];
+	        this.user = source["user"];
+	        this.draft = source["draft"];
+	        this.is_pull_request = source["is_pull_request"];
+	        this.reason = source["reason"];
+	    }
+	}
+	export class Notification {
+	    id: string;
+	    repo_full_name: string;
+	    subject_title: string;
+	    subject_type: string;
+	    reason: string;
+	    updated_at: string;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Notification(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.repo_full_name = source["repo_full_name"];
+	        this.subject_title = source["subject_title"];
+	        this.subject_type = source["subject_type"];
+	        this.reason = source["reason"];
+	        this.updated_at = source["updated_at"];
+	        this.url = source["url"];
+	    }
+	}
+	export class Repo {
+	    owner: string;
+	    name: string;
+	    full_name: string;
+	    description: string;
+	    html_url: string;
+	    clone_url: string;
+	    default_branch: string;
+	    pushed_at: string;
+	    stars: number;
+	    open_issues: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Repo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.owner = source["owner"];
+	        this.name = source["name"];
+	        this.full_name = source["full_name"];
+	        this.description = source["description"];
+	        this.html_url = source["html_url"];
+	        this.clone_url = source["clone_url"];
+	        this.default_branch = source["default_branch"];
+	        this.pushed_at = source["pushed_at"];
+	        this.stars = source["stars"];
+	        this.open_issues = source["open_issues"];
 	    }
 	}
 
@@ -2561,6 +2700,56 @@ export namespace main {
 	        this.detected = source["detected"];
 	        this.definition = source["definition"];
 	    }
+	}
+	export class CodeOverview {
+	    profile: string;
+	    token_missing: boolean;
+	    token_invalid: boolean;
+	    repos: githubclient.Repo[];
+	    pull_requests: githubclient.Issue[];
+	    issues: githubclient.Issue[];
+	    notifications: githubclient.Notification[];
+	    repos_error: string;
+	    pull_requests_error: string;
+	    issues_error: string;
+	    notifications_error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CodeOverview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.token_missing = source["token_missing"];
+	        this.token_invalid = source["token_invalid"];
+	        this.repos = this.convertValues(source["repos"], githubclient.Repo);
+	        this.pull_requests = this.convertValues(source["pull_requests"], githubclient.Issue);
+	        this.issues = this.convertValues(source["issues"], githubclient.Issue);
+	        this.notifications = this.convertValues(source["notifications"], githubclient.Notification);
+	        this.repos_error = source["repos_error"];
+	        this.pull_requests_error = source["pull_requests_error"];
+	        this.issues_error = source["issues_error"];
+	        this.notifications_error = source["notifications_error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class CollectJob {
 	    id: string;
@@ -2882,6 +3071,24 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class DispatchRepoRequest {
+	    profile: string;
+	    repo_url: string;
+	    agent_name: string;
+	    description: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DispatchRepoRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.repo_url = source["repo_url"];
+	        this.agent_name = source["agent_name"];
+	        this.description = source["description"];
+	    }
 	}
 	export class GitHubTokenStatus {
 	    valid: boolean;

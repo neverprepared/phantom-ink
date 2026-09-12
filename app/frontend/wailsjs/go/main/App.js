@@ -6,13 +6,12 @@ export function AddBrainMCP(arg1, arg2) {
   return window['go']['main']['App']['AddBrainMCP'](arg1, arg2);
 }
 
-
-export function AddConversationParticipant(arg1,arg2,arg3) {
-  return window['go']['main']['App']['AddConversationParticipant'](arg1,arg2,arg3);
+export function AddConversationParticipant(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AddConversationParticipant'](arg1, arg2, arg3);
 }
 
-export function ArchiveConversation(arg1,arg2) {
-  return window['go']['main']['App']['ArchiveConversation'](arg1,arg2);
+export function ArchiveConversation(arg1, arg2) {
+  return window['go']['main']['App']['ArchiveConversation'](arg1, arg2);
 }
 
 export function AssistLoopTemplate(arg1) {
@@ -59,7 +58,6 @@ export function ClearProfileServerOverride(arg1, arg2) {
   return window['go']['main']['App']['ClearProfileServerOverride'](arg1, arg2);
 }
 
-
 export function CopyVaultRecord(arg1, arg2, arg3) {
   return window['go']['main']['App']['CopyVaultRecord'](arg1, arg2, arg3);
 }
@@ -75,7 +73,6 @@ export function CreateArtifactFolder(arg1, arg2, arg3) {
 export function CreateBrainSkill(arg1, arg2) {
   return window['go']['main']['App']['CreateBrainSkill'](arg1, arg2);
 }
-
 
 export function CreateConversation(arg1) {
   return window['go']['main']['App']['CreateConversation'](arg1);
@@ -104,7 +101,6 @@ export function DeleteBrainSkill(arg1, arg2) {
 export function DeleteBundleSource(arg1, arg2) {
   return window['go']['main']['App']['DeleteBundleSource'](arg1, arg2);
 }
-
 
 export function DeleteCollectJob(arg1) {
   return window['go']['main']['App']['DeleteCollectJob'](arg1);
@@ -164,6 +160,10 @@ export function DisableLocalRunner() {
 
 export function DismissAttention(arg1) {
   return window['go']['main']['App']['DismissAttention'](arg1);
+}
+
+export function DispatchRepoTask(arg1) {
+  return window['go']['main']['App']['DispatchRepoTask'](arg1);
 }
 
 export function DownloadArtifactObject(arg1, arg2, arg3) {
@@ -250,8 +250,6 @@ export function GetBrainSkill(arg1, arg2) {
   return window['go']['main']['App']['GetBrainSkill'](arg1, arg2);
 }
 
-
-
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
@@ -264,8 +262,8 @@ export function GetContainerMetrics() {
   return window['go']['main']['App']['GetContainerMetrics']();
 }
 
-export function GetConversation(arg1,arg2) {
-  return window['go']['main']['App']['GetConversation'](arg1,arg2);
+export function GetConversation(arg1, arg2) {
+  return window['go']['main']['App']['GetConversation'](arg1, arg2);
 }
 
 export function GetDashboardLayout(arg1) {
@@ -452,6 +450,10 @@ export function GetWidgetCount(arg1, arg2) {
   return window['go']['main']['App']['GetWidgetCount'](arg1, arg2);
 }
 
+export function GitHubOverview(arg1) {
+  return window['go']['main']['App']['GitHubOverview'](arg1);
+}
+
 export function HeadArtifactObject(arg1, arg2) {
   return window['go']['main']['App']['HeadArtifactObject'](arg1, arg2);
 }
@@ -520,7 +522,6 @@ export function ListBundleSources(arg1) {
   return window['go']['main']['App']['ListBundleSources'](arg1);
 }
 
-
 export function ListCollectJobs(arg1) {
   return window['go']['main']['App']['ListCollectJobs'](arg1);
 }
@@ -529,12 +530,12 @@ export function ListCollectedEntries(arg1, arg2, arg3) {
   return window['go']['main']['App']['ListCollectedEntries'](arg1, arg2, arg3);
 }
 
-export function ListConversationMessages(arg1,arg2,arg3) {
-  return window['go']['main']['App']['ListConversationMessages'](arg1,arg2,arg3);
+export function ListConversationMessages(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListConversationMessages'](arg1, arg2, arg3);
 }
 
-export function ListConversations(arg1,arg2) {
-  return window['go']['main']['App']['ListConversations'](arg1,arg2);
+export function ListConversations(arg1, arg2) {
+  return window['go']['main']['App']['ListConversations'](arg1, arg2);
 }
 
 export function ListGatewayServers() {
@@ -637,9 +638,8 @@ export function PlaceIntegration(arg1, arg2, arg3) {
   return window['go']['main']['App']['PlaceIntegration'](arg1, arg2, arg3);
 }
 
-
-export function PostConversationMessage(arg1,arg2,arg3) {
-  return window['go']['main']['App']['PostConversationMessage'](arg1,arg2,arg3);
+export function PostConversationMessage(arg1, arg2, arg3) {
+  return window['go']['main']['App']['PostConversationMessage'](arg1, arg2, arg3);
 }
 
 export function PresignArtifactURL(arg1, arg2, arg3, arg4) {
@@ -686,10 +686,9 @@ export function RebuildBaseImage(arg1) {
   return window['go']['main']['App']['RebuildBaseImage'](arg1);
 }
 
-export function RemoveConversationParticipant(arg1,arg2,arg3) {
-  return window['go']['main']['App']['RemoveConversationParticipant'](arg1,arg2,arg3);
+export function RemoveConversationParticipant(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RemoveConversationParticipant'](arg1, arg2, arg3);
 }
-
 
 export function RenameArtifactObject(arg1, arg2, arg3) {
   return window['go']['main']['App']['RenameArtifactObject'](arg1, arg2, arg3);
@@ -891,8 +890,8 @@ export function SubmitTaskAndWait(arg1) {
   return window['go']['main']['App']['SubmitTaskAndWait'](arg1);
 }
 
-export function SubscribeConversation(arg1,arg2) {
-  return window['go']['main']['App']['SubscribeConversation'](arg1,arg2);
+export function SubscribeConversation(arg1, arg2) {
+  return window['go']['main']['App']['SubscribeConversation'](arg1, arg2);
 }
 
 export function SyncProfileBundleNow(arg1) {
