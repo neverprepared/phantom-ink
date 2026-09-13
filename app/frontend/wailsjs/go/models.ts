@@ -3167,6 +3167,22 @@ export namespace main {
 	        this.wire_err = source["wire_err"];
 	    }
 	}
+	export class InteractiveSessionRequest {
+	    profile: string;
+	    repo_url: string;
+	    task: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new InteractiveSessionRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.repo_url = source["repo_url"];
+	        this.task = source["task"];
+	    }
+	}
 	export class LocalProcess {
 	    pid: string;
 	    tty: string;

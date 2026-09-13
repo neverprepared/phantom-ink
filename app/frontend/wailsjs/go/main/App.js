@@ -470,6 +470,10 @@ export function InitBrainProfile(arg1) {
   return window['go']['main']['App']['InitBrainProfile'](arg1);
 }
 
+export function LaunchInteractiveSession(arg1) {
+  return window['go']['main']['App']['LaunchInteractiveSession'](arg1);
+}
+
 export function LaunchTeam(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['LaunchTeam'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
@@ -628,6 +632,10 @@ export function MoveVaultRecord(arg1, arg2, arg3) {
 
 export function OpenLocalSession(arg1) {
   return window['go']['main']['App']['OpenLocalSession'](arg1);
+}
+
+export function OpenRepoLocally(arg1, arg2) {
+  return window['go']['main']['App']['OpenRepoLocally'](arg1, arg2);
 }
 
 export function OutboxPending() {
