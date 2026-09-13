@@ -238,6 +238,8 @@ export function ImportEnvFile():Promise<string>;
 
 export function InitBrainProfile(arg1:string):Promise<brainbox.BrainProfileInitResult>;
 
+export function LaunchInteractiveSession(arg1:main.InteractiveSessionRequest):Promise<brainbox.SessionActionResponse>;
+
 export function LaunchTeam(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<brainbox.SessionActionResponse>;
 
 export function ListAgentEvents(arg1:string,arg2:string,arg3:number):Promise<Array<brainbox.AgentEventEntry>>;
@@ -317,6 +319,8 @@ export function MintProfileToken(arg1:string,arg2:Array<string>,arg3:string):Pro
 export function MoveVaultRecord(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function OpenLocalSession(arg1:string):Promise<void>;
+
+export function OpenRepoLocally(arg1:string,arg2:string):Promise<string>;
 
 export function OutboxPending():Promise<number>;
 

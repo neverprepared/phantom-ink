@@ -129,6 +129,57 @@ export const PROMPT_TEMPLATES: Record<DispatchKind, PromptTemplate[]> = {
   ],
 };
 
+/**
+ * Which lane a "Begin work" submit takes.
+ *
+ * `task`    — an autonomous fleet agent (DispatchRepoTask): it clones, works,
+ *             opens a PR, and reports to the hub. Nobody watches it.
+ * `session` — an interactive container session (LaunchInteractiveSession) the
+ *             operator attaches to and drives.
+ *
+ * The third lane (clone to the host + open a terminal) has no modal at all —
+ * it's the repo row's direct `Clone + terminal` button.
+ */
+export type DispatchLane = 'task' | 'session';
+
+/**
+ * The https clone URL for a target. A repo row carries a real clone_url, but a
+ * PR/issue search hit only has an html_url, so normalize both to something
+ * `git clone` accepts before it goes into a prompt.
+ */
+export function httpsCloneURL(t: DispatchTarget): string {
+  const raw = (t.repoURL || t.htmlURL || '').trim().replace(/\/+$/, '');
+  if (!raw) return '';
+  // A PR/issue URL carries extra segments (…/pull/7) — keep host + owner/repo
+  // so what lands in the prompt is something `git clone` accepts. The backend
+  // normalizes again; this is so the operator SEES the right URL.
+  const m = raw.match(/^(https?:\/\/[^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/.*)?$/);
+  if (m) return `${m[1]}/${m[2]}/${m[3]}.git`;
+  return raw.endsWith('.git') ? raw : `${raw}.git`;
+}
+
+/**
+ * The line that makes clone-in-session work. A brainbox session has no repo
+ * field — the repo only reaches the container through the seeded task — so the
+ * session lane spells out the clone AND that the credential is already there
+ * (CreateSession forwards the profile env, GITHUB_TOKEN included).
+ */
+export function cloneInstruction(t: DispatchTarget): string {
+  const url = httpsCloneURL(t);
+  return `First: git clone ${url} (GITHUB_TOKEN is already in this session's env), then cd into it.`;
+}
+
+/**
+ * Prepend the clone instruction unless it's already there. Idempotent so
+ * switching lanes back and forth, or re-applying a template, never stacks
+ * duplicate copies on top of the operator's edits.
+ */
+function withCloneInstruction(prompt: string, t: DispatchTarget): string {
+  const url = httpsCloneURL(t);
+  if (!url || prompt.includes(`git clone ${url}`)) return prompt;
+  return `${cloneInstruction(t)}\n\n${prompt}`;
+}
+
 const DEFAULT_AGENT = 'worker';
 
 class CodeStore {
@@ -161,6 +212,18 @@ class CodeStore {
   agents = $state<string[]>([DEFAULT_AGENT]);
   /** Task id of the last successful dispatch — the panel links it to Jobs. */
   lastTaskID = $state('');
+
+  // ── Begin-work lanes ─────────────────────────────────────────────────────
+  /** Which lane the modal submits on. Autonomous task stays the default. */
+  dispatchLane = $state<DispatchLane>('task');
+  /** URL of the last launched interactive session — the panel links to attach. */
+  lastSessionURL = $state('');
+  /** full_name of the repo whose host clone is in flight (one at a time per row). */
+  cloningRepo = $state('');
+  /** Checkout path of the last successful host clone + terminal open. */
+  lastClonePath = $state('');
+  /** git's own stderr from the last failed clone, kept for the panel to show. */
+  cloneError = $state('');
 
   /** Repos narrowed by the filter box (matches name or description). */
   filteredRepos = $derived.by(() => {
@@ -248,14 +311,25 @@ class CodeStore {
     this.tokenMissing = false;
     this.tokenInvalid = false;
     this.loadError = null;
+    // Lane results belong to the profile they were started under.
+    this.lastTaskID = '';
+    this.lastSessionURL = '';
+    this.lastClonePath = '';
+    this.cloneError = '';
   }
 
   // ── Dispatch ─────────────────────────────────────────────────────────────
 
-  /** Open the modal on a target, pre-seeded with its first template. */
+  /**
+   * Open the modal on a target, pre-seeded with its first template. The lane
+   * resets to `task` every time: a launcher that silently remembers "container"
+   * from twenty minutes ago would start the wrong kind of work.
+   */
   openDispatch(target: DispatchTarget): void {
     this.dispatchTarget = target;
     this.lastTaskID = '';
+    this.lastSessionURL = '';
+    this.dispatchLane = 'task';
     const first = PROMPT_TEMPLATES[target.kind][0];
     this.dispatchPrompt = first ? first.build(target) : '';
   }
@@ -265,10 +339,32 @@ class CodeStore {
     this.dispatchPrompt = '';
   }
 
+  /**
+   * Switch lane, keeping the operator's edits. Moving to the session lane adds
+   * the clone instruction the container needs; moving back leaves it in place
+   * rather than editing text the operator can see and delete themselves.
+   */
+  setLane(lane: DispatchLane): void {
+    this.dispatchLane = lane;
+    if (lane === 'session' && this.dispatchTarget) {
+      this.dispatchPrompt = withCloneInstruction(this.dispatchPrompt, this.dispatchTarget);
+    }
+  }
+
   /** Re-seed the textarea from a template, discarding hand edits. */
   applyTemplate(tpl: PromptTemplate): void {
     if (!this.dispatchTarget) return;
-    this.dispatchPrompt = tpl.build(this.dispatchTarget);
+    const seeded = tpl.build(this.dispatchTarget);
+    this.dispatchPrompt =
+      this.dispatchLane === 'session'
+        ? withCloneInstruction(seeded, this.dispatchTarget)
+        : seeded;
+  }
+
+  /** Submit the modal down whichever lane is selected. */
+  async submit(profile: string): Promise<void> {
+    if (this.dispatchLane === 'session') return this.launchSession(profile);
+    return this.dispatch(profile);
   }
 
   /**
@@ -295,6 +391,60 @@ class CodeStore {
       notifications.error(`Dispatch failed: ${e?.message ?? e}`);
     } finally {
       this.dispatching = false;
+    }
+  }
+
+  /**
+   * Start an interactive container session on the target. The session clones
+   * the repo itself from the seeded prompt — there is no repo field on a
+   * brainbox session — so the prompt is forced through withCloneInstruction
+   * even if the operator switched lanes and then deleted the line.
+   */
+  async launchSession(profile: string): Promise<void> {
+    const target = this.dispatchTarget;
+    if (!target || !this.dispatchPrompt.trim() || this.dispatching) return;
+    const a = await getApi();
+    if (!a) return;
+    this.dispatching = true;
+    try {
+      const res = await (a as any).LaunchInteractiveSession({
+        profile,
+        repo_url: httpsCloneURL(target),
+        task: withCloneInstruction(this.dispatchPrompt.trim(), target),
+      });
+      if (res?.success === false) throw new Error(res?.error || 'session create failed');
+      this.lastSessionURL = res?.url ?? '';
+      notifications.success(`Session launched on ${target.repoFullName}`);
+      this.closeDispatch();
+    } catch (e: any) {
+      notifications.error(`Session launch failed: ${e?.message ?? e}`);
+    } finally {
+      this.dispatching = false;
+    }
+  }
+
+  /**
+   * The host lane: clone into the profile's workspace (only if it isn't there
+   * yet — an existing checkout is opened untouched) and open a terminal running
+   * claude in it. No modal; the operator writes the prompt in the terminal.
+   */
+  async cloneAndOpen(profile: string, target: DispatchTarget): Promise<void> {
+    if (!profile || this.cloningRepo) return;
+    const a = await getApi();
+    if (!a) return;
+    this.cloningRepo = target.repoFullName;
+    this.cloneError = '';
+    try {
+      const path = (await (a as any).OpenRepoLocally(profile, httpsCloneURL(target))) as string;
+      this.lastClonePath = path;
+      notifications.success(`Terminal open in ${path}`);
+    } catch (e: any) {
+      // git's stderr is the useful half of a private-repo auth failure — show
+      // it rather than a generic "clone failed".
+      this.cloneError = String(e?.message ?? e);
+      notifications.error(this.cloneError);
+    } finally {
+      this.cloningRepo = '';
     }
   }
 }

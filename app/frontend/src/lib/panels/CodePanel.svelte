@@ -1,7 +1,9 @@
 <script lang="ts">
   // Code — the active profile's GitHub launchpad. One pane covering what's
   // waiting on you (PRs, assigned issues), your notifications, and your
-  // repositories, with a one-click hand-off from any row to a fleet agent.
+  // repositories, with a one-click hand-off from any row into work: an
+  // autonomous fleet task, an interactive container session, or a clone on this
+  // host with a terminal open in it.
   //
   // Read-only and profile-scoped: the backend resolves the profile's EXISTING
   // curated GITHUB_TOKEN per call and nothing is cached, so switching profiles
@@ -45,18 +47,29 @@
     settingsState.open('profiles');
   }
 
-  function dispatchRepo(r: Repo) {
-    codeState.openDispatch({
-      kind: 'repo',
+  /** The dispatch target for a repo row — shared by both of its lanes. */
+  function repoTarget(r: Repo) {
+    return {
+      kind: 'repo' as const,
       repoFullName: r.full_name,
       repoURL: r.clone_url || r.html_url,
       number: 0,
       title: '',
       htmlURL: r.html_url,
-    });
+    };
   }
 
-  function dispatchIssue(i: Issue) {
+  function beginWorkRepo(r: Repo) {
+    codeState.openDispatch(repoTarget(r));
+  }
+
+  // The host lane, no modal: clone into this profile's workspace (or open an
+  // existing checkout untouched) and drop a terminal running claude in it.
+  function cloneAndOpen(r: Repo) {
+    void codeState.cloneAndOpen(activeProfile, repoTarget(r));
+  }
+
+  function beginWorkIssue(i: Issue) {
     codeState.openDispatch({
       kind: i.is_pull_request ? 'pr' : 'issue',
       repoFullName: i.repo_full_name,
@@ -142,7 +155,7 @@
                 {#if row.user}<span class="by">@{row.user}</span>{/if}
                 <span class="ago">{timeAgoOrDate(ts(row.updated_at))}</span>
                 <button class="link" onclick={() => openInBrowser(row.html_url)}>open ↗</button>
-                <button class="link accent" onclick={() => dispatchIssue(row)}>⚡ Dispatch</button>
+                <button class="link accent" onclick={() => beginWorkIssue(row)}>Begin work ▾</button>
               </div>
             </li>
           {/each}
@@ -214,7 +227,15 @@
                 {#if r.open_issues}<span class="muted-small">{r.open_issues} open</span>{/if}
                 <span class="ago">{timeAgoOrDate(ts(r.pushed_at))}</span>
                 <button class="link" onclick={() => openInBrowser(r.html_url)}>open ↗</button>
-                <button class="link accent" onclick={() => dispatchRepo(r)}>⚡ Dispatch</button>
+                <button
+                  class="link"
+                  disabled={codeState.cloningRepo !== ''}
+                  title="Clone into this profile's workspace and open a terminal"
+                  onclick={() => cloneAndOpen(r)}
+                >
+                  {codeState.cloningRepo === r.full_name ? 'Cloning…' : 'Clone + terminal'}
+                </button>
+                <button class="link accent" onclick={() => beginWorkRepo(r)}>Begin work ▾</button>
               </div>
             </li>
           {/each}
@@ -231,6 +252,21 @@
       Dispatched <code>{codeState.lastTaskID.slice(0, 8)}</code> —
       <button class="link accent" onclick={() => (currentPanel.value = 'jobs')}>watch it in Jobs</button>
     </p>
+  {/if}
+  {#if codeState.lastSessionURL}
+    <p class="dispatched">
+      Interactive session up —
+      <button class="link accent" onclick={() => openInBrowser(codeState.lastSessionURL)}>attach ↗</button>
+    </p>
+  {/if}
+  {#if codeState.lastClonePath}
+    <p class="dispatched">
+      Terminal open in <code>{codeState.lastClonePath}</code>
+    </p>
+  {/if}
+  {#if codeState.cloneError}
+    <!-- git's own stderr — on a private repo that wording is the whole answer. -->
+    <p class="section-error">{codeState.cloneError}</p>
   {/if}
 </div>
 
@@ -323,6 +359,7 @@
     color: var(--color-text-secondary); font-size: 0.75rem; cursor: pointer;
   }
   .link:hover { text-decoration: underline; }
+  .link:disabled { opacity: 0.5; cursor: progress; text-decoration: none; }
   .link.accent { color: var(--color-accent); }
 
   .dispatched { font-size: 0.8rem; color: var(--color-text-muted); }

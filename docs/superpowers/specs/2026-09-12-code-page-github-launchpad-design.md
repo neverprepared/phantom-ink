@@ -171,3 +171,114 @@ returns and what the Jobs panel already uses. Still no new backend method.
 - Dispatch straight into an interactive session, not only an autonomous task.
 - Notification read/dismiss (a write, so it needs its own scoping pass).
 - Watching dispatched tasks inline instead of linking out to Jobs.
+
+---
+
+# Slice A — Begin-work lanes
+
+v1 had exactly one way to act on a row: ⚡ Dispatch, which hands the work to an
+autonomous fleet agent and walks away. That is the right default for "fix the
+failing CI on #42" and the wrong one for "I want to poke at this myself." Slice A
+adds the two lanes where the *operator* is the one working, closing the second
+v1 follow-up ("dispatch straight into an interactive session").
+
+## 1. The three lanes
+
+| Lane | Where the work happens | Who drives | Entry point |
+|---|---|---|---|
+| Autonomous task | fleet agent container (hub) | nobody — it opens a PR | `Begin work ▾` → **Autonomous task** (default) |
+| Interactive session | brainbox container session | you, attached | `Begin work ▾` → **Interactive session** |
+| Host terminal | this Mac, in the profile's workspace | you, in iTerm/Terminal | repo row → `Clone + terminal` |
+
+All three are profile-scoped. The task carries `workspace_profile`; the session
+carries `workspace_profile` + `workspace_home`; the host clone lands under the
+profile's own `workspace_home`. A lane started under profile A cannot touch
+profile B's tree or credentials.
+
+## 2. Host lane — `OpenRepoLocally(profile, repoURL) (string, error)`
+
+`app/app_code.go`. Resolves `findProfile(profile).WorkspaceHome`, derives
+`<workspaceHome>/code/<repo>`, and:
+
+- **Destination missing** → `git clone <httpsURL> <dest>` (parent `code/` dir
+  created first), then open a terminal in it.
+- **Destination present** → open it **as-is**. No clone, and deliberately **no
+  pull**: this button must never touch a working tree the operator may have
+  dirty. Fetching is their call, in the terminal it just opened.
+
+Terminal opening reuses the existing `openLocalSessionTab(dir)` — the same path
+`OpenLocalSession` takes — so there is one implementation of "open a tab running
+claude", not two.
+
+**Auth is the HOST's git credentials** (the operator's `gh` / credential
+helper). The profile's `GITHUB_TOKEN` is *not* embedded in the clone URL and not
+passed as an `http.extraHeader`: either would persist the secret into the
+clone's remote or reflog, on disk, indefinitely. A private-repo failure returns
+git's stderr verbatim — on a credential problem git's own wording ("Repository
+not found", "could not read Username") *is* the answer.
+
+`normalizeCloneURL` accepts anything GitHub hands us — `clone_url`, a search
+hit's `html_url`, a PR URL, an `api.github.com/repos/...` URL, an scp-style or
+`ssh://` remote — and returns one https clone URL. The **host is preserved**
+(only `api.github.com` is rewritten to `github.com`), so a GitHub Enterprise
+remote still clones from its own host.
+
+## 3. Container lane — `LaunchInteractiveSession(req) (SessionActionResponse, error)`
+
+```go
+type InteractiveSessionRequest struct { Profile, RepoURL, Task string }
+```
+
+Builds `brainbox.CreateSessionRequest{Name: "code-<repo>-<suffix>", ExecMode:
+"interactive", WorkspaceProfile, WorkspaceHome, Task}` and returns
+`a.CreateSession(...)` — reused, not reimplemented, so the profile env
+forwarding and the `PROFILE_ENV_KEY` / image-delivery handling it already does
+apply unchanged.
+
+A brainbox session has **no repo field**: the repo reaches the container only
+through the seeded `Task`. So the session lane's prompt always carries
+`git clone <httpsURL>` plus the fact that `GITHUB_TOKEN` is already in the
+session's env (it arrives with the forwarded profile env). The store enforces
+that on submit even if the operator deletes the line — a session that can't find
+the repo is a dead session.
+
+The name suffix (`%06x` of the nanosecond clock) exists so a second launch on
+the same repo doesn't collide with the first.
+
+## 4. Testability
+
+The pure logic is factored into helpers unit-tested directly —
+`normalizeCloneURL` (ssh/html/api/enterprise → https, `.git` handling) and
+`deriveCloneDest` (the `<home>/code/<repo>` path). The two side effects sit
+behind package-var seams, `runGitClone` and `openTerminalAt`, so the
+clone-vs-open-existing **branch** is asserted with a temp dir and a fake runner:
+no network, no AppleScript. The existing-checkout test writes an uncommitted
+file into the destination and asserts it survives. `LaunchInteractiveSession` is
+tested through an `httptest` server that inspects the `/api/create` body
+(`exec_mode`, `workspace_profile`, `workspace_home`, verbatim task, name shape),
+matching the style already used in `app_code_test.go`.
+
+## 5. Frontend
+
+- **`DispatchModal.svelte`** grows a *launch as* segmented toggle (Autonomous
+  task | Interactive session). Both lanes share the one editable templated
+  textarea; the agent picker is hidden in session mode (you are the agent). The
+  lane resets to `task` on every open — a launcher that silently remembers
+  "container" from twenty minutes ago starts the wrong kind of work. Switching
+  to the session lane prepends the clone instruction **idempotently**, so
+  toggling back and forth never stacks duplicates on the operator's edits.
+- **`CodePanel.svelte`**: repo rows are `[open ↗] · [Clone + terminal] ·
+  [Begin work ▾]`; PR/issue rows are `[open ↗] · [Begin work ▾]` seeded with
+  that row's context. `Clone + terminal` reports the checkout path on success
+  and git's stderr on failure.
+- **`code.svelte.ts`** owns the lane (`dispatchLane`), the in-flight flag for
+  the host clone (`cloningRepo`), and the per-lane results
+  (`lastTaskID` / `lastSessionURL` / `lastClonePath` / `cloneError`), all
+  cleared by `reset()` on a profile switch — a path or session URL from the
+  previous profile has no business surviving one.
+
+## 6. Explicitly out of Slice A
+
+Single-repo drill-down (Slice B) · SQLite caching of the overview (Slice C) ·
+open-in-editor / reveal-in-Finder (terminal-only by choice) · any new credential
+UI · `git pull`/`fetch` of an existing clone.
