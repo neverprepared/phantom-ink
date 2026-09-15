@@ -43,8 +43,8 @@ func (a *App) Run(args []string) error {
 
 	// Commands that require direnv to be installed
 	switch command {
-	case "help", "--help", "-h", "init":
-		// These commands don't require direnv
+	case "help", "--help", "-h", "init", "doctor", "check", "verify":
+		// These commands don't require direnv (doctor reports on it instead)
 	default:
 		if err := a.requireDirenv(); err != nil {
 			return err
@@ -70,6 +70,8 @@ func (a *App) Run(args []string) error {
 		return a.handleInfo(args)
 	case "status":
 		return a.handleStatus(args)
+	case "doctor", "check", "verify":
+		return a.handleDoctor(args)
 	case "sync":
 		return a.handleSync(args)
 	case "dotfiles":
@@ -422,6 +424,63 @@ func (a *App) handleStatus(_args []string) error {
 	return profile.ShowDirenvStatus()
 }
 
+func (a *App) handleDoctor(args []string) error {
+	opts := commands.DoctorOptions{}
+
+	// Parse arguments
+	for _, arg := range args {
+		switch arg {
+		case "-h", "--help":
+			a.showDoctorHelp()
+			return nil
+		case "--all", "-a":
+			opts.All = true
+		case "--json":
+			opts.JSON = true
+		default:
+			if opts.Profile == "" && !strings.HasPrefix(arg, "-") {
+				opts.Profile = arg
+			}
+		}
+	}
+
+	return commands.RunDoctor(a.profilesDir, opts)
+}
+
+func (a *App) showDoctorHelp() {
+	fmt.Println(`Check that a profile is fully set up
+
+Usage: shell-profiler doctor [name] [options]
+
+Arguments:
+    name                        Profile to check (default: current profile
+                                from $WORKSPACE_HOME)
+
+Options:
+    --all, -a                   Check every profile
+    --json                      Emit machine-readable JSON
+    --help, -h                  Show this help message
+
+Checks:
+    structure   profile env file, direnv file + allow state, .gitconfig
+    env         keys the example env file expects but the profile env file
+                lacks (names only — values are never printed)
+    github      ssh access to github.com, gh auth status
+    brain       brain daemon reachability and per-vault token validity
+    router      router reachability and API key validity
+    cloud       aws / azure / gcloud, only when the profile has the directory
+
+Exit code:
+    Non-zero when any check FAILS. Skipped checks — an offline daemon, a tool
+    that is not installed — never fail a run: they are not yours to fix.
+
+Examples:
+    shell-profiler doctor
+    shell-profiler doctor my-project
+    shell-profiler doctor --all
+    shell-profiler doctor --all --json`)
+}
+
 func (a *App) handleDotfiles(args []string) error {
 	if len(args) == 0 {
 		a.showDotfilesHelp()
@@ -532,6 +591,12 @@ Commands:
 
     info                        Show information about the current profile
     status                      Show direnv status
+    doctor [name] [options]     Check a profile is fully set up and report fixes
+        Options:
+            --all, -a               Check every profile
+            --json                  Emit machine-readable JSON
+        Note: Checks the current profile ($WORKSPACE_HOME) if name is omitted
+              Exits non-zero if any check fails
     dotfiles <command> [name]    Manage shell-profiler dotfiles
         Commands:
             list                    List all dotfiles in a profile
@@ -579,6 +644,11 @@ Examples:
 
     # Show current shell-profiler info
     shell-profiler info
+
+    # Diagnose profile setup
+    shell-profiler doctor                 # Current profile
+    shell-profiler doctor my-project      # A named profile
+    shell-profiler doctor --all --json    # Every profile, machine-readable
 
     # Manage dotfiles (interactive by default)
     shell-profiler dotfiles list              # Interactive shell-profiler selection
