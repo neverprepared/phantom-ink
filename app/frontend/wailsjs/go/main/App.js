@@ -542,6 +542,10 @@ export function ListConversations(arg1, arg2) {
   return window['go']['main']['App']['ListConversations'](arg1, arg2);
 }
 
+export function ListExecutedItems(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ListExecutedItems'](arg1, arg2, arg3, arg4);
+}
+
 export function ListGatewayServers() {
   return window['go']['main']['App']['ListGatewayServers']();
 }
@@ -564,6 +568,10 @@ export function ListLoopTemplates() {
 
 export function ListOllamaModels() {
   return window['go']['main']['App']['ListOllamaModels']();
+}
+
+export function ListPlannedItems(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListPlannedItems'](arg1, arg2, arg3);
 }
 
 export function ListPlatformDatabases() {
@@ -704,6 +712,10 @@ export function RenameArtifactObject(arg1, arg2, arg3) {
 
 export function RescanAgents() {
   return window['go']['main']['App']['RescanAgents']();
+}
+
+export function RescheduleOneShot(arg1, arg2) {
+  return window['go']['main']['App']['RescheduleOneShot'](arg1, arg2);
 }
 
 export function RestartAllPlatformServices() {

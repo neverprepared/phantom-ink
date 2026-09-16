@@ -274,6 +274,8 @@ export function ListConversationMessages(arg1:string,arg2:string,arg3:string):Pr
 
 export function ListConversations(arg1:string,arg2:boolean):Promise<Array<brainbox.Conversation>>;
 
+export function ListExecutedItems(arg1:string,arg2:number,arg3:number,arg4:number):Promise<Array<main.TimelineEvent>>;
+
 export function ListGatewayServers():Promise<Array<brainbox.GatewayServer>>;
 
 export function ListHubTasks(arg1:string,arg2:string):Promise<Array<main.HubTask>>;
@@ -285,6 +287,8 @@ export function ListLiveLoops(arg1:string):Promise<Array<brainbox.LiveLoopSummar
 export function ListLoopTemplates():Promise<Array<string>>;
 
 export function ListOllamaModels():Promise<Array<brainbox.OllamaModel>>;
+
+export function ListPlannedItems(arg1:string,arg2:number,arg3:number):Promise<Array<main.PlannedItem>>;
 
 export function ListPlatformDatabases():Promise<Array<main.DatabaseInfo>>;
 
@@ -355,6 +359,8 @@ export function RemoveConversationParticipant(arg1:string,arg2:string,arg3:strin
 export function RenameArtifactObject(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function RescanAgents():Promise<Array<main.DetectedAgent>>;
+
+export function RescheduleOneShot(arg1:string,arg2:number):Promise<main.CollectJob>;
 
 export function RestartAllPlatformServices():Promise<void>;
 
