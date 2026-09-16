@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getApi, openInBrowser } from '../utils/api';
   import { notifications } from '../notifications.svelte';
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
 
   interface Service {
     name: string; state: string; status: string; health: string; one_shot: boolean; web_url?: string; addr?: string;
@@ -15,7 +15,10 @@
     name: string; label: string; endpoint: string; healthy: boolean; note: string;
   }
 
-  let expanded = $state(false);
+  // startExpanded lets the host render this as the primary, open-by-default card
+  // (the Infrastructure panel does). Data + live-health poll kick off on mount.
+  let { startExpanded = false }: { startExpanded?: boolean } = $props();
+  let expanded = $state(startExpanded);
   let services = $state<Service[]>([]);
   let externals = $state<External[]>([]);
   let loading = $state(false);
@@ -50,6 +53,12 @@
       clearInterval(poll); poll = null;
     }
   }
+  onMount(() => {
+    if (expanded) {
+      void load();
+      poll = window.setInterval(() => void load(true), 5000);
+    }
+  });
   onDestroy(() => { if (poll != null) clearInterval(poll); });
 
   async function act(name: string, action: 'Start' | 'Stop' | 'Restart') {

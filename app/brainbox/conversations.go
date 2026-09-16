@@ -1,0 +1,225 @@
+package brainbox
+
+import (
+	"fmt"
+	"net/url"
+)
+
+// Types and client methods for the multi-agent Chat engine (brainbox
+// /api/conversations). PR4 retired the channels API this superseded, so these
+// are the only chat calls the app makes.
+//
+// Every call carries an explicit profile — the server scopes each read and
+// write to it, so an omitted or wrong profile is a 4xx, not a wildcard.
+
+// ConversationParticipant is a member of a conversation. A "persona" is a
+// lightweight LLM participant driven server-side through the complete() seam;
+// "human" posts through the API; "session" is the promotion path (not yet
+// driven).
+type ConversationParticipant struct {
+	Name        string         `json:"name"`
+	Kind        string         `json:"kind"` // "human" | "persona" | "session"
+	ModelTarget map[string]any `json:"model_target,omitempty"`
+	RolePrompt  string         `json:"role_prompt,omitempty"`
+	CooldownS   float64        `json:"cooldown_s,omitempty"`
+	JoinedAt    int64          `json:"joined_at"`
+}
+
+// Conversation is a chat room record in the local-first store.
+type Conversation struct {
+	ID           string                    `json:"id"` // ULID
+	Profile      string                    `json:"profile"`
+	Title        string                    `json:"title"`
+	Status       string                    `json:"status"` // "active" | "archived"
+	Participants []ConversationParticipant `json:"participants"`
+	CreatedAt    int64                     `json:"created_at"`
+	UpdatedAt    int64                     `json:"updated_at"`
+	NodeID       string                    `json:"node_id,omitempty"`
+}
+
+// ConversationMessage is one entry in a conversation's append-only log.
+type ConversationMessage struct {
+	ID             string `json:"id"` // ULID — also the sort key
+	ConversationID string `json:"conversation_id"`
+	Profile        string `json:"profile"`
+	Author         string `json:"author"`
+	Kind           string `json:"kind"` // "message" | "system" | "join" | "tool" | "session"
+	Content        string `json:"content"`
+	AddressedTo    string `json:"addressed_to,omitempty"`
+	InReplyTo      string `json:"in_reply_to,omitempty"`
+	CreatedAt      int64  `json:"created_at"`
+	NodeID         string `json:"node_id,omitempty"`
+}
+
+// CreateConversationRequest is the payload for POST /api/conversations.
+type CreateConversationRequest struct {
+	Title        string                           `json:"title"`
+	Profile      string                           `json:"profile"`
+	Participants []ConversationParticipantRequest `json:"participants"`
+}
+
+// ConversationParticipantRequest is a participant spec at creation time.
+type ConversationParticipantRequest struct {
+	Name        string         `json:"name"`
+	Kind        string         `json:"kind"`
+	ModelTarget map[string]any `json:"model_target,omitempty"`
+	RolePrompt  string         `json:"role_prompt,omitempty"`
+	CooldownS   float64        `json:"cooldown_s,omitempty"`
+}
+
+// AddConversationParticipantRequest is the payload for adding or updating one
+// participant on a live conversation. Posting an existing name replaces that
+// participant, so "edit persona" and "add persona" are the same call.
+type AddConversationParticipantRequest struct {
+	Name        string         `json:"name"`
+	Kind        string         `json:"kind"`
+	ModelTarget map[string]any `json:"model_target,omitempty"`
+	RolePrompt  string         `json:"role_prompt,omitempty"`
+	CooldownS   *float64       `json:"cooldown_s,omitempty"`
+}
+
+// PostConversationMessageRequest is the payload for posting a human message.
+type PostConversationMessageRequest struct {
+	Author      string `json:"author"`
+	Content     string `json:"content"`
+	AddressedTo string `json:"addressed_to,omitempty"`
+}
+
+// conversationPath builds a conversation URL with the profile (and any extra
+// query values) attached. Centralized so no call site can forget the profile.
+func conversationPath(suffix, profile string, extra url.Values) string {
+	q := url.Values{}
+	for k, v := range extra {
+		q[k] = v
+	}
+	q.Set("profile", profile)
+	return "/api/conversations" + suffix + "?" + q.Encode()
+}
+
+// ListConversations returns the profile's conversations, newest activity first.
+func (c *Client) ListConversations(profile string, includeArchived bool) ([]Conversation, error) {
+	extra := url.Values{}
+	extra.Set("include_archived", fmt.Sprintf("%t", includeArchived))
+	var out []Conversation
+	if err := c.get(conversationPath("", profile, extra), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetConversation returns one conversation. A conversation in another profile
+// reads as "not found".
+func (c *Client) GetConversation(id, profile string) (Conversation, error) {
+	var out Conversation
+	err := c.get(conversationPath("/"+url.PathEscape(id), profile, nil), &out)
+	return out, err
+}
+
+// CreateConversation creates a room. The profile travels in the body here
+// (it is part of the record being created), not the query string.
+func (c *Client) CreateConversation(req CreateConversationRequest) (Conversation, error) {
+	var out Conversation
+	err := c.post("/api/conversations", req, &out)
+	return out, err
+}
+
+// ArchiveConversation flips a room to archived; its messages stay readable.
+// A nil body closes the room with no closing note, which is what the app's
+// archive button does.
+func (c *Client) ArchiveConversation(id, profile string) (Conversation, error) {
+	var out Conversation
+	err := c.post(conversationPath("/"+url.PathEscape(id)+"/archive", profile, nil), nil, &out)
+	return out, err
+}
+
+// ListConversationMessages returns messages in ULID order. A non-empty sinceID
+// returns only messages created after it.
+func (c *Client) ListConversationMessages(id, profile, sinceID string) ([]ConversationMessage, error) {
+	extra := url.Values{}
+	if sinceID != "" {
+		extra.Set("since_id", sinceID)
+	}
+	var out []ConversationMessage
+	path := conversationPath("/"+url.PathEscape(id)+"/messages", profile, extra)
+	if err := c.get(path, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// PostConversationMessage posts a human message. It returns as soon as the
+// message is durable; any persona reply arrives on the conversation's SSE
+// stream, not in this response.
+func (c *Client) PostConversationMessage(id, profile string, req PostConversationMessageRequest) (ConversationMessage, error) {
+	var out ConversationMessage
+	err := c.post(conversationPath("/"+url.PathEscape(id)+"/messages", profile, nil), req, &out)
+	return out, err
+}
+
+// AddConversationParticipant adds (or updates by name) a participant and
+// returns the updated room.
+func (c *Client) AddConversationParticipant(id, profile string, req AddConversationParticipantRequest) (Conversation, error) {
+	var out Conversation
+	err := c.post(conversationPath("/"+url.PathEscape(id)+"/participants", profile, nil), req, &out)
+	return out, err
+}
+
+// RemoveConversationParticipant removes a participant by name. Their messages
+// stay — a room's history is append-only.
+func (c *Client) RemoveConversationParticipant(id, profile, name string) (Conversation, error) {
+	var out Conversation
+	path := conversationPath("/"+url.PathEscape(id)+"/participants/"+url.PathEscape(name), profile, nil)
+	err := c.delete(path, &out)
+	return out, err
+}
+
+// PromoteMessageRequest is the payload for promoting one conversation message
+// into the platform (brainbox POST
+// /api/conversations/{id}/messages/{mid}/promote).
+//
+// Target picks the surface: "memory" and "todo" write a record into that
+// phantom-brain vault for the profile; "task" submits a hub task; "session"
+// submits that same task AND joins the resulting container session to the room
+// as a kind="session" participant that reports its progress back. The
+// credentials are resolved SERVER-SIDE per profile — nothing secret travels in
+// this struct.
+type PromoteMessageRequest struct {
+	Target    string   `json:"target"` // "memory" | "todo" | "task" | "session"
+	Title     string   `json:"title,omitempty"`
+	Note      string   `json:"note,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+	AgentName string   `json:"agent_name,omitempty"` // target="task" | "session"
+	RepoURL   string   `json:"repo_url,omitempty"`   // target="task" | "session"
+}
+
+// PromoteMessageResult is what the promote route returns. Vault targets fill
+// SHA; a task or session fills TaskID, and a session also names the
+// participant it joined the room under — the handle to address or dismiss it.
+type PromoteMessageResult struct {
+	OK          bool   `json:"ok"`
+	Target      string `json:"target"`
+	SHA         string `json:"sha,omitempty"`
+	TaskID      string `json:"task_id,omitempty"`
+	Participant string `json:"participant,omitempty"`
+	Detail      string `json:"detail,omitempty"`
+}
+
+// PromoteConversationMessage promotes one message to memory, a todo, or a hub
+// task. Profile-scoped like every other conversation call: a message in another
+// profile reads as "not found".
+func (c *Client) PromoteConversationMessage(
+	id, messageID, profile string, req PromoteMessageRequest,
+) (PromoteMessageResult, error) {
+	var out PromoteMessageResult
+	path := conversationPath(
+		"/"+url.PathEscape(id)+"/messages/"+url.PathEscape(messageID)+"/promote",
+		profile, nil,
+	)
+	err := c.post(path, req, &out)
+	return out, err
+}
+
+// ConversationStreamURL is the per-conversation SSE endpoint.
+func (c *Client) ConversationStreamURL(id, profile string) string {
+	return c.BaseURL() + conversationPath("/"+url.PathEscape(id)+"/stream", profile, nil)
+}

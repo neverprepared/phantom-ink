@@ -26,51 +26,6 @@ func newMigratedTestDB(t *testing.T) *DB {
 	return db
 }
 
-// expandSchedule enumerates cron fires strictly within the window, as read-only
-// (non-draggable) cron occurrences.
-func TestExpandSchedule_WithinWindow(t *testing.T) {
-	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC) // Monday 00:00
-	until := now.Add(2 * time.Hour).UnixMilli()
-	s := ScheduleRow{ID: "s1", SequenceID: "loopA", CronExpr: "*/30 * * * *", Enabled: true, WorkspaceProfile: "p", Input: "run A"}
-
-	got := expandSchedule(s, now.UnixMilli(), until, now, map[string]string{"loopA": "Loop A"})
-
-	if len(got) != 4 { // 00:30, 01:00, 01:30, 02:00
-		t.Fatalf("expected 4 fires in a 2h window for */30, got %d: %+v", len(got), got)
-	}
-	var prev int64
-	for _, it := range got {
-		if it.Recurrence != "cron" || it.Draggable {
-			t.Errorf("cron occurrence must be recurrence=cron, draggable=false: %+v", it)
-		}
-		if it.Source != "schedule" || it.SourceID != "s1" {
-			t.Errorf("wrong source linkage: %+v", it)
-		}
-		if it.Title != "run A" { // Input wins over loop name
-			t.Errorf("title = %q, want %q", it.Title, "run A")
-		}
-		if it.FireAtMs <= now.UnixMilli() || it.FireAtMs > until {
-			t.Errorf("fire %d outside (now, until]", it.FireAtMs)
-		}
-		if it.FireAtMs <= prev {
-			t.Errorf("fires not strictly ascending: %d after %d", it.FireAtMs, prev)
-		}
-		prev = it.FireAtMs
-	}
-}
-
-// A disabled schedule / bad cron yields nothing.
-func TestExpandSchedule_DisabledOrInvalid(t *testing.T) {
-	now := time.Now()
-	until := now.Add(time.Hour).UnixMilli()
-	if got := expandSchedule(ScheduleRow{ID: "x", CronExpr: "* * * * *", Enabled: false}, now.UnixMilli(), until, now, nil); got != nil {
-		t.Errorf("disabled schedule must expand to nil, got %+v", got)
-	}
-	if got := expandSchedule(ScheduleRow{ID: "x", CronExpr: "not a cron", Enabled: true}, now.UnixMilli(), until, now, nil); got != nil {
-		t.Errorf("invalid cron must expand to nil, got %+v", got)
-	}
-}
-
 func TestExpandInterval(t *testing.T) {
 	now := time.Now()
 	nowMs := now.UnixMilli()
@@ -168,15 +123,12 @@ func TestListPlannedItems_ProfileFilter(t *testing.T) {
 	if err := db.UpsertCollectJob(CollectJob{ID: "jb", Profile: "b", Name: "B one-shot", TargetType: "runner", RunOnceAtMs: &atB, Enabled: true, CreatedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertSchedule(ScheduleRow{ID: "sa", SequenceID: "L", CronExpr: "0 * * * *", Enabled: true, WorkspaceProfile: "a", CreatedAt: "2024-01-01T00:00:00Z", UpdatedAt: "2024-01-01T00:00:00Z"}); err != nil {
-		t.Fatal(err)
-	}
 
 	items, err := a.ListPlannedItems("a", now.UnixMilli(), now.Add(48*time.Hour).UnixMilli())
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sawCollectA, sawSchedule bool
+	var sawCollectA bool
 	for _, it := range items {
 		if it.Profile != "a" {
 			t.Errorf("profile filter leaked a non-'a' item: %+v", it)
@@ -187,15 +139,9 @@ func TestListPlannedItems_ProfileFilter(t *testing.T) {
 		if it.SourceID == "ja" {
 			sawCollectA = true
 		}
-		if it.Source == "schedule" && it.SourceID == "sa" {
-			sawSchedule = true
-		}
 	}
 	if !sawCollectA {
 		t.Error("expected profile 'a' one-shot in results")
-	}
-	if !sawSchedule {
-		t.Error("expected profile 'a' schedule in results")
 	}
 }
 

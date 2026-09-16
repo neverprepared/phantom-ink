@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import uuid
 from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from .utils import now_ms as _now_ms
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +232,7 @@ class Task(BaseModel):
     job_id: str | None = None       # Parent supervisor task ID (own id if this is the root)
     spawned_by: str | None = None   # Task ID that directly spawned this task (None for roots)
     child_task_ids: list[str] = Field(default_factory=list)  # Tasks spawned by this one
-    channel_ids: list[str] = Field(default_factory=list)    # Channels spawned by this task
+    conversation_ids: list[str] = Field(default_factory=list)  # Conversations this task participates in
     runner_name: str | None = None  # Runner that handled this task; None = executed in-process
     workspace_home: str | None = None    # Stored for scheduler retry on backoff
     backend: str = "docker"              # Backend capability required for this task
@@ -352,38 +350,3 @@ class HubState(BaseModel):
     messages: MessagesState = Field(default_factory=MessagesState)
 
 
-# ---------------------------------------------------------------------------
-# Channels (group chat)
-# ---------------------------------------------------------------------------
-
-
-class ChannelParticipant(BaseModel):
-    name: str  # display name in channel
-    type: Literal["session", "ollama", "user"]
-    session_name: str | None = None  # for type="session"
-    ollama_model: str | None = None  # for type="ollama"
-    system_prompt: str | None = None  # role instructions for Ollama
-    joined_at: int = Field(default_factory=_now_ms)
-
-
-class ChannelMessage(BaseModel):
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
-    channel_id: str
-    from_participant: str
-    content: str
-    summary: str | None = None  # sender-authored brief for context management
-    addressed_to: str | None = None  # None = broadcast, name = directed
-    type: Literal["message", "join", "completion"] = "message"
-    timestamp: int = Field(default_factory=_now_ms)
-
-
-class Channel(BaseModel):
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
-    name: str
-    participants: list[ChannelParticipant] = Field(default_factory=list)
-    status: Literal["active", "completed"] = "active"
-    created_at: int = Field(default_factory=_now_ms)
-    completed_at: int | None = None
-    completed_by: str | None = None
-    parent_task_id: str | None = None  # task that spawned this channel
-    workspace_profile: str | None = None

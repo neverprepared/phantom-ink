@@ -18,7 +18,7 @@ The owner asked for competing designs, with an explicit lean toward "A2A tooling
 - **brainbox already has a durable workflow engine.** `brainbox/src/brainbox/router.py:283-368` (`suspend_task` / `resume_task`) plus `brainbox/src/brainbox/models.py:127-151` implement suspension kinds **HUMAN / JOIN / SCHEDULE / CHILD** with scheduler auto-resume, `resume_payload` merge, and the property that *suspended tasks do not consume queue slots*. That is fan-out/fan-in, wall-clock timers, and human-in-the-loop — the exact primitives a graph framework markets — already built.
 - **A loops consolidation is already in flight.** On branch `feat/loops-markdown-cutover`, `app/sequences.go:28-33` demotes the host-side type to "the authoring surface in the desktop app and the host-side runtime for the trivial 1-iteration case," while "the rich convergence / iteration primitives live on the brainbox-side SequenceSpec." `app/sequences.go:73-82` reserves an `Executor` field (`"host"` wired today; `"session"` / `"queue"` reserved). `app/app_loops_runtime.go:10-13` calls the brainbox loop runner the "proper convergence/iteration" engine versus "legacy local-SQLite … bookkeeping."
 - **Multi-model already works per session.** `SessionContext.llm_provider: Literal["claude","ollama","codex"]` with `llm_model` / `llm_effort` / `ollama_host` / `codex_api_key` overrides (`models.py:86-90`); per-agent defaults on `AgentDefinition` (`claude_model`, `claude_effort`, `codex_model`, `ollama_model`, `models.py:31-34`); provider-specific env injection in `lifecycle.py:1027-1044`. Claude runs under **OAuth, no API keys** (see CLAUDE.md "No API Keys for Agents"). aider/gemini/opencode exist only in the host CLI catalog (`app/agents.go`), not yet in brainbox.
-- **A2A is the one genuinely-missing standard piece.** No `/api/a2a/*` routes exist (confirmed). Cross-agent coordination today runs over `/api/hub/messages`, channels, and the task lifecycle.
+- **A2A is the one genuinely-missing standard piece.** No `/api/a2a/*` routes exist (confirmed). Cross-agent coordination today runs over `/api/hub/messages`, conversations (`/api/conversations`, which superseded the channels engine), and the task lifecycle.
 
 ---
 
@@ -82,7 +82,7 @@ New `brainbox/src/brainbox/a2a.py`, mounted in `api.py` — thin adapters over e
 - `POST /a2a/tasks/send` ← `router.submit_task()`; the A2A Task maps onto the brainbox `Task` (states already align).
 - `GET /a2a/tasks/{id}` and stream ← `router.get_task` + the existing SSE bus (`/api/events`, `router.on_event`).
 - A2A `input-required` ↔ `SuspensionKind.HUMAN` via `suspend_task` / `resume_task`.
-- A2A messages ↔ `messages.route()` / channels.
+- A2A messages ↔ `messages.route()` / conversations.
 - Auth bridge: map A2A Bearer onto the existing hub `Token` / `require_api_key`.
 - **Open questions to settle at build time:** which agents ship in v1 (all four — supervisor/worker/assistant/reviewer — or just supervisor + worker); which A2A spec version to pin.
 

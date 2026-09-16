@@ -261,6 +261,51 @@ git config user.email
 git config user.name
 ```
 
+### Diagnosing a Profile
+
+Use `doctor` (aliases: `check`, `verify`) to confirm a profile is fully set up
+and get a fix for anything that is not:
+
+```bash
+# Check the current profile ($WORKSPACE_HOME)
+shell-profiler doctor
+
+# Check a named profile
+shell-profiler doctor my-project
+
+# Check every profile
+shell-profiler doctor --all
+
+# Machine-readable output
+shell-profiler doctor --all --json
+```
+
+It checks, in order:
+
+| Category    | What it checks                                                            |
+| ----------- | ------------------------------------------------------------------------- |
+| `structure` | `.env`, `.envrc` + its direnv allow state, `.gitconfig` user.name/email    |
+| `env`       | Keys `.env.example` expects that `.env` is missing or leaves empty         |
+| `github`    | `ssh -T git@github.com`, `gh auth status`                                  |
+| `brain`     | Brain daemon reachability and per-vault token validity                     |
+| `router`    | Router reachability and `CL_API_KEY` validity                              |
+| `cloud`     | `aws` / `az` / `gcloud` — only when the profile carries the matching dir   |
+
+Each line is marked ✓ (ok), ✗ (fail), or → (skip), and every failure carries a
+`-> fix:` hint. **`doctor` exits non-zero when any check FAILS.** Skips never
+fail a run — they mark what is not yours to fix:
+
+- **Fail** = *your config is wrong or missing* — a token that is not set, a
+  `.gitconfig` without an email, direnv not allowed.
+- **Skip** = *a service is offline or a tool is not installed* — an unreachable
+  brain daemon, no `aws` CLI, a vault this profile does not use.
+
+**`doctor` never prints a secret value.** It reports only set/missing/valid/
+invalid and names keys, never their contents. Token values are read into memory
+and handed to subprocesses through their environment — never to stdout, never
+onto a command line. A secrets file that is a 1Password FIFO is never read
+inline; it is reported as skipped rather than hanging the run.
+
 ### Multiple Client Workspaces
 
 Create separate profiles for different clients, each with their own git configuration, SSH keys, and credentials:

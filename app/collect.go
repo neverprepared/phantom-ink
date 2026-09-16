@@ -569,31 +569,11 @@ func (s *collectScheduler) runJob(job CollectJob) {
 	}
 	if len(entries) > 0 {
 		s.app.emitCollectUpdate(job.Profile)
-		// Emit automation events for each collected entry.
-		if s.app.automations != nil {
-			for _, e := range entries {
-				entry := e
-				s.app.automations.Emit(AutomationEvent{
-					Type:    "entry_created",
-					Profile: job.Profile,
-					Entry:   &entry,
-				})
-			}
-		}
-	}
-	// Emit job_complete event.
-	if s.app.automations != nil {
-		j := job
-		s.app.automations.Emit(AutomationEvent{
-			Type:    "job_complete",
-			Profile: job.Profile,
-			Job:     &j,
-		})
 	}
 }
 
 // dispatchCollectJob executes a job according to its target_type.
-// Shell jobs return timeline entries; loop/runner jobs manage their
+// Shell jobs return timeline entries; runner jobs manage their
 // own output and return nil entries (last_run_at is still recorded).
 func (a *App) dispatchCollectJob(job CollectJob) ([]CollectedEntry, error) {
 	// Dashboard-widget jobs emit a scalar value, not a timeline-entries
@@ -602,9 +582,6 @@ func (a *App) dispatchCollectJob(job CollectJob) ([]CollectedEntry, error) {
 		return a.runWidgetCommand(job)
 	}
 	switch job.TargetType {
-	case "loop":
-		_, err := a.RunSequence(job.TargetID, "", "")
-		return nil, err
 	case "runner":
 		// Fire as a one-shot shell command using the local claude binary.
 		runnerJob := job

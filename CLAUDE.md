@@ -41,7 +41,9 @@ Brainbox (brainbox/src/brainbox)
   │                    /api/runners, /api/tokens, /api/events SSE, /api/agent_events, …)
   ├─ lifecycle.py      provision / run / recycle a session container
   ├─ backends/         docker + utm execution backends, nginx routing
-  ├─ hub.py, registry.py, agent_store.py, channels.py, messages.py — agent hub
+  ├─ hub.py, registry.py, agent_store.py, messages.py — agent hub
+  ├─ conversation_*.py  multi-agent Chat: store, runtime/SSE, turn orchestrator,
+  │                     promote-a-message, promote-to-session
   ├─ mcp_server.py     the operator-facing MCP server (`brainbox mcp`)
   ├─ gateway_*.py      the MCP **gateway**: per-profile, scoped tool plane (ADR-002),
   │                    mounted at `/gateway` in api.py
@@ -115,6 +117,10 @@ Three distinct MCP things live here — do not conflate them:
    `get_qdrant_health`, `get_langfuse_session_traces`, `get_langfuse_session_summary`,
    `get_langfuse_trace_detail`, `channel_read`, `channel_send`, `channel_complete`,
    `channel_join`, `get_event_schema`. Resource: `contract://events/timeline-entry`.
+   The four `channel_*` tools keep their historical names but talk to the
+   **conversation** engine (`/api/conversations/...`) — the in-memory channels
+   hub they were written against was retired; their `channel_id` argument is a
+   conversation ULID.
 2. **`brainbox-mcp`** (`packages/brainbox-mcp`) — the trimmed *guest* variant installed in
    session containers; a subset of the above (sessions, tasks, hub, agents, metrics).
 3. **The MCP gateway** (`gateway_server.py`, mounted at `/gateway`) — the security

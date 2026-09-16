@@ -6,15 +6,15 @@ import {opensearch} from '../models';
 
 export function AddBrainMCP(arg1:string,arg2:string):Promise<string>;
 
-export function AddChannelParticipant(arg1:string,arg2:brainbox.ChannelParticipantRequest):Promise<brainbox.Channel>;
+export function AddConversationParticipant(arg1:string,arg2:string,arg3:brainbox.AddConversationParticipantRequest):Promise<brainbox.Conversation>;
+
+export function ArchiveConversation(arg1:string,arg2:string):Promise<brainbox.Conversation>;
 
 export function AssistLoopTemplate(arg1:brainbox.LoopAssistRequest):Promise<brainbox.LoopAssistResult>;
 
 export function AttentionOpenTarget(arg1:string):Promise<main.OpenTarget>;
 
 export function AttentionRespond(arg1:string,arg2:string):Promise<void>;
-
-export function AttentionRetry(arg1:string):Promise<void>;
 
 export function BackupDatabase(arg1:string):Promise<string>;
 
@@ -30,11 +30,7 @@ export function CancelHubTask(arg1:string):Promise<void>;
 
 export function CancelLiveLoop(arg1:string,arg2:string):Promise<brainbox.LiveLoop>;
 
-export function CancelTask(arg1:string):Promise<void>;
-
 export function ClearProfileServerOverride(arg1:string,arg2:string):Promise<void>;
-
-export function CompleteChannel(arg1:string,arg2:brainbox.CompleteChannelRequest):Promise<brainbox.Channel>;
 
 export function CopyVaultRecord(arg1:string,arg2:string,arg3:string):Promise<void>;
 
@@ -44,7 +40,7 @@ export function CreateArtifactFolder(arg1:string,arg2:string,arg3:string):Promis
 
 export function CreateBrainSkill(arg1:string,arg2:string):Promise<brainbox.BrainSkillWriteResult>;
 
-export function CreateChannel(arg1:brainbox.CreateChannelRequest):Promise<brainbox.Channel>;
+export function CreateConversation(arg1:brainbox.CreateConversationRequest):Promise<brainbox.Conversation>;
 
 export function CreateProfile(arg1:string):Promise<main.Profile>;
 
@@ -54,13 +50,9 @@ export function DeleteAgent(arg1:string):Promise<void>;
 
 export function DeleteArtifactObject(arg1:string,arg2:string):Promise<void>;
 
-export function DeleteAutomationRule(arg1:string):Promise<void>;
-
 export function DeleteBrainSkill(arg1:string,arg2:string):Promise<brainbox.BrainSkillWriteResult>;
 
 export function DeleteBundleSource(arg1:string,arg2:string):Promise<void>;
-
-export function DeleteChannel(arg1:string):Promise<void>;
 
 export function DeleteCollectJob(arg1:string):Promise<void>;
 
@@ -84,10 +76,6 @@ export function DeleteRule(arg1:string):Promise<void>;
 
 export function DeleteRunner(arg1:string):Promise<void>;
 
-export function DeleteSchedule(arg1:string):Promise<void>;
-
-export function DeleteSequence(arg1:string):Promise<void>;
-
 export function DeleteSession(arg1:string):Promise<brainbox.SessionActionResponse>;
 
 export function DeleteTrustRule(arg1:string,arg2:string):Promise<void>;
@@ -96,13 +84,13 @@ export function DisableLocalRunner():Promise<void>;
 
 export function DismissAttention(arg1:string):Promise<void>;
 
+export function DispatchRepoTask(arg1:main.DispatchRepoRequest):Promise<brainbox.Task>;
+
 export function DownloadArtifactObject(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function DryRunLoopTemplate(arg1:string,arg2:Record<string, any>):Promise<Record<string, any>>;
 
 export function EnableLocalRunner(arg1:string):Promise<void>;
-
-export function EnqueueTask(arg1:main.EnqueueTaskRequest):Promise<string>;
 
 export function ExportBrainVault(arg1:string,arg2:string):Promise<string>;
 
@@ -140,15 +128,13 @@ export function GetBrainProfileTokens(arg1:string):Promise<brainbox.BrainProfile
 
 export function GetBrainSkill(arg1:string,arg2:string):Promise<brainbox.BrainSkillDetail>;
 
-export function GetChannel(arg1:string):Promise<brainbox.Channel>;
-
-export function GetChannelMessages(arg1:string,arg2:string):Promise<Array<brainbox.ChannelMessage>>;
-
 export function GetConfig():Promise<main.Config>;
 
 export function GetContainerDiskUsage():Promise<Array<main.ContainerDiskStat>>;
 
 export function GetContainerMetrics():Promise<Array<brainbox.ContainerMetrics>>;
+
+export function GetConversation(arg1:string,arg2:string):Promise<brainbox.Conversation>;
 
 export function GetDashboardLayout(arg1:string):Promise<string>;
 
@@ -179,8 +165,6 @@ export function GetLocalRunnerStatus():Promise<main.LocalRunnerStatus>;
 export function GetLoopTemplate(arg1:string):Promise<brainbox.LoopTemplate>;
 
 export function GetLoopTemplateSchema():Promise<Record<string, any>>;
-
-export function GetMatchingRules(arg1:string,arg2:string):Promise<Array<main.AutomationRule>>;
 
 export function GetMeshStatus():Promise<main.MeshStatus>;
 
@@ -230,11 +214,7 @@ export function GetSessionsMetricsHistory():Promise<Record<string, Array<brainbo
 
 export function GetSystemInfo():Promise<main.SystemInfo>;
 
-export function GetTask(arg1:string):Promise<main.TaskRow>;
-
 export function GetTaskLineage(arg1:string):Promise<Array<main.HubTask>>;
-
-export function GetTaskStats(arg1:number):Promise<main.TaskStats>;
 
 export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;
 
@@ -248,6 +228,8 @@ export function GetVaultToken(arg1:string):Promise<string>;
 
 export function GetWidgetCount(arg1:string,arg2:string):Promise<number>;
 
+export function GitHubOverview(arg1:string):Promise<main.CodeOverview>;
+
 export function HeadArtifactObject(arg1:string,arg2:string):Promise<brainbox.ArtifactObjectHead>;
 
 export function ImportBrainVault(arg1:string,arg2:string):Promise<string>;
@@ -255,6 +237,8 @@ export function ImportBrainVault(arg1:string,arg2:string):Promise<string>;
 export function ImportEnvFile():Promise<string>;
 
 export function InitBrainProfile(arg1:string):Promise<brainbox.BrainProfileInitResult>;
+
+export function LaunchInteractiveSession(arg1:main.InteractiveSessionRequest):Promise<brainbox.SessionActionResponse>;
 
 export function LaunchTeam(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<brainbox.SessionActionResponse>;
 
@@ -276,19 +260,19 @@ export function ListArtifactsFolder(arg1:string,arg2:string):Promise<brainbox.Ar
 
 export function ListAttention(arg1:string):Promise<Array<main.AttentionItem>>;
 
-export function ListAutomationRules(arg1:string):Promise<Array<main.AutomationRule>>;
-
 export function ListBackups():Promise<Array<string>>;
 
 export function ListBrainSkills(arg1:string):Promise<Array<brainbox.BrainSkill>>;
 
 export function ListBundleSources(arg1:string):Promise<Array<main.BundleSourceView>>;
 
-export function ListChannels(arg1:string):Promise<Array<brainbox.Channel>>;
-
 export function ListCollectJobs(arg1:string):Promise<Array<main.CollectJob>>;
 
 export function ListCollectedEntries(arg1:string,arg2:string,arg3:string):Promise<Array<main.CollectedEntry>>;
+
+export function ListConversationMessages(arg1:string,arg2:string,arg3:string):Promise<Array<brainbox.ConversationMessage>>;
+
+export function ListConversations(arg1:string,arg2:boolean):Promise<Array<brainbox.Conversation>>;
 
 export function ListExecutedItems(arg1:string,arg2:number,arg3:number,arg4:number):Promise<Array<main.TimelineEvent>>;
 
@@ -328,17 +312,7 @@ export function ListRules(arg1:string):Promise<Array<brainbox.Rule>>;
 
 export function ListRunners():Promise<Array<brainbox.Runner>>;
 
-export function ListSchedules(arg1:string):Promise<Array<main.ScheduleRow>>;
-
-export function ListSequenceRuns(arg1:string,arg2:number):Promise<Array<main.SequenceRunRow>>;
-
-export function ListSequences():Promise<Array<main.Sequence>>;
-
 export function ListServices():Promise<Array<main.ServiceStatus>>;
-
-export function ListTasks(arg1:string,arg2:string,arg3:number):Promise<Array<main.TaskRow>>;
-
-export function ListUpcomingFires(arg1:number):Promise<Array<main.UpcomingFire>>;
 
 export function MinioIntegrationEnabled():Promise<boolean>;
 
@@ -350,11 +324,13 @@ export function MoveVaultRecord(arg1:string,arg2:string,arg3:string):Promise<voi
 
 export function OpenLocalSession(arg1:string):Promise<void>;
 
+export function OpenRepoLocally(arg1:string,arg2:string):Promise<string>;
+
 export function OutboxPending():Promise<number>;
 
 export function PlaceIntegration(arg1:string,arg2:string,arg3:string):Promise<main.IntegrationPlacementOutcome>;
 
-export function PostChannelMessage(arg1:string,arg2:brainbox.PostChannelMessageRequest):Promise<brainbox.ChannelMessage>;
+export function PostConversationMessage(arg1:string,arg2:string,arg3:brainbox.PostConversationMessageRequest):Promise<brainbox.ConversationMessage>;
 
 export function PresignArtifactURL(arg1:string,arg2:string,arg3:string,arg4:number):Promise<brainbox.ArtifactPresignedURL>;
 
@@ -366,6 +342,8 @@ export function ProfileTokenCapabilities():Promise<Array<string>>;
 
 export function ProfileTokenProfiles():Promise<Array<string>>;
 
+export function PromoteConversationMessage(arg1:string,arg2:string,arg3:string,arg4:brainbox.PromoteMessageRequest):Promise<brainbox.PromoteMessageResult>;
+
 export function PullOllamaModel(arg1:string):Promise<string>;
 
 export function PurgeBackup(arg1:string):Promise<void>;
@@ -376,7 +354,7 @@ export function ReadProfileHostEnv(arg1:string):Promise<string>;
 
 export function RebuildBaseImage(arg1:main.BaseImageBuildRequest):Promise<void>;
 
-export function RemoveChannelParticipant(arg1:string,arg2:string):Promise<brainbox.Channel>;
+export function RemoveConversationParticipant(arg1:string,arg2:string,arg3:string):Promise<brainbox.Conversation>;
 
 export function RenameArtifactObject(arg1:string,arg2:string,arg3:string):Promise<void>;
 
@@ -398,8 +376,6 @@ export function RestoreProfile(arg1:string):Promise<void>;
 
 export function RetryRuleExecution(arg1:number):Promise<brainbox.RuleExecution>;
 
-export function RetryTask(arg1:string):Promise<void>;
-
 export function RevokeProfileToken(arg1:string):Promise<void>;
 
 export function RunCollectJobNow(arg1:string):Promise<void>;
@@ -408,10 +384,6 @@ export function RunMetricScript(arg1:string,arg2:string):Promise<string>;
 
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
 
-export function RunSequence(arg1:string,arg2:string,arg3:string):Promise<string>;
-
-export function SaveAutomationRule(arg1:main.AutomationRule):Promise<void>;
-
 export function SaveCollectJob(arg1:main.CollectJob):Promise<main.CollectJob>;
 
 export function SaveCustomBundleSource(arg1:string,arg2:string,arg3:string):Promise<void>;
@@ -419,10 +391,6 @@ export function SaveCustomBundleSource(arg1:string,arg2:string,arg3:string):Prom
 export function SaveDashboardLayout(arg1:string,arg2:string):Promise<void>;
 
 export function SaveRule(arg1:brainbox.Rule):Promise<brainbox.Rule>;
-
-export function SaveSchedule(arg1:main.ScheduleRow):Promise<main.ScheduleRow>;
-
-export function SaveSequence(arg1:main.Sequence):Promise<main.Sequence>;
 
 export function ScanDiskUsage():Promise<main.DiskOverview>;
 
@@ -490,6 +458,8 @@ export function SubmitTask(arg1:brainbox.SubmitTaskRequest):Promise<main.HubTask
 
 export function SubmitTaskAndWait(arg1:brainbox.WaitForTaskRequest):Promise<brainbox.WaitForTaskResponse>;
 
+export function SubscribeConversation(arg1:string,arg2:string):Promise<void>;
+
 export function SyncProfileBundleNow(arg1:string):Promise<brainbox.BundlePutResult>;
 
 export function TailLogs(arg1:string,arg2:number):Promise<Array<opensearch.LogEntry>>;
@@ -500,7 +470,7 @@ export function TestRuleEvent(arg1:Record<string, any>,arg2:Record<string, any>)
 
 export function TestRulePattern(arg1:Record<string, any>,arg2:number):Promise<brainbox.RuleTestResult>;
 
-export function TriggerRule(arg1:string,arg2:string,arg3:string):Promise<void>;
+export function UnsubscribeConversation(arg1:string):Promise<void>;
 
 export function UpdateAgent(arg1:string,arg2:brainbox.UpdateAgentRequest):Promise<brainbox.AgentDefinition>;
 

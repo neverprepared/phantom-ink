@@ -28,9 +28,7 @@
     days: string;
   }
 
-  interface NamedItem { id: string; name: string; workspace_profile: string; }
-
-  type TargetType = 'shell' | 'loop' | 'runner';
+  type TargetType = 'shell' | 'runner';
   type ScheduleMode = 'interval' | 'time';
 
   // ── State ──────────────────────────────────────────────────────────────
@@ -38,7 +36,6 @@
   const profile = $derived(profileState.active?.name ?? '');
 
   let jobs         = $state<CollectJob[]>([]);
-  let loops       = $state<NamedItem[]>([]);
   let loading      = $state(false);
   let loadError    = $state<string | null>(null); // set when the jobs fetch fails, so the panel shows an error not a false "no jobs"
   let saving       = $state(false); // in-flight guard for save() — prevents double-submit
@@ -53,7 +50,6 @@
     name: '',
     targetType: 'shell' as TargetType,
     command: '',
-    targetId: '',
     targetPrompt: '',
     scheduleMode: 'interval' as ScheduleMode,
     interval_s: 300,
@@ -74,16 +70,6 @@
     filterProfile ? jobs.filter(j => j.profile === filterProfile) : jobs
   );
 
-  let draftProfile = $derived.by(() => {
-    if (editingId === 'new') return filterProfile || profile;
-    const job = jobs.find(j => j.id === editingId);
-    return job?.profile ?? profile;
-  });
-
-  let visibleSequences = $derived(
-    loops.filter(c => !c.workspace_profile || c.workspace_profile === draftProfile)
-  );
-
   // ── Data loading ───────────────────────────────────────────────────────
 
   async function load() {
@@ -91,18 +77,8 @@
     if (!a) { loadError = 'API bindings unavailable'; loading = false; return; }
     loading = true;
     try {
-      // The jobs list is the panel's primary data — let its failure surface as
-      // an error state. The sequence list only feeds the target picker, so a
-      // failure there degrades gracefully (empty picker) via safe().
-      const [j, c] = await Promise.all([
-        (a.ListCollectJobs as any)(''),
-        safe((a.ListSequences as any)(), [], 'ListSequences'),
-      ]);
+      const j = await (a.ListCollectJobs as any)('');
       jobs = (j ?? []) as CollectJob[];
-      loops = ((c ?? []) as any[]).map((x: any) => ({
-        id: x.id, name: x.name,
-        workspace_profile: x.workspace_profile ?? '',
-      }));
       loadError = null;
     } catch (err: any) {
       loadError = `${err?.message ?? err}`;
@@ -131,14 +107,12 @@
       last_error:   '',
       created_at:   0,
       target_type:  draft.targetType,
-      target_id:    draft.targetId,
       target_prompt: draft.targetPrompt.trim(),
       run_at:       draft.scheduleMode === 'time' ? draft.run_at : '',
       days:         draft.scheduleMode === 'time' ? draft.days : '',
     };
     // Validation
     if (draft.targetType === 'shell' && !payload.command) return;
-    if (draft.targetType === 'loop' && !payload.target_id) return;
     if (draft.targetType === 'runner' && !payload.target_prompt) return;
     saving = true;
     try {
@@ -206,7 +180,7 @@
 
   function startNew() {
     editingId = 'new';
-    draft = { name: '', targetType: 'shell', command: '', targetId: '', targetPrompt: '',
+    draft = { name: '', targetType: 'shell', command: '', targetPrompt: '',
               scheduleMode: 'interval', interval_s: 300, run_at: '08:30', days: 'daily', enabled: true };
   }
 
@@ -216,7 +190,6 @@
       name:         job.name,
       targetType:   (job.target_type || 'shell') as TargetType,
       command:      job.command,
-      targetId:     job.target_id,
       targetPrompt: job.target_prompt,
       scheduleMode: job.run_at ? 'time' : 'interval',
       interval_s:   job.interval_s || 300,
@@ -251,10 +224,6 @@
 
   function targetLabel(job: CollectJob): string {
     switch (job.target_type) {
-      case 'loop': {
-        const ch = loops.find(c => c.id === job.target_id);
-        return ch ? ch.name : job.target_id.slice(0, 8);
-      }
       case 'runner':  return job.target_prompt.slice(0, 40) + (job.target_prompt.length > 40 ? '…' : '');
       default:        return job.command.split('\n')[0].slice(0, 60) + (job.command.length > 60 ? '…' : '');
     }
@@ -263,7 +232,6 @@
   function isFormValid(): boolean {
     if (!draft.name.trim()) return false;
     if (draft.targetType === 'shell' && !draft.command.trim()) return false;
-    if (draft.targetType === 'loop' && !draft.targetId) return false;
     if (draft.targetType === 'runner' && !draft.targetPrompt.trim()) return false;
     return true;
   }
@@ -316,8 +284,8 @@
       <div class="form-row">
         <span class="form-label">target</span>
         <div class="seg-ctrl">
-          {#each (['shell', 'loop', 'runner'] as TargetType[]) as t (t)}
-            <button class="seg-btn" class:active={draft.targetType === t} onclick={() => { draft.targetType = t; draft.targetId = ''; }}>{t}</button>
+          {#each (['shell', 'runner'] as TargetType[]) as t (t)}
+            <button class="seg-btn" class:active={draft.targetType === t} onclick={() => { draft.targetType = t; }}>{t}</button>
           {/each}
         </div>
       </div>
@@ -327,16 +295,6 @@
         <label class="form-row">
           <span class="form-label">command</span>
           <textarea class="form-textarea" bind:value={draft.command} placeholder="script that outputs JSON array" rows="4"></textarea>
-        </label>
-      {:else if draft.targetType === 'loop'}
-        <label class="form-row">
-          <span class="form-label">loop</span>
-          <select class="form-select" bind:value={draft.targetId}>
-            <option value="">— select —</option>
-            {#each visibleSequences as ch (ch.id)}
-              <option value={ch.id}>{ch.name}</option>
-            {/each}
-          </select>
         </label>
       {:else if draft.targetType === 'runner'}
         <label class="form-row">
@@ -406,8 +364,8 @@
               <div class="form-row">
                 <span class="form-label">target</span>
                 <div class="seg-ctrl">
-                  {#each (['shell', 'loop', 'runner'] as TargetType[]) as t (t)}
-                    <button class="seg-btn" class:active={draft.targetType === t} onclick={() => { draft.targetType = t; draft.targetId = ''; }}>{t}</button>
+                  {#each (['shell', 'runner'] as TargetType[]) as t (t)}
+                    <button class="seg-btn" class:active={draft.targetType === t} onclick={() => { draft.targetType = t; }}>{t}</button>
                   {/each}
                 </div>
               </div>
@@ -416,16 +374,6 @@
                 <label class="form-row">
                   <span class="form-label">command</span>
                   <textarea class="form-textarea" bind:value={draft.command} rows="4"></textarea>
-                </label>
-              {:else if draft.targetType === 'loop'}
-                <label class="form-row">
-                  <span class="form-label">loop</span>
-                  <select class="form-select" bind:value={draft.targetId}>
-                    <option value="">— select —</option>
-                    {#each loops as ch (ch.id)}
-                      <option value={ch.id}>{ch.name}</option>
-                    {/each}
-                  </select>
                 </label>
               {:else if draft.targetType === 'runner'}
                 <label class="form-row">

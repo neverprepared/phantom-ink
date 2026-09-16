@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -186,48 +187,6 @@ class OllamaPullRequest(BaseModel):
     name: str = Field(..., description="Model name to pull (e.g. 'llama3.2')")
 
 
-# ---------------------------------------------------------------------------
-# Channel request models
-# ---------------------------------------------------------------------------
-
-
-class ChannelParticipantRequest(BaseModel):
-    """One participant in a CreateChannelRequest."""
-
-    name: str = Field(..., description="Display name in channel")
-    type: str = Field(..., description="'session', 'ollama', or 'user'")
-    session_name: str | None = Field(None, description="Brainbox session name (type=session)")
-    ollama_model: str | None = Field(None, description="Ollama model name (type=ollama)")
-    system_prompt: str | None = Field(None, description="Role instructions for this participant")
-
-
-class CreateChannelRequest(BaseModel):
-    """Request model for POST /api/hub/channels."""
-
-    name: str = Field(..., min_length=1, max_length=128, description="Channel name")
-    participants: list[ChannelParticipantRequest] = Field(
-        ..., min_length=1, description="Participants to add at creation"
-    )
-    parent_task_id: str | None = None
-    workspace_profile: str | None = None
-
-
-class PostChannelMessageRequest(BaseModel):
-    """Request model for POST /api/hub/channels/{id}/messages."""
-
-    from_participant: str = Field(..., description="Sender's participant name")
-    content: str = Field(..., min_length=1, description="Message content")
-    summary: str | None = Field(None, description="Brief for other agents' context management")
-    addressed_to: str | None = Field(None, description="Recipient name, or None for broadcast")
-
-
-class CompleteChannelRequest(BaseModel):
-    """Request model for POST /api/hub/channels/{id}/complete."""
-
-    by: str = Field(..., description="Name of participant signalling completion")
-    reason: str | None = Field(None, description="Optional reason / summary")
-
-
 class CreateAgentRequest(BaseModel):
     """Request model for POST /api/hub/agents."""
 
@@ -300,3 +259,90 @@ class MintProfileTokenRequest(BaseModel):
                 "letters, numbers, '.', '_', or '-'"
             )
         return stripped
+
+
+# ---------------------------------------------------------------------------
+# Conversations (multi-agent Chat) — the new engine that supersedes channels.
+# ---------------------------------------------------------------------------
+
+
+class ConversationParticipantRequest(BaseModel):
+    """A participant spec in CreateConversationRequest.
+
+    ``kind='persona'`` is the lightweight LLM participant PR1 drives through the
+    complete() seam: ``model_target`` selects the provider/model and
+    ``role_prompt`` is its system prompt. ``kind='session'`` is a promoted
+    container session (see ``conversation_session``): it is driven by its own
+    container through the ``channel_*`` tools, not by the turn orchestrator.
+    """
+
+    name: str = Field(..., min_length=1, max_length=128)
+    kind: Literal["human", "persona", "session"] = "persona"
+    model_target: dict | None = Field(
+        None, description="ModelTarget shape: {provider, model, effort}"
+    )
+    role_prompt: str | None = Field(None, description="System prompt for a persona")
+    cooldown_s: float | None = Field(
+        None,
+        description=(
+            "Minimum seconds between this persona's turns; None uses "
+            "settings.conversations.default_cooldown_s"
+        ),
+    )
+
+
+class CreateConversationRequest(BaseModel):
+    """Request model for POST /api/conversations."""
+
+    title: str = Field(..., min_length=1, max_length=200)
+    profile: str = Field(..., min_length=1, description="Workspace profile that owns the room")
+    participants: list[ConversationParticipantRequest] = Field(default_factory=list)
+
+
+class PostConversationMessageRequest(BaseModel):
+    """Request model for POST /api/conversations/{id}/messages."""
+
+    author: str = Field(..., min_length=1, max_length=128, description="Human sender's name")
+    content: str = Field(..., min_length=1)
+    addressed_to: str | None = Field(None, description="Participant name, or None for the room")
+
+
+class ArchiveConversationRequest(BaseModel):
+    """Optional body for POST /api/conversations/{id}/archive.
+
+    A closing note is part of the record: ``reason`` is appended as a final
+    ``kind='session'`` message before the room is archived, so the log says why
+    it ended. Both fields are optional — an archive with no body just closes the
+    room, which is what the desktop app's archive button does.
+    """
+
+    by: str | None = Field(None, max_length=128, description="Who is closing the room")
+    reason: str | None = Field(None, description="Closing note appended before archiving")
+
+
+class PromoteMessageRequest(BaseModel):
+    """Request model for POST /api/conversations/{id}/messages/{mid}/promote.
+
+    ``target`` picks the platform surface the message becomes: ``memory`` and
+    ``todo`` write a record into that phantom-brain vault for the caller's
+    profile; ``task`` submits a hub task; ``session`` (PR4) submits that same
+    hub task AND wires the resulting container session into the room as a
+    ``kind='session'`` participant that reports back. Everything else is
+    optional — the message supplies the content, and the profile comes from the
+    caller's auth context (never from the body).
+    """
+
+    target: Literal["memory", "todo", "task", "session"]
+    title: str | None = Field(
+        None, max_length=200, description="Override the derived record/task title"
+    )
+    note: str | None = Field(
+        None, description="Extra context appended to the promoted body"
+    )
+    tags: list[str] = Field(default_factory=list)
+    agent_name: str = Field(
+        "worker", description="target='task'/'session' only: which hub agent runs it"
+    )
+    repo_url: str | None = Field(
+        None, description="target='task'/'session' only: repo to clone"
+    )

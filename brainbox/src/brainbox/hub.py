@@ -11,9 +11,6 @@ import json
 
 from .config import settings
 from .log import get_logger
-from .channels import get_state as channels_get_state
-from .channels import ollama_watcher
-from .channels import restore_state as channels_restore_state
 from .runners import get_state as runners_get_state
 from .runners import restore_state as runners_restore_state
 from .messages import get_state as messages_get_state
@@ -38,7 +35,6 @@ log = get_logger()
 
 _flush_task: asyncio.Task[None] | None = None
 _check_task: asyncio.Task[None] | None = None
-_ollama_watcher_task: asyncio.Task[None] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -63,10 +59,9 @@ async def init() -> None:
     load_runner_sessions_from_db()
 
     loop = asyncio.get_running_loop()
-    global _flush_task, _check_task, _ollama_watcher_task
+    global _flush_task, _check_task
     _flush_task = loop.create_task(_periodic_flush())
     _check_task = loop.create_task(_periodic_check())
-    _ollama_watcher_task = loop.create_task(ollama_watcher())
 
     from . import scheduler as _scheduler
     _scheduler.start()
@@ -94,16 +89,13 @@ async def init() -> None:
 
 async def shutdown() -> None:
     """Stop background tasks and flush state."""
-    global _flush_task, _check_task, _ollama_watcher_task
+    global _flush_task, _check_task
     if _flush_task and not _flush_task.done():
         _flush_task.cancel()
         _flush_task = None
     if _check_task and not _check_task.done():
         _check_task.cancel()
         _check_task = None
-    if _ollama_watcher_task and not _ollama_watcher_task.done():
-        _ollama_watcher_task.cancel()
-        _ollama_watcher_task = None
 
     from . import scheduler as _scheduler
     _scheduler.stop()
@@ -131,7 +123,6 @@ async def _flush_state() -> None:
         "registry": registry_get_state(),
         "router": router_get_state(),
         "messages": messages_get_state(),
-        "channels": channels_get_state(),
         "runners": runners_get_state(),
     }
 
@@ -164,7 +155,6 @@ async def _restore_state() -> None:
     registry_restore_state(state.get("registry"))
     router_restore_state(state.get("router"))
     messages_restore_state(state.get("messages"))
-    channels_restore_state(state.get("channels"))
     runners_restore_state(state.get("runners"))
 
     log.info(

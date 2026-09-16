@@ -22,20 +22,15 @@ import (
 
 // App is the Wails-bound struct. All exported methods become callable from JS.
 type App struct {
-	ctx        context.Context
-	mu         sync.RWMutex // protects config
-	config     *Config
-	db         *DB
-	client     *brainbox.Client
-	sse        *brainbox.SSEListener
-	worker           *worker
-	workerStop       context.CancelFunc
-	scheduler        *scheduler
-	schedulerStop    context.CancelFunc
+	ctx              context.Context
+	mu               sync.RWMutex // protects config
+	config           *Config
+	db               *DB
+	client           *brainbox.Client
+	sse              *brainbox.SSEListener
+	conversations    *brainbox.ConversationStreams
 	collectScheduler *collectScheduler
 	collectStop      context.CancelFunc
-	automations      *AutomationEngine
-	automationsStop  context.CancelFunc
 	localRunner      *localRunner
 	localRunnerStop  context.CancelFunc
 	outbox           *outbox.Outbox
@@ -121,17 +116,12 @@ func (a *App) startup(ctx context.Context) {
 		if probe.Event == "agent.event" && probe.Data != nil {
 			runtime.EventsEmit(ctx, "agent:event", probe.Data)
 		}
-
-		// Route webhook.trigger events to the automation engine.
-		if a.automations != nil && probe.Action == "webhook.trigger" && probe.Key != "" {
-			a.automations.Emit(AutomationEvent{
-				Type:           "webhook",
-				WebhookKey:     probe.Key,
-				WebhookPayload: probe.Payload,
-			})
-		}
 	})
 	a.sse.Start()
+
+	// Per-conversation SSE bridge (multi-agent Chat). Opened lazily per room by
+	// SubscribeConversation; nothing streams until a conversation is selected.
+	a.conversations = newConversationBridge(a)
 
 	// Seed the agents catalog in the background — version probes can block
 	// briefly and we don't want to delay window paint.
@@ -166,20 +156,8 @@ func (a *App) startup(ctx context.Context) {
 		a.outbox.Start(outboxCtx)
 	}
 
-	// Start the task queue worker. Stopped during shutdown via workerStop.
+	// Collect scheduler — runs data collection jobs and stores entries.
 	if a.db != nil {
-		workerCtx, cancel := context.WithCancel(ctx)
-		a.workerStop = cancel
-		a.worker = newWorker(a)
-		a.worker.Start(workerCtx)
-
-		// Cron scheduler — enqueues tasks for due schedules.
-		schedCtx, schedCancel := context.WithCancel(ctx)
-		a.schedulerStop = schedCancel
-		a.scheduler = newScheduler(a)
-		a.scheduler.Start(schedCtx)
-
-		// Collect scheduler — runs data collection jobs and stores entries.
 		collectCtx, collectCancel := context.WithCancel(ctx)
 		a.collectStop = collectCancel
 		a.collectScheduler = newCollectScheduler(a)
@@ -198,12 +176,6 @@ func (a *App) startup(ctx context.Context) {
 			fmt.Fprintf(os.Stderr, "collect: removed %d orphan widget-owned job(s)\n", n)
 		}
 		a.collectScheduler.Start(collectCtx)
-
-		// Automation engine — evaluates event-driven rules and fires actions.
-		automationCtx, automationCancel := context.WithCancel(ctx)
-		a.automationsStop = automationCancel
-		a.automations = newAutomationEngine(a)
-		a.automations.Start(automationCtx)
 	}
 
 	// Start local runner if enabled.
@@ -221,19 +193,10 @@ func (a *App) startup(ctx context.Context) {
 
 // shutdown is called by Wails when the app closes.
 func (a *App) shutdown(_ context.Context) {
-	// Stop the queue worker and scheduler first so they don't grab work
-	// while the DB is being closed. Wait for both goroutines to exit.
-	if a.workerStop != nil {
-		a.workerStop()
-	}
-	if a.schedulerStop != nil {
-		a.schedulerStop()
-	}
+	// Stop the collect scheduler first so it doesn't grab work while the DB
+	// is being closed. Wait for its goroutine to exit.
 	if a.collectStop != nil {
 		a.collectStop()
-	}
-	if a.automationsStop != nil {
-		a.automationsStop()
 	}
 	if a.localRunnerStop != nil {
 		a.localRunnerStop()
@@ -244,12 +207,6 @@ func (a *App) shutdown(_ context.Context) {
 	if a.outbox != nil {
 		a.outbox.Stop()
 	}
-	if a.worker != nil {
-		a.worker.Wait()
-	}
-	if a.scheduler != nil {
-		a.scheduler.Wait()
-	}
 	if a.collectScheduler != nil {
 		a.collectScheduler.Wait()
 	}
@@ -258,6 +215,9 @@ func (a *App) shutdown(_ context.Context) {
 	}
 	if a.sse != nil {
 		a.sse.Stop()
+	}
+	if a.conversations != nil {
+		a.conversations.UnsubscribeAll()
 	}
 	if a.db != nil {
 		if err := a.db.Close(); err != nil {
@@ -402,10 +362,11 @@ func (a *App) restartViaDaemon() error {
 
 // findBrainboxProject locates the brainbox Python project (the directory
 // containing pyproject.toml that declares name = "brainbox"). Tries, in order:
-//   1. The running daemon's cwd and its ancestors
-//   2. <WorkspacesRoot>/<profile>/code/phantom-ink/brainbox for every profile
-//   3. $HOME/workspaces/profiles/*/code/phantom-ink/brainbox
-//   4. $HOME/code/phantom-ink/brainbox
+//  1. The running daemon's cwd and its ancestors
+//  2. <WorkspacesRoot>/<profile>/code/phantom-ink/brainbox for every profile
+//  3. $HOME/workspaces/profiles/*/code/phantom-ink/brainbox
+//  4. $HOME/code/phantom-ink/brainbox
+//
 // Returns "" if none look right. Existence + a pyproject.toml that names
 // the project "brainbox" are both required.
 func (a *App) findBrainboxProject() string {
@@ -463,7 +424,7 @@ func (a *App) findBrainboxProject() string {
 // a pyproject.toml declaring name = "brainbox". Empty string if none.
 func walkForBrainboxRoot(start string) string {
 	dir := start
-	for i := 0; i < 8; i++ {  // bounded ascent
+	for i := 0; i < 8; i++ { // bounded ascent
 		py := filepath.Join(dir, "pyproject.toml")
 		if data, err := os.ReadFile(py); err == nil {
 			if strings.Contains(string(data), `name = "brainbox"`) {

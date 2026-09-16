@@ -29,6 +29,11 @@ log = get_logger()
 CAPABILITY_CATALOG: tuple[str, ...] = (
     "agent_events:write",
     "agent_events:read",
+    # Conversations (multi-agent Chat, PR3). A token minted with these is bound
+    # to ONE workspace profile and can only read/write that profile's rooms —
+    # the route derives the profile from the token, not from the request.
+    "conversations:read",
+    "conversations:write",
 )
 
 # ---------------------------------------------------------------------------

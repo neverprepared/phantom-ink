@@ -80,23 +80,10 @@ func (a *App) ListPlannedItems(profile string, sinceMs, untilMs int64) ([]Planne
 
 	out := []PlannedItem{}
 
-	// Cron schedules (filtered to the profile; empty profile = all).
-	if schedules, err := a.db.ListSchedules(""); err == nil {
-		loopNames := map[string]string{}
-		if list, e := a.db.ListSequences(""); e == nil {
-			for _, c := range list {
-				loopNames[c.ID] = c.Name
-			}
-		}
-		for _, s := range schedules {
-			if profile != "" && s.WorkspaceProfile != profile {
-				continue
-			}
-			out = append(out, expandSchedule(s, sinceMs, untilMs, now, loopNames)...)
-		}
-	}
-
 	// Collect jobs (one-shot / time-of-day / interval). Timed todos live here too.
+	// NOTE: the cron-schedule + sequences sources were removed when the app-local
+	// scheduler/sequences engine was retired (dead-code cleanup); collect jobs
+	// (which back the Collectors panel + timed todos) are the surviving planned source.
 	if jobs, err := a.db.ListCollectJobs(profile); err == nil {
 		for _, j := range jobs {
 			out = append(out, expandCollectJob(j, sinceMs, untilMs, now)...)
@@ -176,40 +163,6 @@ func (a *App) ListExecutedItems(profile string, sinceMs, untilMs int64, limit in
 }
 
 // ── expansion helpers ───────────────────────────────────────────────────────
-
-// expandSchedule enumerates a cron schedule's fires within (start, untilMs],
-// where start = max(now, sinceMs). Recurring → not draggable.
-func expandSchedule(s ScheduleRow, sinceMs, untilMs int64, now time.Time, loopNames map[string]string) []PlannedItem {
-	if !s.Enabled {
-		return nil
-	}
-	sched, err := cronParser.Parse(s.CronExpr)
-	if err != nil {
-		return nil
-	}
-	start := now
-	if sinceMs > start.UnixMilli() {
-		start = time.UnixMilli(sinceMs)
-	}
-	title := scheduleTitle(s, loopNames)
-	var out []PlannedItem
-	t := sched.Next(start)
-	for i := 0; i < timelineMaxOccurrencesPerItem && !t.IsZero() && t.UnixMilli() <= untilMs; i++ {
-		out = append(out, PlannedItem{
-			ID:         fmt.Sprintf("schedule:%s:%d", s.ID, t.UnixMilli()),
-			Source:     "schedule",
-			SourceID:   s.ID,
-			Title:      title,
-			Profile:    s.WorkspaceProfile,
-			FireAtMs:   t.UnixMilli(),
-			Recurrence: "cron",
-			Draggable:  false,
-			Kind:       "loop",
-		})
-		t = sched.Next(t)
-	}
-	return out
-}
 
 // expandCollectJob dispatches on the job's scheduling mode. One-shot → a single
 // draggable point; time-of-day / interval → recurring read-only occurrences.
@@ -321,19 +274,6 @@ func expandTimeOfDay(j CollectJob, base PlannedItem, sinceMs, untilMs int64, now
 }
 
 // ── misc helpers ────────────────────────────────────────────────────────────
-
-func scheduleTitle(s ScheduleRow, loopNames map[string]string) string {
-	if t := strings.TrimSpace(s.Input); t != "" {
-		return t
-	}
-	if n := loopNames[s.SequenceID]; n != "" {
-		return n
-	}
-	if s.SequenceID != "" {
-		return s.SequenceID
-	}
-	return "schedule"
-}
 
 // isTopLevelTimelineID keeps envelope ids that represent a whole unit of work
 // (task/loop/entry/action) and drops per-step noise ("loop-step:*"). Note

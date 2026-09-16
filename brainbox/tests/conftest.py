@@ -7,11 +7,10 @@ import pytest
 def reset_hub_state():
     """Reset all module-level hub state before and after each test.
 
-    Covers: auth, registry, runners, channels, router. Hub background tasks
-    are never started in unit tests so they don't need resetting.
+    Covers: auth, registry, runners, router, conversations. Hub background
+    tasks are never started in unit tests so they don't need resetting.
     """
     import brainbox.auth as _auth
-    import brainbox.channels as _ch
     import brainbox.registry as _reg
     import brainbox.router as _router
     from brainbox.runners import reset_registry_for_tests
@@ -22,6 +21,9 @@ def reset_hub_state():
     from brainbox.event_rules import reset_for_tests as _reset_event_rules
     from brainbox.os_sink import reset_for_tests as _reset_os_sink
     from brainbox.llm import reset_for_tests as _reset_llm
+    from brainbox.conversation_runtime import reset_for_tests as _reset_conversations
+    from brainbox.conversation_orchestrator import reset_for_tests as _reset_turn_orchestrator
+    from brainbox.conversation_session import reset_for_tests as _reset_conversation_sessions
 
     def _reset():
         _auth._api_key = ""
@@ -29,10 +31,6 @@ def reset_hub_state():
         _reg._tokens.clear()
         _reg._role_prompts.clear()
         reset_registry_for_tests()  # clears _singleton + _pairing_singleton
-        _ch._channels.clear()
-        _ch._messages.clear()
-        _ch._listeners.clear()
-        _ch._ollama_last_read.clear()
         _router._tasks.clear()
         _router._listeners.clear()
         _reset_scheduler()
@@ -40,6 +38,9 @@ def reset_hub_state():
         _reset_event_rules()  # clears wakeup/rate windows/inflight
         _reset_os_sink()  # clears sink task/listener/client cache
         _reset_llm()  # clears llm-seam metering listeners + backend registry
+        _reset_conversations()  # clears per-conversation SSE subscribers + streamer
+        _reset_turn_orchestrator()  # restores the default relevance gate
+        _reset_conversation_sessions()  # clears promoted-session task<->room links
         reset_store_for_tests()  # fresh in-memory DB per test
 
     _reset()
@@ -76,14 +77,29 @@ def _override_api_key_auth():
     real capability path (test_profile_tokens) pop this override explicitly.
     """
     try:
-        from brainbox.api import app, _require_agent_events_write
+        from brainbox.api import (
+            app,
+            _require_agent_events_write,
+            _require_conversations_read,
+            _require_conversations_write,
+        )
         from brainbox.auth import require_api_key
 
+        # Returning None means "authenticated, but no bearer token" — the same
+        # thing the API-key path returns — so the conversation routes keep
+        # deriving their profile from the request. Tests that exercise the
+        # token-scoped derivation pop these overrides explicitly (see
+        # test_conversation_profile_scope.py).
+        conversation_guards = (_require_conversations_read, _require_conversations_write)
         app.dependency_overrides[require_api_key] = lambda: None
         app.dependency_overrides[_require_agent_events_write] = lambda: None
+        for guard in conversation_guards:
+            app.dependency_overrides[guard] = lambda: None
         yield
         app.dependency_overrides.pop(require_api_key, None)
         app.dependency_overrides.pop(_require_agent_events_write, None)
+        for guard in conversation_guards:
+            app.dependency_overrides.pop(guard, None)
     except ImportError:
         # If brainbox.api can't be imported (e.g., missing optional deps),
         # skip the override — tests that don't import app won't need it

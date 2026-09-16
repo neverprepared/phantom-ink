@@ -113,7 +113,6 @@
         onClick: () => openTarget(item),
         disabled: !supports('open') && !item.url,
       },
-      { label: 'Retry', onClick: () => retry(item), disabled: !supports('retry') },
       { label: 'Respond…', onClick: () => openRespond(item), disabled: !supports('respond') },
       { label: 'Copy ID', onClick: () => copyToClipboard(item.id, 'id') },
       { label: 'Copy reason', onClick: () => copyToClipboard(item.reason || item.subtitle || item.title, 'reason'), disabled: !item.reason && !item.subtitle && !item.title },
@@ -287,18 +286,6 @@
     } catch (err: any) {
       void attentionStore.refresh(); // restore canonical state
       notifications.error(`Failed to dismiss: ${err?.message ?? err}`);
-    }
-  }
-
-  async function retry(item: AttentionItem) {
-    attentionStore.removeLocal(item.id);
-    const a = await getApi();
-    if (!a) return;
-    try {
-      await a.AttentionRetry(item.id);
-    } catch (err: any) {
-      void attentionStore.refresh();
-      notifications.error(`Retry failed: ${err?.message ?? err}`);
     }
   }
 
@@ -557,9 +544,7 @@
 
               <div class="attn-actions">
                 {#each item.actions as action (action)}
-                  {#if action === 'retry'}
-                    <button class="btn ghost small" onclick={() => retry(item)}>retry</button>
-                  {:else if action === 'respond'}
+                  {#if action === 'respond'}
                     <button
                       class="btn ghost small"
                       class:active={respondingId === item.id}

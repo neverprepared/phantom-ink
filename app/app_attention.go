@@ -186,61 +186,6 @@ func (a *App) RestoreAttention(id string) error {
 	})
 }
 
-// AttentionRetry re-dispatches the work that caused the bus item and dismisses
-// it. The retry path is driven entirely by the envelope id prefix and the
-// envelope's metadata:
-//   - task:*  → local queue task; calls RetryTask with the stripped id
-//   - loop:* → reads loop_id/input/cwd from metadata and re-enqueues
-//   - other   → returns an error (the source doesn't support retry today)
-//
-// On success the row is dismissed so it falls out of the attention list. The
-// underlying job will surface a fresh bus envelope as it runs.
-func (a *App) AttentionRetry(id string) error {
-	return a.recordAction(id, "retry", ActorUser, func() error {
-		if a.db == nil || a.client == nil {
-			return fmt.Errorf("database or brainbox not available")
-		}
-
-		switch {
-		case strings.HasPrefix(id, "task:"):
-			taskID := strings.TrimPrefix(id, "task:")
-			if err := a.RetryTask(taskID); err != nil {
-				return fmt.Errorf("retry task: %w", err)
-			}
-
-		case strings.HasPrefix(id, "loop:"):
-			env, ok, err := a.client.GetAgentState(id)
-			if err != nil {
-				return fmt.Errorf("fetch loop envelope: %w", err)
-			}
-			if !ok {
-				return fmt.Errorf("loop envelope %q not found", id)
-			}
-			loopID, _ := env.Metadata["loop_id"].(string)
-			input, _ := env.Metadata["input"].(string)
-			cwd, _ := env.Metadata["cwd"].(string)
-			if loopID == "" {
-				return fmt.Errorf("loop envelope missing loop_id metadata")
-			}
-			if _, err := a.EnqueueTask(EnqueueTaskRequest{
-				SequenceID:       loopID,
-				Input:            input,
-				Cwd:              cwd,
-				Trigger:          TriggerManual,
-				WorkspaceProfile: env.Workspace,
-			}); err != nil {
-				return fmt.Errorf("re-enqueue loop: %w", err)
-			}
-
-		default:
-			return fmt.Errorf("envelope %q does not support retry", id)
-		}
-
-		// Hide the card now that we've dispatched a follow-up.
-		return a.db.DismissAttentionRow(id)
-	})
-}
-
 // AttentionRespond stores the user's reply against the envelope id and emits
 // an event so automations can hook into it. The item is not auto-dismissed —
 // the user dismisses explicitly after following up.
@@ -358,15 +303,3 @@ func hasActions(raw json.RawMessage) bool {
 	return len(arr) > 0
 }
 
-// sequenceNameOrID returns the loop's human-readable name, falling back to the
-// id when the loop is not found.
-func sequenceNameOrID(db *DB, loopID string) string {
-	if db == nil {
-		return loopID
-	}
-	row, ok := db.GetSequence(loopID)
-	if !ok || row.Name == "" {
-		return loopID
-	}
-	return row.Name
-}

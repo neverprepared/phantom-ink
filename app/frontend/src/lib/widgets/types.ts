@@ -33,7 +33,6 @@ export interface StatCounterConfig {
     | 'activeSessions'
     | 'runningTasks'
     | 'failedTasks'
-    | 'scheduledFires'
     | 'actionItems'
     | 'attentionItems'
     | 'offlineRunners'
@@ -136,14 +135,6 @@ export interface HubTask {
   [key: string]: unknown;
 }
 
-export interface UpcomingFire {
-  schedule_id: string;
-  loop_id: string;
-  loop_name: string;
-  cron_expr: string;
-  next_fire_at: string;
-}
-
 export interface DockerStat {
   name: string;
   id: string;
@@ -176,8 +167,6 @@ export interface OpenSearchOverview {
 export interface DashboardData {
   sessions: SessionSummary[];
   hubTasks: HubTask[];
-  fires: UpcomingFire[];
-  taskStats: { pending: number; running: number; succeeded: number; failed: number; cancelled: number } | null;
   dockerStats: DockerStat[];
   localProcs: LocalProcess[];
   systemInfo: { cpu_cores: number; mem_total_gib: number };

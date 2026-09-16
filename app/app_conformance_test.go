@@ -29,18 +29,8 @@ func TestEmitHelpersConformToContract(t *testing.T) {
 	a, cap := newConformanceApp(t)
 
 	// Drive each emit* helper with a representative input. The set covers every
-	// producer: sequence run/step (both phases), task state change, collected
-	// entry with actions, and an action outcome (success + failure).
-	ws := "work"
-	cc := sequenceContext{Input: "do the thing", Cwd: "/tmp"}
-	a.emitSequenceEnvelope(SequenceRunEvent{RunID: "r1", SequenceID: "s1", Phase: "run:start", Status: "running"}, ws, cc)
-	a.emitSequenceEnvelope(SequenceRunEvent{RunID: "r1", SequenceID: "s1", Phase: "run:done", Status: "success"}, ws, cc)
-	a.emitSequenceEnvelope(SequenceRunEvent{RunID: "r1", SequenceID: "s1", Phase: "step:start", StepIndex: 0, AgentID: "dev"}, ws, cc)
-	a.emitSequenceEnvelope(SequenceRunEvent{RunID: "r1", SequenceID: "s1", Phase: "step:done", StepIndex: 0, AgentID: "dev", Status: "failed", Error: "boom", ExitCode: 1}, ws, cc)
-
-	a.emitTaskEnvelope("t1", "s1", TaskRunning, 1, "")
-	a.emitTaskEnvelope("t2", "s1", TaskFailed, 3, "exceeded retries")
-
+	// producer: a collected entry with actions, and an action outcome (success
+	// + failure).
 	a.emitCollectedEntryEnvelope(
 		CollectJob{Name: "calendar", Profile: "work"},
 		CollectedEntry{
@@ -54,8 +44,8 @@ func TestEmitHelpersConformToContract(t *testing.T) {
 	_ = a.recordAction("task:t1", "retry", ActorUser, func() error { return nil })
 	_ = a.recordAction("task:t2", "respond", ActorUser, func() error { return errors.New("nope") })
 
-	// 4 sequence + 2 task + 1 entry + 2 action = 9 envelopes.
-	const want = 9
+	// 1 entry + 2 action = 3 envelopes.
+	const want = 3
 	envs := cap.waitFor(t, want, 3*time.Second)
 	if len(envs) != want {
 		t.Fatalf("captured %d envelopes, want %d", len(envs), want)
@@ -102,9 +92,8 @@ func compileContractSchema(t *testing.T) *jsonschema.Schema {
 }
 
 // newConformanceApp boots an App with an outbox, a capturing deliverer, and a
-// bare in-memory DB (no tables). emitTaskEnvelope needs a non-nil db but
-// tolerates missing rows/tables — GetTask/GetSequence report "not found" — so
-// this is enough to exercise the real marshaling path.
+// bare in-memory DB (no tables). The emit* helpers tolerate missing rows/tables
+// — enough to exercise the real marshaling path.
 func newConformanceApp(t *testing.T) (*App, *capturingDeliverer) {
 	t.Helper()
 	appDB, err := sql.Open("sqlite", ":memory:")

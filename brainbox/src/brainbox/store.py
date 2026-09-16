@@ -416,6 +416,45 @@ _SCHEMA: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_profile_tokens_hash ON profile_tokens(token_hash)",
     "CREATE INDEX IF NOT EXISTS idx_profile_tokens_profile ON profile_tokens(workspace_profile)",
+    # Conversations (multi-agent Chat, PR1). Local-first records: ULID primary
+    # keys, a node_id stamp and a deleted_at tombstone, all profile-scoped —
+    # every read/write in conversation_store.py filters on `profile`, so
+    # isolation is a property of the SQL rather than of caller discipline.
+    # Participants ride as a JSON blob, matching the store's JSON-TEXT discipline.
+    """
+    CREATE TABLE IF NOT EXISTS conversations (
+        id                TEXT   PRIMARY KEY,
+        profile           TEXT   NOT NULL DEFAULT '',
+        title             TEXT   NOT NULL,
+        status            TEXT   NOT NULL DEFAULT 'active',
+        participants_json TEXT   NOT NULL DEFAULT '[]',
+        created_at        BIGINT NOT NULL,
+        updated_at        BIGINT NOT NULL,
+        node_id           TEXT,
+        deleted_at        BIGINT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_conversations_profile "
+    "ON conversations(profile, status, updated_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS conversation_messages (
+        id              TEXT   PRIMARY KEY,
+        conversation_id TEXT   NOT NULL,
+        profile         TEXT   NOT NULL DEFAULT '',
+        author          TEXT   NOT NULL,
+        kind            TEXT   NOT NULL DEFAULT 'message',
+        content         TEXT   NOT NULL DEFAULT '',
+        addressed_to    TEXT,
+        in_reply_to     TEXT,
+        created_at      BIGINT NOT NULL,
+        node_id         TEXT,
+        deleted_at      BIGINT
+    )
+    """,
+    # Reads are always "this conversation, in ULID order" — the id is the sort
+    # key, so the index carries it rather than created_at.
+    "CREATE INDEX IF NOT EXISTS idx_conversation_messages_conv "
+    "ON conversation_messages(conversation_id, id)",
 )
 
 

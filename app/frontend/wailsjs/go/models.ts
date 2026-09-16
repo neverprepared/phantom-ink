@@ -1,5 +1,25 @@
 export namespace brainbox {
 	
+	export class AddConversationParticipantRequest {
+	    name: string;
+	    kind: string;
+	    model_target?: Record<string, any>;
+	    role_prompt?: string;
+	    cooldown_s?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AddConversationParticipantRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.kind = source["kind"];
+	        this.model_target = source["model_target"];
+	        this.role_prompt = source["role_prompt"];
+	        this.cooldown_s = source["cooldown_s"];
+	    }
+	}
 	export class AgentDefinition {
 	    name: string;
 	    image: string;
@@ -469,54 +489,70 @@ export namespace brainbox {
 	        this.size = source["size"];
 	    }
 	}
-	export class ChannelParticipant {
+	export class ContainerMetrics {
 	    name: string;
-	    type: string;
-	    session_name?: string;
-	    ollama_model?: string;
-	    system_prompt?: string;
-	    joined_at: number;
+	    cpu_percent: number;
+	    memory_bytes: number;
+	    uptime: string;
 	
 	    static createFrom(source: any = {}) {
-	        return new ChannelParticipant(source);
+	        return new ContainerMetrics(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
-	        this.type = source["type"];
-	        this.session_name = source["session_name"];
-	        this.ollama_model = source["ollama_model"];
-	        this.system_prompt = source["system_prompt"];
+	        this.cpu_percent = source["cpu_percent"];
+	        this.memory_bytes = source["memory_bytes"];
+	        this.uptime = source["uptime"];
+	    }
+	}
+	export class ConversationParticipant {
+	    name: string;
+	    kind: string;
+	    model_target?: Record<string, any>;
+	    role_prompt?: string;
+	    cooldown_s?: number;
+	    joined_at: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConversationParticipant(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.kind = source["kind"];
+	        this.model_target = source["model_target"];
+	        this.role_prompt = source["role_prompt"];
+	        this.cooldown_s = source["cooldown_s"];
 	        this.joined_at = source["joined_at"];
 	    }
 	}
-	export class Channel {
+	export class Conversation {
 	    id: string;
-	    name: string;
-	    participants: ChannelParticipant[];
+	    profile: string;
+	    title: string;
 	    status: string;
+	    participants: ConversationParticipant[];
 	    created_at: number;
-	    completed_at?: number;
-	    completed_by?: string;
-	    parent_task_id?: string;
-	    workspace_profile?: string;
+	    updated_at: number;
+	    node_id?: string;
 	
 	    static createFrom(source: any = {}) {
-	        return new Channel(source);
+	        return new Conversation(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.participants = this.convertValues(source["participants"], ChannelParticipant);
+	        this.profile = source["profile"];
+	        this.title = source["title"];
 	        this.status = source["status"];
+	        this.participants = this.convertValues(source["participants"], ConversationParticipant);
 	        this.created_at = source["created_at"];
-	        this.completed_at = source["completed_at"];
-	        this.completed_by = source["completed_by"];
-	        this.parent_task_id = source["parent_task_id"];
-	        this.workspace_profile = source["workspace_profile"];
+	        this.updated_at = source["updated_at"];
+	        this.node_id = source["node_id"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -537,83 +573,55 @@ export namespace brainbox {
 		    return a;
 		}
 	}
-	export class ChannelMessage {
+	export class ConversationMessage {
 	    id: string;
-	    channel_id: string;
-	    from_participant: string;
+	    conversation_id: string;
+	    profile: string;
+	    author: string;
+	    kind: string;
 	    content: string;
-	    summary?: string;
 	    addressed_to?: string;
-	    type: string;
-	    timestamp: number;
+	    in_reply_to?: string;
+	    created_at: number;
+	    node_id?: string;
 	
 	    static createFrom(source: any = {}) {
-	        return new ChannelMessage(source);
+	        return new ConversationMessage(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
-	        this.channel_id = source["channel_id"];
-	        this.from_participant = source["from_participant"];
+	        this.conversation_id = source["conversation_id"];
+	        this.profile = source["profile"];
+	        this.author = source["author"];
+	        this.kind = source["kind"];
 	        this.content = source["content"];
-	        this.summary = source["summary"];
 	        this.addressed_to = source["addressed_to"];
-	        this.type = source["type"];
-	        this.timestamp = source["timestamp"];
+	        this.in_reply_to = source["in_reply_to"];
+	        this.created_at = source["created_at"];
+	        this.node_id = source["node_id"];
 	    }
 	}
 	
-	export class ChannelParticipantRequest {
+	export class ConversationParticipantRequest {
 	    name: string;
-	    type: string;
-	    session_name?: string;
-	    ollama_model?: string;
-	    system_prompt?: string;
+	    kind: string;
+	    model_target?: Record<string, any>;
+	    role_prompt?: string;
+	    cooldown_s?: number;
 	
 	    static createFrom(source: any = {}) {
-	        return new ChannelParticipantRequest(source);
+	        return new ConversationParticipantRequest(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
-	        this.type = source["type"];
-	        this.session_name = source["session_name"];
-	        this.ollama_model = source["ollama_model"];
-	        this.system_prompt = source["system_prompt"];
-	    }
-	}
-	export class CompleteChannelRequest {
-	    by: string;
-	    reason?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new CompleteChannelRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.by = source["by"];
-	        this.reason = source["reason"];
-	    }
-	}
-	export class ContainerMetrics {
-	    name: string;
-	    cpu_percent: number;
-	    memory_bytes: number;
-	    uptime: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ContainerMetrics(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.cpu_percent = source["cpu_percent"];
-	        this.memory_bytes = source["memory_bytes"];
-	        this.uptime = source["uptime"];
+	        this.kind = source["kind"];
+	        this.model_target = source["model_target"];
+	        this.role_prompt = source["role_prompt"];
+	        this.cooldown_s = source["cooldown_s"];
 	    }
 	}
 	export class CreateAgentRequest {
@@ -652,22 +660,20 @@ export namespace brainbox {
 	        this.ollama_model = source["ollama_model"];
 	    }
 	}
-	export class CreateChannelRequest {
-	    name: string;
-	    participants: ChannelParticipantRequest[];
-	    parent_task_id?: string;
-	    workspace_profile?: string;
+	export class CreateConversationRequest {
+	    title: string;
+	    profile: string;
+	    participants: ConversationParticipantRequest[];
 	
 	    static createFrom(source: any = {}) {
-	        return new CreateChannelRequest(source);
+	        return new CreateConversationRequest(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.participants = this.convertValues(source["participants"], ChannelParticipantRequest);
-	        this.parent_task_id = source["parent_task_id"];
-	        this.workspace_profile = source["workspace_profile"];
+	        this.title = source["title"];
+	        this.profile = source["profile"];
+	        this.participants = this.convertValues(source["participants"], ConversationParticipantRequest);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1515,21 +1521,19 @@ export namespace brainbox {
 	        this.policy = source["policy"];
 	    }
 	}
-	export class PostChannelMessageRequest {
-	    from_participant: string;
+	export class PostConversationMessageRequest {
+	    author: string;
 	    content: string;
-	    summary?: string;
 	    addressed_to?: string;
 	
 	    static createFrom(source: any = {}) {
-	        return new PostChannelMessageRequest(source);
+	        return new PostConversationMessageRequest(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.from_participant = source["from_participant"];
+	        this.author = source["author"];
 	        this.content = source["content"];
-	        this.summary = source["summary"];
 	        this.addressed_to = source["addressed_to"];
 	    }
 	}
@@ -1599,6 +1603,50 @@ export namespace brainbox {
 	        this.revoked = source["revoked"];
 	        this.revoked_at = source["revoked_at"];
 	        this.last_used = source["last_used"];
+	    }
+	}
+	export class PromoteMessageRequest {
+	    target: string;
+	    title?: string;
+	    note?: string;
+	    tags?: string[];
+	    agent_name?: string;
+	    repo_url?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PromoteMessageRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.target = source["target"];
+	        this.title = source["title"];
+	        this.note = source["note"];
+	        this.tags = source["tags"];
+	        this.agent_name = source["agent_name"];
+	        this.repo_url = source["repo_url"];
+	    }
+	}
+	export class PromoteMessageResult {
+	    ok: boolean;
+	    target: string;
+	    sha?: string;
+	    task_id?: string;
+	    participant?: string;
+	    detail?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PromoteMessageResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.target = source["target"];
+	        this.sha = source["sha"];
+	        this.task_id = source["task_id"];
+	        this.participant = source["participant"];
+	        this.detail = source["detail"];
 	    }
 	}
 	
@@ -2101,6 +2149,54 @@ export namespace brainbox {
 	        this.pool = source["pool"];
 	    }
 	}
+	export class Task {
+	    id: string;
+	    description: string;
+	    agent_name: string;
+	    status: string;
+	    repo_url: any;
+	    created_at: any;
+	    updated_at: any;
+	    result: any;
+	    error: any;
+	    session_name: string;
+	    workspace_profile: string;
+	    runner_name: string;
+	    backend: string;
+	    docker_host: string;
+	    ssh_host: string;
+	    job_id: string;
+	    spawned_by: string;
+	    child_task_ids: string[];
+	    conversation_ids: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Task(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.description = source["description"];
+	        this.agent_name = source["agent_name"];
+	        this.status = source["status"];
+	        this.repo_url = source["repo_url"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	        this.result = source["result"];
+	        this.error = source["error"];
+	        this.session_name = source["session_name"];
+	        this.workspace_profile = source["workspace_profile"];
+	        this.runner_name = source["runner_name"];
+	        this.backend = source["backend"];
+	        this.docker_host = source["docker_host"];
+	        this.ssh_host = source["ssh_host"];
+	        this.job_id = source["job_id"];
+	        this.spawned_by = source["spawned_by"];
+	        this.child_task_ids = source["child_task_ids"];
+	        this.conversation_ids = source["conversation_ids"];
+	    }
+	}
 	
 	export class Trace {
 	    id: string;
@@ -2272,6 +2368,95 @@ export namespace brainbox {
 
 }
 
+export namespace githubclient {
+	
+	export class Issue {
+	    repo_full_name: string;
+	    number: number;
+	    title: string;
+	    state: string;
+	    html_url: string;
+	    updated_at: string;
+	    user: string;
+	    draft: boolean;
+	    is_pull_request: boolean;
+	    reason: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Issue(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.repo_full_name = source["repo_full_name"];
+	        this.number = source["number"];
+	        this.title = source["title"];
+	        this.state = source["state"];
+	        this.html_url = source["html_url"];
+	        this.updated_at = source["updated_at"];
+	        this.user = source["user"];
+	        this.draft = source["draft"];
+	        this.is_pull_request = source["is_pull_request"];
+	        this.reason = source["reason"];
+	    }
+	}
+	export class Notification {
+	    id: string;
+	    repo_full_name: string;
+	    subject_title: string;
+	    subject_type: string;
+	    reason: string;
+	    updated_at: string;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Notification(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.repo_full_name = source["repo_full_name"];
+	        this.subject_title = source["subject_title"];
+	        this.subject_type = source["subject_type"];
+	        this.reason = source["reason"];
+	        this.updated_at = source["updated_at"];
+	        this.url = source["url"];
+	    }
+	}
+	export class Repo {
+	    owner: string;
+	    name: string;
+	    full_name: string;
+	    description: string;
+	    html_url: string;
+	    clone_url: string;
+	    default_branch: string;
+	    pushed_at: string;
+	    stars: number;
+	    open_issues: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Repo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.owner = source["owner"];
+	        this.name = source["name"];
+	        this.full_name = source["full_name"];
+	        this.description = source["description"];
+	        this.html_url = source["html_url"];
+	        this.clone_url = source["clone_url"];
+	        this.default_branch = source["default_branch"];
+	        this.pushed_at = source["pushed_at"];
+	        this.stars = source["stars"];
+	        this.open_issues = source["open_issues"];
+	    }
+	}
+
+}
+
 export namespace main {
 	
 	export class AgentInvocation {
@@ -2311,7 +2496,7 @@ export namespace main {
 	    job_id: string;
 	    spawned_by: string;
 	    child_task_ids: string[];
-	    channel_ids: string[];
+	    conversation_ids: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new HubTask(source);
@@ -2337,7 +2522,7 @@ export namespace main {
 	        this.job_id = source["job_id"];
 	        this.spawned_by = source["spawned_by"];
 	        this.child_task_ids = source["child_task_ids"];
-	        this.channel_ids = source["channel_ids"];
+	        this.conversation_ids = source["conversation_ids"];
 	    }
 	}
 	export class AgentJobDetail {
@@ -2478,40 +2663,6 @@ export namespace main {
 	        this.runner_name = source["runner_name"];
 	    }
 	}
-	export class AutomationRule {
-	    id: string;
-	    profile: string;
-	    name: string;
-	    description: string;
-	    enabled: boolean;
-	    trigger_type: string;
-	    trigger_config: string;
-	    action_type: string;
-	    action_config: string;
-	    created_at: number;
-	    last_triggered_at?: number;
-	    trigger_count: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new AutomationRule(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.profile = source["profile"];
-	        this.name = source["name"];
-	        this.description = source["description"];
-	        this.enabled = source["enabled"];
-	        this.trigger_type = source["trigger_type"];
-	        this.trigger_config = source["trigger_config"];
-	        this.action_type = source["action_type"];
-	        this.action_config = source["action_config"];
-	        this.created_at = source["created_at"];
-	        this.last_triggered_at = source["last_triggered_at"];
-	        this.trigger_count = source["trigger_count"];
-	    }
-	}
 	export class BaseImageBuildRequest {
 	    profile: string;
 	    no_cache: boolean;
@@ -2549,6 +2700,56 @@ export namespace main {
 	        this.detected = source["detected"];
 	        this.definition = source["definition"];
 	    }
+	}
+	export class CodeOverview {
+	    profile: string;
+	    token_missing: boolean;
+	    token_invalid: boolean;
+	    repos: githubclient.Repo[];
+	    pull_requests: githubclient.Issue[];
+	    issues: githubclient.Issue[];
+	    notifications: githubclient.Notification[];
+	    repos_error: string;
+	    pull_requests_error: string;
+	    issues_error: string;
+	    notifications_error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CodeOverview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.token_missing = source["token_missing"];
+	        this.token_invalid = source["token_invalid"];
+	        this.repos = this.convertValues(source["repos"], githubclient.Repo);
+	        this.pull_requests = this.convertValues(source["pull_requests"], githubclient.Issue);
+	        this.issues = this.convertValues(source["issues"], githubclient.Issue);
+	        this.notifications = this.convertValues(source["notifications"], githubclient.Notification);
+	        this.repos_error = source["repos_error"];
+	        this.pull_requests_error = source["pull_requests_error"];
+	        this.issues_error = source["issues_error"];
+	        this.notifications_error = source["notifications_error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class CollectJob {
 	    id: string;
@@ -2871,32 +3072,22 @@ export namespace main {
 		    return a;
 		}
 	}
-	export class EnqueueTaskRequest {
-	    loop_id: string;
-	    input: string;
-	    cwd: string;
-	    priority: number;
-	    max_attempts: number;
-	    trigger: string;
-	    parent_task_id: string;
-	    workspace_profile: string;
-	    scheduled_for: string;
+	export class DispatchRepoRequest {
+	    profile: string;
+	    repo_url: string;
+	    agent_name: string;
+	    description: string;
 	
 	    static createFrom(source: any = {}) {
-	        return new EnqueueTaskRequest(source);
+	        return new DispatchRepoRequest(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.loop_id = source["loop_id"];
-	        this.input = source["input"];
-	        this.cwd = source["cwd"];
-	        this.priority = source["priority"];
-	        this.max_attempts = source["max_attempts"];
-	        this.trigger = source["trigger"];
-	        this.parent_task_id = source["parent_task_id"];
-	        this.workspace_profile = source["workspace_profile"];
-	        this.scheduled_for = source["scheduled_for"];
+	        this.profile = source["profile"];
+	        this.repo_url = source["repo_url"];
+	        this.agent_name = source["agent_name"];
+	        this.description = source["description"];
 	    }
 	}
 	export class GitHubTokenStatus {
@@ -2974,6 +3165,22 @@ export namespace main {
 	        this.output = source["output"];
 	        this.wired = source["wired"];
 	        this.wire_err = source["wire_err"];
+	    }
+	}
+	export class InteractiveSessionRequest {
+	    profile: string;
+	    repo_url: string;
+	    task: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new InteractiveSessionRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.repo_url = source["repo_url"];
+	        this.task = source["task"];
 	    }
 	}
 	export class LocalProcess {
@@ -3279,38 +3486,6 @@ export namespace main {
 	        this.env_key = source["env_key"];
 	    }
 	}
-	export class ScheduleRow {
-	    id: string;
-	    loop_id: string;
-	    cron_expr: string;
-	    input: string;
-	    cwd: string;
-	    enabled: boolean;
-	    workspace_profile: string;
-	    created_at: string;
-	    updated_at: string;
-	    last_fired_at: string;
-	    next_fire_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ScheduleRow(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.loop_id = source["loop_id"];
-	        this.cron_expr = source["cron_expr"];
-	        this.input = source["input"];
-	        this.cwd = source["cwd"];
-	        this.enabled = source["enabled"];
-	        this.workspace_profile = source["workspace_profile"];
-	        this.created_at = source["created_at"];
-	        this.updated_at = source["updated_at"];
-	        this.last_fired_at = source["last_fired_at"];
-	        this.next_fire_at = source["next_fire_at"];
-	    }
-	}
 	export class SecretKeyStatus {
 	    key: string;
 	    has_value: boolean;
@@ -3327,116 +3502,6 @@ export namespace main {
 	        this.source = source["source"];
 	    }
 	}
-	export class SequenceFollowup {
-	    loop_id: string;
-	    input_from: string;
-	    input_literal: string;
-	    cwd: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new SequenceFollowup(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.loop_id = source["loop_id"];
-	        this.input_from = source["input_from"];
-	        this.input_literal = source["input_literal"];
-	        this.cwd = source["cwd"];
-	    }
-	}
-	export class SequenceStep {
-	    type: string;
-	    agent_id: string;
-	    prompt_template: string;
-	    cwd: string;
-	    executor: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new SequenceStep(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.type = source["type"];
-	        this.agent_id = source["agent_id"];
-	        this.prompt_template = source["prompt_template"];
-	        this.cwd = source["cwd"];
-	        this.executor = source["executor"];
-	    }
-	}
-	export class Sequence {
-	    id: string;
-	    name: string;
-	    description: string;
-	    steps: SequenceStep[];
-	    cwd: string;
-	    on_success: SequenceFollowup[];
-	    files: string[];
-	    workspace_profile: string;
-	    created_at: string;
-	    updated_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Sequence(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.description = source["description"];
-	        this.steps = this.convertValues(source["steps"], SequenceStep);
-	        this.cwd = source["cwd"];
-	        this.on_success = this.convertValues(source["on_success"], SequenceFollowup);
-	        this.files = source["files"];
-	        this.workspace_profile = source["workspace_profile"];
-	        this.created_at = source["created_at"];
-	        this.updated_at = source["updated_at"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-	
-	export class SequenceRunRow {
-	    id: string;
-	    loop_id: string;
-	    started_at: string;
-	    finished_at: string;
-	    status: string;
-	    log_json: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new SequenceRunRow(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.loop_id = source["loop_id"];
-	        this.started_at = source["started_at"];
-	        this.finished_at = source["finished_at"];
-	        this.status = source["status"];
-	        this.log_json = source["log_json"];
-	    }
-	}
-	
 	export class ServiceStatus {
 	    name: string;
 	    label: string;
@@ -3489,72 +3554,6 @@ export namespace main {
 	        this.mem_total_gib = source["mem_total_gib"];
 	    }
 	}
-	export class TaskRow {
-	    id: string;
-	    loop_id: string;
-	    status: string;
-	    priority: number;
-	    input: string;
-	    cwd: string;
-	    trigger: string;
-	    parent_task_id: string;
-	    workspace_profile: string;
-	    enqueued_at: string;
-	    scheduled_for: string;
-	    started_at: string;
-	    finished_at: string;
-	    attempts: number;
-	    max_attempts: number;
-	    last_error: string;
-	    result_run_id: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new TaskRow(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.loop_id = source["loop_id"];
-	        this.status = source["status"];
-	        this.priority = source["priority"];
-	        this.input = source["input"];
-	        this.cwd = source["cwd"];
-	        this.trigger = source["trigger"];
-	        this.parent_task_id = source["parent_task_id"];
-	        this.workspace_profile = source["workspace_profile"];
-	        this.enqueued_at = source["enqueued_at"];
-	        this.scheduled_for = source["scheduled_for"];
-	        this.started_at = source["started_at"];
-	        this.finished_at = source["finished_at"];
-	        this.attempts = source["attempts"];
-	        this.max_attempts = source["max_attempts"];
-	        this.last_error = source["last_error"];
-	        this.result_run_id = source["result_run_id"];
-	    }
-	}
-	export class TaskStats {
-	    window_hours: number;
-	    pending: number;
-	    running: number;
-	    succeeded: number;
-	    failed: number;
-	    cancelled: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new TaskStats(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.window_hours = source["window_hours"];
-	        this.pending = source["pending"];
-	        this.running = source["running"];
-	        this.succeeded = source["succeeded"];
-	        this.failed = source["failed"];
-	        this.cancelled = source["cancelled"];
-	    }
-	}
 	export class TimelineEvent {
 	    id: string;
 	    title: string;
@@ -3577,26 +3576,6 @@ export namespace main {
 	        this.start_at_ms = source["start_at_ms"];
 	        this.end_at_ms = source["end_at_ms"];
 	        this.source_id = source["source_id"];
-	    }
-	}
-	export class UpcomingFire {
-	    schedule_id: string;
-	    loop_id: string;
-	    loop_name: string;
-	    cron_expr: string;
-	    next_fire_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new UpcomingFire(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.schedule_id = source["schedule_id"];
-	        this.loop_id = source["loop_id"];
-	        this.loop_name = source["loop_name"];
-	        this.cron_expr = source["cron_expr"];
-	        this.next_fire_at = source["next_fire_at"];
 	    }
 	}
 	export class VaultAuth {

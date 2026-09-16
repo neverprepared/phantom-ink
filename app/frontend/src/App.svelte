@@ -90,6 +90,7 @@
         '2': 'sessions',
         '3': 'integrations',
         '5': 'mesh',
+        '9': 'code',
         ',': 'settings',
       };
 

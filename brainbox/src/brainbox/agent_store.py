@@ -547,57 +547,78 @@ def envelope_from_hub_task(event: str, task: Any) -> AgentEnvelope:
     )
 
 
-def envelope_from_channel(event: str, data: Any) -> AgentEnvelope | None:
-    """Translate a channel event into the unified envelope.
+# The bus key for a conversation. Every envelope a conversation produces —
+# created, each finalized message, archived — carries THIS id, so `agent_state`
+# holds exactly one row per room (the timeline entity) while `agent_events`
+# keeps the append-only history of what happened in it. Never build this string
+# at a call site.
+CONVERSATION_ENVELOPE_PREFIX = "conversation:"
 
-    channel.message returns None — it is the only high-frequency event on the
-    hub, and pushing every chat message through the durable bus (and through
-    rule evaluation) invites rule storms for no attention-model gain. SSE
-    delivery of messages is unaffected.
+
+def conversation_envelope_id(conversation_id: str) -> str:
+    return f"{CONVERSATION_ENVELOPE_PREFIX}{conversation_id}"
+
+
+def envelope_from_conversation(
+    event: str,
+    conv: Any,
+    msg: Any | None = None,
+    extra: dict[str, Any] | None = None,
+) -> AgentEnvelope:
+    """Translate a conversation lifecycle event into the unified envelope
+    (design spec §8).
+
+    ``event`` is the dotted conversation event name (``conversation.created``,
+    ``conversation.message``, ``conversation.archived``). ``conv`` is a
+    ``conversation_store.Conversation``; ``msg`` is the finalized
+    ``Message`` for ``conversation.message``.
+
+    A *message* DOES produce an envelope here — that is the point: the room is
+    a timeline entity whose newest turn is its current state. The upsert on a stable id means N messages produce one
+    `agent_state` row, not N, so the frequency cost is in `agent_events`
+    (append-only, which is what an audit log is for) and not in the attention
+    view.
     """
-    if event == "channel.message":
-        return None
-
-    if isinstance(data, dict):
-        ch_id = data.get("channel_id")
-        if not ch_id:
-            return None
-        from . import channels as _channels_mod
-
-        ch = _channels_mod.get_channel(ch_id)
-        metadata = {k: v for k, v in data.items() if k != "channel_id" and not hasattr(v, "model_dump")}
-        return AgentEnvelope(
-            id=f"channel:{ch_id}",
-            kind="event",
-            source="brainbox-hub",
-            type=event,
-            status=("done" if ch and ch.status == "completed" else "active") if ch else None,
-            title=ch.name if ch else ch_id,
-            workspace=getattr(ch, "workspace_profile", None) if ch else None,
-            parent_id=(
-                f"hub-task:{ch.parent_task_id}" if ch and getattr(ch, "parent_task_id", None) else None
-            ),
-            tags=["channel"],
-            metadata=metadata,
+    status = "done" if getattr(conv, "status", "active") == "archived" else "active"
+    participants = list(getattr(conv, "participants", []) or [])
+    metadata: dict[str, Any] = {
+        "conversation_id": conv.id,
+        "participants": len(participants),
+        "personas": [
+            p.name for p in participants if getattr(p, "kind", "persona") == "persona"
+        ],
+    }
+    subtitle = None
+    description = None
+    if msg is not None:
+        metadata.update(
+            {
+                "message_id": msg.id,
+                "author": msg.author,
+                "message_kind": msg.kind,
+                "addressed_to": msg.addressed_to,
+                "in_reply_to": msg.in_reply_to,
+            }
         )
+        subtitle = msg.author
+        # One line of the turn itself, so the timeline card says something.
+        description = (msg.content or "").strip().splitlines()[0][:280] or None
 
-    ch = data
-    ch_id = getattr(ch, "id", None)
-    if not ch_id:
-        return None
+    if extra:
+        metadata.update(extra)
+
     return AgentEnvelope(
-        id=f"channel:{ch_id}",
+        id=conversation_envelope_id(conv.id),
         kind="event",
-        source="brainbox-hub",
+        source="brainbox-conversations",
         type=event,
-        status="done" if getattr(ch, "status", "") == "completed" else "active",
-        title=getattr(ch, "name", ch_id),
-        workspace=getattr(ch, "workspace_profile", None),
-        parent_id=(
-            f"hub-task:{ch.parent_task_id}" if getattr(ch, "parent_task_id", None) else None
-        ),
-        start_at=getattr(ch, "created_at", None),
-        end_at=getattr(ch, "completed_at", None),
-        tags=["channel"],
-        metadata={"participants": len(getattr(ch, "participants", []) or [])},
+        status=status,
+        title=conv.title,
+        subtitle=subtitle,
+        description=description,
+        workspace=conv.profile,
+        start_at=getattr(conv, "created_at", None),
+        end_at=getattr(conv, "updated_at", None) if status == "done" else None,
+        tags=["conversation"],
+        metadata={k: v for k, v in metadata.items() if v is not None},
     )
