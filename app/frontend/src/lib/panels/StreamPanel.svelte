@@ -197,7 +197,11 @@
 
     // Legacy events still poke a refresh so anything not yet on the bus stays
     // current (P5 retired most, but defense-in-depth is cheap).
-    const legacy = ['task:event', 'loop:run:event', 'brainbox:event'];
+    // NOTE: 'brainbox:event' fires for *every* raw bus frame and duplicated the
+    // typed 'agent:event' → applyAgentEvent delta path above with a full
+    // ListAgentState(200) + ListAttention per event; dropped. The 5s livePoll
+    // backstops any gap not covered by the typed stream.
+    const legacy = ['task:event', 'loop:run:event'];
     for (const ev of legacy) {
       const off = (window as any).runtime?.EventsOn?.(ev, () => {
         void refreshAttention();
