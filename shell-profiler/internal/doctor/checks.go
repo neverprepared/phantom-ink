@@ -1,9 +1,12 @@
 package doctor
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 // Categories a check can belong to.
@@ -27,6 +30,7 @@ func DefaultChecks() []Check {
 		checkExpectedKeys(),
 		checkGitHubSSH(),
 		checkGitHubCLI(),
+		checkGitHubToken(),
 		checkBrainDaemon(),
 	}
 	for _, v := range brainVaults {
@@ -193,6 +197,71 @@ func checkGitHubCLI() Check {
 		}
 		return fail("gh is not authenticated", "run: gh auth login")
 	})
+}
+
+// githubAPIBase is the GitHub REST base the GITHUB_TOKEN probe hits. A package
+// var so tests can point it at an httptest.Server.
+var githubAPIBase = "https://api.github.com"
+
+// githubProbeTimeout bounds the GITHUB_TOKEN probe. Shorter than
+// commandTimeout: this is one HTTP round trip, not a CLI invocation.
+const githubProbeTimeout = 10 * time.Second
+
+// checkGitHubToken confirms GitHub actually ACCEPTS the profile's
+// GITHUB_TOKEN. Presence of the key is checkExpectedKeys's job — an absent
+// token skips here rather than double-reporting the same missing key.
+func checkGitHubToken() Check {
+	return NewCheck("github token", CatGitHub, func(p *Profile) Result {
+		token, found := p.Lookup("GITHUB_TOKEN")
+		if !found {
+			return skip("GITHUB_TOKEN not set — presence is covered by the expected-keys check")
+		}
+		code, err := probeGitHubToken(githubAPIBase, token)
+		if err != nil {
+			// Offline is not a bad token. Same rule as an offline daemon.
+			return skip("could not reach GitHub — GITHUB_TOKEN not verified")
+		}
+		switch code {
+		case http.StatusOK:
+			return ok("GitHub accepted the token")
+		case http.StatusUnauthorized:
+			return fail("GitHub rejected GITHUB_TOKEN (401 Bad credentials) — expired or wrong value",
+				"regenerate the PAT and update GITHUB_TOKEN in "+SecretsEnvFileName)
+		default:
+			// 403 (rate-limited or blocked) and 5xx are not a clean verdict.
+			return skip(fmt.Sprintf("inconclusive (GitHub returned %d)", code))
+		}
+	})
+}
+
+// probeGitHubToken hits GET <base>/rate_limit with the token and returns the
+// status code. /rate_limit is used deliberately over /user: it returns 200 for
+// ANY valid credential — classic/fine-grained PATs AND GitHub App installation
+// tokens — and 401 for a rejected one, whereas /user 403s for installation
+// tokens and would false-negative.
+//
+// This is native net/http rather than the CmdRunner seam on purpose: a token
+// handed to `curl -H "Authorization: Bearer $T"` lands in the child's argv and
+// is readable via ps. Here it stays an in-process header and never touches
+// argv, a shell, or a log.
+func probeGitHubToken(base, token string) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), githubProbeTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/rate_limit", nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := (&http.Client{Timeout: githubProbeTimeout}).Do(req)
+	if err != nil {
+		return 0, err
+	}
+	// The body is not needed: the status code is the whole verdict.
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode, nil
 }
 
 // --- brain -------------------------------------------------------------
