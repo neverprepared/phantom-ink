@@ -286,7 +286,7 @@ It checks, in order:
 | ----------- | ------------------------------------------------------------------------- |
 | `structure` | `.env`, `.envrc` + its direnv allow state, `.gitconfig` user.name/email    |
 | `env`       | Keys `.env.example` expects that `.env` is missing or leaves empty         |
-| `github`    | `ssh -T git@github.com`, `gh auth status`                                  |
+| `github`    | `ssh -T git@github.com`, `gh auth status`, `GITHUB_TOKEN` accepted by GitHub |
 | `brain`     | Brain daemon reachability and per-vault token validity                     |
 | `router`    | Router reachability and `CL_API_KEY` validity                              |
 | `cloud`     | `aws` / `az` / `gcloud` — only when the profile carries the matching dir   |
@@ -299,6 +299,15 @@ fail a run — they mark what is not yours to fix:
   `.gitconfig` without an email, direnv not allowed.
 - **Skip** = *a service is offline or a tool is not installed* — an unreachable
   brain daemon, no `aws` CLI, a vault this profile does not use.
+
+The `github token` check probes `GET https://api.github.com/rate_limit` with
+the profile's `GITHUB_TOKEN`. `/rate_limit` returns 200 for *any* credential
+GitHub accepts — classic and fine-grained PATs as well as App installation
+tokens — so a valid token is never misreported. A 401 fails; an unreachable
+GitHub, a 403 (rate limit) or a 5xx skips, and an absent `GITHUB_TOKEN` skips
+because the `env` check already reports it as missing. The probe is a native
+in-process HTTP request, not `curl`: a token handed to a subprocess would land
+in its argv and be readable via `ps`.
 
 **`doctor` never prints a secret value.** It reports only set/missing/valid/
 invalid and names keys, never their contents. Token values are read into memory

@@ -2,6 +2,8 @@ package doctor
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,6 +150,171 @@ func TestCheckGitHubSSH(t *testing.T) {
 	})
 	if got := runOne(t, load(t, dir, offline), "github ssh"); got.Status != StatusSkip {
 		t.Errorf("offline: status = %v, want skip", got.Status)
+	}
+}
+
+// --- github token ------------------------------------------------------
+
+// fakeGitHubToken is the value the assertions below prove never reaches output.
+const fakeGitHubToken = "ghp_FAKE_0123456789abcdef0123456789abcdef"
+
+// githubTokenProfile builds a profile carrying fakeGitHubToken and points the
+// probe at base for the duration of the test.
+func githubTokenProfile(t *testing.T, base, token string) *Profile {
+	t.Helper()
+	env := "A=1\n"
+	if token != "" {
+		env = "GITHUB_TOKEN=" + token + "\n"
+	}
+	dir := fullProfile(t, env)
+
+	prev := githubAPIBase
+	githubAPIBase = base
+	t.Cleanup(func() { githubAPIBase = prev })
+
+	return load(t, dir, newStub(t, nil))
+}
+
+// githubStub serves /rate_limit with a fixed status and records the request so
+// the test can assert on the headers doctor sent.
+func githubStub(t *testing.T, status int) (base string, gotAuth, gotAccept *string) {
+	t.Helper()
+	auth, accept := "", ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rate_limit" {
+			t.Errorf("probed %q, want /rate_limit", r.URL.Path)
+		}
+		auth = r.Header.Get("Authorization")
+		accept = r.Header.Get("Accept")
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, &auth, &accept
+}
+
+func TestCheckGitHubToken_Accepted(t *testing.T) {
+	base, auth, accept := githubStub(t, http.StatusOK)
+	p := githubTokenProfile(t, base, fakeGitHubToken)
+
+	got := runOne(t, p, "github token")
+	if got.Status != StatusOK {
+		t.Fatalf("status = %v, want ok (%s)", got.Status, got.Detail)
+	}
+	if *auth != "Bearer "+fakeGitHubToken {
+		t.Error("probe did not send the token as a Bearer Authorization header")
+	}
+	if *accept != "application/vnd.github+json" {
+		t.Errorf("Accept = %q, want the GitHub media type", *accept)
+	}
+}
+
+func TestCheckGitHubToken_RejectedFails(t *testing.T) {
+	base, _, _ := githubStub(t, http.StatusUnauthorized)
+	p := githubTokenProfile(t, base, fakeGitHubToken)
+
+	got := runOne(t, p, "github token")
+	if got.Status != StatusFail {
+		t.Fatalf("status = %v, want fail — a rejected token is the user's to fix", got.Status)
+	}
+	if !strings.Contains(got.Fix, "GITHUB_TOKEN") {
+		t.Errorf("fix should name the key, got %q", got.Fix)
+	}
+}
+
+// A 5xx is GitHub's problem, not a verdict on the token.
+func TestCheckGitHubToken_ServerErrorSkips(t *testing.T) {
+	base, _, _ := githubStub(t, http.StatusInternalServerError)
+	p := githubTokenProfile(t, base, fakeGitHubToken)
+
+	got := runOne(t, p, "github token")
+	if got.Status != StatusSkip {
+		t.Fatalf("status = %v, want skip", got.Status)
+	}
+	if !strings.Contains(got.Detail, "inconclusive") {
+		t.Errorf("detail should say inconclusive, got %q", got.Detail)
+	}
+}
+
+// Rate limiting (403) is equally inconclusive — never a false fail.
+func TestCheckGitHubToken_RateLimitedSkips(t *testing.T) {
+	base, _, _ := githubStub(t, http.StatusForbidden)
+	p := githubTokenProfile(t, base, fakeGitHubToken)
+	if got := runOne(t, p, "github token"); got.Status != StatusSkip {
+		t.Errorf("status = %v, want skip", got.Status)
+	}
+}
+
+// Offline must never be reported as a bad token.
+func TestCheckGitHubToken_UnreachableSkips(t *testing.T) {
+	// Port 1 on loopback: nothing listens, so the dial fails immediately.
+	p := githubTokenProfile(t, "http://127.0.0.1:1", fakeGitHubToken)
+
+	got := runOne(t, p, "github token")
+	if got.Status != StatusSkip {
+		t.Fatalf("status = %v, want skip — an unreachable GitHub is not a bad token", got.Status)
+	}
+	if !strings.Contains(got.Detail, "could not reach GitHub") {
+		t.Errorf("detail should say GitHub was unreachable, got %q", got.Detail)
+	}
+}
+
+// An absent token skips: presence is checkExpectedKeys's job, and reporting it
+// here too would double-count one missing key as two failures.
+func TestCheckGitHubToken_AbsentSkips(t *testing.T) {
+	p := githubTokenProfile(t, "http://127.0.0.1:1", "")
+
+	got := runOne(t, p, "github token")
+	if got.Status != StatusSkip {
+		t.Fatalf("status = %v, want skip", got.Status)
+	}
+	if !strings.Contains(got.Detail, "GITHUB_TOKEN") {
+		t.Errorf("detail should name the key, got %q", got.Detail)
+	}
+}
+
+// The token value must not reach Detail or Fix in ANY outcome, and must never
+// appear on a command line (the probe is in-process, so nothing is executed).
+func TestCheckGitHubToken_NeverLeaksTheToken(t *testing.T) {
+	// GITHUB_TOKEN is a secret-keyed env var, so Redact covers it too.
+	if !isSecretKey("GITHUB_TOKEN") {
+		t.Fatal("GITHUB_TOKEN must classify as a secret key so Redact scrubs its value")
+	}
+
+	for _, status := range []int{http.StatusOK, http.StatusUnauthorized, http.StatusForbidden, http.StatusInternalServerError} {
+		base, _, _ := githubStub(t, status)
+		dir := fullProfile(t, "GITHUB_TOKEN="+fakeGitHubToken+"\n")
+
+		prev := githubAPIBase
+		githubAPIBase = base
+		stub := newStub(t, nil)
+		p := load(t, dir, stub)
+
+		// Go through RunChecks so the central redaction pass runs too.
+		report := RunChecks(p, []Check{checkGitHubToken()})
+		githubAPIBase = prev
+
+		res := report.Results[0]
+		if strings.Contains(res.Detail, fakeGitHubToken) {
+			t.Errorf("status %d: token leaked into Detail", status)
+		}
+		if strings.Contains(res.Fix, fakeGitHubToken) {
+			t.Errorf("status %d: token leaked into Fix", status)
+		}
+		for _, call := range stub.calls {
+			if strings.Contains(call, fakeGitHubToken) {
+				t.Errorf("status %d: token appeared on a command line", status)
+			}
+		}
+	}
+
+	// The unreachable path has its own Detail — assert it as well.
+	dir := fullProfile(t, "GITHUB_TOKEN="+fakeGitHubToken+"\n")
+	prev := githubAPIBase
+	githubAPIBase = "http://127.0.0.1:1"
+	res := RunChecks(load(t, dir, newStub(t, nil)), []Check{checkGitHubToken()}).Results[0]
+	githubAPIBase = prev
+	if strings.Contains(res.Detail+res.Fix, fakeGitHubToken) {
+		t.Error("unreachable: token leaked into Detail/Fix")
 	}
 }
 
