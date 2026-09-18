@@ -88,7 +88,7 @@ func RunDoctorFleet(profilesDir string, opts FleetOptions) error {
 	}
 
 	if report.Failed() {
-		return fmt.Errorf("doctor --fleet: %d credential(s) failed the delivery check", report.FailCount())
+		return fmt.Errorf("doctor --fleet: %d credential(s) failed the delivery check", report.DeliveryFailCount())
 	}
 	return nil
 }

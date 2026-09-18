@@ -212,8 +212,10 @@ func TestRunDoctorFleet_NoWorkspaceHome(t *testing.T) {
 	}
 }
 
-// A local failure short-circuits: no session is created, and the run fails
-// pointing at the local fix.
+// A local failure short-circuits: no session is created, and the report points
+// at the local fix — but it does NOT fail the run. `--fleet` exits non-zero
+// for a broken DELIVERY only, and a credential that is broken here was never
+// delivered anywhere to be measured.
 func TestRunDoctorFleet_LocalFailureShortCircuits(t *testing.T) {
 	root := t.TempDir()
 	dir := makeProfile(t, root, "demo", healthyFiles())
@@ -223,14 +225,37 @@ func TestRunDoctorFleet_LocalFailureShortCircuits(t *testing.T) {
 	err := RunDoctorFleet(root, FleetOptions{
 		Out: &buf, WorkspaceHome: dir, Fleet: fake, Checks: fleetOracle(doctor.StatusFail),
 	})
-	if err == nil {
-		t.Fatalf("a broken local credential must fail the run\n%s", buf.String())
+	if err != nil {
+		t.Fatalf("a local-only fault must not fail a delivery check: %v\n%s", err, buf.String())
 	}
 	if len(fake.created) != 0 {
 		t.Errorf("no session may be created when the oracle fails, got %d", len(fake.created))
 	}
-	if !strings.Contains(buf.String(), "fix locally first") {
-		t.Errorf("report should point at the local fix\n%s", buf.String())
+	out := buf.String()
+	if !strings.Contains(out, "fix locally first") {
+		t.Errorf("report should point at the local fix\n%s", out)
+	}
+	if !strings.Contains(out, "need a local fix first") {
+		t.Errorf("report should count the local-first rows separately\n%s", out)
+	}
+}
+
+// A broken DELIVERY is still a non-zero exit, and the error names the count.
+func TestRunDoctorFleet_DeliveryFailureFailsTheRun(t *testing.T) {
+	root := t.TempDir()
+	dir := makeProfile(t, root, "demo", healthyFiles())
+	// 401: the delivered token reached the container and was refused.
+	fake := &fakeFleetClient{execRes: probeOutput("401")}
+
+	var buf bytes.Buffer
+	err := RunDoctorFleet(root, FleetOptions{
+		Out: &buf, WorkspaceHome: dir, Fleet: fake, Checks: fleetOracle(doctor.StatusOK),
+	})
+	if err == nil {
+		t.Fatalf("a broken delivery must fail the run\n%s", buf.String())
+	}
+	if !strings.Contains(err.Error(), "1 credential(s) failed the delivery check") {
+		t.Errorf("error should count exactly the delivery failures, got %q", err)
 	}
 }
 

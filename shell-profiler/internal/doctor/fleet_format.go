@@ -38,16 +38,23 @@ func FormatFleetText(w io.Writer, r FleetReport, color bool) {
 			writef(w, " — %s", res.Detail)
 		}
 		writef(w, "\n")
-		if res.Failed() && res.Fix != "" {
+		if res.NeedsAction() && res.Fix != "" {
 			writef(w, "        %s-> fix: %s%s\n", c.yellow, res.Fix, c.reset)
 		}
 	}
 
 	writef(w, "\n")
-	if failCount := r.FailCount(); failCount > 0 {
+	if failCount := r.DeliveryFailCount(); failCount > 0 {
 		writef(w, "%s%d credential(s) failed the delivery check%s\n", c.red, failCount, c.reset)
 	} else {
 		writef(w, "%sCredential delivery verified%s\n", c.green, c.reset)
+	}
+	// A local fault is reported on its own line: it is real work for the user,
+	// but it is not evidence that delivery is broken, and folding it into the
+	// delivery count is what made a run with expired AWS creds exit non-zero.
+	if localFirst := r.LocalFirstCount(); localFirst > 0 {
+		writef(w, "%s%d credential(s) need a local fix first (not a delivery failure)%s\n",
+			c.yellow, localFirst, c.reset)
 	}
 }
 

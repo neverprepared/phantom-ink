@@ -5,6 +5,12 @@
 **Revised:** 2026-09-18 — v2 extends coverage from `GITHUB_TOKEN` alone to the
 brain vault tokens, the router key, and the AWS/Azure CLIs, batched into one
 ephemeral session. gcloud is deferred.
+**Revised:** 2026-09-18 — v2.1, from the first live `--fleet` run. `CL_API_KEY`
+is dropped from the probe registry (it is the operator hub key and is
+deliberately absent from a session); the brain-token fix hints point at the
+brain binding rather than the gateway env store; and only `delivery-broken`
+fails the run — `fix-locally-first` is reported and counted on its own line.
+See §7.
 **Surface:** `shell-profiler doctor <profile> --fleet [--runner <name>] [--json]`
 
 ## 1. Motivation
@@ -71,9 +77,12 @@ probes map onto the same rows via their markers — `SPFLEET:OK` where `200` sit
 `SPFLEET:FAIL` where `401` sits, `SPFLEET:UNSET` unchanged, and no recognisable
 marker where `000` sits.
 
-`delivery-broken` and `fix-locally-first` exit non-zero. `inconclusive` never
-does — the same rule a skipped check follows: an offline node is not the user's
-to fix.
+Only `delivery-broken` exits non-zero (v2.1). `fix-locally-first` and
+`inconclusive` never do: a local-credential fault is a different axis — the
+remote probe was never run, so the run measured nothing about delivery — and an
+offline node is not the user's to fix. Both are still reported, with their fix
+hint, and the local-first rows get their own summary line ("M credential(s)
+need a local fix first"). See §7.1.
 
 **"Not delivered" is separated from "rejected" deliberately.** An absent token
 would otherwise degrade into an unauthenticated request and return 401, reading
@@ -185,7 +194,6 @@ comparison is the entire point.
 | `CL_TODO_API_TOKEN` | `brain token (todo)` | same, token aliased into `CL_BRAIN_API_TOKEN` |
 | `CL_SKILLS_API_TOKEN` | `brain token (skills)` | same |
 | `CL_AGENTS_API_TOKEN` | `brain token (agents)` | same |
-| `CL_API_KEY` (router) | `router` | `prouterctl status` |
 | AWS credentials | `aws` | `aws sts get-caller-identity` |
 | Azure credentials | `azure` | `az account show` |
 
@@ -237,8 +245,16 @@ different places, so they are never collapsed:
 
 | verdict detail | meaning | fix hint |
 |---|---|---|
-| **not delivered** (`FleetUnset`) | nothing reached the container | curate the value into the gateway env store |
-| **rejected** (`FleetRejected`) | it arrived and was refused | the delivered value is stale/wrong — re-curate it |
+| **not delivered** (`FleetUnset`) | nothing reached the container | provision it where that credential actually comes from |
+| **rejected** (`FleetRejected`) | it arrived and was refused | the delivered value is stale/wrong — re-provision it |
+
+*Where* differs per credential, and the hint must name the right place (v2.1):
+
+| credential | delivered by | fix hint points at |
+|---|---|---|
+| `GITHUB_TOKEN` | the profile's gateway env store | the gateway env store |
+| brain vault tokens | phantom-router's **brain binding** | the profile's vault binding, *not* the env store |
+| AWS / Azure | nothing — they are local files | the unwired file-vs-env-var gap |
 
 For the env-delivered credentials the unset case is carved out **before** any
 work is done, with `[ -z "${KEY}" ]` reporting `SPFLEET:UNSET`. Without it an
@@ -261,6 +277,14 @@ fleet containers at all. The fix hint says exactly that and asks for a
 decision, rather than naming a store entry that was never meant to exist.
 
 ### gcloud — deferred, and stated
+
+`CL_API_KEY` is **not** probed either (v2.1). It is the *operator* hub key; a
+session container authenticates to the hub with a hub-issued, session-scoped
+`BRAINBOX_TOKEN` and deliberately never receives `CL_API_KEY` (it is not in the
+app's `routerManagedVars`). Its absence in a container is correct by design, so
+probing it produced a `delivery-broken` row for a non-fault. It remains the
+config key `--fleet` itself authenticates with; it is simply not a delivery
+subject. `FleetCoverageNote` states the exclusion and its reason.
 
 `gcloud` is **not** in the `docker/brainbox` container image. A probe would
 report "not delivered" for every profile and say nothing about delivery.
@@ -300,8 +324,14 @@ real fleet.** Every remote outcome is a canned reply on a fake, covering:
 - `classifyStatusProbe` over `{OK, UNSET, FAIL}` plus banners, missing markers
   and non-zero exits; `classifyCloudProbe` over the AWS/Azure not-delivered
   phrases, a refused-credential error, and a missing CLI;
-- every `deliveryFix` distinguishes not-delivered from rejected, and the cloud
-  hints name the `~/.aws` / `~/.azure` file-vs-env-var gap;
+- every `deliveryFix` distinguishes not-delivered from rejected; the cloud hints
+  name the `~/.aws` / `~/.azure` file-vs-env-var gap; the brain hints name the
+  brain binding and never the gateway env store; `GITHUB_TOKEN`'s keeps it;
+- `CL_API_KEY` is absent from `remoteProbes()` and from the coverage note;
+- the counting split: a report of {1 `delivery-broken`, 2 `fix-locally-first`,
+  1 `inconclusive`} yields `DeliveryFailCount() == 1`, `LocalFirstCount() == 2`
+  and a non-zero exit; the same report without the delivery-broken row exits
+  **zero** while still rendering both local fix hints;
 - every `localCheck` names a check that actually exists in `DefaultChecks()` —
   a renamed check would otherwise silently drop a credential to "no baseline";
 - no probe command carries a credential VALUE, asserted against a profile
@@ -325,3 +355,39 @@ the `X-API-Key` header, and `workspace_profile` in the create payload.
 | `internal/doctor/fleet_format.go` | text + JSON report |
 | `internal/commands/doctor_fleet.go` | `RunDoctorFleet` — profile resolution, wiring, exit code |
 | `internal/cli/app.go` | `--fleet` / `--runner` parsing and help |
+
+## 7. v2.1 — corrections from the first live run
+
+Running `doctor --fleet` against a real profile exposed three defects in the
+v2 multi-credential check. All three were the same mistake in different
+clothes: the report asserting more than the probe had measured.
+
+### 7.1 A local fault is not a delivery failure
+
+AWS and Azure returned `fix-locally-first` — expired local credentials, so
+correctly never probed remotely. The summary and the exit code counted them
+alongside real `delivery-broken` rows, so a run reported "3 credential(s)
+failed the delivery check" and exited non-zero having measured delivery for
+exactly one of them.
+
+`FleetResult.Failed()` is therefore split: `DeliveryFailed()` (delivery-broken
+only) drives `FleetReport.Failed()`, `DeliveryFailCount()` and the exit code;
+`NeedsAction()` (delivery-broken **or** fix-locally-first) drives only whether
+a row renders its fix hint. `LocalFirstCount()` feeds a separate summary line.
+
+### 7.2 `CL_API_KEY` was a false positive
+
+Reported `delivery-broken` because it is unset in the container — which is the
+designed behaviour, not a fault. Removed from `remoteProbes()` entirely, along
+with `routerProbe()`; probing whether the operator key reaches a session is a
+non-goal, and a PASS row for a credential that is *supposed* to be absent would
+still imply the question was worth asking.
+
+### 7.3 The brain tokens' fix hint named the wrong place
+
+`envDeliveryFix` sent the operator to "the profile's gateway env store" for
+every env-delivered credential. True for `GITHUB_TOKEN`; wrong for the vault
+tokens, which phantom-router's brain binding provisions and forwards — that
+store holds a couple of keys and never held these. `brainDeliveryFix(tokenKey,
+label)` replaces it for those rows and names the binding and the vault;
+`envDeliveryFix` is gone, `GITHUB_TOKEN` keeping its own (correct) hint.
