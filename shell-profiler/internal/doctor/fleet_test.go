@@ -185,16 +185,17 @@ func TestRunFleetChecks_ClassificationMatrix(t *testing.T) {
 				t.Error("every row must explain itself")
 			}
 			// A failing verdict without a fix leaves the user stuck.
-			if got.Failed() && got.Fix == "" {
+			if got.NeedsAction() && got.Fix == "" {
 				t.Errorf("failing verdict %v carries no fix hint", got.Verdict)
 			}
 		})
 	}
 }
 
-// Only a broken delivery or a broken local credential is the user's to fix.
-// An inconclusive probe follows the skip rule and must not fail the run.
-func TestFleetReport_FailedIgnoresInconclusive(t *testing.T) {
+// Only a broken DELIVERY fails the run. An inconclusive probe follows the skip
+// rule, and a local-credential fault is a different axis entirely: the remote
+// probe never ran, so the run measured nothing about delivery.
+func TestFleetReport_OnlyDeliveryBrokenFailsTheRun(t *testing.T) {
 	r := FleetReport{Results: []FleetResult{
 		{Verdict: VerdictPass}, {Verdict: VerdictInconclusive},
 	}}
@@ -203,8 +204,56 @@ func TestFleetReport_FailedIgnoresInconclusive(t *testing.T) {
 	}
 
 	r.Results = append(r.Results, FleetResult{Verdict: VerdictDeliveryBroken})
-	if !r.Failed() || r.FailCount() != 1 {
-		t.Errorf("Failed=%v FailCount=%d, want true/1", r.Failed(), r.FailCount())
+	if !r.Failed() || r.DeliveryFailCount() != 1 {
+		t.Errorf("Failed=%v DeliveryFailCount=%d, want true/1", r.Failed(), r.DeliveryFailCount())
+	}
+}
+
+// The live run that motivated this: AWS and Azure came back fix-locally-first
+// (expired local creds, correctly never probed remotely) and were counted as
+// delivery failures, so --fleet exited non-zero for a fault it never measured.
+func TestFleetReport_LocalFirstIsNotADeliveryFailure(t *testing.T) {
+	mixed := FleetReport{Results: []FleetResult{
+		{Credential: "CL_AGENTS_API_TOKEN", Verdict: VerdictDeliveryBroken},
+		{Credential: "AWS credentials", Verdict: VerdictLocalFirst},
+		{Credential: "Azure credentials", Verdict: VerdictLocalFirst},
+		{Credential: "GITHUB_TOKEN", Verdict: VerdictInconclusive},
+	}}
+	if got := mixed.DeliveryFailCount(); got != 1 {
+		t.Errorf("DeliveryFailCount = %d, want 1 (only the delivery-broken row)", got)
+	}
+	if got := mixed.LocalFirstCount(); got != 2 {
+		t.Errorf("LocalFirstCount = %d, want 2", got)
+	}
+	if !mixed.Failed() {
+		t.Error("a delivery-broken row must fail the run")
+	}
+
+	// Drop the one real delivery failure: nothing is left that --fleet
+	// measured, so the run must exit zero.
+	localOnly := FleetReport{Results: mixed.Results[1:]}
+	if localOnly.Failed() || localOnly.DeliveryFailCount() != 0 {
+		t.Errorf("local-first + inconclusive must exit zero, got Failed=%v count=%d",
+			localOnly.Failed(), localOnly.DeliveryFailCount())
+	}
+	if localOnly.LocalFirstCount() != 2 {
+		t.Errorf("LocalFirstCount = %d, want 2", localOnly.LocalFirstCount())
+	}
+
+	// Both rows still need a fix hint rendered — not failing the run is not
+	// the same as saying nothing.
+	for _, res := range []FleetResult{
+		{Verdict: VerdictDeliveryBroken}, {Verdict: VerdictLocalFirst},
+	} {
+		if !res.NeedsAction() {
+			t.Errorf("verdict %v must still be reported as needing action", res.Verdict)
+		}
+	}
+	if (FleetResult{Verdict: VerdictLocalFirst}).DeliveryFailed() {
+		t.Error("fix-locally-first is not a delivery failure")
+	}
+	if (FleetResult{Verdict: VerdictInconclusive}).NeedsAction() {
+		t.Error("inconclusive follows the skip rule")
 	}
 }
 
@@ -469,7 +518,6 @@ func TestRemoteProbes_CoverageIsStatedHonestly(t *testing.T) {
 	want := []string{
 		"GITHUB_TOKEN",
 		"CL_BRAIN_API_TOKEN", "CL_TODO_API_TOKEN", "CL_SKILLS_API_TOKEN", "CL_AGENTS_API_TOKEN",
-		"CL_API_KEY",
 		"AWS credentials", "Azure credentials",
 	}
 	got := map[string]bool{}
@@ -497,6 +545,10 @@ func TestRemoteProbes_CoverageIsStatedHonestly(t *testing.T) {
 	// delivered" for every profile and say nothing about delivery.
 	if !strings.Contains(FleetCoverageNote, "gcloud is excluded") {
 		t.Error("the coverage note must state the gcloud exclusion")
+	}
+	if !strings.Contains(FleetCoverageNote, "CL_API_KEY is") ||
+		!strings.Contains(FleetCoverageNote, "excluded") {
+		t.Errorf("the coverage note must state the CL_API_KEY exclusion: %q", FleetCoverageNote)
 	}
 	for _, pr := range probes {
 		if strings.Contains(strings.ToLower(pr.credential), "gcloud") {
@@ -686,7 +738,9 @@ func TestRunFleetChecks_ShortCircuitIsPerCredential(t *testing.T) {
 		NewCheck("github token", CatGitHub, func(_ *Profile) Result {
 			return fail("GitHub rejected GITHUB_TOKEN", "regenerate the PAT")
 		}),
-		NewCheck("router", CatRouter, func(_ *Profile) Result { return ok("router reachable") }),
+		NewCheck("brain token (memory)", CatBrain, func(_ *Profile) Result {
+			return ok("memory vault reachable")
+		}),
 	}
 	fake := &fakeFleet{runners: remoteRunners(), execRes: execOutput(probeOK)}
 	report := RunFleetChecks(fleetProfile(t), fake, "m3-64", checks)
@@ -696,9 +750,9 @@ func TestRunFleetChecks_ShortCircuitIsPerCredential(t *testing.T) {
 		t.Errorf("GITHUB_TOKEN = %v/%v, want fix-locally-first/not-run", gh.Verdict, gh.Fleet)
 	}
 
-	router := resultFor(t, report, RouterAPITokenKey)
-	if router.Verdict != VerdictPass {
-		t.Errorf("%s verdict = %v, want pass (detail: %s)", RouterAPITokenKey, router.Verdict, router.Detail)
+	brain := resultFor(t, report, "CL_BRAIN_API_TOKEN")
+	if brain.Verdict != VerdictPass {
+		t.Errorf("CL_BRAIN_API_TOKEN verdict = %v, want pass (detail: %s)", brain.Verdict, brain.Detail)
 	}
 
 	// One passing oracle still means exactly one session, and only its probe.
@@ -750,7 +804,6 @@ func TestRunFleetChecks_NoProbeCarriesASecretValue(t *testing.T) {
 func TestStatusProbes_ShapeAndSecrecy(t *testing.T) {
 	envKeyed := []string{
 		"CL_BRAIN_API_TOKEN", "CL_TODO_API_TOKEN", "CL_SKILLS_API_TOKEN", "CL_AGENTS_API_TOKEN",
-		RouterAPITokenKey,
 	}
 	byCredential := map[string]remoteProbe{}
 	for _, pr := range remoteProbes() {
@@ -793,9 +846,6 @@ func TestStatusProbes_ShapeAndSecrecy(t *testing.T) {
 	}
 	if !strings.Contains(brain, "pbrainctl client recall --limit 1 doctor") {
 		t.Error("brain probe must run the same recall the local oracle does")
-	}
-	if !strings.Contains(byCredential[RouterAPITokenKey].buildProbe(), "prouterctl status") {
-		t.Error("router probe must run prouterctl status")
 	}
 }
 
@@ -954,6 +1004,72 @@ func TestDeliveryFix_DistinguishesNotDeliveredFromRejected(t *testing.T) {
 			}
 		})
 	}
+}
+
+// CL_API_KEY is the OPERATOR hub key. A session container deliberately does
+// NOT get it — it authenticates to the hub with a hub-issued, session-scoped
+// BRAINBOX_TOKEN — so probing it reported "delivery-broken" for a credential
+// whose absence is correct by design. It must not be in the registry at all.
+func TestRemoteProbes_ExcludesOperatorHubKey(t *testing.T) {
+	for _, pr := range remoteProbes() {
+		if pr.credential == RouterAPITokenKey {
+			t.Fatalf("%s must not be probed remotely: its absence in a session is by design",
+				RouterAPITokenKey)
+		}
+	}
+	if strings.Contains(FleetCoverageNote, "CL_API_KEY (router)") {
+		t.Error("the coverage note must no longer claim CL_API_KEY is probed")
+	}
+}
+
+// The brain vault tokens are provisioned and forwarded by phantom-router's
+// brain binding, NOT curated in the profile's gateway env store (which holds a
+// couple of keys and never held these). The hint must name the real place.
+func TestBrainDeliveryFix_PointsAtTheBrainBinding(t *testing.T) {
+	for _, v := range brainVaults {
+		t.Run(v.tokenKey, func(t *testing.T) {
+			for _, reason := range []FleetStatus{FleetUnset, FleetRejected} {
+				fix := brainDeliveryFix(v.tokenKey, v.label)(reason)
+				if strings.Contains(fix, "gateway env store") &&
+					!strings.Contains(fix, "not the gateway env store") {
+					t.Errorf("%s hint must not send the operator to the gateway env store: %q", reason, fix)
+				}
+				if !strings.Contains(fix, "brain binding") || !strings.Contains(fix, "phantom-router") {
+					t.Errorf("%s hint must name the brain binding (phantom-router): %q", reason, fix)
+				}
+				if !strings.Contains(fix, v.label) {
+					t.Errorf("%s hint must name the %s vault: %q", reason, v.label, fix)
+				}
+			}
+		})
+	}
+
+	// And the registry actually uses it — the defect was a correct helper
+	// wired to the wrong rows.
+	for _, pr := range remoteProbes() {
+		if pr.credential == "CL_AGENTS_API_TOKEN" {
+			if fix := pr.deliveryFix(FleetUnset); !strings.Contains(fix, "brain binding") {
+				t.Errorf("the registry row must use the brain-binding hint, got %q", fix)
+			}
+		}
+	}
+}
+
+// GITHUB_TOKEN is the one credential the gateway env store really does
+// deliver, so its hint keeps pointing there.
+func TestGitHubDeliveryFix_KeepsTheGatewayStoreHint(t *testing.T) {
+	for _, pr := range remoteProbes() {
+		if pr.credential != "GITHUB_TOKEN" {
+			continue
+		}
+		for _, reason := range []FleetStatus{FleetUnset, FleetRejected} {
+			if fix := pr.deliveryFix(reason); !strings.Contains(fix, "gateway env store") {
+				t.Errorf("%s hint must still name the gateway env store: %q", reason, fix)
+			}
+		}
+		return
+	}
+	t.Fatal("GITHUB_TOKEN is missing from the probe registry")
 }
 
 // Cloud credentials are FILES locally and the broker delivers ENV VARS, so

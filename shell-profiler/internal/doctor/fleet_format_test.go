@@ -52,6 +52,54 @@ func TestFormatFleetText_ShowsBothSidesAndTheFix(t *testing.T) {
 	}
 }
 
+// A local-credential fault gets its own summary line. Folding it into the
+// delivery count told the operator that delivery was broken when the probe
+// never ran — the live-run defect this separation fixes.
+func TestFormatFleetText_CountsLocalFirstSeparately(t *testing.T) {
+	r := sampleFleetReport()
+	r.Results = append(r.Results,
+		FleetResult{
+			Credential: "AWS credentials", Local: StatusFail, Fleet: FleetNotRun,
+			Verdict: VerdictLocalFirst, Detail: "fix locally first", Fix: "refresh the SSO session",
+		},
+		FleetResult{
+			Credential: "Azure credentials", Local: StatusFail, Fleet: FleetNotRun,
+			Verdict: VerdictLocalFirst, Detail: "fix locally first", Fix: "run az login",
+		},
+	)
+
+	var buf bytes.Buffer
+	FormatFleetText(&buf, r, false)
+	out := buf.String()
+
+	if !strings.Contains(out, "1 credential(s) failed the delivery check") {
+		t.Errorf("only the delivery-broken row counts as a delivery failure\n%s", out)
+	}
+	if !strings.Contains(out, "2 credential(s) need a local fix first") {
+		t.Errorf("local-first rows need their own count\n%s", out)
+	}
+	// Not failing the run is not the same as saying nothing: both still
+	// render their fix hint.
+	for _, want := range []string{"refresh the SSO session", "run az login"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("local-first rows must still show their fix %q\n%s", want, out)
+		}
+	}
+
+	// With no delivery failure left, delivery reads as verified and the local
+	// note still appears.
+	r.Results = r.Results[1:]
+	buf.Reset()
+	FormatFleetText(&buf, r, false)
+	out = buf.String()
+	if !strings.Contains(out, "Credential delivery verified") {
+		t.Errorf("no delivery-broken row means delivery is verified\n%s", out)
+	}
+	if !strings.Contains(out, "2 credential(s) need a local fix first") {
+		t.Errorf("the local note must survive a clean delivery run\n%s", out)
+	}
+}
+
 func TestFormatFleetText_PassingRun(t *testing.T) {
 	r := sampleFleetReport()
 	r.Results[0].Fleet = FleetAccepted

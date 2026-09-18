@@ -154,10 +154,22 @@ type FleetResult struct {
 	Fix string `json:"fix,omitempty"`
 }
 
-// Failed reports whether this row is something the user must act on. Only a
-// broken delivery and a broken local credential qualify; an inconclusive probe
-// follows the same rule as a skipped check and never fails a run.
-func (r FleetResult) Failed() bool {
+// DeliveryFailed reports whether this row is a DELIVERY failure — the one
+// finding this mode exists for, and the only one that fails a run.
+//
+// A local-credential problem is deliberately excluded: an expired AWS session
+// here says nothing about whether the broker delivers credentials into a
+// container, and counting it as a delivery failure made `--fleet` exit
+// non-zero for a fault it never measured.
+func (r FleetResult) DeliveryFailed() bool {
+	return r.Verdict == VerdictDeliveryBroken
+}
+
+// NeedsAction reports whether this row is something the user must act on — a
+// broken delivery, or a local credential that must be fixed before delivery
+// can even be tested. Both carry a fix hint; only the former fails the run.
+// An inconclusive probe follows the same rule as a skipped check: neither.
+func (r FleetResult) NeedsAction() bool {
 	return r.Verdict == VerdictDeliveryBroken || r.Verdict == VerdictLocalFirst
 }
 
@@ -169,14 +181,27 @@ type FleetReport struct {
 	Results []FleetResult `json:"results"`
 }
 
-// Failed reports whether any row needs action.
-func (r FleetReport) Failed() bool { return r.FailCount() > 0 }
+// Failed reports whether the run found a broken delivery. Only that fails a
+// run: a local-first row is reported and hinted, but it names a local fault
+// the remote probe never got to measure.
+func (r FleetReport) Failed() bool { return r.DeliveryFailCount() > 0 }
 
-// FailCount totals the rows needing action.
-func (r FleetReport) FailCount() int {
+// DeliveryFailCount totals the rows whose delivery is broken.
+func (r FleetReport) DeliveryFailCount() int {
+	return r.count(FleetResult.DeliveryFailed)
+}
+
+// LocalFirstCount totals the rows whose local credential must be fixed before
+// delivery can be tested. Counted separately so the summary never conflates a
+// local fault with a delivery fault.
+func (r FleetReport) LocalFirstCount() int {
+	return r.count(func(res FleetResult) bool { return res.Verdict == VerdictLocalFirst })
+}
+
+func (r FleetReport) count(pred func(FleetResult) bool) int {
 	n := 0
 	for _, res := range r.Results {
-		if res.Failed() {
+		if pred(res) {
 			n++
 		}
 	}
@@ -330,13 +355,6 @@ func brainVaultProbe(tokenKey string) string {
 		"env CL_BRAIN_API_TOKEN=\"${"+tokenKey+"}\" pbrainctl client recall --limit 1 doctor")
 }
 
-// routerProbe renders the in-container probe for CL_API_KEY. prouterctl reads
-// CL_ROUTER_API and CL_API_KEY from the environment, so a working prouterctl
-// in the container is a delivered router credential.
-func routerProbe() string {
-	return statusProbe(RouterAPITokenKey, "prouterctl status")
-}
-
 // classifyStatusProbe turns statusProbe output into a fleet status.
 //
 // FAIL is reported as a rejection rather than as inconclusive: these tools
@@ -446,16 +464,23 @@ type remoteProbe struct {
 	deliveryFix func(reason FleetStatus) string
 }
 
-// envDeliveryFix is the repair hint for a credential the broker delivers as an
-// env var: either it was never curated, or the curated copy has gone stale.
-func envDeliveryFix(credential string) func(FleetStatus) string {
+// brainDeliveryFix is the repair hint for a brain vault token.
+//
+// These tokens are NOT sourced from the profile's gateway env store: they are
+// provisioned by phantom-router's brain binding and forwarded into the session
+// from there. Pointing the operator at the env store sent them looking in a
+// store that holds a couple of keys and never held this one.
+func brainDeliveryFix(tokenKey, label string) func(FleetStatus) string {
 	return func(reason FleetStatus) string {
+		base := tokenKey + " is provisioned and delivered by this profile's brain binding " +
+			"(phantom-router), not the gateway env store — "
 		if reason == FleetUnset {
-			return "add " + credential + " to the profile's gateway env store, then re-run"
+			return base + "ensure the profile's " + label +
+				" vault binding is provisioned and forwarded to sessions, then re-run"
 		}
-		return "the delivered " + credential + " is stale or wrong — re-curate it in the " +
-			"profile's gateway env store (and check the matching endpoint URL is reachable " +
-			"from a container), then re-run"
+		return base + "the delivered value is stale or wrong: re-provision the profile's " +
+			label + " vault binding (and check the delivered CL_BRAIN_API is reachable from " +
+			"a container), then re-run"
 	}
 }
 
@@ -508,20 +533,11 @@ func remoteProbes() []remoteProbe {
 			classify: func(res FleetExecResult) (FleetStatus, string) {
 				return classifyStatusProbe(res, v.tokenKey, "brain daemon ("+v.label+" vault)")
 			},
-			deliveryFix: envDeliveryFix(v.tokenKey),
+			deliveryFix: brainDeliveryFix(v.tokenKey, v.label),
 		})
 	}
 
 	return append(probes,
-		remoteProbe{
-			credential: RouterAPITokenKey,
-			localCheck: "router",
-			buildProbe: routerProbe,
-			classify: func(res FleetExecResult) (FleetStatus, string) {
-				return classifyStatusProbe(res, RouterAPITokenKey, "router")
-			},
-			deliveryFix: envDeliveryFix(RouterAPITokenKey),
-		},
 		remoteProbe{
 			credential: "AWS credentials",
 			localCheck: "aws",
@@ -548,8 +564,10 @@ func remoteProbes() []remoteProbe {
 // letting it read as full coverage would be the more dangerous outcome.
 const FleetCoverageNote = "probed remotely: GITHUB_TOKEN, the brain vault tokens " +
 	"(CL_BRAIN_API_TOKEN, CL_TODO_API_TOKEN, CL_SKILLS_API_TOKEN, CL_AGENTS_API_TOKEN), " +
-	"CL_API_KEY (router), AWS and Azure — gcloud is excluded (not in the container image), " +
-	"and any other credential is not covered by this report"
+	"AWS and Azure — gcloud is excluded (not in the container image) and CL_API_KEY is " +
+	"excluded (it is the OPERATOR hub key; sessions authenticate with a hub-issued, " +
+	"session-scoped BRAINBOX_TOKEN instead), and any other credential is not covered " +
+	"by this report"
 
 // RunFleetChecks runs the credential-delivery differential for a profile.
 //
