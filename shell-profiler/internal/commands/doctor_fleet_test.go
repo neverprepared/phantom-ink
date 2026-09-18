@@ -145,7 +145,13 @@ func TestRunDoctorFleet_JSON(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 	}
-	if len(decoded.Results) != 1 || decoded.Results[0].Verdict != string(doctor.VerdictPass) {
+	// The narrowed catalog carries the GITHUB_TOKEN oracle only, so that is
+	// the row with a delivery verdict; the rest report no baseline.
+	if len(decoded.Results) == 0 {
+		t.Fatalf("JSON output carries no results: %+v", decoded)
+	}
+	if decoded.Results[0].Credential != "GITHUB_TOKEN" ||
+		decoded.Results[0].Verdict != string(doctor.VerdictPass) {
 		t.Errorf("unexpected JSON payload: %+v", decoded)
 	}
 	if decoded.Coverage == "" {

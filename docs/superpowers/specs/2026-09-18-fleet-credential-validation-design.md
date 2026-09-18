@@ -1,7 +1,10 @@
 # Fleet Credential Validation — `doctor --fleet` (Design Spec)
 
 **Date:** 2026-09-18
-**Status:** Implemented (v1). Scope below is the shipped surface.
+**Status:** Implemented (v2). Scope below is the shipped surface.
+**Revised:** 2026-09-18 — v2 extends coverage from `GITHUB_TOKEN` alone to the
+brain vault tokens, the router key, and the AWS/Azure CLIs, batched into one
+ephemeral session. gcloud is deferred.
 **Surface:** `shell-profiler doctor <profile> --fleet [--runner <name>] [--json]`
 
 ## 1. Motivation
@@ -62,6 +65,11 @@ This ordering is load-bearing in both directions:
 | `ok` | 000 / 403 / 5xx / exec error | `inconclusive` | no verdict; not a finding |
 | `fail` | *(not run)* | `fix-locally-first` | the credential itself is broken |
 | `skip` | *(not run)* | `inconclusive` | no baseline could be established |
+
+The matrix is written with the GitHub probe's HTTP codes; the CLI-backed
+probes map onto the same rows via their markers — `SPFLEET:OK` where `200` sits,
+`SPFLEET:FAIL` where `401` sits, `SPFLEET:UNSET` unchanged, and no recognisable
+marker where `000` sits.
 
 `delivery-broken` and `fix-locally-first` exit non-zero. `inconclusive` never
 does — the same rule a skipped check follows: an offline node is not the user's
@@ -137,6 +145,16 @@ The shipped probe avoids that on both halves:
 
 See `githubTokenProbe` in `internal/doctor/fleet.go` for the exact command.
 
+The CLI-backed probes (`statusProbe`, `cloudProbe`) hold the same line by a
+different route: the tool reads its credential from the environment the broker
+delivered, so the shell only ever expands the value into a `[ -z ]` test or an
+`env KEY="${KEY}"` assignment — never an argv. Tool output is discarded
+wholesale (`>/dev/null 2>&1`), because a tool's stdout can echo the very token
+it was handed and only the marker is ever needed. Every probe is bounded by
+`timeout 20`, so a container that cannot reach a service produces an
+inconclusive verdict promptly rather than holding the ephemeral session — and
+with it a live copy of the credentials — open.
+
 On the local side: the exec command string is built from the env var name and
 never carries a literal value; every `Detail` and `Fix` passes through
 `Profile.Redact` (matching `RunChecks`), so even a container that echoed the
@@ -158,13 +176,98 @@ comparison is the entire point.
 
 ## 5. Scope
 
-**In (v1): `GITHUB_TOKEN` only.**
+**In (v2): eight credentials, one session.**
 
-`remoteProbes()` is a catalog of `{credential, localCheck, buildProbe, classify,
-deliveryFix}`. Adding AWS or Azure is a new entry, not a new code path — but v1
-ships one entry and says so. `FleetCoverageNote` is rendered with **every**
-report, text and JSON, because a clean run proves one credential is delivered
-and letting that read as full coverage would be the more dangerous outcome.
+| credential | local oracle | in-container probe |
+|---|---|---|
+| `GITHUB_TOKEN` | `github token` | `printf \| curl -H @-` against `/rate_limit` |
+| `CL_BRAIN_API_TOKEN` (memory vault) | `brain token (memory)` | `pbrainctl client recall --limit 1 doctor` |
+| `CL_TODO_API_TOKEN` | `brain token (todo)` | same, token aliased into `CL_BRAIN_API_TOKEN` |
+| `CL_SKILLS_API_TOKEN` | `brain token (skills)` | same |
+| `CL_AGENTS_API_TOKEN` | `brain token (agents)` | same |
+| `CL_API_KEY` (router) | `router` | `prouterctl status` |
+| AWS credentials | `aws` | `aws sts get-caller-identity` |
+| Azure credentials | `azure` | `az account show` |
+
+`remoteProbes()` remains a catalog of `{credential, localCheck, buildProbe,
+classify, deliveryFix}`; the brain entries are generated from the same
+`brainVaults` table the local checks use, so a vault added there cannot be
+silently missed here. `FleetCoverageNote` is rendered with **every** report,
+text and JSON, and now names exactly what was probed *and* what was not.
+
+### The brain probes also test ENDPOINT delivery
+
+`pbrainctl` resolves both `CL_BRAIN_API` and the vault token from the
+environment. The local oracle injects the vault's token as
+`CL_BRAIN_API_TOKEN` whichever vault it came from, and the probe aliases it the
+same way — a probe reading a different key than the oracle would make the two
+sides non-comparable, and the comparison is the point.
+
+The consequence is deliberate: a `CL_BRAIN_API` pointing at a loopback address
+that is alive on the workstation and dead inside a container passes locally and
+fails remotely. That is a delivery fault, and it is exactly the class of bug
+this mode exists to surface. The rejected detail names both possibilities —
+refused credential *or* unreachable endpoint — so the fix is not mistaken for
+"rotate the token".
+
+### One session for all probes
+
+v1 created an ephemeral session per credential. With eight credentials that
+would pay the provisioning cost — up to a five-minute create timeout — once per
+row, for a container that is **identical every time**: it is the *profile* that
+decides what is delivered into it, not the credential being tested. The run is
+therefore staged:
+
+1. Run **every** local oracle first. Credentials that do not pass are recorded
+   (`fix-locally-first` / `inconclusive`) and are not probed.
+2. If at least one passed, create **one** ephemeral session on the target
+   runner for the profile.
+3. Run each surviving credential's probe via `Exec` in **that** session. A
+   failing exec does not abort the batch — one probe tripping over a missing
+   tool must not erase the answer for the others.
+4. Tear the session down **once**, via `defer`, on every path including a
+   create that failed after provisioning started.
+
+Zero survivors means no session is created at all.
+
+### Not delivered vs. rejected — a distinction the report must keep
+
+The two failure modes both exit non-zero, but they send the operator to
+different places, so they are never collapsed:
+
+| verdict detail | meaning | fix hint |
+|---|---|---|
+| **not delivered** (`FleetUnset`) | nothing reached the container | curate the value into the gateway env store |
+| **rejected** (`FleetRejected`) | it arrived and was refused | the delivered value is stale/wrong — re-curate it |
+
+For the env-delivered credentials the unset case is carved out **before** any
+work is done, with `[ -z "${KEY}" ]` reporting `SPFLEET:UNSET`. Without it an
+absent credential degrades into a generic tool failure and reads as a
+rejection, pointing the operator at rotating a token when nothing was ever
+curated.
+
+The cloud CLIs have no single env key to test, so their probe captures the
+CLI's own failure text and matches it against the phrases each tool uses for
+"there are no credentials here at all" — `Unable to locate credentials` for
+AWS, `az login` for Azure. The text is **matched, never reported**: it is
+untrusted container output and a CLI error can quote the argument that upset
+it. A missing CLI (`command not found`) is matched separately and yields
+`inconclusive`, because a tool that was never run is not a credential verdict.
+
+**A not-delivered verdict for AWS/Azure is a legitimate finding, not a broken
+probe.** Cloud credentials are local **files** (`~/.aws`, `~/.azure`) while the
+broker delivers **env vars**, so nothing is currently wired to ship them to
+fleet containers at all. The fix hint says exactly that and asks for a
+decision, rather than naming a store entry that was never meant to exist.
+
+### gcloud — deferred, and stated
+
+`gcloud` is **not** in the `docker/brainbox` container image. A probe would
+report "not delivered" for every profile and say nothing about delivery.
+Covering it needs a Dockerfile change plus a rebuild and redistribution of
+`brainbox:latest` to every runner — a separate prereq — so no gcloud probe is
+registered, and `FleetCoverageNote` states the exclusion so a clean run is not
+misread as covering GCP.
 
 **Out (deliberately):** `--all` (the local oracle reads the loaded environment,
 which belongs to one profile — see below); parallel probes across runners;
@@ -187,7 +290,22 @@ real fleet.** Every remote outcome is a canned reply on a fake, covering:
   `{200, 401, unset, 000, 403, exec-error}`);
 - teardown fires on every path, including exec error, garbage output, and a
   failed create, and deletes the session that was created;
-- the short-circuit creates and execs nothing when the oracle is not `ok`;
+- the short-circuit creates and execs nothing when NO oracle is `ok`, and is
+  applied **per credential** — one broken local credential must not suppress
+  the delivery verdict for the ones that are fine;
+- the batching contract: N locally-passing credentials produce exactly ONE
+  `CreateSession` and ONE `DeleteSession`, every probe runs in that session,
+  and teardown still fires on an exec error, garbage output, and a failed
+  create;
+- `classifyStatusProbe` over `{OK, UNSET, FAIL}` plus banners, missing markers
+  and non-zero exits; `classifyCloudProbe` over the AWS/Azure not-delivered
+  phrases, a refused-credential error, and a missing CLI;
+- every `deliveryFix` distinguishes not-delivered from rejected, and the cloud
+  hints name the `~/.aws` / `~/.azure` file-vs-env-var gap;
+- every `localCheck` names a check that actually exists in `DefaultChecks()` —
+  a renamed check would otherwise silently drop a credential to "no baseline";
+- no probe command carries a credential VALUE, asserted against a profile
+  holding a distinctive secret for all six env-delivered keys;
 - the probe references the `GITHUB_TOKEN` env var, carries no literal token, and
   has the `printf | curl -H @-` shape — asserted on the builder *and* on the
   command string that actually reaches `Exec`;
