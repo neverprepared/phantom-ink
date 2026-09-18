@@ -426,9 +426,14 @@ func (a *App) handleStatus(_args []string) error {
 
 func (a *App) handleDoctor(args []string) error {
 	opts := commands.DoctorOptions{}
+	// --fleet switches to the credential-delivery differential, which takes a
+	// different option set; --runner is meaningful only there.
+	fleet := false
+	runner := ""
 
 	// Parse arguments
-	for _, arg := range args {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		switch arg {
 		case "-h", "--help":
 			a.showDoctorHelp()
@@ -437,11 +442,38 @@ func (a *App) handleDoctor(args []string) error {
 			opts.All = true
 		case "--json":
 			opts.JSON = true
+		case "--fleet":
+			fleet = true
+		case "--runner":
+			// Consume the value so it is never mistaken for a profile name.
+			if i+1 >= len(args) {
+				return fmt.Errorf("--runner needs a runner name — see `prouterctl runners`")
+			}
+			i++
+			runner = args[i]
 		default:
+			if name, found := strings.CutPrefix(arg, "--runner="); found {
+				runner = name
+				continue
+			}
 			if opts.Profile == "" && !strings.HasPrefix(arg, "-") {
 				opts.Profile = arg
 			}
 		}
+	}
+
+	if fleet {
+		if opts.All {
+			return fmt.Errorf("doctor --fleet cannot be combined with --all — it only works for the current profile")
+		}
+		return commands.RunDoctorFleet(a.profilesDir, commands.FleetOptions{
+			Profile: opts.Profile,
+			Runner:  runner,
+			JSON:    opts.JSON,
+		})
+	}
+	if runner != "" {
+		return fmt.Errorf("--runner is only meaningful with --fleet")
 	}
 
 	return commands.RunDoctor(a.profilesDir, opts)
@@ -458,6 +490,10 @@ Arguments:
 
 Options:
     --all, -a                   Check every profile
+    --fleet                     Check that the CURRENT profile's credentials
+                                reach a fleet node intact (see below)
+    --runner <name>             Fleet node to probe on (--fleet only; default:
+                                least-loaded remote runner)
     --json                      Emit machine-readable JSON
     --help, -h                  Show this help message
 
@@ -470,6 +506,17 @@ Checks:
     router      router reachability and API key validity
     cloud       aws / azure / gcloud, only when the profile has the directory
 
+Fleet credential delivery (--fleet):
+    A normal check proves a credential works HERE. Agents run in containers on
+    fleet nodes, where the credential comes from the broker's env store — a
+    separate copy that drifts. --fleet diffs the two: it runs the local check
+    as an oracle, then exercises the SAME credential inside an ephemeral
+    session on a remote runner and compares. A remote failure under a passing
+    local check means delivery is broken, not the credential.
+
+    Only the current profile can be checked, and only GITHUB_TOKEN is probed
+    remotely in v1. The ephemeral session is always torn down.
+
 Exit code:
     Non-zero when any check FAILS. Skipped checks — an offline daemon, a tool
     that is not installed — never fail a run: they are not yours to fix.
@@ -478,7 +525,9 @@ Examples:
     shell-profiler doctor
     shell-profiler doctor my-project
     shell-profiler doctor --all
-    shell-profiler doctor --all --json`)
+    shell-profiler doctor --all --json
+    shell-profiler doctor --fleet
+    shell-profiler doctor --fleet --runner m3-64 --json`)
 }
 
 func (a *App) handleDotfiles(args []string) error {
