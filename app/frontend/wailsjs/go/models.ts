@@ -2370,6 +2370,40 @@ export namespace brainbox {
 
 export namespace githubclient {
 	
+	export class Branch {
+	    name: string;
+	    sha: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Branch(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.sha = source["sha"];
+	    }
+	}
+	export class Commit {
+	    sha: string;
+	    message: string;
+	    author: string;
+	    date: string;
+	    html_url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Commit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sha = source["sha"];
+	        this.message = source["message"];
+	        this.author = source["author"];
+	        this.date = source["date"];
+	        this.html_url = source["html_url"];
+	    }
+	}
 	export class Issue {
 	    repo_full_name: string;
 	    number: number;
@@ -3485,6 +3519,68 @@ export namespace main {
 	        this.last_digest = source["last_digest"];
 	        this.env_key = source["env_key"];
 	    }
+	}
+	export class RepoDetailResult {
+	    profile: string;
+	    owner: string;
+	    repo: string;
+	    default_branch: string;
+	    token_missing: boolean;
+	    token_invalid: boolean;
+	    branches: githubclient.Branch[];
+	    commits: githubclient.Commit[];
+	    prs: githubclient.Issue[];
+	    issues: githubclient.Issue[];
+	    readme: string;
+	    readme_url: string;
+	    branches_error: string;
+	    commits_error: string;
+	    readme_error: string;
+	    prs_error: string;
+	    issues_error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RepoDetailResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.owner = source["owner"];
+	        this.repo = source["repo"];
+	        this.default_branch = source["default_branch"];
+	        this.token_missing = source["token_missing"];
+	        this.token_invalid = source["token_invalid"];
+	        this.branches = this.convertValues(source["branches"], githubclient.Branch);
+	        this.commits = this.convertValues(source["commits"], githubclient.Commit);
+	        this.prs = this.convertValues(source["prs"], githubclient.Issue);
+	        this.issues = this.convertValues(source["issues"], githubclient.Issue);
+	        this.readme = source["readme"];
+	        this.readme_url = source["readme_url"];
+	        this.branches_error = source["branches_error"];
+	        this.commits_error = source["commits_error"];
+	        this.readme_error = source["readme_error"];
+	        this.prs_error = source["prs_error"];
+	        this.issues_error = source["issues_error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class SecretKeyStatus {
 	    key: string;

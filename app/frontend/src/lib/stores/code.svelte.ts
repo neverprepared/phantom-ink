@@ -65,6 +65,42 @@ export interface CodeOverview {
   notifications_error: string;
 }
 
+export interface Branch {
+  name: string;
+  sha: string;
+}
+
+export interface Commit {
+  sha: string;
+  /** The FULL commit message; the panel renders only its first line. */
+  message: string;
+  author: string;
+  date: string;
+  html_url: string;
+}
+
+/** One repository's detail view — the backend's RepoDetailResult. */
+export interface RepoDetail {
+  profile: string;
+  owner: string;
+  repo: string;
+  default_branch: string;
+  token_missing: boolean;
+  token_invalid: boolean;
+  branches: Branch[];
+  commits: Commit[];
+  prs: Issue[];
+  issues: Issue[];
+  /** RAW markdown. Sanitizing happens at render — see MarkdownRenderer. */
+  readme: string;
+  readme_url: string;
+  branches_error: string;
+  commits_error: string;
+  readme_error: string;
+  prs_error: string;
+  issues_error: string;
+}
+
 /** What a dispatch is about — drives which prompt templates are offered. */
 export type DispatchKind = 'repo' | 'pr' | 'issue';
 
@@ -204,6 +240,32 @@ class CodeStore {
   /** Client-side filter over the repositories list. */
   repoFilter = $state('');
 
+  // ── Repo detail ──────────────────────────────────────────────────────────
+  //
+  // Held ALONGSIDE the overview, never instead of it: `closeDetail` clears only
+  // these fields, so going back is instant rather than a second round-trip to
+  // GitHub for a list the operator was looking at a moment ago.
+
+  /** The repo the detail view is open on. Null means "show the overview". */
+  detailRepo = $state<Repo | null>(null);
+  detailLoading = $state(false);
+  /** Set only when the RepoDetail call itself failed (no sections at all). */
+  detailError = $state<string | null>(null);
+
+  repoBranches = $state<Branch[]>([]);
+  repoCommits = $state<Commit[]>([]);
+  repoPRs = $state<Issue[]>([]);
+  repoIssues = $state<Issue[]>([]);
+  /** Raw markdown — MarkdownRenderer sanitizes before it reaches the DOM. */
+  readme = $state('');
+  readmeURL = $state('');
+
+  branchesError = $state('');
+  commitsError = $state('');
+  readmeError = $state('');
+  prsError = $state('');
+  repoIssuesError = $state('');
+
   // ── Dispatch modal ───────────────────────────────────────────────────────
   dispatchTarget = $state<DispatchTarget | null>(null);
   dispatchPrompt = $state('');
@@ -300,6 +362,9 @@ class CodeStore {
   }
 
   reset(): void {
+    // A profile switch closes the detail view: leaving another account's
+    // repo open under a new profile's name would be a leak, not a glitch.
+    this.closeDetail();
     this.repos = [];
     this.pullRequests = [];
     this.issues = [];
@@ -316,6 +381,84 @@ class CodeStore {
     this.lastSessionURL = '';
     this.lastClonePath = '';
     this.cloneError = '';
+  }
+
+  // ── Repo detail ──────────────────────────────────────────────────────────
+
+  /**
+   * Open the detail view on one repo and fill it.
+   *
+   * `detailRepo` is set BEFORE the await so the view swaps immediately and
+   * renders its per-section skeletons, rather than leaving the operator on the
+   * overview wondering whether the click landed.
+   */
+  async openDetail(profile: string, repo: Repo): Promise<void> {
+    if (!profile || !repo) return;
+    this.detailRepo = repo;
+    this.detailError = null;
+    this.clearDetailSections();
+    const a = await getApi();
+    if (!a) {
+      this.detailError = 'API bindings unavailable';
+      return;
+    }
+    this.detailLoading = true;
+    try {
+      const d = (await (a as any).RepoDetail(
+        profile,
+        repo.owner,
+        repo.name,
+        repo.default_branch
+      )) as RepoDetail;
+      // A response for a repo (or profile) the operator has since navigated
+      // away from is stale — dropping it keeps the header honest, the same
+      // rule the overview applies on a profile switch.
+      if (d.profile && d.profile !== profile) return;
+      if (this.detailRepo?.full_name !== repo.full_name) return;
+      this.applyDetail(d);
+    } catch (e) {
+      this.detailError = String(e);
+    } finally {
+      this.detailLoading = false;
+    }
+  }
+
+  /** Back to the overview. Deliberately leaves the overview lists alone. */
+  closeDetail(): void {
+    this.detailRepo = null;
+    this.detailLoading = false;
+    this.detailError = null;
+    this.clearDetailSections();
+  }
+
+  private applyDetail(d: RepoDetail): void {
+    this.tokenMissing = d.token_missing;
+    this.tokenInvalid = d.token_invalid;
+    this.repoBranches = d.branches ?? [];
+    this.repoCommits = d.commits ?? [];
+    this.repoPRs = d.prs ?? [];
+    this.repoIssues = d.issues ?? [];
+    this.readme = d.readme ?? '';
+    this.readmeURL = d.readme_url ?? '';
+    this.branchesError = d.branches_error ?? '';
+    this.commitsError = d.commits_error ?? '';
+    this.readmeError = d.readme_error ?? '';
+    this.prsError = d.prs_error ?? '';
+    this.repoIssuesError = d.issues_error ?? '';
+  }
+
+  private clearDetailSections(): void {
+    this.repoBranches = [];
+    this.repoCommits = [];
+    this.repoPRs = [];
+    this.repoIssues = [];
+    this.readme = '';
+    this.readmeURL = '';
+    this.branchesError = '';
+    this.commitsError = '';
+    this.readmeError = '';
+    this.prsError = '';
+    this.repoIssuesError = '';
   }
 
   // ── Dispatch ─────────────────────────────────────────────────────────────

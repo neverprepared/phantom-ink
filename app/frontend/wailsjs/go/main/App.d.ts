@@ -358,6 +358,8 @@ export function RemoveConversationParticipant(arg1:string,arg2:string,arg3:strin
 
 export function RenameArtifactObject(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function RepoDetail(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.RepoDetailResult>;
+
 export function RescanAgents():Promise<Array<main.DetectedAgent>>;
 
 export function RescheduleOneShot(arg1:string,arg2:number):Promise<main.CollectJob>;

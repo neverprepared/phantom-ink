@@ -11,6 +11,7 @@ package githubclient
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -331,4 +332,161 @@ func subjectBrowserURL(subjectURL, repoFullName string) string {
 	default:
 		return repoPage
 	}
+}
+
+// --- Repository detail ------------------------------------------------------
+//
+// The five reads behind the Code panel's single-repo view. Same shape as the
+// launchpad methods: token per call, small structs, no caching. Every one is a
+// plain GET — nothing here can mutate a repository.
+
+// Branch is one branch head.
+type Branch struct {
+	Name string `json:"name"`
+	SHA  string `json:"sha"`
+}
+
+type wireBranch struct {
+	Name   string `json:"name"`
+	Commit struct {
+		SHA string `json:"sha"`
+	} `json:"commit"`
+}
+
+// ListBranches returns up to 50 branches of one repository.
+func (c *Client) ListBranches(ctx context.Context, token, owner, repo string) ([]Branch, error) {
+	var wire []wireBranch
+	path := fmt.Sprintf("/repos/%s/%s/branches?per_page=50", url.PathEscape(owner), url.PathEscape(repo))
+	if err := c.get(ctx, token, path, &wire); err != nil {
+		return nil, err
+	}
+	out := make([]Branch, 0, len(wire))
+	for _, w := range wire {
+		out = append(out, Branch{Name: w.Name, SHA: w.Commit.SHA})
+	}
+	return out, nil
+}
+
+// Commit is one entry from a repository's commit log.
+//
+// Message is the FULL commit message; the panel renders only its first line.
+// Truncating here would throw away the body for every future caller to save a
+// few bytes on the wire.
+type Commit struct {
+	SHA     string `json:"sha"`
+	Message string `json:"message"`
+	// Author is the GitHub login when the commit is attributed to an account,
+	// falling back to the git author name when it isn't (an unlinked email, a
+	// bot, a rewritten history). One of the two is nearly always present.
+	Author  string `json:"author"`
+	Date    string `json:"date"`
+	HTMLURL string `json:"html_url"`
+}
+
+// wireCommit mirrors GitHub's two-level nesting: the ACCOUNT that authored the
+// commit sits at the top level (and is null for an unlinked email), while the
+// git trailer — name, date, message — lives under "commit".
+type wireCommit struct {
+	SHA     string `json:"sha"`
+	HTMLURL string `json:"html_url"`
+	Commit  struct {
+		Message string `json:"message"`
+		Author  struct {
+			Name string `json:"name"`
+			Date string `json:"date"`
+		} `json:"author"`
+	} `json:"commit"`
+	Author *struct {
+		Login string `json:"login"`
+	} `json:"author"`
+}
+
+// defaultCommitLimit is GitHub's own per_page default; used when the caller
+// passes a non-positive limit.
+const defaultCommitLimit = 30
+
+// maxCommitLimit is GitHub's per_page ceiling.
+const maxCommitLimit = 100
+
+// ListRecentCommits returns the most recent commits on the default branch.
+func (c *Client) ListRecentCommits(ctx context.Context, token, owner, repo string, limit int) ([]Commit, error) {
+	if limit <= 0 {
+		limit = defaultCommitLimit
+	}
+	if limit > maxCommitLimit {
+		limit = maxCommitLimit
+	}
+	var wire []wireCommit
+	path := fmt.Sprintf("/repos/%s/%s/commits?per_page=%d", url.PathEscape(owner), url.PathEscape(repo), limit)
+	if err := c.get(ctx, token, path, &wire); err != nil {
+		return nil, err
+	}
+	out := make([]Commit, 0, len(wire))
+	for _, w := range wire {
+		author := ""
+		if w.Author != nil {
+			author = w.Author.Login
+		}
+		if author == "" {
+			author = w.Commit.Author.Name
+		}
+		out = append(out, Commit{
+			SHA:     w.SHA,
+			Message: w.Commit.Message,
+			Author:  author,
+			Date:    w.Commit.Author.Date,
+			HTMLURL: w.HTMLURL,
+		})
+	}
+	return out, nil
+}
+
+// wireReadme is GitHub's contents payload for the README: the file body is
+// base64 with embedded newlines.
+type wireReadme struct {
+	Content  string `json:"content"`
+	Encoding string `json:"encoding"`
+	HTMLURL  string `json:"html_url"`
+}
+
+// GetReadme returns the repository's README as raw markdown plus a link to it
+// on github.com.
+//
+// A repository with NO README is a normal state, not a failure: GitHub answers
+// 404 and this returns empty markdown with a nil error, so the detail view
+// renders "No README" instead of a red error box in a perfectly healthy repo.
+func (c *Client) GetReadme(ctx context.Context, token, owner, repo string) (string, string, error) {
+	var wire wireReadme
+	path := fmt.Sprintf("/repos/%s/%s/readme", url.PathEscape(owner), url.PathEscape(repo))
+	if err := c.get(ctx, token, path, &wire); err != nil {
+		var se *StatusError
+		if errors.As(err, &se) && se.Code == http.StatusNotFound {
+			return "", "", nil
+		}
+		return "", "", err
+	}
+	// Only base64 is documented for this endpoint, but a future "none"
+	// encoding (GitHub uses it for over-size files) must not be decoded as if
+	// it were base64.
+	if wire.Encoding != "" && wire.Encoding != "base64" {
+		return "", wire.HTMLURL, fmt.Errorf("github readme: unsupported encoding %q", wire.Encoding)
+	}
+	// The payload wraps at 60 chars; the newlines are not valid base64.
+	raw := strings.NewReplacer("\n", "", "\r", "").Replace(wire.Content)
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return "", wire.HTMLURL, fmt.Errorf("github readme: decode: %w", err)
+	}
+	return string(decoded), wire.HTMLURL, nil
+}
+
+// SearchPRsByRepo lists one repository's open pull requests.
+func (c *Client) SearchPRsByRepo(ctx context.Context, token, owner, repo string) ([]Issue, error) {
+	return c.search(ctx, token, fmt.Sprintf("is:open is:pr repo:%s/%s", owner, repo), "")
+}
+
+// SearchIssuesByRepo lists one repository's open issues (pull requests
+// excluded — GitHub counts a PR as an issue unless is:issue says otherwise).
+func (c *Client) SearchIssuesByRepo(ctx context.Context, token, owner, repo string) ([]Issue, error) {
+	return c.search(ctx, token, fmt.Sprintf("is:open is:issue repo:%s/%s", owner, repo), "")
 }

@@ -17,6 +17,7 @@
   import { timeAgoOrDate } from '../utils/format';
   import CardExpander from '../components/CardExpander.svelte';
   import DispatchModal from '../components/DispatchModal.svelte';
+  import MarkdownRenderer from '../components/MarkdownRenderer.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Spinner from '../components/Spinner.svelte';
 
@@ -25,6 +26,14 @@
   let attentionOpen = $state(true);
   let notificationsOpen = $state(false);
   let reposOpen = $state(false);
+
+  // Detail-view section state. Branches and commits open by default — they are
+  // what "what's going on in this repo" usually means.
+  let branchesOpen = $state(true);
+  let commitsOpen = $state(true);
+  let detailPRsOpen = $state(false);
+  let detailIssuesOpen = $state(false);
+  let readmeOpen = $state(true);
 
   onMount(() => { void codeState.loadAgents(); });
 
@@ -69,6 +78,25 @@
     void codeState.cloneAndOpen(activeProfile, repoTarget(r));
   }
 
+  // ── Detail view ──────────────────────────────────────────────────────────
+
+  function openDetail(r: Repo) {
+    void codeState.openDetail(activeProfile, r);
+  }
+
+  /**
+   * The first line of a commit message. The backend keeps the whole message on
+   * purpose; a row only has space for the subject.
+   */
+  function commitSubject(message: string): string {
+    const first = (message ?? '').split('\n', 1)[0];
+    return first.trim() || '(no message)';
+  }
+
+  function shortSHA(sha: string): string {
+    return (sha ?? '').slice(0, 7);
+  }
+
   function beginWorkIssue(i: Issue) {
     codeState.openDispatch({
       kind: i.is_pull_request ? 'pr' : 'issue',
@@ -88,14 +116,32 @@
     <div>
       <h1>Code</h1>
       <p class="sub">
-        GitHub for <strong>{activeProfile || 'no profile'}</strong> — what's waiting on you, and a
-        one-click hand-off to an agent.
+        {#if codeState.detailRepo}
+          <code class="repo">{codeState.detailRepo.full_name}</code> in
+          <strong>{activeProfile || 'no profile'}</strong>
+        {:else}
+          GitHub for <strong>{activeProfile || 'no profile'}</strong> — what's waiting on you, and a
+          one-click hand-off to an agent.
+        {/if}
       </p>
     </div>
-    <button class="refresh" title="Refresh" disabled={codeState.loading} onclick={() => codeState.refresh(activeProfile)}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
-      {codeState.loading ? 'Refreshing…' : 'Refresh'}
-    </button>
+    <!-- Refresh re-runs whichever view is showing, not always the overview. -->
+    {#if codeState.detailRepo}
+      <button
+        class="refresh"
+        title="Refresh this repository"
+        disabled={codeState.detailLoading}
+        onclick={() => openDetail(codeState.detailRepo!)}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
+        {codeState.detailLoading ? 'Refreshing…' : 'Refresh'}
+      </button>
+    {:else}
+      <button class="refresh" title="Refresh" disabled={codeState.loading} onclick={() => codeState.refresh(activeProfile)}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
+        {codeState.loading ? 'Refreshing…' : 'Refresh'}
+      </button>
+    {/if}
   </header>
 
   {#if !activeProfile}
@@ -117,6 +163,179 @@
     </div>
   {/if}
 
+  <!-- The two views are one top-level branch. The overview's DATA lives in
+       codeState, not in this component, so swapping back is instant: there is
+       no second GitHub round-trip for a list that was on screen a click ago. -->
+  {#if codeState.detailRepo}
+    {@const repo = codeState.detailRepo}
+    <div class="detail-head">
+      <button class="link back" onclick={() => codeState.closeDetail()}>← back</button>
+      <code class="repo strong">{repo.full_name}</code>
+      {#if repo.default_branch}<span class="badge">{repo.default_branch}</span>{/if}
+      <div class="detail-actions">
+        <button class="link" onclick={() => openInBrowser(repo.html_url)}>open ↗</button>
+        <button
+          class="link"
+          disabled={codeState.cloningRepo !== ''}
+          title="Clone into this profile's workspace and open a terminal"
+          onclick={() => cloneAndOpen(repo)}
+        >
+          {codeState.cloningRepo === repo.full_name ? 'Cloning…' : 'Clone + terminal'}
+        </button>
+        <button class="link accent" onclick={() => beginWorkRepo(repo)}>Begin work ▾</button>
+      </div>
+    </div>
+    {#if repo.description}<p class="detail-desc">{repo.description}</p>{/if}
+
+    {#if codeState.detailError}
+      <EmptyState title="Couldn't load this repository" message={codeState.detailError} />
+    {/if}
+
+    <!-- D1 · Branches -->
+    <section class="card">
+      <CardExpander
+        label="branches"
+        count={String(codeState.repoBranches.length)}
+        bind:open={branchesOpen}
+      >
+        {#if codeState.branchesError}
+          <p class="section-error">{codeState.branchesError}</p>
+        {:else if codeState.detailLoading && codeState.repoBranches.length === 0}
+          <div class="skeleton"><span class="bar w-50"></span><span class="bar w-35"></span></div>
+        {:else if codeState.repoBranches.length === 0}
+          <p class="muted-note">No branches visible.</p>
+        {:else}
+          <ul class="rows">
+            {#each codeState.repoBranches as b (b.name)}
+              <li class="row compact">
+                <div class="row-meta">
+                  <code class="repo">{b.name}</code>
+                  {#if b.name === repo.default_branch}<span class="badge why">default</span>{/if}
+                  <span class="ago"><code class="repo">{shortSHA(b.sha)}</code></span>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </CardExpander>
+    </section>
+
+    <!-- D2 · Recent commits -->
+    <section class="card">
+      <CardExpander
+        label="recent commits"
+        count={String(codeState.repoCommits.length)}
+        hint="newest first"
+        bind:open={commitsOpen}
+      >
+        {#if codeState.commitsError}
+          <p class="section-error">{codeState.commitsError}</p>
+        {:else if codeState.detailLoading && codeState.repoCommits.length === 0}
+          <div class="skeleton"><span class="bar w-80"></span><span class="bar w-65"></span><span class="bar w-50"></span></div>
+        {:else if codeState.repoCommits.length === 0}
+          <p class="muted-note">No commits.</p>
+        {:else}
+          <ul class="rows">
+            {#each codeState.repoCommits as c (c.sha)}
+              <li class="row">
+                <div class="row-main">
+                  <span class="title">{commitSubject(c.message)}</span>
+                </div>
+                <div class="row-meta">
+                  <code class="repo">{shortSHA(c.sha)}</code>
+                  {#if c.author}<span class="by">{c.author}</span>{/if}
+                  <span class="ago">{timeAgoOrDate(ts(c.date))}</span>
+                  {#if c.html_url}
+                    <button class="link" onclick={() => openInBrowser(c.html_url)}>open ↗</button>
+                  {/if}
+                </div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </CardExpander>
+    </section>
+
+    <!-- D3 · Open PRs -->
+    <section class="card">
+      <CardExpander label="open pull requests" count={String(codeState.repoPRs.length)} bind:open={detailPRsOpen}>
+        {#if codeState.prsError}
+          <p class="section-error">{codeState.prsError}</p>
+        {:else if codeState.detailLoading && codeState.repoPRs.length === 0}
+          <div class="skeleton"><span class="bar w-80"></span><span class="bar w-50"></span></div>
+        {:else if codeState.repoPRs.length === 0}
+          <p class="muted-note">No open pull requests.</p>
+        {:else}
+          <ul class="rows">
+            {#each codeState.repoPRs as row (row.html_url)}
+              <li class="row">
+                <div class="row-main">
+                  <span class="num">#{row.number}</span>
+                  <span class="title">{row.title}</span>
+                </div>
+                <div class="row-meta">
+                  {#if row.draft}<span class="badge muted">draft</span>{/if}
+                  {#if row.user}<span class="by">@{row.user}</span>{/if}
+                  <span class="ago">{timeAgoOrDate(ts(row.updated_at))}</span>
+                  <button class="link" onclick={() => openInBrowser(row.html_url)}>open ↗</button>
+                  <button class="link accent" onclick={() => beginWorkIssue(row)}>Begin work ▾</button>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </CardExpander>
+    </section>
+
+    <!-- D4 · Open issues -->
+    <section class="card">
+      <CardExpander label="open issues" count={String(codeState.repoIssues.length)} bind:open={detailIssuesOpen}>
+        {#if codeState.repoIssuesError}
+          <p class="section-error">{codeState.repoIssuesError}</p>
+        {:else if codeState.detailLoading && codeState.repoIssues.length === 0}
+          <div class="skeleton"><span class="bar w-80"></span><span class="bar w-50"></span></div>
+        {:else if codeState.repoIssues.length === 0}
+          <p class="muted-note">No open issues.</p>
+        {:else}
+          <ul class="rows">
+            {#each codeState.repoIssues as row (row.html_url)}
+              <li class="row">
+                <div class="row-main">
+                  <span class="num">#{row.number}</span>
+                  <span class="title">{row.title}</span>
+                </div>
+                <div class="row-meta">
+                  {#if row.user}<span class="by">@{row.user}</span>{/if}
+                  <span class="ago">{timeAgoOrDate(ts(row.updated_at))}</span>
+                  <button class="link" onclick={() => openInBrowser(row.html_url)}>open ↗</button>
+                  <button class="link accent" onclick={() => beginWorkIssue(row)}>Begin work ▾</button>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </CardExpander>
+    </section>
+
+    <!-- D5 · README. Untrusted repo content — MarkdownRenderer sanitizes. -->
+    <section class="card">
+      <CardExpander label="readme" bind:open={readmeOpen}>
+        {#if codeState.readmeError}
+          <p class="section-error">{codeState.readmeError}</p>
+        {:else}
+          {#if codeState.readmeURL}
+            <p class="readme-link">
+              <button class="link" onclick={() => openInBrowser(codeState.readmeURL)}>view on GitHub ↗</button>
+            </p>
+          {/if}
+          <MarkdownRenderer
+            content={codeState.readme}
+            loading={codeState.detailLoading && !codeState.readme}
+          />
+        {/if}
+      </CardExpander>
+    </section>
+  {:else}
   {#if codeState.loadError}
     <EmptyState title="Couldn't load GitHub" message={codeState.loadError} />
   {:else if codeState.loading && codeState.repos.length === 0 && codeState.attentionCount === 0}
@@ -218,7 +437,11 @@
           {#each codeState.filteredRepos as r (r.full_name)}
             <li class="row">
               <div class="row-main">
-                <code class="repo">{r.full_name}</code>
+                <!-- The repo name IS the link into the detail view; the row's
+                     existing actions keep working alongside it. -->
+                <button class="repo-link" title="Open this repository" onclick={() => openDetail(r)}>
+                  <code class="repo">{r.full_name}</code>
+                </button>
                 {#if r.description}<span class="desc">{r.description}</span>{/if}
               </div>
               <div class="row-meta">
@@ -236,6 +459,7 @@
                   {codeState.cloningRepo === r.full_name ? 'Cloning…' : 'Clone + terminal'}
                 </button>
                 <button class="link accent" onclick={() => beginWorkRepo(r)}>Begin work ▾</button>
+                <button class="link" title="Branches, commits, PRs, issues, README" onclick={() => openDetail(r)}>details →</button>
               </div>
             </li>
           {/each}
@@ -247,6 +471,9 @@
     </CardExpander>
   </section>
 
+  {/if}
+
+  <!-- Lane results belong to both views: work can be started from either. -->
   {#if codeState.lastTaskID}
     <p class="dispatched">
       Dispatched <code>{codeState.lastTaskID.slice(0, 8)}</code> —
@@ -361,6 +588,39 @@
   .link:hover { text-decoration: underline; }
   .link:disabled { opacity: 0.5; cursor: progress; text-decoration: none; }
   .link.accent { color: var(--color-accent); }
+
+  /* ── Detail view ──────────────────────────────────────────────────────── */
+  .detail-head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+  .detail-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+  .back { color: var(--color-accent); font-size: 0.8rem; }
+  .repo.strong { color: var(--color-text-primary); font-size: 0.9rem; }
+  .detail-desc { margin: 0 0 var(--spacing-md); font-size: 0.8rem; color: var(--color-text-muted); }
+  .readme-link { margin: 0 0 var(--spacing-sm); }
+
+  /* A repo name that navigates. Styled as text, not a button, so the row still
+     reads as a row. */
+  .repo-link {
+    background: transparent; border: none; padding: 0; cursor: pointer;
+    font: inherit; color: inherit; text-align: left;
+  }
+  .repo-link:hover .repo { color: var(--color-accent); text-decoration: underline; }
+
+  .row.compact { padding: 4px 10px; }
+
+  /* Per-section skeleton while a detail fetch is in flight. */
+  .skeleton { display: flex; flex-direction: column; gap: 8px; }
+  .bar {
+    height: 10px; border-radius: var(--radius-sm);
+    background: var(--color-bg-tertiary, var(--color-bg-primary));
+    opacity: 0.6;
+  }
+  .w-35 { width: 35%; }
+  .w-50 { width: 50%; }
+  .w-65 { width: 65%; }
+  .w-80 { width: 80%; }
 
   .dispatched { font-size: 0.8rem; color: var(--color-text-muted); }
   .dispatched code { font-family: var(--font-mono); }
