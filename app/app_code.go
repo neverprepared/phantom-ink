@@ -226,6 +226,178 @@ func sortIssues(rows []githubclient.Issue) {
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].UpdatedAt > rows[j].UpdatedAt })
 }
 
+// --- Repository detail ------------------------------------------------------
+
+// RepoDetailResult is one page-load of the Code panel's single-repo view.
+//
+// Same contract as CodeOverview: per-section error STRINGS rather than one
+// returned error, because the five reads have genuinely independent failure
+// modes (a fine-grained PAT with no issues scope must still render branches,
+// commits, and the README).
+type RepoDetailResult struct {
+	// Profile / Owner / Repo echo the request back so a response that lands
+	// after the operator navigated away can be discarded by the panel.
+	Profile string `json:"profile"`
+	Owner   string `json:"owner"`
+	Repo    string `json:"repo"`
+	// DefaultBranch comes from the caller's already-loaded Repo row rather than
+	// a sixth GitHub call — the overview fetched it seconds ago.
+	DefaultBranch string `json:"default_branch"`
+
+	// TokenMissing / TokenInvalid mirror CodeOverview so the panel reuses one
+	// banner for both views.
+	TokenMissing bool `json:"token_missing"`
+	TokenInvalid bool `json:"token_invalid"`
+
+	Branches []githubclient.Branch `json:"branches"`
+	Commits  []githubclient.Commit `json:"commits"`
+	PRs      []githubclient.Issue  `json:"prs"`
+	Issues   []githubclient.Issue  `json:"issues"`
+	// Readme is RAW markdown. Rendering (and sanitizing — a README is
+	// untrusted repo content) happens in the frontend.
+	Readme    string `json:"readme"`
+	ReadmeURL string `json:"readme_url"`
+
+	BranchesError string `json:"branches_error"`
+	CommitsError  string `json:"commits_error"`
+	ReadmeError   string `json:"readme_error"`
+	PRsError      string `json:"prs_error"`
+	IssuesError   string `json:"issues_error"`
+}
+
+// repoDetailCommitLimit is how far back the "recent commits" card reads. Enough
+// to see the shape of the week without paging.
+const repoDetailCommitLimit = 20
+
+// githubRepoFetcher is the read surface the detail view needs — separate from
+// githubFetcher so each build function can be tested against a fake that only
+// implements what it uses.
+type githubRepoFetcher interface {
+	ListBranches(ctx context.Context, token, owner, repo string) ([]githubclient.Branch, error)
+	ListRecentCommits(ctx context.Context, token, owner, repo string, limit int) ([]githubclient.Commit, error)
+	GetReadme(ctx context.Context, token, owner, repo string) (string, string, error)
+	SearchPRsByRepo(ctx context.Context, token, owner, repo string) ([]githubclient.Issue, error)
+	SearchIssuesByRepo(ctx context.Context, token, owner, repo string) ([]githubclient.Issue, error)
+}
+
+// RepoDetail fetches one repository's detail view for the active profile.
+// Bound to the UI; one call drives the whole detail pane.
+//
+// defaultBranch is passed in (not fetched) so opening a repo costs five calls,
+// not six — the caller already has the row the operator clicked.
+func (a *App) RepoDetail(profile, owner, repo, defaultBranch string) (RepoDetailResult, error) {
+	base := RepoDetailResult{Profile: profile, Owner: owner, Repo: repo, DefaultBranch: defaultBranch}
+	env, err := a.GetGatewayEnv(profile)
+	if err != nil {
+		return base, err
+	}
+	token := strings.TrimSpace(env["GITHUB_TOKEN"])
+	if token == "" {
+		// Not an error, same as GitHubOverview: the panel shows the
+		// "connect a token" banner.
+		base.TokenMissing = true
+		return base, nil
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return buildRepoDetail(ctx, githubclient.New(), profile, owner, repo, defaultBranch, token), nil
+}
+
+// buildRepoDetail fans the five reads out concurrently and folds them into one
+// struct, recording failures per section instead of aborting the view.
+func buildRepoDetail(ctx context.Context, gh githubRepoFetcher, profile, owner, repo, defaultBranch, token string) RepoDetailResult {
+	out := RepoDetailResult{Profile: profile, Owner: owner, Repo: repo, DefaultBranch: defaultBranch}
+
+	var (
+		mu      sync.Mutex // guards out and auth401
+		wg      sync.WaitGroup
+		auth401 bool
+	)
+
+	note := func(err error, dst *string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if githubclient.IsUnauthorized(err) {
+			auth401 = true
+		}
+		*dst = err.Error()
+	}
+
+	run := func(fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn()
+		}()
+	}
+
+	run(func() {
+		bs, err := gh.ListBranches(ctx, token, owner, repo)
+		if err != nil {
+			note(err, &out.BranchesError)
+			return
+		}
+		mu.Lock()
+		out.Branches = bs
+		mu.Unlock()
+	})
+
+	run(func() {
+		cs, err := gh.ListRecentCommits(ctx, token, owner, repo, repoDetailCommitLimit)
+		if err != nil {
+			note(err, &out.CommitsError)
+			return
+		}
+		mu.Lock()
+		out.Commits = cs
+		mu.Unlock()
+	})
+
+	run(func() {
+		// A repo with no README returns empty markdown and a nil error — it is
+		// not a failure, and must not paint a red box on a healthy repo.
+		md, htmlURL, err := gh.GetReadme(ctx, token, owner, repo)
+		if err != nil {
+			note(err, &out.ReadmeError)
+			return
+		}
+		mu.Lock()
+		out.Readme, out.ReadmeURL = md, htmlURL
+		mu.Unlock()
+	})
+
+	run(func() {
+		prs, err := gh.SearchPRsByRepo(ctx, token, owner, repo)
+		if err != nil {
+			note(err, &out.PRsError)
+			return
+		}
+		sortIssues(prs)
+		mu.Lock()
+		out.PRs = prs
+		mu.Unlock()
+	})
+
+	run(func() {
+		issues, err := gh.SearchIssuesByRepo(ctx, token, owner, repo)
+		if err != nil {
+			note(err, &out.IssuesError)
+			return
+		}
+		sortIssues(issues)
+		mu.Lock()
+		out.Issues = issues
+		mu.Unlock()
+	})
+
+	wg.Wait()
+
+	out.TokenInvalid = auth401
+	return out
+}
+
 // --- Dispatch ---------------------------------------------------------------
 
 // DispatchRepoRequest is the Code panel's "start work here" payload: the

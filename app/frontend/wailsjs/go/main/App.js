@@ -710,6 +710,10 @@ export function RenameArtifactObject(arg1, arg2, arg3) {
   return window['go']['main']['App']['RenameArtifactObject'](arg1, arg2, arg3);
 }
 
+export function RepoDetail(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RepoDetail'](arg1, arg2, arg3, arg4);
+}
+
 export function RescanAgents() {
   return window['go']['main']['App']['RescanAgents']();
 }
