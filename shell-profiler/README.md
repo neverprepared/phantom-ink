@@ -309,6 +309,24 @@ because the `env` check already reports it as missing. The probe is a native
 in-process HTTP request, not `curl`: a token handed to a subprocess would land
 in its argv and be readable via `ps`.
 
+It validates the **effective** token, not just the one in the file. Profiles
+that inject `GITHUB_TOKEN` at direnv-load (from 1Password, say) have it live in
+the shell but absent from the profile env file — so when the file has no value,
+the check falls back to the live environment and reports
+`GitHub accepted the token (from live environment)`. That fallback is
+deliberately narrow:
+
+- **Current profile only.** Under `--all`, the loaded environment belongs to
+  whichever profile is active; reading it for any other profile would report
+  that profile's credential as this one's. A non-current profile stays
+  file-only and skips as "not set".
+- **Functional checks only.** The `env` check is unchanged: a key missing from
+  the profile *file* is still reported as missing, however the value reaches
+  the shell.
+
+A live-sourced value joins the redaction set like any file-sourced secret, so
+it can no more reach output than one read from the profile env file.
+
 **`doctor` never prints a secret value.** It reports only set/missing/valid/
 invalid and names keys, never their contents. Token values are read into memory
 and handed to subprocesses through their environment — never to stdout, never

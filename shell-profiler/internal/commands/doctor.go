@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/neverprepared/shell-profile-manager/internal/doctor"
 )
@@ -45,6 +46,9 @@ func RunDoctor(profilesDir string, opts DoctorOptions) error {
 	if err != nil {
 		return err
 	}
+	// The profile whose direnv environment is the one actually loaded. Only it
+	// may have credentials resolved out of the live environment.
+	current := currentProfileName(opts)
 
 	report := doctor.Report{}
 	for _, name := range names {
@@ -53,6 +57,7 @@ func RunDoctor(profilesDir string, opts DoctorOptions) error {
 			return fmt.Errorf("profile %q not found at %s", name, dir)
 		}
 		p := doctor.LoadProfile(name, dir, opts.NewRunner)
+		p.IsCurrent = current != "" && name == current
 		report.Profiles = append(report.Profiles, doctor.RunChecks(p, checks))
 	}
 
@@ -87,15 +92,36 @@ func targetProfiles(profilesDir string, opts DoctorOptions) ([]string, error) {
 		return []string{opts.Profile}, nil
 	}
 
-	workspaceHome := opts.WorkspaceHome
-	if workspaceHome == "" {
-		workspaceHome = os.Getenv("WORKSPACE_HOME")
-	}
-	current := doctor.CurrentProfileName(workspaceHome)
+	current := doctor.CurrentProfileName(workspaceHome(opts))
 	if current == "" {
 		return nil, fmt.Errorf("no profile specified and WORKSPACE_HOME is not set\n\n  Usage:\n    shell-profiler doctor <profile>\n    shell-profiler doctor --all")
 	}
 	return []string{current}, nil
+}
+
+// workspaceHome is the WORKSPACE_HOME a run resolves against, with the option
+// override tests use taking precedence.
+func workspaceHome(opts DoctorOptions) string {
+	if opts.WorkspaceHome != "" {
+		return opts.WorkspaceHome
+	}
+	return os.Getenv("WORKSPACE_HOME")
+}
+
+// currentProfileName resolves which profile's direnv environment is the one
+// loaded in this process. It starts from the same WORKSPACE_HOME that picks
+// the default target, then falls back to WORKSPACE_PROFILE — direnv exports
+// both, and WORKSPACE_PROFILE names the active profile directly.
+//
+// The fallback applies only here, not to target resolution: an unset
+// WORKSPACE_HOME must still be the error that tells the user to name a
+// profile. Returning "" leaves every profile non-current, which is the safe
+// default — no live credential is read on a guess.
+func currentProfileName(opts DoctorOptions) string {
+	if name := doctor.CurrentProfileName(workspaceHome(opts)); name != "" {
+		return name
+	}
+	return strings.TrimSpace(os.Getenv("WORKSPACE_PROFILE"))
 }
 
 // colorEnabled reports whether ANSI colors should be used. Honours NO_COLOR.

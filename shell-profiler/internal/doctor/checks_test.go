@@ -318,6 +318,166 @@ func TestCheckGitHubToken_NeverLeaksTheToken(t *testing.T) {
 	}
 }
 
+// --- github token: the live-environment fallback -----------------------
+
+// countingGitHubStub serves /rate_limit and counts probes, so a test can prove
+// a probe did NOT happen.
+func countingGitHubStub(t *testing.T, status int) (base string, probes *int) {
+	t.Helper()
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n++
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, &n
+}
+
+// liveTokenProfile builds a profile whose env FILE has no GITHUB_TOKEN, sets a
+// live one in the process environment, and points the probe at base.
+func liveTokenProfile(t *testing.T, base, liveToken string, isCurrent bool) *Profile {
+	t.Helper()
+	dir := fullProfile(t, "A=1\n")
+
+	prev := githubAPIBase
+	githubAPIBase = base
+	t.Cleanup(func() { githubAPIBase = prev })
+
+	t.Setenv("GITHUB_TOKEN", liveToken)
+
+	p := load(t, dir, newStub(t, nil))
+	p.IsCurrent = isCurrent
+	return p
+}
+
+// The bug this fixes: a profile that injects GITHUB_TOKEN at direnv-load has
+// it live in the environment but absent from the file, and the check reported
+// "not set" instead of verifying the token every tool actually uses.
+func TestCheckGitHubToken_LiveEnvFallbackForCurrentProfile(t *testing.T) {
+	base, probes := countingGitHubStub(t, http.StatusOK)
+	p := liveTokenProfile(t, base, fakeGitHubToken, true)
+
+	got := runOne(t, p, "github token")
+	if got.Status != StatusOK {
+		t.Fatalf("status = %v, want ok (%s)", got.Status, got.Detail)
+	}
+	if *probes != 1 {
+		t.Errorf("probes = %d, want 1 — the live token should have been verified", *probes)
+	}
+	// The detail must say the value was not in the profile file, so this line
+	// does not contradict the expected-keys check still reporting it missing.
+	if !strings.Contains(got.Detail, "live environment") {
+		t.Errorf("detail should name the live environment, got %q", got.Detail)
+	}
+}
+
+// A live token GitHub rejects still fails — the fallback changes the SOURCE of
+// the value, not the verdict branches.
+func TestCheckGitHubToken_LiveEnvRejectedFails(t *testing.T) {
+	base, _ := countingGitHubStub(t, http.StatusUnauthorized)
+	p := liveTokenProfile(t, base, fakeGitHubToken, true)
+
+	got := runOne(t, p, "github token")
+	if got.Status != StatusFail {
+		t.Fatalf("status = %v, want fail", got.Status)
+	}
+	if !strings.Contains(got.Fix, "GITHUB_TOKEN") {
+		t.Errorf("fix should name the key, got %q", got.Fix)
+	}
+}
+
+// The correctness rule: under --all the loaded environment belongs to whatever
+// profile is active, so a NON-current profile must never read it. Reading it
+// would report another profile's credential as this one's.
+func TestCheckGitHubToken_LiveEnvIgnoredForOtherProfile(t *testing.T) {
+	base, probes := countingGitHubStub(t, http.StatusOK)
+	p := liveTokenProfile(t, base, "ghp_FAKE_wrong_profiles_token_0000000000", false)
+
+	got := runOne(t, p, "github token")
+	if got.Status != StatusSkip {
+		t.Fatalf("status = %v, want skip — a non-current profile is file-only", got.Status)
+	}
+	if !strings.Contains(got.Detail, "GITHUB_TOKEN not set") {
+		t.Errorf("detail should report the key as unset, got %q", got.Detail)
+	}
+	if *probes != 0 {
+		t.Errorf("probes = %d, want 0 — the live environment must not be consulted", *probes)
+	}
+}
+
+// The file wins over the live environment: the profile's own value is the one
+// under test, even when a different token is loaded in the shell.
+func TestCheckGitHubToken_FileValueWinsOverLiveEnv(t *testing.T) {
+	base, auth, _ := githubStub(t, http.StatusOK)
+	dir := fullProfile(t, "GITHUB_TOKEN="+fakeGitHubToken+"\n")
+
+	prev := githubAPIBase
+	githubAPIBase = base
+	t.Cleanup(func() { githubAPIBase = prev })
+	t.Setenv("GITHUB_TOKEN", "ghp_FAKE_live_value_that_must_not_win_00")
+
+	p := load(t, dir, newStub(t, nil))
+	p.IsCurrent = true
+
+	got := runOne(t, p, "github token")
+	if got.Status != StatusOK {
+		t.Fatalf("status = %v, want ok (%s)", got.Status, got.Detail)
+	}
+	if *auth != "Bearer "+fakeGitHubToken {
+		t.Error("probe used the live value; the profile file must take precedence")
+	}
+	if strings.Contains(got.Detail, "live environment") {
+		t.Errorf("detail should not claim a live source, got %q", got.Detail)
+	}
+}
+
+// A live value is outside Env and Secrets, so it is outside the normal
+// redaction set unless the fallback registers it. Assert it never escapes.
+func TestCheckGitHubToken_LiveValueNeverReachesOutput(t *testing.T) {
+	const liveToken = "ghp_FAKE_live_aaaaaaaabbbbbbbbccccccccdddd"
+
+	for _, status := range []int{http.StatusOK, http.StatusUnauthorized, http.StatusForbidden, http.StatusInternalServerError} {
+		base, _ := countingGitHubStub(t, status)
+		p := liveTokenProfile(t, base, liveToken, true)
+
+		// Through RunChecks so the central redaction pass runs too.
+		res := RunChecks(p, []Check{checkGitHubToken()}).Results[0]
+		if strings.Contains(res.Detail, liveToken) {
+			t.Errorf("status %d: live token leaked into Detail", status)
+		}
+		if strings.Contains(res.Fix, liveToken) {
+			t.Errorf("status %d: live token leaked into Fix", status)
+		}
+	}
+
+	// Redact must scrub it even when a subprocess echoes it back.
+	base, _ := countingGitHubStub(t, http.StatusOK)
+	p := liveTokenProfile(t, base, liveToken, true)
+	_ = runOne(t, p, "github token")
+	if strings.Contains(p.Redact("error: token "+liveToken+" rejected"), liveToken) {
+		t.Error("a live-sourced value must join the redaction set")
+	}
+}
+
+// The structural check stays file-only: a live value does not make a key that
+// is missing from the profile FILE look present.
+func TestExpectedKeysIgnoresLiveEnv(t *testing.T) {
+	dir := fullProfile(t, "A=1\n")
+	writeFile(t, dir, ".env.example", "A=\nGITHUB_TOKEN=\n")
+	t.Setenv("GITHUB_TOKEN", fakeGitHubToken)
+
+	p := load(t, dir, newStub(t, nil))
+	p.IsCurrent = true
+
+	got := runOne(t, p, "expected env keys")
+	if got.Status != StatusFail {
+		t.Fatalf("status = %v, want fail — the file is still missing the key", got.Status)
+	}
+	if !strings.Contains(got.Detail, "GITHUB_TOKEN") {
+		t.Errorf("detail should still name the missing key, got %q", got.Detail)
+	}
+}
+
 // --- brain: the missing-vs-down distinction ----------------------------
 
 func TestCheckBrainDaemon_UnsetURLFails(t *testing.T) {

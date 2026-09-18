@@ -207,12 +207,52 @@ var githubAPIBase = "https://api.github.com"
 // commandTimeout: this is one HTTP round trip, not a CLI invocation.
 const githubProbeTimeout = 10 * time.Second
 
-// checkGitHubToken confirms GitHub actually ACCEPTS the profile's
-// GITHUB_TOKEN. Presence of the key is checkExpectedKeys's job — an absent
+// Sources a functional credential check can draw a value from.
+const (
+	// sourceFile is a value read from the profile's env or secrets file.
+	sourceFile = "file"
+	// sourceLive is a value read from the live process environment.
+	sourceLive = "live"
+)
+
+// effectiveSecret resolves the value a tool would ACTUALLY use for key, which
+// is not always what the profile file holds: some profiles inject a secret at
+// direnv-load time from a 1Password-backed source, so it is live in the
+// process environment and absent from the file.
+//
+// File first; the live environment only as a fallback, and ONLY for the
+// current profile. Under --all the loaded environment belongs to whichever
+// profile is active, so reading it for a different profile would report that
+// profile's credential as this one's — the structural "not set" skip is the
+// honest answer there.
+//
+// A live value is registered with the profile so Redact scrubs it: it is not
+// in Env or Secrets and would otherwise sit outside the redaction set.
+//
+// Deliberately scoped to functional checks. The structural expected-keys check
+// keeps using the file alone: "your profile FILE is missing key X" stays a
+// valid finding however the value reaches the shell.
+func effectiveSecret(p *Profile, key string) (value, source string, found bool) {
+	if v, okv := p.Lookup(key); okv {
+		return v, sourceFile, true
+	}
+	if !p.IsCurrent {
+		return "", "", false
+	}
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		p.noteLiveSecret(v)
+		return v, sourceLive, true
+	}
+	return "", "", false
+}
+
+// checkGitHubToken confirms GitHub actually ACCEPTS the profile's EFFECTIVE
+// GITHUB_TOKEN — the file value, or the live one when the profile injects it
+// at direnv-load. Presence of the key is checkExpectedKeys's job — an absent
 // token skips here rather than double-reporting the same missing key.
 func checkGitHubToken() Check {
 	return NewCheck("github token", CatGitHub, func(p *Profile) Result {
-		token, found := p.Lookup("GITHUB_TOKEN")
+		token, source, found := effectiveSecret(p, "GITHUB_TOKEN")
 		if !found {
 			return skip("GITHUB_TOKEN not set — presence is covered by the expected-keys check")
 		}
@@ -223,6 +263,12 @@ func checkGitHubToken() Check {
 		}
 		switch code {
 		case http.StatusOK:
+			if source == sourceLive {
+				// Say where it came from: the value is NOT in the profile
+				// file, so the expected-keys check still flags it as missing
+				// and the two lines would otherwise look contradictory.
+				return ok("GitHub accepted the token (from live environment)")
+			}
 			return ok("GitHub accepted the token")
 		case http.StatusUnauthorized:
 			return fail("GitHub rejected GITHUB_TOKEN (401 Bad credentials) — expired or wrong value",

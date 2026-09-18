@@ -352,3 +352,86 @@ func TestRunDoctor_RealCatalogOffline(t *testing.T) {
 		t.Errorf("an offline daemon should be reported as unreachable:\n%s", out)
 	}
 }
+
+// --- current-profile marking -------------------------------------------
+
+// probeCheck records the IsCurrent flag each profile was run with.
+func probeCheck(seen map[string]bool) doctor.Check {
+	return doctor.NewCheck("is-current probe", "structure", func(p *doctor.Profile) doctor.Result {
+		seen[p.Name] = p.IsCurrent
+		return doctor.Result{Status: doctor.StatusOK}
+	})
+}
+
+// Only the active profile may resolve credentials from the live environment,
+// so exactly one profile in an --all run may be marked current.
+func TestRunDoctor_MarksOnlyTheCurrentProfile(t *testing.T) {
+	root := t.TempDir()
+	makeProfile(t, root, "alpha", healthyFiles())
+	makeProfile(t, root, "beta", healthyFiles())
+
+	seen := map[string]bool{}
+	err := RunDoctor(root, DoctorOptions{
+		All:           true,
+		Out:           &bytes.Buffer{},
+		WorkspaceHome: filepath.Join(root, "beta"),
+		NewRunner:     happyFactory(),
+		Checks:        []doctor.Check{probeCheck(seen)},
+	})
+	if err != nil {
+		t.Fatalf("RunDoctor: %v", err)
+	}
+	if seen["alpha"] {
+		t.Error("alpha was marked current; only the active profile may be")
+	}
+	if !seen["beta"] {
+		t.Error("beta is the active profile and should be marked current")
+	}
+}
+
+// With no WORKSPACE_HOME and no WORKSPACE_PROFILE, nothing is current — a
+// named run must not read the live environment on a guess.
+func TestRunDoctor_NoWorkspaceMarksNothingCurrent(t *testing.T) {
+	root := t.TempDir()
+	makeProfile(t, root, "alpha", healthyFiles())
+	t.Setenv("WORKSPACE_HOME", "")
+	t.Setenv("WORKSPACE_PROFILE", "")
+
+	seen := map[string]bool{}
+	err := RunDoctor(root, DoctorOptions{
+		Profile:   "alpha",
+		Out:       &bytes.Buffer{},
+		NewRunner: happyFactory(),
+		Checks:    []doctor.Check{probeCheck(seen)},
+	})
+	if err != nil {
+		t.Fatalf("RunDoctor: %v", err)
+	}
+	if seen["alpha"] {
+		t.Error("alpha was marked current with no workspace set")
+	}
+}
+
+// WORKSPACE_PROFILE identifies the active profile when WORKSPACE_HOME is unset.
+// It is a fallback for the current-profile gate only — the profile still has
+// to be named, because an unset WORKSPACE_HOME stays a usage error.
+func TestRunDoctor_WorkspaceProfileFallback(t *testing.T) {
+	root := t.TempDir()
+	makeProfile(t, root, "alpha", healthyFiles())
+	t.Setenv("WORKSPACE_HOME", "")
+	t.Setenv("WORKSPACE_PROFILE", "alpha")
+
+	seen := map[string]bool{}
+	err := RunDoctor(root, DoctorOptions{
+		Profile:   "alpha",
+		Out:       &bytes.Buffer{},
+		NewRunner: happyFactory(),
+		Checks:    []doctor.Check{probeCheck(seen)},
+	})
+	if err != nil {
+		t.Fatalf("RunDoctor: %v", err)
+	}
+	if !seen["alpha"] {
+		t.Error("alpha should be marked current from WORKSPACE_PROFILE")
+	}
+}
