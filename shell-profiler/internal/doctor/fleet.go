@@ -191,11 +191,23 @@ func (r FleetReport) FailCount() int {
 // where "read the last line" is not.
 const probeMarker = "SPFLEET:"
 
-// Probe verdict tokens, emitted by the probe and parsed by parseGitHubProbe.
+// Probe verdict tokens, emitted by the probes and parsed by the classifiers.
+//
+// probeHTTP carries curl's status code and belongs to the GitHub probe alone.
+// The other probes exercise a CLI that already knows whether the credential
+// worked, so they report the verdict directly: probeOK / probeFail, with the
+// same probeUnset case carved out first for the same reason.
 const (
 	probeUnset = probeMarker + "UNSET"
 	probeHTTP  = probeMarker + "HTTP:"
+	probeOK    = probeMarker + "OK"
+	probeFail  = probeMarker + "FAIL"
 )
+
+// probeTimeout bounds every in-container probe. A container that cannot reach
+// a service must produce an inconclusive verdict promptly rather than hold the
+// ephemeral session — and with it a live copy of the credentials — open.
+const probeTimeout = "20"
 
 // githubTokenProbe is the shell one-liner run inside the container to exercise
 // the DELIVERED GITHUB_TOKEN.
@@ -281,14 +293,147 @@ func parseProbeCode(s string) int {
 	return code
 }
 
+// --- CLI-backed probes -------------------------------------------------
+
+// statusProbe renders a probe for a credential that a CLI reads out of the
+// container's environment.
+//
+// The credential never reaches an argv: the tool picks it up from the env the
+// broker delivered, and the shell only ever expands it into a `[ -z ]` test or
+// an env assignment. Output is discarded wholesale — a tool's stdout can echo
+// the very token it was handed, and only the marker is ever needed.
+//
+// The unset case is tested FIRST and reported distinctly, for the same reason
+// the GitHub probe does it: an absent credential otherwise degrades into a
+// generic tool failure and reads as a rejection, pointing the operator at
+// rotating a token when nothing was ever delivered.
+func statusProbe(envKey, command string) string {
+	return "if [ -z \"${" + envKey + "}\" ]; then printf '" + probeUnset + "'; " +
+		"elif timeout " + probeTimeout + " " + command + " >/dev/null 2>&1; then printf '" + probeOK + "'; " +
+		"else printf '" + probeFail + "'; fi"
+}
+
+// brainVaultProbe renders the in-container probe for one brain vault's token.
+//
+// The local oracle hands pbrainctl the vault's token as CL_BRAIN_API_TOKEN
+// whichever vault it came from (see checkBrainToken), so the probe aliases it
+// the same way — a probe that read a different key than the oracle would make
+// the two sides non-comparable, and the comparison is the point.
+//
+// pbrainctl also resolves CL_BRAIN_API from the environment, so this probe
+// exercises ENDPOINT delivery as well as token delivery: a CL_BRAIN_API that
+// points at a loopback address which is dead inside a container fails here
+// while passing locally, which is exactly the class of bug this mode exists
+// to surface.
+func brainVaultProbe(tokenKey string) string {
+	return statusProbe(tokenKey,
+		"env CL_BRAIN_API_TOKEN=\"${"+tokenKey+"}\" pbrainctl client recall --limit 1 doctor")
+}
+
+// routerProbe renders the in-container probe for CL_API_KEY. prouterctl reads
+// CL_ROUTER_API and CL_API_KEY from the environment, so a working prouterctl
+// in the container is a delivered router credential.
+func routerProbe() string {
+	return statusProbe(RouterAPITokenKey, "prouterctl status")
+}
+
+// classifyStatusProbe turns statusProbe output into a fleet status.
+//
+// FAIL is reported as a rejection rather than as inconclusive: these tools
+// fail for exactly two reasons the operator can act on — the delivered
+// credential was refused, or the delivered ENDPOINT is unreachable from the
+// container — and both are delivery faults. The detail names both so the fix
+// is not mistaken for "rotate the token" when the endpoint is at fault.
+func classifyStatusProbe(res FleetExecResult, credential, service string) (FleetStatus, string) {
+	out := res.Output
+	switch {
+	case strings.Contains(out, probeUnset):
+		return FleetUnset, credential + " is not set inside the container"
+	case strings.Contains(out, probeOK):
+		return FleetAccepted, "the " + service + " accepted the delivered " + credential
+	case strings.Contains(out, probeFail):
+		return FleetRejected, "the delivered " + credential + " did not work from the container — " +
+			"the " + service + " refused it, or its endpoint is unreachable from there"
+	}
+	// No marker: the probe did not run to completion. A tool missing from the
+	// image lands here, as does a container that died mid-exec.
+	if !res.Success {
+		return FleetUnknown, fmt.Sprintf("probe did not complete (exit %d)", res.ExitCode)
+	}
+	return FleetUnknown, "probe produced no recognisable result"
+}
+
+// --- cloud probes ------------------------------------------------------
+
+// cloudProbe renders a probe for a cloud CLI.
+//
+// Cloud credentials have no single env key to test for, so the unset case
+// cannot be carved out up front the way statusProbe does it: `aws` and `az`
+// read from a spread of variables and files. Instead the CLI's own failure
+// text comes back alongside the marker and is matched against the strings
+// each tool uses to say "there are no credentials here at all".
+//
+// The text is matched, never reported: it is untrusted container output, and
+// a CLI error can quote the argument that upset it.
+func cloudProbe(command string) string {
+	return "if out=$(timeout " + probeTimeout + " " + command + " 2>&1); then printf '" + probeOK + "'; " +
+		"else printf '" + probeFail + ":%s' \"$out\"; fi"
+}
+
+// awsNotDelivered / azureNotDelivered are the phrases each CLI uses when no
+// credential reached it at all, as opposed to one it could evaluate and
+// refuse. Matched lowercase against the probe's captured failure text.
+var (
+	awsNotDelivered   = []string{"unable to locate credentials", "unable to locate"}
+	azureNotDelivered = []string{"az login", "please run 'az login'"}
+)
+
+// classifyCloudProbe turns cloudProbe output into a fleet status.
+//
+// "Nothing was delivered" is separated from "delivered and refused" because
+// the two have completely different fixes on this platform: the broker
+// delivers ENV VARS, while cloud credentials live locally in ~/.aws and
+// ~/.azure FILES. A not-delivered verdict here is therefore a legitimate
+// finding about how cloud credentials reach the fleet, not a broken probe.
+func classifyCloudProbe(res FleetExecResult, credential, service string, notDelivered []string) (FleetStatus, string) {
+	out := res.Output
+	if strings.Contains(out, probeOK) {
+		return FleetAccepted, service + " accepted the delivered " + credential
+	}
+	if idx := strings.Index(out, probeFail); idx >= 0 {
+		reason := strings.ToLower(out[idx+len(probeFail):])
+		// A missing CLI is not a credential verdict. Saying "rejected" here
+		// would send the operator to re-curate a value that was never read.
+		// Matched tightly: a plain "not found" also appears in service
+		// errors like "the subscription was not found", which IS a verdict.
+		for _, m := range []string{"command not found", ": not found", "no such file"} {
+			if strings.Contains(reason, m) {
+				return FleetUnknown, service + " is not available in the container image"
+			}
+		}
+		for _, m := range notDelivered {
+			if strings.Contains(reason, m) {
+				return FleetUnset, "no " + credential + " reached the container — " +
+					service + " found no credentials at all"
+			}
+		}
+		return FleetRejected, service + " refused the delivered " + credential
+	}
+	if !res.Success {
+		return FleetUnknown, fmt.Sprintf("probe did not complete (exit %d)", res.ExitCode)
+	}
+	return FleetUnknown, "probe produced no recognisable result"
+}
+
 // --- the differential --------------------------------------------------
 
 // remoteProbe pairs a credential's local oracle with its in-container probe.
 //
-// v1 carries exactly one entry (GITHUB_TOKEN). The shape is the extension
-// point: adding AWS or Azure is a new entry, not a new code path.
+// Every credential doctor can check remotely is one entry here; nothing else
+// in this file knows how many there are or what they test.
 type remoteProbe struct {
-	// credential is the env key under test.
+	// credential is the env key under test, or — for the cloud CLIs, whose
+	// credentials span several keys and files — a short name for the set.
 	credential string
 	// localCheck names the check in the default catalog that acts as the
 	// oracle for this credential.
@@ -301,13 +446,44 @@ type remoteProbe struct {
 	deliveryFix func(reason FleetStatus) string
 }
 
+// envDeliveryFix is the repair hint for a credential the broker delivers as an
+// env var: either it was never curated, or the curated copy has gone stale.
+func envDeliveryFix(credential string) func(FleetStatus) string {
+	return func(reason FleetStatus) string {
+		if reason == FleetUnset {
+			return "add " + credential + " to the profile's gateway env store, then re-run"
+		}
+		return "the delivered " + credential + " is stale or wrong — re-curate it in the " +
+			"profile's gateway env store (and check the matching endpoint URL is reachable " +
+			"from a container), then re-run"
+	}
+}
+
+// cloudDeliveryFix is the repair hint for a cloud CLI's credentials.
+//
+// The not-delivered branch does NOT say "add it to the env store": on this
+// platform cloud credentials are local FILES (~/.aws, ~/.azure) and the broker
+// delivers env vars, so nothing is currently wired to ship them at all. That
+// is a decision to make, not a value to paste, and saying otherwise would send
+// the operator looking for a store entry that was never meant to exist.
+func cloudDeliveryFix(credential, dir string) func(FleetStatus) string {
+	return func(reason FleetStatus) string {
+		if reason == FleetUnset {
+			return credential + " are not shipped to fleet containers — the broker delivers " +
+				"env vars, not " + dir + " files; decide how cloud credentials should reach the node"
+		}
+		return credential + " are delivered but the value is stale or wrong — re-curate them, then re-run"
+	}
+}
+
 // remoteProbes is the catalog of credentials that have a remote probe.
 //
-// v1 is GITHUB_TOKEN ONLY. Every other credential doctor checks locally is
-// simply not covered here, and the report says so rather than implying that a
-// clean fleet run means all credentials are delivered.
+// gcloud is deliberately absent: it is not installed in the container image,
+// so a probe would report "not delivered" for every profile and say nothing
+// about delivery. Adding it needs an image change, which this mode does not
+// make. The coverage note states the exclusion.
 func remoteProbes() []remoteProbe {
-	return []remoteProbe{{
+	probes := []remoteProbe{{
 		credential: "GITHUB_TOKEN",
 		localCheck: "github token",
 		buildProbe: func() string { return githubTokenProbe(githubAPIBase) },
@@ -320,27 +496,98 @@ func remoteProbes() []remoteProbe {
 				"the delivered value is stale, then re-run"
 		},
 	}}
+
+	// One entry per brain vault, driven by the same table the local checks
+	// use, so a vault added there cannot be silently missed here.
+	for _, v := range brainVaults {
+		v := v
+		probes = append(probes, remoteProbe{
+			credential: v.tokenKey,
+			localCheck: "brain token (" + v.label + ")",
+			buildProbe: func() string { return brainVaultProbe(v.tokenKey) },
+			classify: func(res FleetExecResult) (FleetStatus, string) {
+				return classifyStatusProbe(res, v.tokenKey, "brain daemon ("+v.label+" vault)")
+			},
+			deliveryFix: envDeliveryFix(v.tokenKey),
+		})
+	}
+
+	return append(probes,
+		remoteProbe{
+			credential: RouterAPITokenKey,
+			localCheck: "router",
+			buildProbe: routerProbe,
+			classify: func(res FleetExecResult) (FleetStatus, string) {
+				return classifyStatusProbe(res, RouterAPITokenKey, "router")
+			},
+			deliveryFix: envDeliveryFix(RouterAPITokenKey),
+		},
+		remoteProbe{
+			credential: "AWS credentials",
+			localCheck: "aws",
+			buildProbe: func() string { return cloudProbe("aws sts get-caller-identity") },
+			classify: func(res FleetExecResult) (FleetStatus, string) {
+				return classifyCloudProbe(res, "AWS credentials", "AWS STS", awsNotDelivered)
+			},
+			deliveryFix: cloudDeliveryFix("AWS credentials", "~/.aws"),
+		},
+		remoteProbe{
+			credential: "Azure credentials",
+			localCheck: "azure",
+			buildProbe: func() string { return cloudProbe("az account show") },
+			classify: func(res FleetExecResult) (FleetStatus, string) {
+				return classifyCloudProbe(res, "Azure credentials", "Azure CLI", azureNotDelivered)
+			},
+			deliveryFix: cloudDeliveryFix("Azure credentials", "~/.azure"),
+		},
+	)
 }
 
 // FleetCoverageNote states what a fleet run does and does not cover. Rendered
-// with every report: a clean run proves one credential is delivered, and
+// with every report: a clean run proves these credentials are delivered, and
 // letting it read as full coverage would be the more dangerous outcome.
-const FleetCoverageNote = "only GITHUB_TOKEN is probed remotely in v1 — " +
-	"other credentials are not covered by this report"
+const FleetCoverageNote = "probed remotely: GITHUB_TOKEN, the brain vault tokens " +
+	"(CL_BRAIN_API_TOKEN, CL_TODO_API_TOKEN, CL_SKILLS_API_TOKEN, CL_AGENTS_API_TOKEN), " +
+	"CL_API_KEY (router), AWS and Azure — gcloud is excluded (not in the container image), " +
+	"and any other credential is not covered by this report"
 
 // RunFleetChecks runs the credential-delivery differential for a profile.
 //
-// The caller has already resolved the runner: selectRunner picks one, and the
+// The caller has already resolved the runner: SelectRunner picks one, and the
 // same node is used for every probe so a verdict cannot be confounded by two
 // probes landing on differently-configured hosts.
 //
 // Every Detail and Fix goes through Profile.Redact, matching RunChecks — the
 // probe echoes container output back to us and must not be trusted to be free
-// of the token it was handed.
+// of the credential it was handed.
 func RunFleetChecks(p *Profile, fc FleetClient, runner string, checks []Check) FleetReport {
+	probes := remoteProbes()
+	results := make([]FleetResult, len(probes))
+
+	// 1. Every oracle first, before any session exists. Without a known-good
+	//    local credential there is no baseline, and a remote failure could
+	//    mean either half is at fault. Running them all up front is also what
+	//    lets the survivors share ONE container.
+	var probed []int
+	for i, probe := range probes {
+		res, hasBaseline := localBaseline(p, probe, checks)
+		results[i] = res
+		if hasBaseline {
+			probed = append(probed, i)
+		}
+	}
+
+	// 2. One session for all of them. The container a probe needs is the same
+	//    container for every credential — it is the PROFILE that decides what
+	//    is delivered into it — so creating one per credential would pay a
+	//    provisioning cost (up to a five-minute timeout) once per row for no
+	//    additional signal. Zero survivors means no session at all.
+	if len(probed) > 0 {
+		execProbes(fc, runner, p.Name, probes, probed, results)
+	}
+
 	report := FleetReport{Profile: p.Name, Runner: runner}
-	for _, probe := range remoteProbes() {
-		res := runFleetProbe(p, fc, runner, probe, checks)
+	for _, res := range results {
 		res.Detail = p.Redact(res.Detail)
 		res.Fix = p.Redact(res.Fix)
 		report.Results = append(report.Results, res)
@@ -348,63 +595,51 @@ func RunFleetChecks(p *Profile, fc FleetClient, runner string, checks []Check) F
 	return report
 }
 
-// runFleetProbe runs one credential's differential.
-func runFleetProbe(p *Profile, fc FleetClient, runner string, probe remoteProbe, checks []Check) FleetResult {
+// localBaseline runs one credential's oracle. The bool reports whether a
+// baseline was established — i.e. whether this credential is worth probing
+// remotely at all.
+//
+// A credential that fails here is short-circuited: standing up a container to
+// confirm that an already-broken credential is also broken remotely costs a
+// node slot and tells the user nothing.
+func localBaseline(p *Profile, probe remoteProbe, checks []Check) (FleetResult, bool) {
 	res := FleetResult{Credential: probe.credential}
 
-	// 1. The oracle. Without a known-good local credential there is no
-	//    baseline, and a remote failure could mean either half is at fault.
 	local := runNamedCheck(p, probe.localCheck, checks)
 	res.Local = local.Status
-	if local.Status != StatusOK {
-		// Short-circuit: no session is created. Standing up a container to
-		// confirm that a credential we already know is broken is also broken
-		// costs a node slot and tells the user nothing.
-		res.Fleet = FleetNotRun
-		res.Detail = fmt.Sprintf("fix locally first (local check is %s: %s)", local.Status, local.Detail)
-		if local.Status == StatusFail {
-			res.Verdict = VerdictLocalFirst
-			res.Fix = local.Fix
-			return res
-		}
-		// A skipped oracle — the credential is unset, or the service was
-		// unreachable — is not a user-fixable failure, so neither is this.
-		res.Verdict = VerdictInconclusive
-		return res
+	if local.Status == StatusOK {
+		return res, true
 	}
 
-	// 2. Exercise the same credential through the real delivery path.
-	res.Runner = runner
-	status, detail := execProbe(fc, runner, p.Name, probe)
-	res.Fleet = status
-	res.Detail = detail
-
-	// 3. Diff.
-	switch status {
-	case FleetAccepted:
-		res.Verdict = VerdictPass
-		res.Detail = fmt.Sprintf("%s delivered and accepted on %s", probe.credential, runner)
-	case FleetRejected, FleetUnset:
-		res.Verdict = VerdictDeliveryBroken
-		res.Fix = probe.deliveryFix(status)
-	default:
-		// The node was unreachable, exec failed, or the container could not
-		// reach the service. None of those is a delivery verdict.
-		res.Verdict = VerdictInconclusive
+	res.Fleet = FleetNotRun
+	res.Detail = fmt.Sprintf("fix locally first (local check is %s: %s)", local.Status, local.Detail)
+	if local.Status == StatusFail {
+		res.Verdict = VerdictLocalFirst
+		res.Fix = local.Fix
+		return res, false
 	}
-	return res
+	// A skipped oracle — the credential is unset, or the service was
+	// unreachable — is not a user-fixable failure, so neither is this.
+	res.Verdict = VerdictInconclusive
+	return res, false
 }
 
-// execProbe stands up an ephemeral session, runs the probe in it, and tears it
-// down.
+// execProbes stands up ONE ephemeral session, runs every surviving probe in
+// it, and tears it down.
 //
-// Teardown is deferred so it runs on EVERY path, including an exec error and a
-// create that partially succeeded. A leaked session holds a runner slot and —
-// far worse — holds a live copy of the profile's credentials on a remote node.
-func execProbe(fc FleetClient, runner, profile string, probe remoteProbe) (FleetStatus, string) {
+// Teardown is deferred so it runs on EVERY path, including an exec error, a
+// panic, and a create that partially succeeded. A leaked session holds a
+// runner slot and — far worse — holds a live copy of the profile's credentials
+// on a remote node.
+//
+// A failing exec does not abort the batch: each credential gets its own
+// verdict, and one probe tripping over a missing tool must not erase the
+// answer for the others.
+func execProbes(fc FleetClient, runner, profile string, probes []remoteProbe, probed []int, results []FleetResult) {
 	name, err := ephemeralSessionName()
 	if err != nil {
-		return FleetUnknown, "could not generate a session name"
+		markInconclusive(probes, probed, results, runner, "could not generate a session name")
+		return
 	}
 
 	if err := fc.CreateSession(FleetSessionSpec{
@@ -415,15 +650,52 @@ func execProbe(fc FleetClient, runner, profile string, probe remoteProbe) (Fleet
 	}); err != nil {
 		// A create can fail after provisioning started, so tear down anyway.
 		defer func() { _ = fc.DeleteSession(name) }()
-		return FleetUnknown, "could not create a session on " + runner + ": " + firstLine(err.Error())
+		markInconclusive(probes, probed, results, runner,
+			"could not create a session on "+runner+": "+firstLine(err.Error()))
+		return
 	}
 	defer func() { _ = fc.DeleteSession(name) }()
 
-	res, err := fc.Exec(name, probe.buildProbe())
-	if err != nil {
-		return FleetUnknown, "probe could not run on " + runner + ": " + firstLine(err.Error())
+	for _, i := range probed {
+		probe := probes[i]
+		status, detail := FleetUnknown, ""
+		if res, execErr := fc.Exec(name, probe.buildProbe()); execErr != nil {
+			detail = "probe could not run on " + runner + ": " + firstLine(execErr.Error())
+		} else {
+			status, detail = probe.classify(res)
+		}
+		applyRemote(&results[i], runner, probe, status, detail)
 	}
-	return probe.classify(res)
+}
+
+// markInconclusive records the same non-verdict against every credential that
+// was going to be probed. A session that could not be created says nothing
+// about any of them.
+func markInconclusive(probes []remoteProbe, probed []int, results []FleetResult, runner, detail string) {
+	for _, i := range probed {
+		applyRemote(&results[i], runner, probes[i], FleetUnknown, detail)
+	}
+}
+
+// applyRemote diffs one probe's remote outcome against its passing oracle.
+func applyRemote(res *FleetResult, runner string, probe remoteProbe, status FleetStatus, detail string) {
+	res.Runner = runner
+	res.Fleet = status
+	res.Detail = detail
+
+	switch status {
+	case FleetAccepted:
+		res.Verdict = VerdictPass
+		res.Detail = fmt.Sprintf("%s delivered and accepted on %s", probe.credential, runner)
+	case FleetRejected, FleetUnset:
+		// The finding the whole mode exists for: good here, broken there.
+		res.Verdict = VerdictDeliveryBroken
+		res.Fix = probe.deliveryFix(status)
+	default:
+		// The node was unreachable, exec failed, or the container could not
+		// reach the service. None of those is a delivery verdict.
+		res.Verdict = VerdictInconclusive
+	}
 }
 
 // runNamedCheck runs one check from the catalog by name. A name that is not in
