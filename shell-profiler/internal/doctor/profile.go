@@ -32,6 +32,16 @@ type Profile struct {
 	// HasEnvFile records whether the profile env file was found at all.
 	HasEnvFile bool
 
+	// IsCurrent marks the profile whose direnv environment is the one actually
+	// loaded in this process. Only that profile may have its credentials read
+	// out of the live environment — for any other profile the live env belongs
+	// to someone else and would be a false verdict. See effectiveSecret.
+	IsCurrent bool
+
+	// liveSecrets holds secret values read from the live process environment
+	// (never from a profile file), so Redact scrubs them too.
+	liveSecrets []string
+
 	// Run executes external commands. Always set; never nil.
 	Run CmdRunner
 
@@ -65,6 +75,22 @@ func (p *Profile) Lookup(key string) (string, bool) {
 		return v, true
 	}
 	return "", false
+}
+
+// noteLiveSecret registers a value read from the live process environment so
+// Redact treats it like any file-sourced secret. A live value is not in Env or
+// Secrets, so without this it would be outside the redaction set.
+func (p *Profile) noteLiveSecret(v string) {
+	v = strings.TrimSpace(v)
+	if len(v) < 6 {
+		return
+	}
+	for _, existing := range p.liveSecrets {
+		if existing == v {
+			return
+		}
+	}
+	p.liveSecrets = append(p.liveSecrets, v)
 }
 
 // Path joins a profile-relative path.
@@ -124,6 +150,8 @@ func (p *Profile) secretValues() []string {
 	add(p.Env, true)
 	// The secrets env file holds nothing but secrets.
 	add(p.Secrets, false)
+	// Values read from the live environment are secrets by the same rule.
+	vals = append(vals, p.liveSecrets...)
 	// Longest first, so a value that contains another is scrubbed whole.
 	sort.Slice(vals, func(i, j int) bool { return len(vals[i]) > len(vals[j]) })
 	return vals
