@@ -49,7 +49,12 @@ func (a *App) mindwalkComposeEnv() ([]string, error) {
 	}
 	return []string{
 		"CL_BRAIN_API_TOKEN=" + token,
-		"BRAIN_URL=" + containerBrainURL(a.BrainHostAPI()),
+		// Read the LOCAL mesh daemon — the same source MeshPanel/VaultBrowser
+		// browse memory from — NOT BrainHostAPI (the platform base_url host,
+		// which points at the remote router/brain when configured for a remote
+		// platform). The per-(profile,vault) token is unified across the mesh,
+		// so it authenticates against the local daemon.
+		"BRAIN_URL=" + containerBrainURL(a.meshURL()),
 		"MINDWALK_REPO=" + repo,
 	}, nil
 }
