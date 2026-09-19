@@ -226,6 +226,13 @@ var knownServices = []ServiceDef{
 		Port:        9998,
 		Native:      true, // the mesh daemon is managed outside docker
 	},
+	{
+		Name:        "mindwalk",
+		Label:       "Memory Graph",
+		Description: "phantom-mindwalk — 3D force-directed view of the active profile's phantom-brain memory (similar + supersedes edges)",
+		DefaultURL:  "http://localhost:9997",
+		Port:        9997,
+	},
 }
 
 // isPortOpen checks if a TCP port is accepting connections.
@@ -290,28 +297,32 @@ func isServiceRunning(def ServiceDef, cfg ServiceConfig) bool {
 	return isComposeRunning(def.Name)
 }
 
-// composeUp starts a service's docker compose stack.
-func composeUp(name string) error {
+// composeUp starts a service's docker compose stack. extraEnv (KEY=VALUE
+// entries) is appended to serviceEnv for services that need runtime-resolved
+// values — e.g. mindwalk's per-profile brain token and build-context path.
+func composeUp(name string, extraEnv ...string) error {
 	composePath, err := ensureComposeFile(name)
 	if err != nil {
 		return err
 	}
 	cmd := exec.Command("docker", "compose", "-f", composePath, "up", "-d")
-	cmd.Env = serviceEnv(name)
+	cmd.Env = append(serviceEnv(name), extraEnv...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }
 
-// composeDown stops a service's docker compose stack.
-func composeDown(name string) error {
+// composeDown stops a service's docker compose stack. extraEnv mirrors composeUp
+// so compose can interpolate any variables the file references (down does not
+// build, so unset build-context vars are harmless, but passing them avoids warnings).
+func composeDown(name string, extraEnv ...string) error {
 	composePath, err := ensureComposeFile(name)
 	if err != nil {
 		return err
 	}
 	cmd := exec.Command("docker", "compose", "-f", composePath, "down")
-	cmd.Env = serviceEnv(name)
+	cmd.Env = append(serviceEnv(name), extraEnv...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
 	}

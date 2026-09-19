@@ -15,6 +15,7 @@
   import JobsPanel from '../panels/JobsPanel.svelte';
   import CodePanel from '../panels/CodePanel.svelte';
   import MeshPanel from '../panels/MeshPanel.svelte';
+  import MemoryGraphPanel from '../panels/MemoryGraphPanel.svelte';
   import CollectorsPanel from '../panels/CollectorsPanel.svelte';
   import AutomationsPanel from '../panels/AutomationsPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
@@ -106,6 +107,8 @@
         <CodePanel />
       {:else if currentPanel.value === 'mesh'}
         <MeshPanel />
+      {:else if currentPanel.value === 'memory-graph'}
+        <MemoryGraphPanel />
       {:else if currentPanel.value === 'collectors'}
         <CollectorsPanel />
       {:else if currentPanel.value === 'settings'}
