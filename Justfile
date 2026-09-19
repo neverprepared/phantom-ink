@@ -3,6 +3,10 @@
 default:
     @just --list --unsorted
 
+# wails binary: prefer PATH, fall back to the go-install location. (just does
+# not expand Make's $(shell ...)/$(HOME); use a backtick assignment instead.)
+wails := `command -v wails 2>/dev/null || echo "$HOME/go/bin/wails"`
+
 # === App (Wails desktop, Go + Svelte) ===
 
 # Regenerate the timeline-entry Go bindings + committed schema from the pinned
@@ -12,10 +16,10 @@ app-contract-gen:
     cd app && go generate ./internal/contract
 
 app-dev:
-    cd app && $(shell which wails 2>/dev/null || echo $(HOME)/go/bin/wails) dev
+    cd app && {{wails}} dev
 
 app-build:
-    cd app && $(shell which wails 2>/dev/null || echo $(HOME)/go/bin/wails) build -platform darwin/universal
+    cd app && {{wails}} build -platform darwin/universal
 
 app-clean:
     rm -rf app/build/bin app/frontend/dist
