@@ -1,19 +1,14 @@
-# phantom-mindwalk — memory-graph visualizer (build-context v1).
+# phantom-mindwalk — memory-graph visualizer.
 #
-# Managed by phantom-ink's Integrations (knownServices "mindwalk"). phantom-ink
-# injects these at `compose up` (see app_mindwalk.go):
-#   MINDWALK_REPO       absolute path to the sibling phantom-mindwalk repo (build context)
+# Managed by phantom-ink's Integrations (knownServices "mindwalk"). The image is
+# published to the fleet registry, so this works on any node that can pull it
+# (nodes need `docker login registry.neverprepared.com` — ansible-managed).
+# phantom-ink injects at `compose up` (see app_mindwalk.go):
 #   BRAIN_URL           brain daemon reachable from inside the container
 #   CL_BRAIN_API_TOKEN  the ACTIVE profile's memory-vault bearer token
-#
-# v1 builds the image from source on this box; it is NOT published, so this does
-# not work for a packaged .app or other fleet nodes. Publish an image to make it
-# portable (deferred).
 services:
   mindwalk:
-    build:
-      context: ${MINDWALK_REPO}
-    image: phantom-mindwalk:dev
+    image: registry.neverprepared.com/phantom-mindwalk:0.1.0
     container_name: phantom-mindwalk
     restart: unless-stopped
     ports:
