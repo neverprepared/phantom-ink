@@ -56,7 +56,11 @@ func (a *App) StartService(name string) error {
 			if cfg.Remote {
 				return fmt.Errorf("%s is configured as remote — cannot start locally", def.Label)
 			}
-			if err := composeUp(name); err != nil {
+			extra, err := a.serviceComposeEnv(name)
+			if err != nil {
+				return err
+			}
+			if err := composeUp(name, extra...); err != nil {
 				return err
 			}
 			if a.db != nil {
@@ -84,7 +88,8 @@ func (a *App) StopService(name string) error {
 			if cfg.Remote {
 				return fmt.Errorf("%s is configured as remote — cannot stop locally", def.Label)
 			}
-			return composeDown(name)
+			extra, _ := a.serviceComposeEnv(name) // best-effort: down doesn't build
+			return composeDown(name, extra...)
 		}
 	}
 	return fmt.Errorf("unknown service: %s", name)
