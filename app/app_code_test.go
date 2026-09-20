@@ -270,6 +270,30 @@ func TestNormalizeCloneURL(t *testing.T) {
 	}
 }
 
+func TestNormalizeCloneURL_ADO(t *testing.T) {
+	cases := map[string]string{
+		"https://dev.azure.com/acme/widgets/_git/api":      "https://dev.azure.com/acme/widgets/_git/api",
+		"https://acme@dev.azure.com/acme/widgets/_git/api": "https://dev.azure.com/acme/widgets/_git/api",
+		"https://acme.visualstudio.com/widgets/_git/api":   "https://dev.azure.com/acme/widgets/_git/api",
+		// GitHub still works.
+		"git@github.com:o/r.git": "https://github.com/o/r.git",
+	}
+	for in, want := range cases {
+		if got := normalizeCloneURL(in); got != want {
+			t.Errorf("normalizeCloneURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestIsADOCloneURL(t *testing.T) {
+	if !isADOCloneURL("https://dev.azure.com/acme/widgets/_git/api") {
+		t.Fatal("dev.azure.com should be ADO")
+	}
+	if isADOCloneURL("https://github.com/o/r.git") {
+		t.Fatal("github should not be ADO")
+	}
+}
+
 func TestDeriveCloneDest(t *testing.T) {
 	cases := []struct{ home, url, want string }{
 		{"/ws/work", "https://github.com/o/phantom-ink.git", "/ws/work/code/phantom-ink"},

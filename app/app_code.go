@@ -15,6 +15,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -452,6 +453,27 @@ var runGitClone = func(cloneURL, dest string) error {
 	return nil
 }
 
+// isADOCloneURL reports whether a normalized clone URL points at Azure DevOps.
+func isADOCloneURL(cloneURL string) bool {
+	return strings.Contains(cloneURL, "dev.azure.com/") || strings.Contains(cloneURL, ".visualstudio.com/")
+}
+
+// runGitCloneAuth clones with an inline Authorization header (never persisted to
+// the clone's config). Used for ADO, where host git has no credential. A package
+// var so a test can assert the header-carrying branch without a network.
+var runGitCloneAuth = func(cloneURL, dest, authHeader string) error {
+	cmd := exec.Command("git", "-c", "http.extraheader=Authorization: "+authHeader, "clone", cloneURL, dest)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("git clone: %s", msg)
+		}
+		return fmt.Errorf("git clone: %w", err)
+	}
+	return nil
+}
+
 // openTerminalAt opens a host terminal tab running claude in a directory. A var
 // over the EXISTING opener (shared with OpenLocalSession) so tests don't drive
 // AppleScript and there is exactly one implementation of "open a tab".
@@ -487,7 +509,20 @@ func (a *App) OpenRepoLocally(profile, repoURL string) (string, error) {
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return "", err
 		}
-		if err := runGitClone(cloneURL, dest); err != nil {
+		if isADOCloneURL(cloneURL) {
+			env, err := a.GetGatewayEnv(profile)
+			if err != nil {
+				return "", err
+			}
+			pat := strings.TrimSpace(env["ADO_PAT"])
+			if pat == "" {
+				return "", fmt.Errorf("profile %q has no ADO_PAT to clone %s", profile, cloneURL)
+			}
+			auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+pat))
+			if err := runGitCloneAuth(cloneURL, dest, auth); err != nil {
+				return "", err
+			}
+		} else if err := runGitClone(cloneURL, dest); err != nil {
 			return "", err
 		}
 	}
@@ -582,19 +617,89 @@ func repoNameFromURL(repoURL string) string {
 	return name
 }
 
-// normalizeCloneURL turns any GitHub reference to a repo into an https clone
-// URL, so the same helper serves a repo row's clone_url, a search hit's
-// html_url, an api.github.com URL, and an ssh remote pasted by hand:
+// normalizeADOCloneURL turns any Azure DevOps reference into an https _git
+// clone URL, handling dev.azure.com (with or without a user@ prefix) and
+// legacy {org}.visualstudio.com. Returns "" when it can't parse a full
+// {org}/{project}/_git/{repo} — mirrors provider/ado.Client.NormalizeCloneURL
+// so the main-package free function used by the local-clone lane agrees with
+// the ado provider client on what counts as a valid ADO clone URL.
+func normalizeADOCloneURL(repoURL string) string {
+	s := strings.TrimSpace(repoURL)
+	s = strings.TrimSuffix(s, "/")
+	if s == "" {
+		return ""
+	}
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if at := strings.Index(s, "@"); at >= 0 {
+		s = s[at+1:]
+	}
+	slash := strings.Index(s, "/")
+	if slash < 0 {
+		return "" // bare host, no path
+	}
+	host, rest := s[:slash], s[slash+1:]
+	var org, tail string
+	switch {
+	case host == "dev.azure.com":
+		i := strings.Index(rest, "/")
+		if i < 0 {
+			return ""
+		}
+		org, tail = rest[:i], rest[i+1:]
+	case strings.HasSuffix(host, ".visualstudio.com"):
+		org, tail = strings.TrimSuffix(host, ".visualstudio.com"), rest
+	default:
+		return ""
+	}
+	segs := strings.Split(tail, "/")
+	if org == "" || len(segs) < 3 || segs[0] == "" || segs[1] != "_git" || segs[2] == "" {
+		return ""
+	}
+	return "https://dev.azure.com/" + org + "/" + segs[0] + "/_git/" + segs[2]
+}
+
+// isADOCloneHost reports whether repoURL's host looks like Azure DevOps, so
+// normalizeCloneURL knows to route it through normalizeADOCloneURL instead of
+// the GitHub logic below.
+func isADOCloneHost(repoURL string) bool {
+	s := strings.TrimSpace(repoURL)
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if at := strings.Index(s, "@"); at >= 0 {
+		s = s[at+1:]
+	}
+	host := s
+	if slash := strings.Index(host, "/"); slash >= 0 {
+		host = host[:slash]
+	}
+	return host == "dev.azure.com" || strings.HasSuffix(host, ".visualstudio.com")
+}
+
+// normalizeCloneURL turns any GitHub or Azure DevOps reference to a repo into
+// an https clone URL, so the same helper serves a repo row's clone_url, a
+// search hit's html_url, an api.github.com URL, and an ssh remote pasted by
+// hand:
 //
 //	git@github.com:o/r.git              → https://github.com/o/r.git
 //	ssh://git@github.com/o/r            → https://github.com/o/r.git
 //	https://github.com/o/r              → https://github.com/o/r.git
 //	https://api.github.com/repos/o/r    → https://github.com/o/r.git
+//	https://dev.azure.com/o/p/_git/r    → https://dev.azure.com/o/p/_git/r
+//	https://o.visualstudio.com/p/_git/r → https://dev.azure.com/o/p/_git/r
 //
-// The host is PRESERVED (only api.github.com is rewritten to github.com) so a
-// GitHub Enterprise remote still clones from its own host. Returns "" when no
-// owner/repo pair can be read out.
+// ADO hosts are detected and normalized BEFORE the GitHub logic below; GitHub
+// URLs fall through unchanged. The host is otherwise PRESERVED (only
+// api.github.com is rewritten to github.com) so a GitHub Enterprise remote
+// still clones from its own host. Returns "" when no owner/repo pair (or,
+// for ADO, no org/project/_git/repo) can be read out.
 func normalizeCloneURL(repoURL string) string {
+	if isADOCloneHost(repoURL) {
+		return normalizeADOCloneURL(repoURL)
+	}
+
 	s := strings.TrimSpace(repoURL)
 	s = strings.TrimSuffix(s, "/")
 	if s == "" {
