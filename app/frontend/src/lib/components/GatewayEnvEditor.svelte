@@ -167,6 +167,17 @@
     rows = [...rows, { key: '', value: '', reveal: true }];
   }
 
+  // Seed the three rows an Azure DevOps connection needs; skip any already
+  // present. ADO_PAT is a secret (hidden by default), org/project are not.
+  function addADOConnection() {
+    const want = ['ADO_ORG', 'ADO_PROJECT', 'ADO_PAT'];
+    const next = [...rows];
+    for (const key of want) {
+      if (!next.some((r) => r.key.trim() === key)) next.push({ key, value: '', reveal: key !== 'ADO_PAT' });
+    }
+    rows = next;
+  }
+
   function removeRow(i: number) {
     rows = rows.filter((_, idx) => idx !== i);
   }
@@ -202,6 +213,17 @@
           const st = await a.ValidateGitHubToken(gh);
           if (st.checked && !st.valid) {
             notifications.warning(`GITHUB_TOKEN saved, but ${st.message}`);
+          }
+        } catch { /* validation is best-effort */ }
+      }
+      // Same idea for an ADO connection: confirm the org/project/PAT combo
+      // actually authenticates so a bad PAT surfaces here, not later.
+      const org = env['ADO_ORG'], project = env['ADO_PROJECT'], pat = env['ADO_PAT'];
+      if (org && project && pat) {
+        try {
+          const st = await a.ValidateADOConnection(org, project, pat);
+          if (st.checked && !st.valid) {
+            notifications.warning(`ADO connection saved, but ${st.message}`);
           }
         } catch { /* validation is best-effort */ }
       }
@@ -289,6 +311,7 @@
 
       <div class="gw-actions">
         <button class="gw-btn" onclick={addRow}>+ variable</button>
+        <button class="gw-btn" onclick={addADOConnection} title="Seed ADO_ORG / ADO_PROJECT / ADO_PAT rows for an Azure DevOps connection">+ ADO connection</button>
         <button class="gw-btn" onclick={loadHostEnv} title="Load this profile's host .env + .env.secrets (~/workspaces/profiles/{profile}/) into the list to review + save; .env.secrets (1Password-resolved) wins on overlap">load host env</button>
         <button class="gw-btn" onclick={importFromFile} title="Import a .env file (merges into the list)">import .env</button>
         <button class="gw-btn" class:active={showPaste} onclick={() => (showPaste = !showPaste)} title="Paste .env contents">paste</button>
