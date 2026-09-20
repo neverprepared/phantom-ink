@@ -13,165 +13,139 @@ import (
 	"testing"
 
 	"phantom-ink/brainbox"
-	"phantom-ink/githubclient"
+	"phantom-ink/provider"
 )
 
-// fakeGitHub is a githubFetcher whose every section can be made to fail
-// independently — the case the panel's per-section error fields exist for.
-type fakeGitHub struct {
-	repos    []githubclient.Repo
-	authored []githubclient.Issue
-	reviews  []githubclient.Issue
-	issues   []githubclient.Issue
-	notifs   []githubclient.Notification
-
-	reposErr    error
-	authoredErr error
-	reviewsErr  error
-	issuesErr   error
-	notifsErr   error
-
-	gotToken string
+// fakeProvider is a provider.Client whose each method returns canned data or a
+// canned error, for testing the fan-out/merge without a live server.
+type fakeProvider struct {
+	kind     provider.Kind
+	repos    []provider.Repo
+	prs      []provider.Item
+	work     []provider.Item
+	reposErr error
+	prsErr   error
+	workErr  error
 }
 
-func (f *fakeGitHub) ListRepos(_ context.Context, token string) ([]githubclient.Repo, error) {
-	f.gotToken = token
+func (f *fakeProvider) Kind() provider.Kind { return f.kind }
+func (f *fakeProvider) ListRepos(context.Context) ([]provider.Repo, error) {
 	return f.repos, f.reposErr
 }
-func (f *fakeGitHub) SearchPRsAuthored(context.Context, string) ([]githubclient.Issue, error) {
-	return f.authored, f.authoredErr
+func (f *fakeProvider) SearchMyPRs(context.Context) ([]provider.Item, error) { return f.prs, f.prsErr }
+func (f *fakeProvider) ListAssignedWork(context.Context) ([]provider.Item, error) {
+	return f.work, f.workErr
 }
-func (f *fakeGitHub) SearchPRsReviewRequested(context.Context, string) ([]githubclient.Issue, error) {
-	return f.reviews, f.reviewsErr
+func (f *fakeProvider) ListBranches(context.Context, provider.RepoRef) ([]provider.Branch, error) {
+	return nil, nil
 }
-func (f *fakeGitHub) SearchIssuesAssigned(context.Context, string) ([]githubclient.Issue, error) {
-	return f.issues, f.issuesErr
+func (f *fakeProvider) ListRecentCommits(context.Context, provider.RepoRef, int) ([]provider.Commit, error) {
+	return nil, nil
 }
-func (f *fakeGitHub) ListNotifications(context.Context, string) ([]githubclient.Notification, error) {
+func (f *fakeProvider) GetReadme(context.Context, provider.RepoRef) (string, string, error) {
+	return "", "", nil
+}
+func (f *fakeProvider) RepoPRs(context.Context, provider.RepoRef) ([]provider.Item, error) {
+	return nil, nil
+}
+func (f *fakeProvider) RepoIssues(context.Context, provider.RepoRef) ([]provider.Item, error) {
+	return nil, nil
+}
+func (f *fakeProvider) NormalizeCloneURL(u string) string { return u }
+
+// fakeNotifierProvider adds ListNotifications on top of fakeProvider, since
+// only GitHub implements provider.Notifier in production.
+type fakeNotifierProvider struct {
+	fakeProvider
+	notifs    []provider.Notification
+	notifsErr error
+}
+
+func (f *fakeNotifierProvider) ListNotifications(context.Context) ([]provider.Notification, error) {
 	return f.notifs, f.notifsErr
 }
 
-func pr(url, reason, updated string) githubclient.Issue {
-	return githubclient.Issue{HTMLURL: url, Reason: reason, UpdatedAt: updated, IsPullRequest: true}
+func TestBuildCodeOverview_MergesAndTags(t *testing.T) {
+	gh := &fakeProvider{kind: provider.KindGitHub, repos: []provider.Repo{{Provider: provider.KindGitHub, FullName: "me/gh"}}}
+	ado := &fakeProvider{kind: provider.KindADO, repos: []provider.Repo{{Provider: provider.KindADO, FullName: "proj/ado"}}}
+	out := buildCodeOverview(context.Background(), []provider.Client{gh, ado}, "work")
+	if len(out.Repos) != 2 {
+		t.Fatalf("want 2 merged repos, got %d", len(out.Repos))
+	}
+	if out.Profile != "work" {
+		t.Errorf("profile not echoed back: %q", out.Profile)
+	}
 }
 
-func TestBuildCodeOverview_MergesAndTagsPullRequests(t *testing.T) {
-	f := &fakeGitHub{
-		authored: []githubclient.Issue{
-			pr("https://github.com/a/b/pull/1", githubclient.ReasonAuthored, "2026-09-10T00:00:00Z"),
-			pr("https://github.com/a/b/pull/2", githubclient.ReasonAuthored, "2026-09-12T00:00:00Z"),
-		},
-		reviews: []githubclient.Issue{
-			// Same PR as authored #1 — must appear ONCE, tagged with both.
-			pr("https://github.com/a/b/pull/1", githubclient.ReasonReviewRequested, "2026-09-10T00:00:00Z"),
-			pr("https://github.com/c/d/pull/9", githubclient.ReasonReviewRequested, "2026-09-11T00:00:00Z"),
-		},
+func TestBuildCodeOverview_ErrorIsolation(t *testing.T) {
+	gh := &fakeProvider{kind: provider.KindGitHub, repos: []provider.Repo{{FullName: "me/gh"}}}
+	ado := &fakeProvider{kind: provider.KindADO, reposErr: errors.New("boom")}
+	out := buildCodeOverview(context.Background(), []provider.Client{gh, ado}, "work")
+	if len(out.Repos) != 1 {
+		t.Fatalf("healthy provider's repos must still render: got %d", len(out.Repos))
 	}
-	got := buildCodeOverview(context.Background(), f, "work", "tok")
+	if !strings.Contains(out.ReposError, "ado:") {
+		t.Fatalf("failed provider's error must be prefixed: %q", out.ReposError)
+	}
+}
 
-	if len(got.PullRequests) != 3 {
-		t.Fatalf("want 3 deduped PRs, got %d: %+v", len(got.PullRequests), got.PullRequests)
+func TestBuildCodeOverview_PRsAndWorkMergeAcrossProviders(t *testing.T) {
+	gh := &fakeProvider{
+		kind: provider.KindGitHub,
+		prs:  []provider.Item{{Provider: provider.KindGitHub, HTMLURL: "https://github.com/a/b/pull/1", UpdatedAt: "2026-09-10T00:00:00Z"}},
+		work: []provider.Item{{Provider: provider.KindGitHub, Number: 3, UpdatedAt: "2026-09-09T00:00:00Z"}},
+	}
+	ado := &fakeProvider{
+		kind: provider.KindADO,
+		prs:  []provider.Item{{Provider: provider.KindADO, HTMLURL: "https://dev.azure.com/o/p/_git/r/pullrequest/2", UpdatedAt: "2026-09-12T00:00:00Z"}},
+		work: []provider.Item{{Provider: provider.KindADO, Number: 4, UpdatedAt: "2026-09-11T00:00:00Z"}},
+	}
+	out := buildCodeOverview(context.Background(), []provider.Client{gh, ado}, "work")
+	if len(out.PullRequests) != 2 {
+		t.Fatalf("want 2 merged PRs, got %d: %+v", len(out.PullRequests), out.PullRequests)
 	}
 	// Newest first.
-	if got.PullRequests[0].HTMLURL != "https://github.com/a/b/pull/2" {
-		t.Errorf("not sorted updated-desc: %+v", got.PullRequests)
+	if out.PullRequests[0].Provider != provider.KindADO {
+		t.Errorf("not sorted updated-desc: %+v", out.PullRequests)
 	}
-	var merged githubclient.Issue
-	for _, p := range got.PullRequests {
-		if p.HTMLURL == "https://github.com/a/b/pull/1" {
-			merged = p
-		}
-	}
-	if !strings.Contains(merged.Reason, githubclient.ReasonAuthored) ||
-		!strings.Contains(merged.Reason, githubclient.ReasonReviewRequested) {
-		t.Errorf("duplicate PR must carry both reasons, got %q", merged.Reason)
-	}
-	if got.Profile != "work" {
-		t.Errorf("profile not echoed back: %q", got.Profile)
-	}
-	if f.gotToken != "tok" {
-		t.Errorf("token not passed through: %q", f.gotToken)
+	if len(out.Issues) != 2 {
+		t.Fatalf("want 2 merged work items, got %d: %+v", len(out.Issues), out.Issues)
 	}
 }
 
-func TestBuildCodeOverview_OneFailingSectionDoesNotBlankThePage(t *testing.T) {
-	f := &fakeGitHub{
-		repos:     []githubclient.Repo{{FullName: "a/b"}},
-		authored:  []githubclient.Issue{pr("https://github.com/a/b/pull/1", githubclient.ReasonAuthored, "2026-09-10T00:00:00Z")},
-		issues:    []githubclient.Issue{{RepoFullName: "a/b", Number: 3}},
-		notifsErr: &githubclient.StatusError{Code: http.StatusForbidden, Status: "403 Forbidden", Path: "/notifications"},
-	}
-	got := buildCodeOverview(context.Background(), f, "work", "tok")
-
-	if got.NotificationsError == "" {
-		t.Error("failing section must record its error")
-	}
-	if len(got.Repos) != 1 || len(got.PullRequests) != 1 || len(got.Issues) != 1 {
-		t.Errorf("healthy sections must still render: %+v", got)
-	}
-	if got.TokenInvalid {
-		t.Error("a 403 is not a rejected credential")
-	}
-	if got.ReposError != "" || got.IssuesError != "" || got.PullRequestsError != "" {
-		t.Errorf("healthy sections must have no error: %+v", got)
-	}
-}
-
-func TestBuildCodeOverview_HalfFailedPRSectionKeepsTheOtherHalf(t *testing.T) {
-	f := &fakeGitHub{
-		authored:   []githubclient.Issue{pr("https://github.com/a/b/pull/1", githubclient.ReasonAuthored, "2026-09-10T00:00:00Z")},
-		reviewsErr: errors.New("boom"),
-	}
-	got := buildCodeOverview(context.Background(), f, "work", "tok")
-	if len(got.PullRequests) != 1 {
-		t.Errorf("authored half must survive a review-requested failure: %+v", got.PullRequests)
-	}
-	if !strings.Contains(got.PullRequestsError, "boom") {
-		t.Errorf("failure must be named: %q", got.PullRequestsError)
+func TestBuildCodeOverview_SectionErrorsAreJoinedAndPrefixed(t *testing.T) {
+	gh := &fakeProvider{kind: provider.KindGitHub, prsErr: errors.New("gh down")}
+	ado := &fakeProvider{kind: provider.KindADO, prsErr: errors.New("ado down")}
+	out := buildCodeOverview(context.Background(), []provider.Client{gh, ado}, "work")
+	if !strings.Contains(out.PullRequestsError, "github:") || !strings.Contains(out.PullRequestsError, "ado:") {
+		t.Errorf("both providers' failures must be named: %q", out.PullRequestsError)
 	}
 }
 
 func TestBuildCodeOverview_401SetsTokenInvalid(t *testing.T) {
-	unauth := &githubclient.StatusError{Code: http.StatusUnauthorized, Status: "401 Unauthorized", Path: "/user/repos"}
-	f := &fakeGitHub{reposErr: unauth, authoredErr: unauth, reviewsErr: unauth, issuesErr: unauth, notifsErr: unauth}
-	got := buildCodeOverview(context.Background(), f, "work", "bad")
-	if !got.TokenInvalid {
+	unauth := &provider.StatusError{Code: http.StatusUnauthorized, Status: "401 Unauthorized", Path: "/user/repos"}
+	gh := &fakeProvider{kind: provider.KindGitHub, reposErr: unauth}
+	out := buildCodeOverview(context.Background(), []provider.Client{gh}, "work")
+	if !out.TokenInvalid {
 		t.Fatal("401 must set TokenInvalid so the panel shows a reconnect banner")
 	}
-	if got.TokenMissing {
-		t.Error("a rejected token is present, not missing")
+}
+
+func TestBuildCodeOverview_NotificationsOnlyFromNotifier(t *testing.T) {
+	gh := &fakeNotifierProvider{
+		fakeProvider: fakeProvider{kind: provider.KindGitHub},
+		notifs:       []provider.Notification{{ID: "1", RepoFullName: "a/b"}},
+	}
+	ado := &fakeProvider{kind: provider.KindADO}
+	out := buildCodeOverview(context.Background(), []provider.Client{gh, ado}, "work")
+	if len(out.Notifications) != 1 {
+		t.Fatalf("want 1 notification from the Notifier provider, got %d", len(out.Notifications))
 	}
 }
 
-func TestBuildCodeOverview_401OnOneSectionOnly(t *testing.T) {
-	// Fine-grained PATs scope notifications separately from repos; a 401 there
-	// still means the credential was rejected for that read.
-	f := &fakeGitHub{
-		repos:     []githubclient.Repo{{FullName: "a/b"}},
-		notifsErr: &githubclient.StatusError{Code: http.StatusUnauthorized, Status: "401 Unauthorized", Path: "/notifications"},
-	}
-	got := buildCodeOverview(context.Background(), f, "work", "tok")
-	if !got.TokenInvalid {
-		t.Error("a 401 on any section marks the token invalid")
-	}
-	if len(got.Repos) != 1 {
-		t.Error("the section that worked must still render")
-	}
-}
-
-func TestMergePullRequests_KeepsRowsWithNoURL(t *testing.T) {
-	got := mergePullRequests(
-		[]githubclient.Issue{{Title: "no url", Reason: githubclient.ReasonAuthored}},
-		[]githubclient.Issue{{Title: "also no url", Reason: githubclient.ReasonReviewRequested}},
-	)
-	if len(got) != 2 {
-		t.Fatalf("rows without an html_url must not be deduped away: %+v", got)
-	}
-}
-
-// GitHubOverview must return the token-missing state as a VALUE, not an
-// error, so the panel renders a "connect a token" banner instead of a toast.
-func TestGitHubOverview_NoTokenIsNotAnError(t *testing.T) {
+// CodeOverview must return the token-missing state as a VALUE, not an error,
+// so the panel renders a "connect a provider" banner instead of a toast.
+func TestCodeOverview_NoProviderIsNotAnError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/env") {
 			t.Errorf("unexpected call to %s", r.URL.Path)
@@ -181,15 +155,15 @@ func TestGitHubOverview_NoTokenIsNotAnError(t *testing.T) {
 	defer srv.Close()
 	app := &App{client: brainbox.NewClient(srv.URL, ""), ctx: context.Background()}
 
-	got, err := app.GitHubOverview("work")
+	got, err := app.CodeOverview("work")
 	if err != nil {
-		t.Fatalf("missing token must not be an error: %v", err)
+		t.Fatalf("missing provider must not be an error: %v", err)
 	}
 	if !got.TokenMissing {
 		t.Errorf("want TokenMissing, got %+v", got)
 	}
 	if got.TokenInvalid {
-		t.Error("a missing token is not a rejected one")
+		t.Error("a missing provider is not a rejected one")
 	}
 	if got.Profile != "work" {
 		t.Errorf("profile = %q", got.Profile)
@@ -198,19 +172,36 @@ func TestGitHubOverview_NoTokenIsNotAnError(t *testing.T) {
 
 // A profile with no stored env at all (the gateway 404s) is the same
 // actionable state, not a page-breaking error.
-func TestGitHubOverview_NoStoredEnvIsTokenMissing(t *testing.T) {
+func TestCodeOverview_NoStoredEnvIsTokenMissing(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 	app := &App{client: brainbox.NewClient(srv.URL, ""), ctx: context.Background()}
 
-	got, err := app.GitHubOverview("fresh")
+	got, err := app.CodeOverview("fresh")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !got.TokenMissing {
 		t.Errorf("want TokenMissing, got %+v", got)
+	}
+}
+
+// Only an ADO config (no GITHUB_TOKEN) must still count as "configured".
+func TestCodeOverview_ADOOnlyIsConfigured(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"profile":"work","env":{"ADO_ORG":"o","ADO_PROJECT":"p","ADO_PAT":"secret"}}`))
+	}))
+	defer srv.Close()
+	app := &App{client: brainbox.NewClient(srv.URL, ""), ctx: context.Background()}
+
+	got, err := app.CodeOverview("work")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.TokenMissing {
+		t.Errorf("ADO-only config must count as configured: %+v", got)
 	}
 }
 

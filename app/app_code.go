@@ -1,14 +1,16 @@
 package main
 
 // The Code page: a profile-scoped, single-pane view of the active profile's
-// GitHub account, plus a one-click hand-off from a repo/PR/issue straight into
-// a fleet agent task. Read-only; nothing here is persisted.
+// configured git providers (GitHub, Azure DevOps), plus a one-click hand-off
+// from a repo/PR/issue straight into a fleet agent task. Read-only; nothing
+// here is persisted.
 //
-// Everything is host-side and profile-scoped: the token is the profile's
-// EXISTING curated GITHUB_TOKEN, read fresh out of the gateway env store on
-// every call. No new secret, no new credential storage, no cache — so a
-// profile can only ever see its own GitHub content, and switching profiles
-// cannot serve stale rows from the previous one.
+// Everything is host-side and profile-scoped: each provider's credential is
+// the profile's EXISTING curated env (GITHUB_TOKEN, ADO_ORG/ADO_PROJECT/
+// ADO_PAT), read fresh out of the gateway env store on every call. No new
+// secret, no new credential storage, no cache — so a profile can only ever
+// see its own content, and switching profiles cannot serve stale rows from
+// the previous one.
 
 import (
 	"bytes"
@@ -23,30 +25,36 @@ import (
 	"time"
 
 	"phantom-ink/brainbox"
-	"phantom-ink/githubclient"
+	"phantom-ink/provider"
+	"phantom-ink/provider/ado"
+	"phantom-ink/provider/github"
 )
 
-// CodeOverview is one page-load of the Code panel.
+// CodeOverview is one page-load of the Code panel, merged across every
+// provider the profile has configured.
 //
 // Section errors are per-section STRINGS rather than one returned error on
-// purpose: a 401 on /notifications (the notifications scope is separate from
-// repo scope on fine-grained PATs) must not blank the repositories list. The
-// panel renders each section's error inside that section's card.
+// purpose: a 401 on one provider's notifications (a scope separate from repo
+// scope on fine-grained PATs) must not blank the repositories list, and one
+// provider failing must not blank another provider's results. The panel
+// renders each section's error inside that section's card.
 type CodeOverview struct {
 	// Profile echoes back which profile these rows belong to, so a response
 	// that lands after a profile switch can be discarded by the panel.
 	Profile string `json:"profile"`
-	// TokenMissing is set when the profile has no GITHUB_TOKEN at all. It is
-	// NOT an error: the panel shows a "connect a token" banner pointing at the
-	// Profiles panel instead of an error toast.
+	// TokenMissing is set when the profile has NO provider configured at all
+	// (no GITHUB_TOKEN and no complete ADO_ORG/ADO_PROJECT/ADO_PAT). It is
+	// NOT an error: the panel shows a "connect a provider" banner pointing at
+	// the Profiles panel instead of an error toast.
 	TokenMissing bool `json:"token_missing"`
-	// TokenInvalid is set when GitHub rejected the credential (401).
+	// TokenInvalid is set when ANY configured provider rejected its
+	// credential (401).
 	TokenInvalid bool `json:"token_invalid"`
 
-	Repos         []githubclient.Repo         `json:"repos"`
-	PullRequests  []githubclient.Issue        `json:"pull_requests"`
-	Issues        []githubclient.Issue        `json:"issues"`
-	Notifications []githubclient.Notification `json:"notifications"`
+	Repos         []provider.Repo         `json:"repos"`
+	PullRequests  []provider.Item         `json:"pull_requests"`
+	Issues        []provider.Item         `json:"issues"`
+	Notifications []provider.Notification `json:"notifications"`
 
 	ReposError         string `json:"repos_error"`
 	PullRequestsError  string `json:"pull_requests_error"`
@@ -54,62 +62,65 @@ type CodeOverview struct {
 	NotificationsError string `json:"notifications_error"`
 }
 
-// githubFetcher is the read surface the overview needs. An interface (rather
-// than the concrete *githubclient.Client) keeps buildCodeOverview testable
-// with per-section failures that a live server can't easily be made to produce.
-type githubFetcher interface {
-	ListRepos(ctx context.Context, token string) ([]githubclient.Repo, error)
-	SearchPRsAuthored(ctx context.Context, token string) ([]githubclient.Issue, error)
-	SearchPRsReviewRequested(ctx context.Context, token string) ([]githubclient.Issue, error)
-	SearchIssuesAssigned(ctx context.Context, token string) ([]githubclient.Issue, error)
-	ListNotifications(ctx context.Context, token string) ([]githubclient.Notification, error)
+// providersFor builds the set of providers a profile has configured in its
+// gateway env. Presence is selection: GitHub needs GITHUB_TOKEN; ADO needs all
+// of ADO_ORG/ADO_PROJECT/ADO_PAT. The bool reports whether ANY provider is
+// configured (drives the "connect something" banner).
+func (a *App) providersFor(profile string) ([]provider.Client, bool, error) {
+	env, err := a.GetGatewayEnv(profile)
+	if err != nil {
+		return nil, false, err
+	}
+	var clients []provider.Client
+	if tok := strings.TrimSpace(env["GITHUB_TOKEN"]); tok != "" {
+		clients = append(clients, github.New(tok))
+	}
+	org := strings.TrimSpace(env["ADO_ORG"])
+	proj := strings.TrimSpace(env["ADO_PROJECT"])
+	pat := strings.TrimSpace(env["ADO_PAT"])
+	if org != "" && proj != "" && pat != "" {
+		clients = append(clients, ado.New(org, proj, pat))
+	}
+	anyConfigured := len(clients) > 0
+	return clients, anyConfigured, nil
 }
 
-// GitHubOverview fetches the active profile's GitHub launchpad view. Bound to
-// the UI; one call drives the whole panel.
-func (a *App) GitHubOverview(profile string) (CodeOverview, error) {
-	env, err := a.GetGatewayEnv(profile)
+// CodeOverview fetches the active profile's launchpad across every configured
+// provider (GitHub, ADO), merged. Bound to the UI; one call drives the panel.
+func (a *App) CodeOverview(profile string) (CodeOverview, error) {
+	clients, any, err := a.providersFor(profile)
 	if err != nil {
 		return CodeOverview{Profile: profile}, err
 	}
-	token := strings.TrimSpace(env["GITHUB_TOKEN"])
-	if token == "" {
-		// Not an error — a profile that hasn't curated a token yet is a
-		// normal, actionable state.
+	if !any {
 		return CodeOverview{Profile: profile, TokenMissing: true}, nil
 	}
 	ctx := a.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return buildCodeOverview(ctx, githubclient.New(), profile, token), nil
+	return buildCodeOverview(ctx, clients, profile), nil
 }
 
-// buildCodeOverview fans the five GitHub reads out concurrently (one page-open
-// is ~5 calls against a 5000/hr authenticated budget) and folds them into one
-// struct, recording failures per section instead of aborting the page.
-func buildCodeOverview(ctx context.Context, gh githubFetcher, profile, token string) CodeOverview {
+// buildCodeOverview fans each configured provider's reads out concurrently and
+// folds them into one struct, recording failures per section (prefixed by the
+// provider that produced them) instead of aborting the page. One provider's
+// failure never blanks another provider's results.
+func buildCodeOverview(ctx context.Context, clients []provider.Client, profile string) CodeOverview {
 	out := CodeOverview{Profile: profile}
 
 	var (
-		mu       sync.Mutex // guards the section results below
-		wg       sync.WaitGroup
-		authored []githubclient.Issue
-		reviews  []githubclient.Issue
-		prErrs   []string
-		auth401  bool
+		mu         sync.Mutex // guards the section results below
+		wg         sync.WaitGroup
+		prs        []provider.Item
+		work       []provider.Item
+		notifs     []provider.Notification
+		reposErrs  []string
+		prsErrs    []string
+		workErrs   []string
+		notifsErrs []string
+		auth401    bool
 	)
-
-	// note records a section failure. A 401 anywhere means the credential
-	// itself is rejected, which the panel surfaces as a reconnect banner.
-	note := func(err error, dst *string) {
-		mu.Lock()
-		defer mu.Unlock()
-		if githubclient.IsUnauthorized(err) {
-			auth401 = true
-		}
-		*dst = err.Error()
-	}
 
 	run := func(fn func()) {
 		wg.Add(1)
@@ -119,111 +130,95 @@ func buildCodeOverview(ctx context.Context, gh githubFetcher, profile, token str
 		}()
 	}
 
-	run(func() {
-		repos, err := gh.ListRepos(ctx, token)
-		if err != nil {
-			note(err, &out.ReposError)
-			return
-		}
-		mu.Lock()
-		out.Repos = repos
-		mu.Unlock()
-	})
-
-	run(func() {
-		prs, err := gh.SearchPRsAuthored(ctx, token)
-		mu.Lock()
-		defer mu.Unlock()
-		if err != nil {
-			if githubclient.IsUnauthorized(err) {
-				auth401 = true
+	for _, c := range clients {
+		c := c
+		run(func() {
+			repos, err := c.ListRepos(ctx)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				if provider.IsUnauthorized(err) {
+					auth401 = true
+				}
+				reposErrs = append(reposErrs, fmt.Sprintf("%s: %s", c.Kind(), err))
+				return
 			}
-			prErrs = append(prErrs, err.Error())
-			return
-		}
-		authored = prs
-	})
+			out.Repos = append(out.Repos, repos...)
+		})
 
-	run(func() {
-		prs, err := gh.SearchPRsReviewRequested(ctx, token)
-		mu.Lock()
-		defer mu.Unlock()
-		if err != nil {
-			if githubclient.IsUnauthorized(err) {
-				auth401 = true
+		run(func() {
+			items, err := c.SearchMyPRs(ctx)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				if provider.IsUnauthorized(err) {
+					auth401 = true
+				}
+				prsErrs = append(prsErrs, fmt.Sprintf("%s: %s", c.Kind(), err))
+				return
 			}
-			prErrs = append(prErrs, err.Error())
-			return
-		}
-		reviews = prs
-	})
+			prs = append(prs, items...)
+		})
 
-	run(func() {
-		issues, err := gh.SearchIssuesAssigned(ctx, token)
-		if err != nil {
-			note(err, &out.IssuesError)
-			return
-		}
-		sortIssues(issues)
-		mu.Lock()
-		out.Issues = issues
-		mu.Unlock()
-	})
+		run(func() {
+			items, err := c.ListAssignedWork(ctx)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				if provider.IsUnauthorized(err) {
+					auth401 = true
+				}
+				workErrs = append(workErrs, fmt.Sprintf("%s: %s", c.Kind(), err))
+				return
+			}
+			work = append(work, items...)
+		})
 
-	run(func() {
-		ns, err := gh.ListNotifications(ctx, token)
-		if err != nil {
-			note(err, &out.NotificationsError)
-			return
+		if notifier, ok := c.(provider.Notifier); ok {
+			run(func() {
+				ns, err := notifier.ListNotifications(ctx)
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					if provider.IsUnauthorized(err) {
+						auth401 = true
+					}
+					notifsErrs = append(notifsErrs, fmt.Sprintf("%s: %s", c.Kind(), err))
+					return
+				}
+				notifs = append(notifs, ns...)
+			})
 		}
-		mu.Lock()
-		out.Notifications = ns
-		mu.Unlock()
-	})
+	}
 
 	wg.Wait()
 
-	out.PullRequests = mergePullRequests(authored, reviews)
-	// A half-failed PR section still renders the half that worked, with the
-	// failure named alongside it.
-	out.PullRequestsError = strings.Join(prErrs, "; ")
+	sortRepos(out.Repos)
+	sortItems(prs)
+	sortItems(work)
+
+	out.PullRequests = prs
+	out.Issues = work
+	out.Notifications = notifs
+
+	out.ReposError = strings.Join(reposErrs, "; ")
+	out.PullRequestsError = strings.Join(prsErrs, "; ")
+	out.IssuesError = strings.Join(workErrs, "; ")
+	out.NotificationsError = strings.Join(notifsErrs, "; ")
 	out.TokenInvalid = auth401
 	return out
 }
 
-// mergePullRequests unions the authored and review-requested lists, deduping on
-// html_url. A PR that is both mine AND waiting on my review appears once,
-// tagged with both reasons, so the row explains why it is on the list.
-func mergePullRequests(lists ...[]githubclient.Issue) []githubclient.Issue {
-	byURL := map[string]int{}
-	out := make([]githubclient.Issue, 0, 16)
-	for _, list := range lists {
-		for _, pr := range list {
-			key := pr.HTMLURL
-			if key == "" {
-				// No URL to dedupe on (shouldn't happen); keep the row rather
-				// than silently dropping work.
-				out = append(out, pr)
-				continue
-			}
-			if i, seen := byURL[key]; seen {
-				if !strings.Contains(out[i].Reason, pr.Reason) {
-					out[i].Reason += ", " + pr.Reason
-				}
-				continue
-			}
-			byURL[key] = len(out)
-			out = append(out, pr)
-		}
-	}
-	sortIssues(out)
-	return out
+// sortItems orders rows most-recently-updated first. UpdatedAt is RFC3339, so
+// a plain string compare is already chronological.
+func sortItems(rows []provider.Item) {
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].UpdatedAt > rows[j].UpdatedAt })
 }
 
-// sortIssues orders rows most-recently-updated first. UpdatedAt is RFC3339 from
-// GitHub, so a plain string compare is already chronological.
-func sortIssues(rows []githubclient.Issue) {
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].UpdatedAt > rows[j].UpdatedAt })
+// sortRepos orders repos most-recently-pushed first. PushedAt is RFC3339, so a
+// plain string compare is already chronological.
+func sortRepos(rows []provider.Repo) {
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].PushedAt > rows[j].PushedAt })
 }
 
 // --- Repository detail ------------------------------------------------------
@@ -238,10 +233,12 @@ type RepoDetailResult struct {
 	// Profile / Owner / Repo echo the request back so a response that lands
 	// after the operator navigated away can be discarded by the panel.
 	Profile string `json:"profile"`
-	Owner   string `json:"owner"`
-	Repo    string `json:"repo"`
+	// Provider echoes which provider this detail view was fetched from.
+	Provider provider.Kind `json:"provider"`
+	Owner    string        `json:"owner"`
+	Repo     string        `json:"repo"`
 	// DefaultBranch comes from the caller's already-loaded Repo row rather than
-	// a sixth GitHub call — the overview fetched it seconds ago.
+	// a sixth call — the overview fetched it seconds ago.
 	DefaultBranch string `json:"default_branch"`
 
 	// TokenMissing / TokenInvalid mirror CodeOverview so the panel reuses one
@@ -249,10 +246,10 @@ type RepoDetailResult struct {
 	TokenMissing bool `json:"token_missing"`
 	TokenInvalid bool `json:"token_invalid"`
 
-	Branches []githubclient.Branch `json:"branches"`
-	Commits  []githubclient.Commit `json:"commits"`
-	PRs      []githubclient.Issue  `json:"prs"`
-	Issues   []githubclient.Issue  `json:"issues"`
+	Branches []provider.Branch `json:"branches"`
+	Commits  []provider.Commit `json:"commits"`
+	PRs      []provider.Item   `json:"prs"`
+	Issues   []provider.Item   `json:"issues"`
 	// Readme is RAW markdown. Rendering (and sanitizing — a README is
 	// untrusted repo content) happens in the frontend.
 	Readme    string `json:"readme"`
@@ -269,32 +266,27 @@ type RepoDetailResult struct {
 // to see the shape of the week without paging.
 const repoDetailCommitLimit = 20
 
-// githubRepoFetcher is the read surface the detail view needs — separate from
-// githubFetcher so each build function can be tested against a fake that only
-// implements what it uses.
-type githubRepoFetcher interface {
-	ListBranches(ctx context.Context, token, owner, repo string) ([]githubclient.Branch, error)
-	ListRecentCommits(ctx context.Context, token, owner, repo string, limit int) ([]githubclient.Commit, error)
-	GetReadme(ctx context.Context, token, owner, repo string) (string, string, error)
-	SearchPRsByRepo(ctx context.Context, token, owner, repo string) ([]githubclient.Issue, error)
-	SearchIssuesByRepo(ctx context.Context, token, owner, repo string) ([]githubclient.Issue, error)
-}
-
-// RepoDetail fetches one repository's detail view for the active profile.
-// Bound to the UI; one call drives the whole detail pane.
-//
-// defaultBranch is passed in (not fetched) so opening a repo costs five calls,
-// not six — the caller already has the row the operator clicked.
-func (a *App) RepoDetail(profile, owner, repo, defaultBranch string) (RepoDetailResult, error) {
-	base := RepoDetailResult{Profile: profile, Owner: owner, Repo: repo, DefaultBranch: defaultBranch}
-	env, err := a.GetGatewayEnv(profile)
+// RepoDetail fetches one repository's detail view. The RepoRef (carried from
+// the overview row the operator clicked) names the provider AND the repo, so
+// routing needs no lookup.
+func (a *App) RepoDetail(profile string, ref provider.RepoRef) (RepoDetailResult, error) {
+	base := RepoDetailResult{Profile: profile, Provider: ref.Provider, Owner: ref.Owner, Repo: ref.Name, DefaultBranch: ref.DefaultBranch}
+	clients, any, err := a.providersFor(profile)
 	if err != nil {
 		return base, err
 	}
-	token := strings.TrimSpace(env["GITHUB_TOKEN"])
-	if token == "" {
-		// Not an error, same as GitHubOverview: the panel shows the
-		// "connect a token" banner.
+	if !any {
+		base.TokenMissing = true
+		return base, nil
+	}
+	var client provider.Client
+	for _, c := range clients {
+		if c.Kind() == ref.Provider {
+			client = c
+			break
+		}
+	}
+	if client == nil {
 		base.TokenMissing = true
 		return base, nil
 	}
@@ -302,13 +294,14 @@ func (a *App) RepoDetail(profile, owner, repo, defaultBranch string) (RepoDetail
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return buildRepoDetail(ctx, githubclient.New(), profile, owner, repo, defaultBranch, token), nil
+	return buildRepoDetail(ctx, client, profile, ref), nil
 }
 
 // buildRepoDetail fans the five reads out concurrently and folds them into one
-// struct, recording failures per section instead of aborting the view.
-func buildRepoDetail(ctx context.Context, gh githubRepoFetcher, profile, owner, repo, defaultBranch, token string) RepoDetailResult {
-	out := RepoDetailResult{Profile: profile, Owner: owner, Repo: repo, DefaultBranch: defaultBranch}
+// struct, recording failures per section (prefixed by the provider that
+// produced them) instead of aborting the view.
+func buildRepoDetail(ctx context.Context, c provider.Client, profile string, ref provider.RepoRef) RepoDetailResult {
+	out := RepoDetailResult{Profile: profile, Provider: ref.Provider, Owner: ref.Owner, Repo: ref.Name, DefaultBranch: ref.DefaultBranch}
 
 	var (
 		mu      sync.Mutex // guards out and auth401
@@ -319,10 +312,10 @@ func buildRepoDetail(ctx context.Context, gh githubRepoFetcher, profile, owner, 
 	note := func(err error, dst *string) {
 		mu.Lock()
 		defer mu.Unlock()
-		if githubclient.IsUnauthorized(err) {
+		if provider.IsUnauthorized(err) {
 			auth401 = true
 		}
-		*dst = err.Error()
+		*dst = fmt.Sprintf("%s: %s", c.Kind(), err)
 	}
 
 	run := func(fn func()) {
@@ -334,7 +327,7 @@ func buildRepoDetail(ctx context.Context, gh githubRepoFetcher, profile, owner, 
 	}
 
 	run(func() {
-		bs, err := gh.ListBranches(ctx, token, owner, repo)
+		bs, err := c.ListBranches(ctx, ref)
 		if err != nil {
 			note(err, &out.BranchesError)
 			return
@@ -345,7 +338,7 @@ func buildRepoDetail(ctx context.Context, gh githubRepoFetcher, profile, owner, 
 	})
 
 	run(func() {
-		cs, err := gh.ListRecentCommits(ctx, token, owner, repo, repoDetailCommitLimit)
+		cs, err := c.ListRecentCommits(ctx, ref, repoDetailCommitLimit)
 		if err != nil {
 			note(err, &out.CommitsError)
 			return
@@ -358,7 +351,7 @@ func buildRepoDetail(ctx context.Context, gh githubRepoFetcher, profile, owner, 
 	run(func() {
 		// A repo with no README returns empty markdown and a nil error — it is
 		// not a failure, and must not paint a red box on a healthy repo.
-		md, htmlURL, err := gh.GetReadme(ctx, token, owner, repo)
+		md, htmlURL, err := c.GetReadme(ctx, ref)
 		if err != nil {
 			note(err, &out.ReadmeError)
 			return
@@ -369,24 +362,24 @@ func buildRepoDetail(ctx context.Context, gh githubRepoFetcher, profile, owner, 
 	})
 
 	run(func() {
-		prs, err := gh.SearchPRsByRepo(ctx, token, owner, repo)
+		prs, err := c.RepoPRs(ctx, ref)
 		if err != nil {
 			note(err, &out.PRsError)
 			return
 		}
-		sortIssues(prs)
+		sortItems(prs)
 		mu.Lock()
 		out.PRs = prs
 		mu.Unlock()
 	})
 
 	run(func() {
-		issues, err := gh.SearchIssuesByRepo(ctx, token, owner, repo)
+		issues, err := c.RepoIssues(ctx, ref)
 		if err != nil {
 			note(err, &out.IssuesError)
 			return
 		}
-		sortIssues(issues)
+		sortItems(issues)
 		mu.Lock()
 		out.Issues = issues
 		mu.Unlock()
