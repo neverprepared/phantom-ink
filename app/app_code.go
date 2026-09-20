@@ -474,6 +474,13 @@ var runGitCloneAuth = func(cloneURL, dest, authHeader string) error {
 	return nil
 }
 
+// readProfileGatewayEnv resolves a profile's gateway env for the clone path. A
+// package var (like runGitClone) so a test can supply an ADO_PAT without a live
+// broker; production delegates to the real GetGatewayEnv.
+var readProfileGatewayEnv = func(a *App, profile string) (map[string]string, error) {
+	return a.GetGatewayEnv(profile)
+}
+
 // openTerminalAt opens a host terminal tab running claude in a directory. A var
 // over the EXISTING opener (shared with OpenLocalSession) so tests don't drive
 // AppleScript and there is exactly one implementation of "open a tab".
@@ -510,7 +517,7 @@ func (a *App) OpenRepoLocally(profile, repoURL string) (string, error) {
 			return "", err
 		}
 		if isADOCloneURL(cloneURL) {
-			env, err := a.GetGatewayEnv(profile)
+			env, err := readProfileGatewayEnv(a, profile)
 			if err != nil {
 				return "", err
 			}

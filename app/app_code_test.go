@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -275,6 +276,10 @@ func TestNormalizeCloneURL_ADO(t *testing.T) {
 		"https://dev.azure.com/acme/widgets/_git/api":      "https://dev.azure.com/acme/widgets/_git/api",
 		"https://acme@dev.azure.com/acme/widgets/_git/api": "https://dev.azure.com/acme/widgets/_git/api",
 		"https://acme.visualstudio.com/widgets/_git/api":   "https://dev.azure.com/acme/widgets/_git/api",
+		// Fail closed on incomplete ADO refs.
+		"https://dev.azure.com/acme":    "", // org only, no project/repo
+		"https://dev.azure.com":         "", // bare host
+		"https://acme.visualstudio.com": "", // bare legacy host, no path
 		// GitHub still works.
 		"git@github.com:o/r.git": "https://github.com/o/r.git",
 	}
@@ -314,15 +319,16 @@ func TestDeriveCloneDest(t *testing.T) {
 // stubLanes replaces the clone + terminal seams for the duration of a test and
 // records what they were asked to do.
 type stubLanes struct {
-	clones   [][2]string // (url, dest) per call
-	opened   []string    // dirs the terminal opener saw
-	cloneErr error
-	openErr  error
+	clones     [][2]string // (url, dest) per plain runGitClone call
+	authClones [][3]string // (url, dest, authHeader) per runGitCloneAuth call
+	opened     []string    // dirs the terminal opener saw
+	cloneErr   error
+	openErr    error
 }
 
 func (s *stubLanes) install(t *testing.T) {
 	t.Helper()
-	origClone, origOpen := runGitClone, openTerminalAt
+	origClone, origAuth, origOpen := runGitClone, runGitCloneAuth, openTerminalAt
 	runGitClone = func(cloneURL, dest string) error {
 		s.clones = append(s.clones, [2]string{cloneURL, dest})
 		if s.cloneErr != nil {
@@ -332,11 +338,31 @@ func (s *stubLanes) install(t *testing.T) {
 		// second call would look like a fresh checkout.
 		return os.MkdirAll(dest, 0o755)
 	}
+	runGitCloneAuth = func(cloneURL, dest, authHeader string) error {
+		s.authClones = append(s.authClones, [3]string{cloneURL, dest, authHeader})
+		if s.cloneErr != nil {
+			return s.cloneErr
+		}
+		return os.MkdirAll(dest, 0o755)
+	}
 	openTerminalAt = func(dir string) error {
 		s.opened = append(s.opened, dir)
 		return s.openErr
 	}
-	t.Cleanup(func() { runGitClone, openTerminalAt = origClone, origOpen })
+	t.Cleanup(func() {
+		runGitClone, runGitCloneAuth, openTerminalAt = origClone, origAuth, origOpen
+	})
+}
+
+// stubGatewayEnv makes readProfileGatewayEnv return a fixed env for the test's
+// duration, so the ADO clone path resolves a PAT without a live broker.
+func stubGatewayEnv(t *testing.T, env map[string]string) {
+	t.Helper()
+	orig := readProfileGatewayEnv
+	readProfileGatewayEnv = func(_ *App, _ string) (map[string]string, error) {
+		return env, nil
+	}
+	t.Cleanup(func() { readProfileGatewayEnv = orig })
 }
 
 // laneApp builds an App whose profile scan finds exactly one profile, rooted in
@@ -415,6 +441,73 @@ func TestOpenRepoLocally_ExistingCheckoutIsNotReCloned(t *testing.T) {
 	}
 	if len(stub.opened) != 1 || stub.opened[0] != dest {
 		t.Errorf("terminal opened at %v, want [%s]", stub.opened, dest)
+	}
+}
+
+// An ADO repo clones through the auth seam with the PAT injected via an inline
+// Authorization header — never embedded in the URL — and host git creds are not
+// used.
+func TestOpenRepoLocally_ADOClonesWithPAT(t *testing.T) {
+	app, home := laneApp(t, "work")
+	stub := &stubLanes{}
+	stub.install(t)
+	stubGatewayEnv(t, map[string]string{"ADO_PAT": "secret"})
+
+	dest, err := app.OpenRepoLocally("work", "https://dev.azure.com/acme/widgets/_git/api")
+	if err != nil {
+		t.Fatalf("OpenRepoLocally: %v", err)
+	}
+	want := filepath.Join(home, "code", "api")
+	if dest != want {
+		t.Errorf("dest = %q, want %q", dest, want)
+	}
+	if len(stub.authClones) != 1 {
+		t.Fatalf("want 1 auth clone, got %v", stub.authClones)
+	}
+	if len(stub.clones) != 0 {
+		t.Errorf("ADO must not fall back to plain host-cred clone, got %v", stub.clones)
+	}
+	gotURL, gotDest, gotAuth := stub.authClones[0][0], stub.authClones[0][1], stub.authClones[0][2]
+	if gotURL != "https://dev.azure.com/acme/widgets/_git/api" {
+		t.Errorf("clone url = %q", gotURL)
+	}
+	if gotDest != want {
+		t.Errorf("clone dest = %q, want %q", gotDest, want)
+	}
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(":secret"))
+	if gotAuth != wantAuth {
+		t.Errorf("auth header = %q, want %q", gotAuth, wantAuth)
+	}
+	// The PAT must never leak into the clone URL (which would persist to the
+	// remote/reflog on disk).
+	if strings.Contains(gotURL, "secret") {
+		t.Errorf("PAT leaked into clone url: %q", gotURL)
+	}
+	if len(stub.opened) != 1 || stub.opened[0] != want {
+		t.Errorf("terminal opened at %v, want [%s]", stub.opened, want)
+	}
+}
+
+// An ADO repo with no PAT configured fails with a clear error and never falls
+// back to a plain host-cred clone.
+func TestOpenRepoLocally_ADOMissingPATErrors(t *testing.T) {
+	app, _ := laneApp(t, "work")
+	stub := &stubLanes{}
+	stub.install(t)
+	stubGatewayEnv(t, map[string]string{}) // no ADO_PAT
+
+	_, err := app.OpenRepoLocally("work", "https://dev.azure.com/acme/widgets/_git/api")
+	if err == nil {
+		t.Fatal("want an error when ADO_PAT is absent")
+	}
+	if !strings.Contains(err.Error(), "ADO_PAT") {
+		t.Errorf("error must mention ADO_PAT, got %v", err)
+	}
+	if len(stub.authClones) != 0 {
+		t.Errorf("no PAT must mean no auth clone, got %v", stub.authClones)
+	}
+	if len(stub.clones) != 0 {
+		t.Errorf("no PAT must not fall back to host-cred clone, got %v", stub.clones)
 	}
 }
 
