@@ -163,6 +163,38 @@ export const settingsState = {
 };
 
 // ---------------------------------------------------------------------------
+// "Automations" hub sub-tabs — Loops (iterate + judge), Collectors (scheduled
+// ingest), and Rules (server rules engine) are folded in alongside the fleet
+// fan-out jobs view. The panel id is still 'jobs' internally (label-only rename
+// to "Automations"). Same pattern as the Settings tabs above: callers that used
+// to navigate to those panels directly (or via legacy deep-links) are
+// redirected to the hub with the matching tab pre-selected.
+// ---------------------------------------------------------------------------
+
+export type JobsTab = 'jobs' | 'loops' | 'collectors' | 'rules';
+
+// Legacy panel ids that are now hub tabs → their tab. Used by AppShell to
+// redirect stale navigation/deep-links and by the command palette. Note the
+// old top-level 'automations' panel maps to the renamed 'rules' tab.
+export const JOBS_TAB_PANELS: Record<string, JobsTab> = {
+  loops: 'loops',
+  collectors: 'collectors',
+  automations: 'rules',
+};
+
+let _jobsTab = $state<JobsTab>('jobs');
+
+export const jobsState = {
+  get tab(): JobsTab { return _jobsTab; },
+  set tab(v: JobsTab) { _jobsTab = v; },
+  /** Navigate to the hub panel with a specific tab pre-selected. */
+  open(tab: JobsTab): void {
+    _jobsTab = tab;
+    currentPanel.value = 'jobs';
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Active profile
 // ---------------------------------------------------------------------------
 
@@ -358,7 +390,7 @@ export const attentionStore = {
 // ---------------------------------------------------------------------------
 
 export interface StreamFocus {
-  tab: 'live' | 'attention' | 'logs';
+  tab: 'live' | 'attention' | 'logs' | 'timeline';
   sortBy?: 'cost' | 'duration' | 'tokens';
 }
 
@@ -400,7 +432,9 @@ export const ruleSeed = {
   get value(): RuleSeed | null { return _ruleSeed; },
   seed(target: RuleSeed): void {
     _ruleSeed = target;
-    currentPanel.value = 'automations';
+    // The rules engine now lives as the "rules" tab under the Automations hub.
+    _jobsTab = 'rules';
+    currentPanel.value = 'jobs';
   },
   consume(): RuleSeed | null {
     const f = _ruleSeed;

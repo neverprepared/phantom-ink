@@ -4,8 +4,18 @@
   import CommandPalette from './lib/components/CommandPalette.svelte';
   import Notifications from './lib/components/Notifications.svelte';
   import { commandPalette, currentPanel, profileState, profileColorStore, featureFlags, refreshTick } from './lib/stores.svelte';
+  import { panels } from './lib/panels';
   import { notifications } from './lib/notifications.svelte';
   import { startEventListener } from './lib/events.svelte';
+
+  // Keyboard nav map derived from the panel registry — single source of truth,
+  // so ⌘-shortcuts can never drift from the labels shown in the sidebar. Each
+  // panel's `shortcut` is "⌘<key>"; strip the ⌘ to get the bound key.
+  const panelShortcutMap: Record<string, string> = Object.fromEntries(
+    panels
+      .filter((p) => p.shortcut)
+      .map((p) => [p.shortcut!.replace(/^⌘/, ''), p.id]),
+  );
   import './styles/tokens.css';
   import './styles/base.css';
   import './styles/buttons.css';
@@ -85,18 +95,9 @@
         return;
       }
 
-      const panelMap: Record<string, string> = {
-        '1': 'dashboard',
-        '2': 'sessions',
-        '3': 'integrations',
-        '5': 'mesh',
-        '9': 'code',
-        ',': 'settings',
-      };
-
-      if (panelMap[e.key]) {
+      if (panelShortcutMap[e.key]) {
         e.preventDefault();
-        currentPanel.value = panelMap[e.key];
+        currentPanel.value = panelShortcutMap[e.key];
       }
     }
 

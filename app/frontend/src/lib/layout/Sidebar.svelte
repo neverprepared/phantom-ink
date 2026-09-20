@@ -27,8 +27,11 @@
       : visiblePanels
   );
 
-  let primaryPanels = $derived(filteredPanels.filter(p => p.shortcut));
-  let secondaryPanels = $derived(filteredPanels.filter(p => !p.shortcut));
+  // Sidebar groups are an explicit IA split (panels.ts `section`), not derived
+  // from whether a panel has a keyboard shortcut. Array order within each
+  // section drives display order.
+  let workspacePanels = $derived(filteredPanels.filter(p => p.section === 'workspace'));
+  let systemPanels = $derived(filteredPanels.filter(p => p.section === 'system'));
 </script>
 
 <nav class="sidebar" class:collapsed={sidebarCollapsed.value}>
@@ -50,8 +53,12 @@
     </div>
   {/if}
 
+  {#if !searchActive && !sidebarCollapsed.value}
+    <div class="nav-section-label">workspace</div>
+  {/if}
+
   <ul class="nav-items">
-    {#each (searchActive ? filteredPanels : primaryPanels) as panel (panel.id)}
+    {#each (searchActive ? filteredPanels : workspacePanels) as panel (panel.id)}
       <li>
         <button
           class="nav-btn"
@@ -80,9 +87,12 @@
     {/each}
   </ul>
 
-  {#if !searchActive && secondaryPanels.length > 0}
-    <ul class="nav-items nav-secondary">
-      {#each secondaryPanels as panel (panel.id)}
+  {#if !searchActive && systemPanels.length > 0}
+    {#if !sidebarCollapsed.value}
+      <div class="nav-section-label nav-section-label--secondary">system</div>
+    {/if}
+    <ul class="nav-items nav-secondary" class:nav-secondary--labeled={!sidebarCollapsed.value}>
+      {#each systemPanels as panel (panel.id)}
         <li>
           <button
             class="nav-btn"
@@ -102,6 +112,8 @@
               <span class="nav-label">{panel.label}</span>
               {#if badgeFor(panel.id) > 0}
                 <span class="nav-badge" aria-label="{badgeFor(panel.id)} items need attention">{badgeFor(panel.id)}</span>
+              {:else if panel.shortcut}
+                <span class="nav-shortcut">{panel.shortcut}</span>
               {/if}
             {/if}
           </button>
@@ -198,6 +210,28 @@
     flex: none;
     border-top: 1px solid var(--border, var(--color-border-primary));
     padding-top: 6px;
+  }
+  /* When the "system" caption is shown (expanded), it carries the divider line
+     instead of the list, so the border doesn't sit between label and items. */
+  .nav-secondary--labeled {
+    border-top: none;
+    padding-top: 0;
+  }
+
+  /* Section captions above each sidebar group. */
+  .nav-section-label {
+    flex: none;
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-faint, var(--color-text-tertiary));
+    padding: 10px 14px 4px;
+  }
+  .nav-section-label--secondary {
+    border-top: 1px solid var(--border, var(--color-border-primary));
+    padding-top: 12px;
   }
 
   .nav-items li {

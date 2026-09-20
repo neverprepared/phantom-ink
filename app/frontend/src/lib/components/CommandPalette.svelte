@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { commandPalette, currentPanel, integrationState, settingsState, type SettingsTab } from '../stores.svelte';
+  import { commandPalette, currentPanel, integrationState, settingsState, jobsState, streamFocus, type SettingsTab, type JobsTab } from '../stores.svelte';
   import { panels } from '../panels';
 
   // Settings tabs that used to be top-level panels — kept in the palette so
@@ -9,6 +9,13 @@
     { tab: 'profiles', label: 'Profiles' },
     { tab: 'gateway', label: 'Gateway' },
     { tab: 'tokens', label: 'API tokens' },
+  ];
+
+  // Automations-hub tabs that used to be top-level panels — same treatment.
+  const jobsTabCommands: { tab: JobsTab; label: string }[] = [
+    { tab: 'loops', label: 'Loops' },
+    { tab: 'collectors', label: 'Collectors' },
+    { tab: 'rules', label: 'Rules' },
   ];
 
   interface Command {
@@ -39,6 +46,19 @@
       description: 'Settings',
       action: () => { settingsState.open(t.tab); commandPalette.close(); },
     })),
+    ...jobsTabCommands.map(t => ({
+      id: `nav:jobs:${t.tab}`,
+      label: `Go to ${t.label}`,
+      description: 'Automations',
+      action: () => { jobsState.open(t.tab); commandPalette.close(); },
+    })),
+    {
+      // Timeline is now a tab under Stream — jump via the streamFocus signal.
+      id: 'nav:stream:timeline',
+      label: 'Go to Timeline',
+      description: 'Stream',
+      action: () => { streamFocus.focus({ tab: 'timeline' }); commandPalette.close(); },
+    },
     {
       id: 'reload',
       label: 'Reload app',
