@@ -15,6 +15,8 @@ import { getApi } from '../utils/api';
 import { notifications } from '../notifications.svelte';
 
 export interface Repo {
+  provider: 'github' | 'ado';
+  id: string;
   owner: string;
   name: string;
   full_name: string;
@@ -28,7 +30,9 @@ export interface Repo {
 }
 
 export interface Issue {
+  provider: 'github' | 'ado';
   repo_full_name: string;
+  repo_id: string;
   number: number;
   title: string;
   state: string;
@@ -39,6 +43,16 @@ export interface Issue {
   is_pull_request: boolean;
   /** Why this row is listed: authored / review-requested / assigned. */
   reason: string;
+}
+
+/** Identifies one repository for a `RepoDetail` call, provider-aware. */
+export interface RepoRef {
+  provider: 'github' | 'ado';
+  owner: string;
+  name: string;
+  id: string;
+  clone_url: string;
+  default_branch: string;
 }
 
 export interface GitHubNotification {
@@ -82,6 +96,7 @@ export interface Commit {
 /** One repository's detail view — the backend's RepoDetailResult. */
 export interface RepoDetail {
   profile: string;
+  provider: 'github' | 'ado';
   owner: string;
   repo: string;
   default_branch: string;
@@ -186,12 +201,31 @@ export type DispatchLane = 'task' | 'session';
 export function httpsCloneURL(t: DispatchTarget): string {
   const raw = (t.repoURL || t.htmlURL || '').trim().replace(/\/+$/, '');
   if (!raw) return '';
+  // Azure DevOps repo URLs put the repo name after a literal `/_git/` segment
+  // (e.g. https://dev.azure.com/org/project/_git/repo/pullrequest/7), so the
+  // github-shaped "host + first two segments" regex below would truncate to
+  // .../org/project.git — wrong repo entirely. Detect `/_git/` and keep
+  // everything up to and including the repo segment instead.
+  //   httpsCloneURL({repoURL: '', htmlURL: 'https://dev.azure.com/org/project/_git/repo/pullrequest/7'} as DispatchTarget)
+  //     === 'https://dev.azure.com/org/project/_git/repo.git'
+  const adoMatch = raw.match(/^(https?:\/\/[^/]+\/[^/]+\/[^/]+\/_git\/[^/]+)(?:\/.*)?$/);
+  if (adoMatch) {
+    const base = adoMatch[1];
+    return base.endsWith('.git') ? base : `${base}.git`;
+  }
   // A PR/issue URL carries extra segments (…/pull/7) — keep host + owner/repo
   // so what lands in the prompt is something `git clone` accepts. The backend
   // normalizes again; this is so the operator SEES the right URL.
   const m = raw.match(/^(https?:\/\/[^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/.*)?$/);
   if (m) return `${m[1]}/${m[2]}/${m[3]}.git`;
   return raw.endsWith('.git') ? raw : `${raw}.git`;
+}
+
+/** Best clone URL for a PR/issue row, provider-aware. */
+export function itemCloneURL(i: Issue): string {
+  // A row carries its html_url; httpsCloneURL trims PR/issue path segments and
+  // appends .git, working for both github.com and dev.azure.com/_git URLs.
+  return httpsCloneURL({ repoURL: '', htmlURL: i.html_url } as DispatchTarget);
 }
 
 /**
@@ -321,7 +355,7 @@ class CodeStore {
     }
     this.loading = true;
     try {
-      const ov = (await (a as any).GitHubOverview(profile)) as CodeOverview;
+      const ov = (await (a as any).CodeOverview(profile)) as CodeOverview;
       // A response for a profile the user has since switched away from is
       // stale — dropping it keeps the header's profile name honest.
       if (ov.profile && ov.profile !== profile) return;
@@ -404,12 +438,15 @@ class CodeStore {
     }
     this.detailLoading = true;
     try {
-      const d = (await (a as any).RepoDetail(
-        profile,
-        repo.owner,
-        repo.name,
-        repo.default_branch
-      )) as RepoDetail;
+      const ref: RepoRef = {
+        provider: repo.provider,
+        owner: repo.owner,
+        name: repo.name,
+        id: repo.id,
+        clone_url: repo.clone_url,
+        default_branch: repo.default_branch,
+      };
+      const d = (await (a as any).RepoDetail(profile, ref)) as RepoDetail;
       // A response for a repo (or profile) the operator has since navigated
       // away from is stale — dropping it keeps the header honest, the same
       // rule the overview applies on a profile switch.

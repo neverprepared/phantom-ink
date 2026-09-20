@@ -58,6 +58,10 @@ export function ClearProfileServerOverride(arg1, arg2) {
   return window['go']['main']['App']['ClearProfileServerOverride'](arg1, arg2);
 }
 
+export function CodeOverview(arg1) {
+  return window['go']['main']['App']['CodeOverview'](arg1);
+}
+
 export function CopyVaultRecord(arg1, arg2, arg3) {
   return window['go']['main']['App']['CopyVaultRecord'](arg1, arg2, arg3);
 }
@@ -454,10 +458,6 @@ export function GetWidgetCount(arg1, arg2) {
   return window['go']['main']['App']['GetWidgetCount'](arg1, arg2);
 }
 
-export function GitHubOverview(arg1) {
-  return window['go']['main']['App']['GitHubOverview'](arg1);
-}
-
 export function HeadArtifactObject(arg1, arg2) {
   return window['go']['main']['App']['HeadArtifactObject'](arg1, arg2);
 }
@@ -714,8 +714,8 @@ export function RenameArtifactObject(arg1, arg2, arg3) {
   return window['go']['main']['App']['RenameArtifactObject'](arg1, arg2, arg3);
 }
 
-export function RepoDetail(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['RepoDetail'](arg1, arg2, arg3, arg4);
+export function RepoDetail(arg1, arg2) {
+  return window['go']['main']['App']['RepoDetail'](arg1, arg2);
 }
 
 export function RescanAgents() {
@@ -964,6 +964,10 @@ export function UpsertPool(arg1, arg2, arg3) {
 
 export function UsableAgents() {
   return window['go']['main']['App']['UsableAgents']();
+}
+
+export function ValidateADOConnection(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ValidateADOConnection'](arg1, arg2, arg3);
 }
 
 export function ValidateGitHubToken(arg1) {
