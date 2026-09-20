@@ -12,7 +12,7 @@
   import { onMount } from 'svelte';
   import { profileState } from '../stores.svelte';
   import { currentPanel, settingsState, jobsState } from '../stores.svelte';
-  import { codeState, type Issue, type Repo } from '../stores/code.svelte';
+  import { codeState, itemCloneURL, type Issue, type Repo } from '../stores/code.svelte';
   import { openInBrowser } from '../utils/api';
   import { timeAgoOrDate } from '../utils/format';
   import CardExpander from '../components/CardExpander.svelte';
@@ -22,6 +22,9 @@
   import Spinner from '../components/Spinner.svelte';
 
   const activeProfile = $derived(profileState.active?.name ?? '');
+
+  const PROVIDER_LABEL: Record<string, string> = { github: 'GitHub', ado: 'Azure DevOps' };
+  const providerLabel = (p: string) => PROVIDER_LABEL[p] ?? p;
 
   let attentionOpen = $state(true);
   let notificationsOpen = $state(false);
@@ -61,7 +64,7 @@
     return {
       kind: 'repo' as const,
       repoFullName: r.full_name,
-      repoURL: r.clone_url || r.html_url,
+      repoURL: r.clone_url,
       number: 0,
       title: '',
       htmlURL: r.html_url,
@@ -101,9 +104,8 @@
     codeState.openDispatch({
       kind: i.is_pull_request ? 'pr' : 'issue',
       repoFullName: i.repo_full_name,
-      // Search hits carry no clone_url; derive the repo page and let the agent
-      // clone from it (git accepts the html URL).
-      repoURL: `https://github.com/${i.repo_full_name}.git`,
+      // Provider-aware: derives the correct clone URL for github vs ado rows.
+      repoURL: itemCloneURL(i),
       number: i.number,
       title: i.title,
       htmlURL: i.html_url,
@@ -171,6 +173,7 @@
     <div class="detail-head">
       <button class="link back" onclick={() => codeState.closeDetail()}>← back</button>
       <code class="repo strong">{repo.full_name}</code>
+      <span class="provider-badge provider-{repo.provider}" title={providerLabel(repo.provider)}>{repo.provider === 'ado' ? 'ADO' : 'GH'}</span>
       {#if repo.default_branch}<span class="badge">{repo.default_branch}</span>{/if}
       <div class="detail-actions">
         <button class="link" onclick={() => openInBrowser(repo.html_url)}>open ↗</button>
@@ -364,11 +367,12 @@
             <li class="row">
               <div class="row-main">
                 <code class="repo">{row.repo_full_name}</code>
+                <span class="provider-badge provider-{row.provider}" title={providerLabel(row.provider)}>{row.provider === 'ado' ? 'ADO' : 'GH'}</span>
                 <span class="num">#{row.number}</span>
                 <span class="title">{row.title}</span>
               </div>
               <div class="row-meta">
-                <span class="badge">{row.is_pull_request ? 'pr' : 'issue'}</span>
+                <span class="badge">{row.is_pull_request ? 'pr' : (row.provider === 'ado' ? 'work item' : 'issue')}</span>
                 {#if row.draft}<span class="badge muted">draft</span>{/if}
                 <span class="badge why">{row.reason}</span>
                 {#if row.user}<span class="by">@{row.user}</span>{/if}
@@ -442,6 +446,7 @@
                 <button class="repo-link" title="Open this repository" onclick={() => openDetail(r)}>
                   <code class="repo">{r.full_name}</code>
                 </button>
+                <span class="provider-badge provider-{r.provider}" title={providerLabel(r.provider)}>{r.provider === 'ado' ? 'ADO' : 'GH'}</span>
                 {#if r.description}<span class="desc">{r.description}</span>{/if}
               </div>
               <div class="row-meta">
@@ -580,6 +585,20 @@
   }
   .badge.muted { color: var(--color-text-tertiary); }
   .badge.why { color: var(--color-accent); border-color: var(--color-accent); }
+
+  .provider-badge {
+    font-size: 0.58rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.05rem 0.3rem;
+    border-radius: 3px;
+    margin-left: 0.35rem;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    vertical-align: middle;
+  }
+  .provider-ado { color: #2b88d8; border-color: #2b88d8; }
+  .provider-github { color: var(--text-muted); }
 
   .link {
     background: transparent; border: none; padding: 0;
