@@ -8,7 +8,7 @@
 #   CL_BRAIN_API_TOKEN  the ACTIVE profile's memory-vault bearer token
 services:
   mindwalk:
-    image: registry.neverprepared.com/phantom-mindwalk:0.6.0
+    image: registry.neverprepared.com/phantom-mindwalk:0.7.0
     container_name: phantom-mindwalk
     restart: unless-stopped
     ports:
