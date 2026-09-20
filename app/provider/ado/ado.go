@@ -94,6 +94,14 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, out a
 		return err
 	}
 	defer resp.Body.Close()
+	// ADO answers an unauthenticated/bad-PAT call with 203 Non-Authoritative
+	// Information plus a sign-in HTML page, not 401 — surface it as
+	// unauthorized so provider.IsUnauthorized sees it (matches
+	// checkADOConnection's treatment of 203 in app_ado_token.go), instead of
+	// letting a JSON decode of the HTML page fail opaquely.
+	if resp.StatusCode == http.StatusNonAuthoritativeInfo {
+		return &provider.StatusError{Code: http.StatusUnauthorized, Status: resp.Status, Path: path}
+	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return &provider.StatusError{Code: resp.StatusCode, Status: resp.Status, Path: path}
 	}

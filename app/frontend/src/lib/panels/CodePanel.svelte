@@ -111,6 +111,13 @@
       htmlURL: i.html_url,
     });
   }
+
+  // ADO work items live at .../_workitems/edit/{id} — not a cloneable repo, so
+  // there is no dispatch/session/clone target for them. ADO PRs and all GitHub
+  // rows still resolve to a real repo and keep the begin-work lane.
+  function canBeginWork(row: Issue): boolean {
+    return !(row.provider === 'ado' && !row.is_pull_request);
+  }
 </script>
 
 <div class="code">
@@ -378,7 +385,9 @@
                 {#if row.user}<span class="by">@{row.user}</span>{/if}
                 <span class="ago">{timeAgoOrDate(ts(row.updated_at))}</span>
                 <button class="link" onclick={() => openInBrowser(row.html_url)}>open ↗</button>
-                <button class="link accent" onclick={() => beginWorkIssue(row)}>Begin work ▾</button>
+                {#if canBeginWork(row)}
+                  <button class="link accent" onclick={() => beginWorkIssue(row)}>Begin work ▾</button>
+                {/if}
               </div>
             </li>
           {/each}

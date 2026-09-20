@@ -188,6 +188,31 @@ func TestUnauthorizedSurfaces(t *testing.T) {
 	}
 }
 
+// TestNonAuthoritativeSurfacesAsUnauthorized covers ADO's real failure mode
+// for a bad/expired PAT: it answers with HTTP 203 Non-Authoritative
+// Information and a sign-in HTML page rather than 401. Before the fix, 203
+// fell inside the do() "success" range and the HTML body then failed to
+// JSON-decode with an opaque syntax error instead of surfacing as
+// unauthorized.
+func TestNonAuthoritativeSurfacesAsUnauthorized(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/"+testOrg+"/_apis/connectionData", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNonAuthoritativeInfo)
+		_, _ = w.Write([]byte("<html><body>Sign in</body></html>"))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.SearchMyPRs(context.Background())
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !provider.IsUnauthorized(err) {
+		t.Fatalf("want unauthorized, got %v", err)
+	}
+}
+
 func TestNormalizeCloneURL(t *testing.T) {
 	c := newTestClient("https://dev.azure.com")
 	cases := map[string]string{
