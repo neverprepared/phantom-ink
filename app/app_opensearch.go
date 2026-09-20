@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"phantom-ink/opensearch"
 	"strings"
+	"time"
 )
 
 // platformSubdomainURL derives a sibling platform service's URL from the
@@ -62,6 +63,21 @@ func (a *App) opensearchAPIURL() (string, error) {
 		target = target[:i] + ":9200" + target[i+len(":5601"):]
 	}
 	return target, nil
+}
+
+// GetOpenSearchHealth reports whether the resolved OpenSearch endpoint is
+// reachable and answering. The Stream "Logs" tab gates on this rather than the
+// service-flag list: opensearch is a Platform service, excluded from
+// ListServices, so featureFlags.isActive("opensearch") is structurally always
+// false and the tab could never enable.
+func (a *App) GetOpenSearchHealth() bool {
+	url, err := a.opensearchAPIURL()
+	if err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return opensearch.NewClient(url).Health(ctx) == nil
 }
 
 // TailLogs returns the most-recent log entries (newest first), optionally

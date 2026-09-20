@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { timeAgo } from '../utils/format';
   import { getApi, openInBrowser } from '../utils/api';
-  import { featureFlags, profileState, currentPanel, attentionStore, streamFocus, ruleSeed } from '../stores.svelte';
+  import { profileState, currentPanel, attentionStore, streamFocus, ruleSeed } from '../stores.svelte';
   import { streamLive, STATUS_OPTIONS } from '../stores/streamLive.svelte';
   import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
@@ -86,14 +86,29 @@
   let livePoll: number | undefined;
   let logsPoll: number | undefined;
   let outboxPoll: number | undefined;
+  let healthPoll: number | undefined;
   let sseCleanup: Array<() => void> = [];
 
   const LIVE_POLL_MS = 5_000;     // SSE drives instant updates; this is a safety net
   const LOGS_POLL_MS = 3_000;
   const OUTBOX_POLL_MS = 5_000;
+  const HEALTH_POLL_MS = 20_000;  // OpenSearch reachability changes rarely
   const LOGS_LIMIT = 1000;
 
-  let opensearchActive = $derived(featureFlags.isActive('opensearch'));
+  // Gate for the Logs tab. NOT the service-flag list — opensearch is a Platform
+  // service (excluded from ListServices), so isActive('opensearch') is always
+  // false. Instead probe the resolved endpoint's real reachability.
+  let opensearchActive = $state(false);
+
+  async function refreshOpenSearchHealth() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      opensearchActive = await (a as any).GetOpenSearchHealth();
+    } catch {
+      opensearchActive = false;
+    }
+  }
   let activeProfile    = $derived(profileState.active);
   let workspaceFilter  = $derived(activeProfile?.name ?? '');
 
@@ -186,8 +201,10 @@
 
     void streamLive.refreshLive();
     void refreshOutbox();
+    void refreshOpenSearchHealth();
     livePoll      = window.setInterval(() => streamLive.refreshLive(), LIVE_POLL_MS);
     outboxPoll    = window.setInterval(refreshOutbox, OUTBOX_POLL_MS);
+    healthPoll    = window.setInterval(refreshOpenSearchHealth, HEALTH_POLL_MS);
 
     // SSE-driven instant updates. agent:event is the typed envelope stream we
     // emit in app.go from the brainbox /api/events SSE wrapper.
@@ -212,6 +229,7 @@
     if (livePoll      !== undefined) window.clearInterval(livePoll);
     if (logsPoll      !== undefined) window.clearInterval(logsPoll);
     if (outboxPoll    !== undefined) window.clearInterval(outboxPoll);
+    if (healthPoll    !== undefined) window.clearInterval(healthPoll);
     sseCleanup.forEach(fn => fn());
   });
 
@@ -342,7 +360,7 @@
 
 <div class="panel">
   <header class="panel-header">
-    <h1 class="page-title">stream</h1>
+    <h1 class="page-title">streams</h1>
     <div class="header-actions">
       {#if outboxPending > 0}
         <div class="outbox-indicator" title="Envelopes queued locally awaiting delivery to brainbox">
@@ -381,7 +399,7 @@
       class:disabled={!opensearchActive}
       disabled={!opensearchActive}
       onclick={() => (tab = 'logs')}
-      title={opensearchActive ? '' : 'Enable OpenSearch to view live logs'}>
+      title={opensearchActive ? '' : 'OpenSearch unreachable — logs unavailable'}>
       logs
       {#if tab === 'logs' && logsLoading}
         <Spinner />
