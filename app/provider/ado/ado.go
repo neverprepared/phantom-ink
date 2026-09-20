@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"phantom-ink/provider"
@@ -33,6 +34,7 @@ type Client struct {
 	pat     string
 	hc      *http.Client
 
+	mu sync.Mutex
 	// meID caches the authenticated user's GUID (from connectionData); ADO PR
 	// creator/reviewer queries need it, work-item queries use @Me instead.
 	meID string
@@ -108,6 +110,8 @@ func (c *Client) projPath(p string) string { return "/" + c.org + "/" + c.projec
 
 // me resolves and caches the authenticated user's GUID.
 func (c *Client) me(ctx context.Context) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.meID != "" {
 		return c.meID, nil
 	}
@@ -405,7 +409,8 @@ func (c *Client) RepoIssues(ctx context.Context, ref provider.RepoRef) ([]provid
 
 // NormalizeCloneURL turns any ADO reference into an https _git clone URL,
 // handling dev.azure.com (with or without a user@ prefix) and legacy
-// {org}.visualstudio.com. Returns "" when it can't parse one.
+// {org}.visualstudio.com. Returns "" when it can't parse a full
+// {org}/{project}/_git/{repo}.
 func (c *Client) NormalizeCloneURL(repoURL string) string {
 	s := strings.TrimSpace(repoURL)
 	s = strings.TrimSuffix(s, "/")
@@ -418,17 +423,29 @@ func (c *Client) NormalizeCloneURL(repoURL string) string {
 	if at := strings.Index(s, "@"); at >= 0 {
 		s = s[at+1:]
 	}
-	// Legacy: {org}.visualstudio.com/{project}/_git/{repo}
-	if host := s[:strings.Index(s+"/", "/")]; strings.HasSuffix(host, ".visualstudio.com") {
-		org := strings.TrimSuffix(host, ".visualstudio.com")
-		rest := strings.TrimPrefix(s, host)
-		return "https://dev.azure.com/" + org + rest
+	slash := strings.Index(s, "/")
+	if slash < 0 {
+		return "" // bare host, no path
 	}
-	// Modern: dev.azure.com/{org}/{project}/_git/{repo}
-	if strings.HasPrefix(s, "dev.azure.com/") {
-		return "https://" + s
+	host, rest := s[:slash], s[slash+1:]
+	var org, tail string
+	switch {
+	case host == "dev.azure.com":
+		i := strings.Index(rest, "/")
+		if i < 0 {
+			return ""
+		}
+		org, tail = rest[:i], rest[i+1:]
+	case strings.HasSuffix(host, ".visualstudio.com"):
+		org, tail = strings.TrimSuffix(host, ".visualstudio.com"), rest
+	default:
+		return ""
 	}
-	return ""
+	segs := strings.Split(tail, "/")
+	if org == "" || len(segs) < 3 || segs[0] == "" || segs[1] != "_git" || segs[2] == "" {
+		return ""
+	}
+	return "https://dev.azure.com/" + org + "/" + segs[0] + "/_git/" + segs[2]
 }
 
 // sortItems orders rows most-recently-updated first (RFC3339 string compare).
