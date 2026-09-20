@@ -10,6 +10,7 @@
   import ContextMenu from '../components/ContextMenu.svelte';
   import StreamLogsTab from '../components/StreamLogsTab.svelte';
   import EnvelopeHistory from '../components/EnvelopeHistory.svelte';
+  import TimelinePanel from './TimelinePanel.svelte';
   import SessionSummaryCard from '../components/SessionSummaryCard.svelte';
 
   interface CtxMenuItem {
@@ -52,7 +53,7 @@
     duration_ms?: number;
   }
 
-  type Tab = 'live' | 'attention' | 'logs';
+  type Tab = 'live' | 'attention' | 'logs' | 'timeline';
 
   // ── State ──────────────────────────────────────────────────────────────────
 
@@ -386,6 +387,12 @@
         <Spinner />
       {/if}
     </button>
+    <button
+      class="tab"
+      class:active={tab === 'timeline'}
+      onclick={() => (tab = 'timeline')}>
+      timeline
+    </button>
   </div>
 
   {#if tab === 'live'}
@@ -595,6 +602,13 @@
       onClearSort={() => logsSortBy = null}
       onViewMore={openDashboardsDiscover}
     />
+  {:else if tab === 'timeline'}
+    <!-- Timeline is folded into Stream as a tab; it brings its own header,
+         controls, and scroll region, so wrap it in a flex cell that fills the
+         remaining panel height. -->
+    <div class="timeline-embed">
+      <TimelinePanel />
+    </div>
   {/if}
 </div>
 
@@ -614,6 +628,18 @@
     height: 100%;
     padding: var(--panel-padding);
     overflow: hidden;
+  }
+
+  /* Timeline tab: let the embedded TimelinePanel (its own flex column with a
+     header + scroll region) fill the space below the tab strip. Negative
+     horizontal margin cancels the panel's side padding so the timeline spans
+     full width the way it did as a standalone panel. */
+  .timeline-embed {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 0 calc(-1 * var(--panel-padding));
   }
 
   .panel-header {

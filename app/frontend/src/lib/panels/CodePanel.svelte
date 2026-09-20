@@ -11,7 +11,7 @@
   // dispatch modal share one source.
   import { onMount } from 'svelte';
   import { profileState } from '../stores.svelte';
-  import { currentPanel, settingsState } from '../stores.svelte';
+  import { currentPanel, settingsState, jobsState } from '../stores.svelte';
   import { codeState, type Issue, type Repo } from '../stores/code.svelte';
   import { openInBrowser } from '../utils/api';
   import { timeAgoOrDate } from '../utils/format';
@@ -477,7 +477,7 @@
   {#if codeState.lastTaskID}
     <p class="dispatched">
       Dispatched <code>{codeState.lastTaskID.slice(0, 8)}</code> —
-      <button class="link accent" onclick={() => (currentPanel.value = 'jobs')}>watch it in Jobs</button>
+      <button class="link accent" onclick={() => jobsState.open('jobs')}>watch it in Jobs</button>
     </p>
   {/if}
   {#if codeState.lastSessionURL}

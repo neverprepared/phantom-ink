@@ -2,26 +2,22 @@
   import TitleBar from './TitleBar.svelte';
   import Sidebar from './Sidebar.svelte';
   import StatusBar from './StatusBar.svelte';
-  import { currentPanel, attentionStore, profileState, integrationState, settingsState, SETTINGS_TAB_PANELS } from '../stores.svelte';
+  import { currentPanel, attentionStore, profileState, integrationState, settingsState, SETTINGS_TAB_PANELS, jobsState, JOBS_TAB_PANELS, streamFocus } from '../stores.svelte';
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
 
   // Panels (lazy imports). Runners, Profiles, Gateway, and API tokens live
   // inside SettingsPanel as tabs, so they are imported there, not here.
   import SessionsPanel from '../panels/SessionsPanel.svelte';
-  import LoopsPanel from '../panels/LoopsPanel.svelte';
   import ConversationsPanel from '../panels/ConversationsPanel.svelte';
   import ServicesPanel from '../panels/ServicesPanel.svelte';
-  import JobsPanel from '../panels/JobsPanel.svelte';
+  import JobsHubPanel from '../panels/JobsHubPanel.svelte';
   import CodePanel from '../panels/CodePanel.svelte';
   import MeshPanel from '../panels/MeshPanel.svelte';
   import MemoryGraphPanel from '../panels/MemoryGraphPanel.svelte';
-  import CollectorsPanel from '../panels/CollectorsPanel.svelte';
-  import AutomationsPanel from '../panels/AutomationsPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
   import DashboardPanel from '../panels/DashboardPanel.svelte';
   import StreamPanel from '../panels/StreamPanel.svelte';
-  import TimelinePanel from '../panels/TimelinePanel.svelte';
   import EventLogPanel from '../panels/EventLogPanel.svelte';
   import FilesPanel from '../panels/FilesPanel.svelte';
 
@@ -64,6 +60,26 @@
     }
   });
 
+  // Loops, Collectors, and the rules panel are now tabs under the Automations
+  // hub (panel id still 'jobs'). Redirect any stale navigation or legacy
+  // deep-link to the hub with the matching tab active.
+  $effect(() => {
+    const jt = JOBS_TAB_PANELS[currentPanel.value];
+    if (jt) {
+      jobsState.tab = jt;
+      currentPanel.value = 'jobs';
+    }
+  });
+
+  // Timeline is now a tab under the Stream panel. Redirect stale navigation to
+  // Stream with the Timeline tab active (via the existing streamFocus signal,
+  // which StreamPanel consumes on mount/effect).
+  $effect(() => {
+    if (currentPanel.value === 'timeline') {
+      streamFocus.focus({ tab: 'timeline' });
+    }
+  });
+
   // Attention store powers the sidebar badge + Dashboard ActionItems fold-in.
   // Bootstrapping it here means the count is fresh on every panel, not only
   // while StreamPanel is mounted.
@@ -93,24 +109,16 @@
         <DashboardPanel />
       {:else if currentPanel.value === 'integrations'}
         <ServicesPanel />
-      {:else if currentPanel.value === 'loops'}
-        <LoopsPanel />
       {:else if currentPanel.value === 'conversations'}
         <ConversationsPanel />
-      {:else if currentPanel.value === 'automations'}
-        <AutomationsPanel />
-      {:else if currentPanel.value === 'timeline'}
-        <TimelinePanel />
       {:else if currentPanel.value === 'jobs'}
-        <JobsPanel />
+        <JobsHubPanel />
       {:else if currentPanel.value === 'code'}
         <CodePanel />
       {:else if currentPanel.value === 'mesh'}
         <MeshPanel />
       {:else if currentPanel.value === 'memory-graph'}
         <MemoryGraphPanel />
-      {:else if currentPanel.value === 'collectors'}
-        <CollectorsPanel />
       {:else if currentPanel.value === 'settings'}
         <SettingsPanel />
       {:else if currentPanel.value === 'event-log'}
