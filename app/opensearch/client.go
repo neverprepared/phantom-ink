@@ -50,6 +50,26 @@ func (c *Client) search(ctx context.Context, index string, body any, result any)
 	return json.NewDecoder(resp.Body).Decode(result)
 }
 
+// Health is a lightweight liveness probe — GET /_cluster/health — returning nil
+// when OpenSearch answers 2xx. Used to gate UI (e.g. the Stream Logs tab) on
+// real reachability, since the endpoint is often the remote platform node.
+func (c *Client) Health(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/_cluster/health", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("opensearch %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return nil
+}
+
 // Overview is the snapshot rendered in the Observability panel.
 type Overview struct {
 	CostTodayUSD     float64 `json:"cost_today_usd"`

@@ -350,6 +350,10 @@ export function GetObservabilityOverview(arg1) {
   return window['go']['main']['App']['GetObservabilityOverview'](arg1);
 }
 
+export function GetOpenSearchHealth() {
+  return window['go']['main']['App']['GetOpenSearchHealth']();
+}
+
 export function GetOrchestrationZones(arg1) {
   return window['go']['main']['App']['GetOrchestrationZones'](arg1);
 }

@@ -178,6 +178,8 @@ export function GetOTLPHost():Promise<string>;
 
 export function GetObservabilityOverview(arg1:string):Promise<opensearch.Overview>;
 
+export function GetOpenSearchHealth():Promise<boolean>;
+
 export function GetOrchestrationZones(arg1:string):Promise<brainbox.OrchestrationZones>;
 
 export function GetPlatform():Promise<string>;
