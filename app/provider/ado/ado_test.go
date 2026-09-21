@@ -30,6 +30,12 @@ func adoServer(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		// connectionData is preview-only: real ADO 400s a plain "7.1". Mimic that
+		// so a regression away from the -preview api-version is caught.
+		if v := r.URL.Query().Get("api-version"); !strings.Contains(v, "-preview") {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		_, _ = w.Write([]byte(`{"authenticatedUser":{"id":"` + meID + `","providerDisplayName":"Me"}}`))
 	})
 

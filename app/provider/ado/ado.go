@@ -160,7 +160,10 @@ func (c *Client) me(ctx context.Context) (string, error) {
 			ID string `json:"id"`
 		} `json:"authenticatedUser"`
 	}
-	if err := c.get(ctx, withVersion(c.orgPath("/_apis/connectionData")), &cd); err != nil {
+	// connectionData is a PREVIEW-only resource: it rejects a plain "7.1"
+	// api-version with 400 and demands the -preview flag. (Every other endpoint
+	// we call is GA at 7.1.)
+	if err := c.get(ctx, c.orgPath("/_apis/connectionData")+"?api-version=7.1-preview.1", &cd); err != nil {
 		return "", err
 	}
 	c.meID = cd.AuthenticatedUser.ID
