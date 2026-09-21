@@ -67,13 +67,29 @@ type CodeOverview struct {
 // gateway env. Presence is selection: GitHub needs GITHUB_TOKEN; ADO needs all
 // of ADO_ORG/ADO_PROJECT/ADO_PAT. The bool reports whether ANY provider is
 // configured (drives the "connect something" banner).
-func (a *App) providersFor(profile string) ([]provider.Client, bool, error) {
-	env, err := a.GetGatewayEnv(profile)
-	if err != nil {
-		return nil, false, err
+// resolveADOProjects returns the ADO projects to surface for a profile. An
+// explicit comma-separated ADO_PROJECT list wins. When it is empty or the
+// wildcard "*" (and ADO_ORG is set), every project in the org is auto-discovered
+// via one list-projects call — so the operator need not hand-maintain the list.
+// Returns (nil, nil) when ADO isn't configured. The error is non-fatal: the
+// caller surfaces it in the ADO repos section without blanking other providers.
+func (a *App) resolveADOProjects(ctx context.Context, env map[string]string, azConfigDir string) ([]string, error) {
+	org := strings.TrimSpace(env["ADO_ORG"])
+	if org == "" {
+		return nil, nil
 	}
-	clients := buildProviders(env, a.profileAzureConfigDir(profile))
-	return clients, len(clients) > 0, nil
+	explicit := splitProjects(env["ADO_PROJECT"])
+	if len(explicit) > 0 && !(len(explicit) == 1 && explicit[0] == "*") {
+		return explicit, nil
+	}
+	// Auto-discover: org-level list, so an empty-project client is fine.
+	lister, ok := adoClientFor(org, "", strings.TrimSpace(env["ADO_PAT"]), azConfigDir).(interface {
+		ListProjects(context.Context) ([]string, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return lister.ListProjects(ctx)
 }
 
 // buildProviders maps a profile's gateway env to the set of configured provider
@@ -82,7 +98,7 @@ func (a *App) providersFor(profile string) ([]provider.Client, bool, error) {
 // projects in ADO_PROJECT — one client per project, so the fan-out aggregates
 // repos/PRs/work-items across every listed project. Auth is ADO_PAT when
 // present, otherwise the profile's az login session (azConfigDir).
-func buildProviders(env map[string]string, azConfigDir string) []provider.Client {
+func buildProviders(env map[string]string, azConfigDir string, adoProjects []string) []provider.Client {
 	var clients []provider.Client
 	if tok := strings.TrimSpace(env["GITHUB_TOKEN"]); tok != "" {
 		clients = append(clients, github.New(tok))
@@ -90,7 +106,7 @@ func buildProviders(env map[string]string, azConfigDir string) []provider.Client
 	org := strings.TrimSpace(env["ADO_ORG"])
 	pat := strings.TrimSpace(env["ADO_PAT"])
 	if org != "" {
-		for _, p := range splitProjects(env["ADO_PROJECT"]) {
+		for _, p := range adoProjects {
 			clients = append(clients, adoClientFor(org, p, pat, azConfigDir))
 		}
 	}
@@ -144,18 +160,37 @@ func (a *App) profileAzureConfigDir(profile string) string {
 // CodeOverview fetches the active profile's launchpad across every configured
 // provider (GitHub, ADO), merged. Bound to the UI; one call drives the panel.
 func (a *App) CodeOverview(profile string) (CodeOverview, error) {
-	clients, any, err := a.providersFor(profile)
+	env, err := a.GetGatewayEnv(profile)
 	if err != nil {
 		return CodeOverview{Profile: profile}, err
-	}
-	if !any {
-		return CodeOverview{Profile: profile, TokenMissing: true}, nil
 	}
 	ctx := a.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return buildCodeOverview(ctx, clients, profile), nil
+	azConfigDir := a.profileAzureConfigDir(profile)
+	projects, enumErr := a.resolveADOProjects(ctx, env, azConfigDir)
+	clients := buildProviders(env, azConfigDir, projects)
+
+	adoConfigured := strings.TrimSpace(env["ADO_ORG"]) != ""
+	if len(clients) == 0 && !(adoConfigured && enumErr != nil) {
+		// Nothing to fetch and no ADO enumeration error to report.
+		return CodeOverview{Profile: profile, TokenMissing: true}, nil
+	}
+	out := buildCodeOverview(ctx, clients, profile)
+	if enumErr != nil {
+		// Auto-discovery failed (e.g. az login gone): surface it in the ADO
+		// repos section, fail-soft, without blanking GitHub.
+		msg := "ado: " + enumErr.Error()
+		if out.ReposError != "" {
+			msg = out.ReposError + "; " + msg
+		}
+		out.ReposError = msg
+		if provider.IsUnauthorized(enumErr) {
+			out.TokenInvalid = true
+		}
+	}
+	return out, nil
 }
 
 // buildCodeOverview fans each configured provider's reads out concurrently and
@@ -178,10 +213,17 @@ func buildCodeOverview(ctx context.Context, clients []provider.Client, profile s
 		auth401    bool
 	)
 
+	// Bound concurrency: with all-projects auto-discovery a profile can hold
+	// dozens of ADO clients (one per project), each firing several reads — an
+	// unbounded fan-out would blast hundreds of simultaneous calls and risk ADO
+	// throttling (429). A small semaphore keeps it responsive without a flood.
+	sem := make(chan struct{}, maxConcurrentReads)
 	run := func(fn func()) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			fn()
 		}()
 	}
@@ -321,6 +363,11 @@ type RepoDetailResult struct {
 // repoDetailCommitLimit is how far back the "recent commits" card reads. Enough
 // to see the shape of the week without paging.
 const repoDetailCommitLimit = 20
+
+// maxConcurrentReads caps how many provider section-reads run at once, so a
+// profile with many ADO project clients doesn't fan out into hundreds of
+// simultaneous calls (ADO throttles).
+const maxConcurrentReads = 8
 
 // RepoDetail fetches one repository's detail view. The RepoRef (carried from
 // the overview row the operator clicked) names the provider AND the repo, so

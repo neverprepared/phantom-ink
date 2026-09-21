@@ -623,7 +623,7 @@ func TestBuildProviders_Enablement(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := kinds(buildProviders(c.env, ""))
+			got := kinds(buildProviders(c.env, "", splitProjects(c.env["ADO_PROJECT"])))
 			if len(got) != len(c.want) {
 				t.Fatalf("got %v, want %v", got, c.want)
 			}
@@ -701,5 +701,25 @@ func TestProfileAzureConfigDir_PrefersWorkspaceOverInheritedEnv(t *testing.T) {
 	got := app.profileAzureConfigDir("lakeview")
 	if got != azDir {
 		t.Fatalf("want the profile's own .azure %q, got %q", azDir, got)
+	}
+}
+
+func TestResolveADOProjects_ExplicitListWins(t *testing.T) {
+	app := &App{}
+	got, err := app.resolveADOProjects(context.Background(),
+		map[string]string{"ADO_ORG": "o", "ADO_PROJECT": "a, b ,c"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
+		t.Fatalf("explicit list must win without enumeration: %v", got)
+	}
+}
+
+func TestResolveADOProjects_NoOrgNoProjects(t *testing.T) {
+	app := &App{}
+	got, err := app.resolveADOProjects(context.Background(), map[string]string{}, "")
+	if err != nil || got != nil {
+		t.Fatalf("no ADO_ORG must yield no projects, got %v (err %v)", got, err)
 	}
 }

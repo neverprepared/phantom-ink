@@ -93,8 +93,8 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body []byte, out any) error {
-	if c.org == "" || c.project == "" || c.authFn == nil {
-		return errors.New("ADO not configured (need ADO_ORG, ADO_PROJECT, and either ADO_PAT or an az login)")
+	if c.org == "" || c.authFn == nil {
+		return errors.New("ADO not configured (need ADO_ORG and either ADO_PAT or an az login)")
 	}
 	auth, err := c.authFn(ctx)
 	if err != nil {
@@ -168,6 +168,30 @@ func (c *Client) me(ctx context.Context) (string, error) {
 	}
 	c.meID = cd.AuthenticatedUser.ID
 	return c.meID, nil
+}
+
+// --- Projects ---------------------------------------------------------------
+
+// ListProjects returns the names of every project in the org. Used to
+// auto-discover projects when the profile lists none explicitly. Org-level, so
+// it works on a client constructed with an empty project.
+func (c *Client) ListProjects(ctx context.Context) ([]string, error) {
+	var wire struct {
+		Value []struct {
+			Name string `json:"name"`
+		} `json:"value"`
+	}
+	// $top well above the ~hundreds an org realistically has; projects is GA at 7.1.
+	if err := c.get(ctx, withVersion(c.orgPath("/_apis/projects")+"?$top=1000"), &wire); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(wire.Value))
+	for _, p := range wire.Value {
+		if p.Name != "" {
+			out = append(out, p.Name)
+		}
+	}
+	return out, nil
 }
 
 // --- Repos ------------------------------------------------------------------

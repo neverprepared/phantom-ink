@@ -117,3 +117,23 @@ func TestProjectNameEncodedInPath(t *testing.T) {
 		t.Fatalf("project name not URL-encoded in path: %q", gotPath)
 	}
 }
+
+func TestListProjects(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/acme/_apis/projects" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"count":2,"value":[{"name":"cd-originations"},{"name":"LAKEVIEW ENTERPRISE AUTOMATION"}]}`))
+	}))
+	defer srv.Close()
+	// Empty project is fine for the org-level projects call.
+	c := NewWithBase(srv.URL, "acme", "", "pat", nil)
+	got, err := c.ListProjects(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "cd-originations" || got[1] != "LAKEVIEW ENTERPRISE AUTOMATION" {
+		t.Fatalf("unexpected projects: %v", got)
+	}
+}
