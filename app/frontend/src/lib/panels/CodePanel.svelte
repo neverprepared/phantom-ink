@@ -120,6 +120,22 @@
   }
 </script>
 
+<!-- Provider logo for the far-left column of overview rows. Inline SVG (no
+     network); GitHub takes the theme text color, Azure DevOps its brand blue. -->
+{#snippet providerLogo(provider: string)}
+  {#if provider === 'ado'}
+    <svg class="provider-logo ado" viewBox="0 0 24 24" role="img" aria-label={providerLabel(provider)}>
+      <title>{providerLabel(provider)}</title>
+      <path fill="currentColor" d="M0 8.877L2.247 5.91l8.405-3.416V.022l7.37 5.393L2.966 8.338v8.225L0 15.707zm24-4.45v14.651l-5.753 4.9-9.303-3.057v3.056l-5.978-7.416 15.057 1.798V5.415z" />
+    </svg>
+  {:else}
+    <svg class="provider-logo github" viewBox="0 0 24 24" role="img" aria-label={providerLabel(provider)}>
+      <title>{providerLabel(provider)}</title>
+      <path fill="currentColor" d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.2 3.44 9.6 8.2 11.16.6.11.82-.25.82-.56 0-.28-.01-1.02-.02-2-3.34.7-4.04-1.58-4.04-1.58-.55-1.36-1.33-1.73-1.33-1.73-1.09-.73.08-.71.08-.71 1.2.08 1.83 1.21 1.83 1.21 1.07 1.79 2.81 1.27 3.5.97.11-.76.42-1.27.76-1.56-2.67-.3-5.47-1.31-5.47-5.84 0-1.29.47-2.34 1.24-3.17-.12-.3-.54-1.52.12-3.16 0 0 1.01-.32 3.3 1.21.96-.26 1.98-.39 3-.4 1.02.01 2.04.14 3 .4 2.28-1.53 3.29-1.21 3.29-1.21.66 1.64.24 2.86.12 3.16.77.83 1.24 1.88 1.24 3.17 0 4.54-2.81 5.53-5.49 5.83.43.36.81 1.09.81 2.2 0 1.59-.01 2.87-.01 3.26 0 .31.22.68.83.56A12.02 12.02 0 0024 12.29C24 5.78 18.63.5 12 .5z" />
+    </svg>
+  {/if}
+{/snippet}
+
 <div class="code">
   <header class="head">
     <div>
@@ -179,8 +195,8 @@
     {@const repo = codeState.detailRepo}
     <div class="detail-head">
       <button class="link back" onclick={() => codeState.closeDetail()}>← back</button>
+      {@render providerLogo(repo.provider)}
       <code class="repo strong">{repo.full_name}</code>
-      <span class="provider-badge provider-{repo.provider}" title={providerLabel(repo.provider)}>{repo.provider === 'ado' ? 'ADO' : 'GH'}</span>
       {#if repo.default_branch}<span class="badge">{repo.default_branch}</span>{/if}
       <div class="detail-actions">
         <button class="link" onclick={() => openInBrowser(repo.html_url)}>open ↗</button>
@@ -371,23 +387,25 @@
       {:else}
         <ul class="rows">
           {#each [...codeState.pullRequests, ...codeState.issues] as row (row.html_url)}
-            <li class="row">
-              <div class="row-main">
-                <code class="repo">{row.repo_full_name}</code>
-                <span class="provider-badge provider-{row.provider}" title={providerLabel(row.provider)}>{row.provider === 'ado' ? 'ADO' : 'GH'}</span>
-                <span class="num">#{row.number}</span>
-                <span class="title">{row.title}</span>
-              </div>
-              <div class="row-meta">
-                <span class="badge">{row.is_pull_request ? 'pr' : (row.provider === 'ado' ? 'work item' : 'issue')}</span>
-                {#if row.draft}<span class="badge muted">draft</span>{/if}
-                <span class="badge why">{row.reason}</span>
-                {#if row.user}<span class="by">@{row.user}</span>{/if}
-                <span class="ago">{timeAgoOrDate(ts(row.updated_at))}</span>
-                <button class="link" onclick={() => openInBrowser(row.html_url)}>open ↗</button>
-                {#if canBeginWork(row)}
-                  <button class="link accent" onclick={() => beginWorkIssue(row)}>Begin work ▾</button>
-                {/if}
+            <li class="row with-logo">
+              {@render providerLogo(row.provider)}
+              <div class="row-body">
+                <div class="row-main">
+                  <code class="repo">{row.repo_full_name}</code>
+                  <span class="num">#{row.number}</span>
+                  <span class="title">{row.title}</span>
+                </div>
+                <div class="row-meta">
+                  <span class="badge">{row.is_pull_request ? 'pr' : (row.provider === 'ado' ? 'work item' : 'issue')}</span>
+                  {#if row.draft}<span class="badge muted">draft</span>{/if}
+                  <span class="badge why">{row.reason}</span>
+                  {#if row.user}<span class="by">@{row.user}</span>{/if}
+                  <span class="ago">{timeAgoOrDate(ts(row.updated_at))}</span>
+                  <button class="link" onclick={() => openInBrowser(row.html_url)}>open ↗</button>
+                  {#if canBeginWork(row)}
+                    <button class="link accent" onclick={() => beginWorkIssue(row)}>Begin work ▾</button>
+                  {/if}
+                </div>
               </div>
             </li>
           {/each}
@@ -448,17 +466,18 @@
         <input class="filter" placeholder="Filter repositories…" bind:value={codeState.repoFilter} />
         <ul class="rows">
           {#each codeState.filteredRepos as r (r.full_name)}
-            <li class="row">
-              <div class="row-main">
-                <!-- The repo name IS the link into the detail view; the row's
-                     existing actions keep working alongside it. -->
-                <button class="repo-link" title="Open this repository" onclick={() => openDetail(r)}>
-                  <code class="repo">{r.full_name}</code>
-                </button>
-                <span class="provider-badge provider-{r.provider}" title={providerLabel(r.provider)}>{r.provider === 'ado' ? 'ADO' : 'GH'}</span>
-                {#if r.description}<span class="desc">{r.description}</span>{/if}
-              </div>
-              <div class="row-meta">
+            <li class="row with-logo">
+              {@render providerLogo(r.provider)}
+              <div class="row-body">
+                <div class="row-main">
+                  <!-- The repo name IS the link into the detail view; the row's
+                       existing actions keep working alongside it. -->
+                  <button class="repo-link" title="Open this repository" onclick={() => openDetail(r)}>
+                    <code class="repo">{r.full_name}</code>
+                  </button>
+                  {#if r.description}<span class="desc">{r.description}</span>{/if}
+                </div>
+                <div class="row-meta">
                 <span class="badge">{r.default_branch}</span>
                 <span class="stars">★ {r.stars}</span>
                 {#if r.open_issues}<span class="muted-small">{r.open_issues} open</span>{/if}
@@ -474,6 +493,7 @@
                 </button>
                 <button class="link accent" onclick={() => beginWorkRepo(r)}>Begin work ▾</button>
                 <button class="link" title="Branches, commits, PRs, issues, README" onclick={() => openDetail(r)}>details →</button>
+                </div>
               </div>
             </li>
           {/each}
@@ -595,19 +615,18 @@
   .badge.muted { color: var(--color-text-tertiary); }
   .badge.why { color: var(--color-accent); border-color: var(--color-accent); }
 
-  .provider-badge {
-    font-size: 0.58rem;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    padding: 0.05rem 0.3rem;
-    border-radius: 3px;
-    margin-left: 0.35rem;
-    border: 1px solid var(--border);
-    color: var(--text-muted);
-    vertical-align: middle;
+  /* Overview rows carry a provider logo in a fixed far-left column, so every
+     row's content aligns to the same left edge — a uniform grid across the list. */
+  .row.with-logo {
+    display: grid;
+    grid-template-columns: 20px 1fr;
+    align-items: center;
+    column-gap: 10px;
   }
-  .provider-ado { color: #2b88d8; border-color: #2b88d8; }
-  .provider-github { color: var(--text-muted); }
+  .row-body { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .provider-logo { width: 18px; height: 18px; display: block; flex: none; }
+  .provider-logo.github { color: var(--color-text-primary); }
+  .provider-logo.ado { color: #2b88d8; }
 
   .link {
     background: transparent; border: none; padding: 0;
