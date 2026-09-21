@@ -606,3 +606,97 @@ func TestLaunchInteractiveSession_UnknownProfile(t *testing.T) {
 		t.Fatal("want an error for a profile that does not exist")
 	}
 }
+
+// --- az login auth path (provider enablement + PAT-less clone) ---------------
+
+// stubAzHeader swaps the main-package az bearer seam for a test.
+func stubAzHeader(t *testing.T, header string, err error) {
+	t.Helper()
+	orig := adoAzAuthHeader
+	adoAzAuthHeader = func(context.Context) (string, error) { return header, err }
+	t.Cleanup(func() { adoAzAuthHeader = orig })
+}
+
+func TestBuildProviders_Enablement(t *testing.T) {
+	kinds := func(cs []provider.Client) []provider.Kind {
+		out := make([]provider.Kind, 0, len(cs))
+		for _, c := range cs {
+			out = append(out, c.Kind())
+		}
+		return out
+	}
+	cases := []struct {
+		name string
+		env  map[string]string
+		want []provider.Kind
+	}{
+		{"github only", map[string]string{"GITHUB_TOKEN": "x"}, []provider.Kind{provider.KindGitHub}},
+		{"ado with pat", map[string]string{"ADO_ORG": "a", "ADO_PROJECT": "p", "ADO_PAT": "t"}, []provider.Kind{provider.KindADO}},
+		{"ado az (no pat)", map[string]string{"ADO_ORG": "a", "ADO_PROJECT": "p"}, []provider.Kind{provider.KindADO}},
+		{"ado org only", map[string]string{"ADO_ORG": "a"}, nil},
+		{"both", map[string]string{"GITHUB_TOKEN": "x", "ADO_ORG": "a", "ADO_PROJECT": "p"}, []provider.Kind{provider.KindGitHub, provider.KindADO}},
+		{"none", map[string]string{}, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := kinds(buildProviders(c.env))
+			if len(got) != len(c.want) {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Fatalf("got %v, want %v", got, c.want)
+				}
+			}
+		})
+	}
+}
+
+// An ADO repo with no PAT clones with a bearer minted from az login; the token
+// never lands in the clone URL and there is no fallback to plain host-cred clone.
+func TestOpenRepoLocally_ADOAzLoginClone(t *testing.T) {
+	app, home := laneApp(t, "work")
+	stub := &stubLanes{}
+	stub.install(t)
+	stubGatewayEnv(t, map[string]string{"ADO_ORG": "acme", "ADO_PROJECT": "widgets"})
+	stubAzHeader(t, "Bearer az-tok", nil)
+
+	dest, err := app.OpenRepoLocally("work", "https://dev.azure.com/acme/widgets/_git/api")
+	if err != nil {
+		t.Fatalf("OpenRepoLocally: %v", err)
+	}
+	if len(stub.authClones) != 1 {
+		t.Fatalf("want 1 authed clone, got %v", stub.authClones)
+	}
+	gotURL, gotAuth := stub.authClones[0][0], stub.authClones[0][2]
+	if gotAuth != "Bearer az-tok" {
+		t.Errorf("auth header = %q, want Bearer az-tok", gotAuth)
+	}
+	if strings.Contains(gotURL, "az-tok") {
+		t.Errorf("token leaked into clone url: %q", gotURL)
+	}
+	if len(stub.clones) != 0 {
+		t.Errorf("must not fall back to unauthenticated clone: %v", stub.clones)
+	}
+	if want := filepath.Join(home, "code", "api"); dest != want {
+		t.Errorf("dest = %q, want %q", dest, want)
+	}
+}
+
+// With neither a PAT nor a usable az login, an ADO clone fails clearly and never
+// shells out to git at all.
+func TestOpenRepoLocally_ADONoCredErrors(t *testing.T) {
+	app, _ := laneApp(t, "work")
+	stub := &stubLanes{}
+	stub.install(t)
+	stubGatewayEnv(t, map[string]string{"ADO_ORG": "acme", "ADO_PROJECT": "widgets"})
+	stubAzHeader(t, "", errors.New("Please run 'az login'"))
+
+	_, err := app.OpenRepoLocally("work", "https://dev.azure.com/acme/widgets/_git/api")
+	if err == nil || !strings.Contains(err.Error(), "az login") {
+		t.Fatalf("want an az login error, got %v", err)
+	}
+	if len(stub.authClones) != 0 || len(stub.clones) != 0 {
+		t.Fatalf("no clone should run without a credential: auth=%v plain=%v", stub.authClones, stub.clones)
+	}
+}

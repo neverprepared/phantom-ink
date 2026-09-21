@@ -31,8 +31,11 @@ type Client struct {
 	base    string
 	org     string
 	project string
-	pat     string
 	hc      *http.Client
+
+	// authFn produces the Authorization header value per request: Basic for a
+	// PAT (constant), or Bearer for az login (minted/cached, hence per-call).
+	authFn func(ctx context.Context) (string, error)
 
 	mu sync.Mutex
 	// meID caches the authenticated user's GUID (from connectionData); ADO PR
@@ -40,23 +43,39 @@ type Client struct {
 	meID string
 }
 
+// New returns a PAT-authenticated client (Basic auth, empty username + PAT).
 func New(org, project, pat string) *Client {
 	return NewWithBase(defaultBase, org, project, pat, nil)
 }
 
 func NewWithBase(base, org, project, pat string, hc *http.Client) *Client {
+	c := newClient(base, org, project, hc)
+	basic := "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+pat))
+	c.authFn = func(context.Context) (string, error) { return basic, nil }
+	return c
+}
+
+// NewAzLogin returns a client that authenticates with a bearer token minted from
+// the operator's current Azure CLI (`az login`) session instead of a PAT.
+func NewAzLogin(org, project string) *Client {
+	return NewAzLoginWithBase(defaultBase, org, project, nil)
+}
+
+func NewAzLoginWithBase(base, org, project string, hc *http.Client) *Client {
+	c := newClient(base, org, project, hc)
+	src := &azTokenSource{}
+	c.authFn = src.header
+	return c
+}
+
+func newClient(base, org, project string, hc *http.Client) *Client {
 	if hc == nil {
 		hc = &http.Client{Timeout: requestTimeout}
 	}
-	return &Client{base: strings.TrimRight(base, "/"), org: org, project: project, pat: pat, hc: hc}
+	return &Client{base: strings.TrimRight(base, "/"), org: org, project: project, hc: hc}
 }
 
 func (c *Client) Kind() provider.Kind { return provider.KindADO }
-
-// authHeader is Basic auth with an empty username and the PAT as password.
-func (c *Client) authHeader() string {
-	return "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+c.pat))
-}
 
 // withVersion appends api-version to a path that may already carry a query.
 func withVersion(path string) string {
@@ -71,8 +90,12 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body []byte, out any) error {
-	if c.pat == "" || c.org == "" || c.project == "" {
-		return errors.New("ADO not configured (need ADO_ORG, ADO_PROJECT, ADO_PAT)")
+	if c.org == "" || c.project == "" || c.authFn == nil {
+		return errors.New("ADO not configured (need ADO_ORG, ADO_PROJECT, and either ADO_PAT or an az login)")
+	}
+	auth, err := c.authFn(ctx)
+	if err != nil {
+		return err
 	}
 	var rdr *bytes.Reader
 	if body != nil {
@@ -84,7 +107,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, out a
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", c.authHeader())
+	req.Header.Set("Authorization", auth)
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

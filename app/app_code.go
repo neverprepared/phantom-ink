@@ -72,6 +72,15 @@ func (a *App) providersFor(profile string) ([]provider.Client, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
+	clients := buildProviders(env)
+	return clients, len(clients) > 0, nil
+}
+
+// buildProviders maps a profile's gateway env to the set of configured provider
+// clients. Pure (no I/O) so the enablement rules are unit-testable. GitHub is
+// enabled by GITHUB_TOKEN; ADO by ADO_ORG+ADO_PROJECT, authenticating with
+// ADO_PAT when present or the operator's az login session when it is blank.
+func buildProviders(env map[string]string) []provider.Client {
 	var clients []provider.Client
 	if tok := strings.TrimSpace(env["GITHUB_TOKEN"]); tok != "" {
 		clients = append(clients, github.New(tok))
@@ -79,11 +88,14 @@ func (a *App) providersFor(profile string) ([]provider.Client, bool, error) {
 	org := strings.TrimSpace(env["ADO_ORG"])
 	proj := strings.TrimSpace(env["ADO_PROJECT"])
 	pat := strings.TrimSpace(env["ADO_PAT"])
-	if org != "" && proj != "" && pat != "" {
-		clients = append(clients, ado.New(org, proj, pat))
+	if org != "" && proj != "" {
+		if pat != "" {
+			clients = append(clients, ado.New(org, proj, pat))
+		} else {
+			clients = append(clients, ado.NewAzLogin(org, proj))
+		}
 	}
-	anyConfigured := len(clients) > 0
-	return clients, anyConfigured, nil
+	return clients
 }
 
 // CodeOverview fetches the active profile's launchpad across every configured
@@ -481,6 +493,11 @@ var readProfileGatewayEnv = func(a *App, profile string) (map[string]string, err
 	return a.GetGatewayEnv(profile)
 }
 
+// adoAzAuthHeader mints a one-shot ADO bearer header from the operator's az
+// login session. A package var (like runGitClone) so the PAT-less clone and
+// validation paths are testable without a real az binary.
+var adoAzAuthHeader = ado.AzAuthHeader
+
 // openTerminalAt opens a host terminal tab running claude in a directory. A var
 // over the EXISTING opener (shared with OpenLocalSession) so tests don't drive
 // AppleScript and there is exactly one implementation of "open a tab".
@@ -521,11 +538,21 @@ func (a *App) OpenRepoLocally(profile, repoURL string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			pat := strings.TrimSpace(env["ADO_PAT"])
-			if pat == "" {
-				return "", fmt.Errorf("profile %q has no ADO_PAT to clone %s", profile, cloneURL)
+			var auth string
+			if pat := strings.TrimSpace(env["ADO_PAT"]); pat != "" {
+				auth = "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+pat))
+			} else {
+				// No PAT: mint a bearer from the operator's az login session.
+				ctx := a.ctx
+				if ctx == nil {
+					ctx = context.Background()
+				}
+				h, azErr := adoAzAuthHeader(ctx)
+				if azErr != nil {
+					return "", fmt.Errorf("cloning %s needs an ADO_PAT or an az login: %w", cloneURL, azErr)
+				}
+				auth = h
 			}
-			auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+pat))
 			if err := runGitCloneAuth(cloneURL, dest, auth); err != nil {
 				return "", err
 			}

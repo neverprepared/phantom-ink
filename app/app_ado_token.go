@@ -27,18 +27,30 @@ func (a *App) ValidateADOConnection(org, project, pat string) ADOConnectionStatu
 }
 
 // checkADOConnection probes the project's repositories endpoint (which requires
-// a valid PAT AND a resolvable org+project). 200 → valid; 401/403 → rejected;
-// anything else → inconclusive (leave the UI neutral).
+// a resolvable org+project AND a working credential). The credential is the PAT
+// when given (Basic), otherwise a bearer minted from the operator's az login
+// session. 200 → valid; 401/403 → rejected; anything else → inconclusive.
 func checkADOConnection(base, org, project, pat string, hc *http.Client) ADOConnectionStatus {
-	if org == "" || project == "" || pat == "" {
-		return ADOConnectionStatus{Valid: false, Checked: true, Message: "org, project, and PAT are all required"}
+	if org == "" || project == "" {
+		return ADOConnectionStatus{Valid: false, Checked: true, Message: "org and project are required"}
+	}
+	var auth string
+	if pat != "" {
+		auth = "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+pat))
+	} else {
+		// No PAT — validate the az login path the client will actually use.
+		h, err := adoAzAuthHeader(context.Background())
+		if err != nil {
+			return ADOConnectionStatus{Checked: false, Message: "no ADO_PAT and az login unavailable: " + err.Error()}
+		}
+		auth = h
 	}
 	uri := base + "/" + org + "/" + project + "/_apis/git/repositories?api-version=7.1"
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, uri, nil)
 	if err != nil {
 		return ADOConnectionStatus{Checked: false, Message: "could not build request"}
 	}
-	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(":"+pat)))
+	req.Header.Set("Authorization", auth)
 	req.Header.Set("Accept", "application/json")
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -49,7 +61,7 @@ func checkADOConnection(base, org, project, pat string, hc *http.Client) ADOConn
 	case resp.StatusCode == http.StatusOK:
 		return ADOConnectionStatus{Valid: true, Checked: true, Message: "Azure DevOps accepted the connection"}
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusNonAuthoritativeInfo:
-		return ADOConnectionStatus{Valid: false, Checked: true, Message: "Azure DevOps rejected the PAT (401) — expired or wrong value"}
+		return ADOConnectionStatus{Valid: false, Checked: true, Message: "Azure DevOps rejected the credential (401) — expired/invalid PAT, or run az login"}
 	case resp.StatusCode == http.StatusForbidden:
 		return ADOConnectionStatus{Valid: false, Checked: true, Message: "PAT accepted but lacks access to this org/project (403)"}
 	case resp.StatusCode == http.StatusNotFound:
