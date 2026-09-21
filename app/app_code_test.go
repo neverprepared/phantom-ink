@@ -684,3 +684,22 @@ func TestOpenRepoLocally_ADONoCredErrors(t *testing.T) {
 		t.Fatalf("no clone should run without a credential: auth=%v plain=%v", stub.authClones, stub.clones)
 	}
 }
+
+// profileAzureConfigDir must resolve the TARGET profile's <workspace>/.azure,
+// never the AZURE_CONFIG_DIR the app process inherited from its own launch
+// profile (the os.Environ leak that made every profile mint az against the
+// wrong, logged-out session).
+func TestProfileAzureConfigDir_PrefersWorkspaceOverInheritedEnv(t *testing.T) {
+	app, home := laneApp(t, "lakeview")
+	azDir := filepath.Join(home, ".azure")
+	if err := os.MkdirAll(azDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the app having been launched under a DIFFERENT profile.
+	t.Setenv("AZURE_CONFIG_DIR", "/some/other/profile/.azure")
+
+	got := app.profileAzureConfigDir("lakeview")
+	if got != azDir {
+		t.Fatalf("want the profile's own .azure %q, got %q", azDir, got)
+	}
+}

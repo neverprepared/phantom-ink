@@ -120,19 +120,22 @@ func adoClientFor(org, project, pat, azConfigDir string) provider.Client {
 
 // profileAzureConfigDir finds the AZURE_CONFIG_DIR for a profile's az session.
 // az logins are per-profile here (each workspace points its own .azure at a
-// chosen identity). Prefer the value the profile's env resolves; fall back to
-// the conventional <workspace>/.azure when that directory exists. "" lets az use
-// its default.
+// chosen identity). Prefer the conventional <workspace>/.azure: it is the TARGET
+// profile's session. We deliberately do NOT trust resolveProfileEnv first — it
+// is seeded from os.Environ(), so it would leak the AZURE_CONFIG_DIR the app
+// itself was launched under (whatever profile that was) into every other
+// profile. Only if the convention dir is absent do we consult the profile's
+// resolved env as a fallback. "" lets az use its default.
 func (a *App) profileAzureConfigDir(profile string) string {
-	for _, kv := range a.resolveProfileEnv(profile) {
-		if v, ok := strings.CutPrefix(kv, "AZURE_CONFIG_DIR="); ok && strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
 	if home := a.profileWorkspaceHome(profile); home != "" {
 		cand := filepath.Join(home, ".azure")
 		if fi, err := os.Stat(cand); err == nil && fi.IsDir() {
 			return cand
+		}
+	}
+	for _, kv := range a.resolveProfileEnv(profile) {
+		if v, ok := strings.CutPrefix(kv, "AZURE_CONFIG_DIR="); ok && strings.TrimSpace(v) != "" {
+			return v
 		}
 	}
 	return ""
