@@ -2368,131 +2368,24 @@ export namespace brainbox {
 
 }
 
-export namespace githubclient {
-	
-	export class Branch {
-	    name: string;
-	    sha: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Branch(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.sha = source["sha"];
-	    }
-	}
-	export class Commit {
-	    sha: string;
-	    message: string;
-	    author: string;
-	    date: string;
-	    html_url: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Commit(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.sha = source["sha"];
-	        this.message = source["message"];
-	        this.author = source["author"];
-	        this.date = source["date"];
-	        this.html_url = source["html_url"];
-	    }
-	}
-	export class Issue {
-	    repo_full_name: string;
-	    number: number;
-	    title: string;
-	    state: string;
-	    html_url: string;
-	    updated_at: string;
-	    user: string;
-	    draft: boolean;
-	    is_pull_request: boolean;
-	    reason: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Issue(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.repo_full_name = source["repo_full_name"];
-	        this.number = source["number"];
-	        this.title = source["title"];
-	        this.state = source["state"];
-	        this.html_url = source["html_url"];
-	        this.updated_at = source["updated_at"];
-	        this.user = source["user"];
-	        this.draft = source["draft"];
-	        this.is_pull_request = source["is_pull_request"];
-	        this.reason = source["reason"];
-	    }
-	}
-	export class Notification {
-	    id: string;
-	    repo_full_name: string;
-	    subject_title: string;
-	    subject_type: string;
-	    reason: string;
-	    updated_at: string;
-	    url: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Notification(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.repo_full_name = source["repo_full_name"];
-	        this.subject_title = source["subject_title"];
-	        this.subject_type = source["subject_type"];
-	        this.reason = source["reason"];
-	        this.updated_at = source["updated_at"];
-	        this.url = source["url"];
-	    }
-	}
-	export class Repo {
-	    owner: string;
-	    name: string;
-	    full_name: string;
-	    description: string;
-	    html_url: string;
-	    clone_url: string;
-	    default_branch: string;
-	    pushed_at: string;
-	    stars: number;
-	    open_issues: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new Repo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.owner = source["owner"];
-	        this.name = source["name"];
-	        this.full_name = source["full_name"];
-	        this.description = source["description"];
-	        this.html_url = source["html_url"];
-	        this.clone_url = source["clone_url"];
-	        this.default_branch = source["default_branch"];
-	        this.pushed_at = source["pushed_at"];
-	        this.stars = source["stars"];
-	        this.open_issues = source["open_issues"];
-	    }
-	}
-
-}
-
 export namespace main {
 	
+	export class ADOConnectionStatus {
+	    valid: boolean;
+	    checked: boolean;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ADOConnectionStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.valid = source["valid"];
+	        this.checked = source["checked"];
+	        this.message = source["message"];
+	    }
+	}
 	export class AgentInvocation {
 	    prompt_args: string[];
 	    prompt_mode: string;
@@ -2739,10 +2632,10 @@ export namespace main {
 	    profile: string;
 	    token_missing: boolean;
 	    token_invalid: boolean;
-	    repos: githubclient.Repo[];
-	    pull_requests: githubclient.Issue[];
-	    issues: githubclient.Issue[];
-	    notifications: githubclient.Notification[];
+	    repos: provider.Repo[];
+	    pull_requests: provider.Item[];
+	    issues: provider.Item[];
+	    notifications: provider.Notification[];
 	    repos_error: string;
 	    pull_requests_error: string;
 	    issues_error: string;
@@ -2757,10 +2650,10 @@ export namespace main {
 	        this.profile = source["profile"];
 	        this.token_missing = source["token_missing"];
 	        this.token_invalid = source["token_invalid"];
-	        this.repos = this.convertValues(source["repos"], githubclient.Repo);
-	        this.pull_requests = this.convertValues(source["pull_requests"], githubclient.Issue);
-	        this.issues = this.convertValues(source["issues"], githubclient.Issue);
-	        this.notifications = this.convertValues(source["notifications"], githubclient.Notification);
+	        this.repos = this.convertValues(source["repos"], provider.Repo);
+	        this.pull_requests = this.convertValues(source["pull_requests"], provider.Item);
+	        this.issues = this.convertValues(source["issues"], provider.Item);
+	        this.notifications = this.convertValues(source["notifications"], provider.Notification);
 	        this.repos_error = source["repos_error"];
 	        this.pull_requests_error = source["pull_requests_error"];
 	        this.issues_error = source["issues_error"];
@@ -3522,15 +3415,16 @@ export namespace main {
 	}
 	export class RepoDetailResult {
 	    profile: string;
+	    provider: string;
 	    owner: string;
 	    repo: string;
 	    default_branch: string;
 	    token_missing: boolean;
 	    token_invalid: boolean;
-	    branches: githubclient.Branch[];
-	    commits: githubclient.Commit[];
-	    prs: githubclient.Issue[];
-	    issues: githubclient.Issue[];
+	    branches: provider.Branch[];
+	    commits: provider.Commit[];
+	    prs: provider.Item[];
+	    issues: provider.Item[];
 	    readme: string;
 	    readme_url: string;
 	    branches_error: string;
@@ -3546,15 +3440,16 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.profile = source["profile"];
+	        this.provider = source["provider"];
 	        this.owner = source["owner"];
 	        this.repo = source["repo"];
 	        this.default_branch = source["default_branch"];
 	        this.token_missing = source["token_missing"];
 	        this.token_invalid = source["token_invalid"];
-	        this.branches = this.convertValues(source["branches"], githubclient.Branch);
-	        this.commits = this.convertValues(source["commits"], githubclient.Commit);
-	        this.prs = this.convertValues(source["prs"], githubclient.Issue);
-	        this.issues = this.convertValues(source["issues"], githubclient.Issue);
+	        this.branches = this.convertValues(source["branches"], provider.Branch);
+	        this.commits = this.convertValues(source["commits"], provider.Commit);
+	        this.prs = this.convertValues(source["prs"], provider.Item);
+	        this.issues = this.convertValues(source["issues"], provider.Item);
 	        this.readme = source["readme"];
 	        this.readme_url = source["readme_url"];
 	        this.branches_error = source["branches_error"];
@@ -3784,6 +3679,159 @@ export namespace opensearch {
 	        this.as_of = source["as_of"];
 	        this.workspace = source["workspace"];
 	        this.matched_workspace = source["matched_workspace"];
+	    }
+	}
+
+}
+
+export namespace provider {
+	
+	export class Branch {
+	    name: string;
+	    sha: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Branch(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.sha = source["sha"];
+	    }
+	}
+	export class Commit {
+	    sha: string;
+	    message: string;
+	    author: string;
+	    date: string;
+	    html_url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Commit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sha = source["sha"];
+	        this.message = source["message"];
+	        this.author = source["author"];
+	        this.date = source["date"];
+	        this.html_url = source["html_url"];
+	    }
+	}
+	export class Item {
+	    provider: string;
+	    repo_full_name: string;
+	    number: number;
+	    title: string;
+	    state: string;
+	    html_url: string;
+	    updated_at: string;
+	    user: string;
+	    draft: boolean;
+	    is_pull_request: boolean;
+	    reason: string;
+	    repo_id: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Item(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.provider = source["provider"];
+	        this.repo_full_name = source["repo_full_name"];
+	        this.number = source["number"];
+	        this.title = source["title"];
+	        this.state = source["state"];
+	        this.html_url = source["html_url"];
+	        this.updated_at = source["updated_at"];
+	        this.user = source["user"];
+	        this.draft = source["draft"];
+	        this.is_pull_request = source["is_pull_request"];
+	        this.reason = source["reason"];
+	        this.repo_id = source["repo_id"];
+	    }
+	}
+	export class Notification {
+	    id: string;
+	    repo_full_name: string;
+	    subject_title: string;
+	    subject_type: string;
+	    reason: string;
+	    updated_at: string;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Notification(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.repo_full_name = source["repo_full_name"];
+	        this.subject_title = source["subject_title"];
+	        this.subject_type = source["subject_type"];
+	        this.reason = source["reason"];
+	        this.updated_at = source["updated_at"];
+	        this.url = source["url"];
+	    }
+	}
+	export class Repo {
+	    provider: string;
+	    owner: string;
+	    name: string;
+	    full_name: string;
+	    description: string;
+	    html_url: string;
+	    clone_url: string;
+	    default_branch: string;
+	    pushed_at: string;
+	    stars: number;
+	    open_issues: number;
+	    id: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Repo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.provider = source["provider"];
+	        this.owner = source["owner"];
+	        this.name = source["name"];
+	        this.full_name = source["full_name"];
+	        this.description = source["description"];
+	        this.html_url = source["html_url"];
+	        this.clone_url = source["clone_url"];
+	        this.default_branch = source["default_branch"];
+	        this.pushed_at = source["pushed_at"];
+	        this.stars = source["stars"];
+	        this.open_issues = source["open_issues"];
+	        this.id = source["id"];
+	    }
+	}
+	export class RepoRef {
+	    provider: string;
+	    owner: string;
+	    name: string;
+	    id: string;
+	    clone_url: string;
+	    default_branch: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RepoRef(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.provider = source["provider"];
+	        this.owner = source["owner"];
+	        this.name = source["name"];
+	        this.id = source["id"];
+	        this.clone_url = source["clone_url"];
+	        this.default_branch = source["default_branch"];
 	    }
 	}
 

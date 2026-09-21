@@ -1,4 +1,4 @@
-package githubclient
+package github
 
 import (
 	"context"
@@ -6,7 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"phantom-ink/provider"
 )
+
+func refFor(owner, name string) provider.RepoRef {
+	return provider.RepoRef{Provider: provider.KindGitHub, Owner: owner, Name: name}
+}
 
 func TestListBranches(t *testing.T) {
 	c, last := stub(t, map[string]string{
@@ -15,7 +21,7 @@ func TestListBranches(t *testing.T) {
 			{"name":"feat/code-detail","commit":{"sha":"bbb222"}}
 		]`,
 	})
-	bs, err := c.ListBranches(context.Background(), "tok", "acme", "phantom-ink")
+	bs, err := c.ListBranches(context.Background(), refFor("acme", "phantom-ink"))
 	if err != nil {
 		t.Fatalf("ListBranches: %v", err)
 	}
@@ -31,7 +37,7 @@ func TestListBranches(t *testing.T) {
 	if got := last.URL.Query().Get("per_page"); got != "50" {
 		t.Errorf("per_page = %q", got)
 	}
-	if got := last.Header.Get("Authorization"); got != "Bearer tok" {
+	if got := last.Header.Get("Authorization"); got != "Bearer test-token" {
 		t.Errorf("auth header = %q", got)
 	}
 }
@@ -56,7 +62,7 @@ const commitsBody = `[{
 
 func TestListRecentCommits(t *testing.T) {
 	c, last := stub(t, map[string]string{"/repos/acme/phantom-ink/commits": commitsBody})
-	cs, err := c.ListRecentCommits(context.Background(), "tok", "acme", "phantom-ink", 5)
+	cs, err := c.ListRecentCommits(context.Background(), refFor("acme", "phantom-ink"), 5)
 	if err != nil {
 		t.Fatalf("ListRecentCommits: %v", err)
 	}
@@ -88,13 +94,13 @@ func TestListRecentCommits(t *testing.T) {
 
 func TestListRecentCommits_LimitBounds(t *testing.T) {
 	c, last := stub(t, map[string]string{"/repos/a/b/commits": `[]`})
-	if _, err := c.ListRecentCommits(context.Background(), "tok", "a", "b", 0); err != nil {
+	if _, err := c.ListRecentCommits(context.Background(), refFor("a", "b"), 0); err != nil {
 		t.Fatalf("limit 0: %v", err)
 	}
 	if got := last.URL.Query().Get("per_page"); got != "30" {
 		t.Errorf("non-positive limit must default to 30, got %q", got)
 	}
-	if _, err := c.ListRecentCommits(context.Background(), "tok", "a", "b", 5000); err != nil {
+	if _, err := c.ListRecentCommits(context.Background(), refFor("a", "b"), 5000); err != nil {
 		t.Fatalf("huge limit: %v", err)
 	}
 	if got := last.URL.Query().Get("per_page"); got != "100" {
@@ -120,7 +126,7 @@ func TestGetReadme(t *testing.T) {
 		"/repos/acme/phantom-ink/readme": `{"encoding":"base64","content":"` + wrapped + `",
 			"html_url":"https://github.com/acme/phantom-ink/blob/main/README.md"}`,
 	})
-	got, htmlURL, err := c.GetReadme(context.Background(), "tok", "acme", "phantom-ink")
+	got, htmlURL, err := c.GetReadme(context.Background(), refFor("acme", "phantom-ink"))
 	if err != nil {
 		t.Fatalf("GetReadme: %v", err)
 	}
@@ -139,7 +145,7 @@ func TestGetReadme_MissingIsNotAnError(t *testing.T) {
 	// stub 404s any path it has no body for — exactly what GitHub returns for
 	// a repository with no README, which is a normal state.
 	c, _ := stub(t, map[string]string{})
-	md, htmlURL, err := c.GetReadme(context.Background(), "tok", "acme", "bare")
+	md, htmlURL, err := c.GetReadme(context.Background(), refFor("acme", "bare"))
 	if err != nil {
 		t.Fatalf("a repo with no README must not be an error, got %v", err)
 	}
@@ -152,7 +158,7 @@ func TestGetReadme_UnsupportedEncodingIsAnError(t *testing.T) {
 	c, _ := stub(t, map[string]string{
 		"/repos/a/b/readme": `{"encoding":"none","content":"","html_url":"x"}`,
 	})
-	if _, _, err := c.GetReadme(context.Background(), "tok", "a", "b"); err == nil {
+	if _, _, err := c.GetReadme(context.Background(), refFor("a", "b")); err == nil {
 		t.Fatal("a non-base64 encoding must be reported, not decoded blindly")
 	}
 }
@@ -161,16 +167,16 @@ func TestGetReadme_UndecodableContentIsAnError(t *testing.T) {
 	c, _ := stub(t, map[string]string{
 		"/repos/a/b/readme": `{"encoding":"base64","content":"!!not base64!!","html_url":"x"}`,
 	})
-	if _, _, err := c.GetReadme(context.Background(), "tok", "a", "b"); err == nil {
+	if _, _, err := c.GetReadme(context.Background(), refFor("a", "b")); err == nil {
 		t.Fatal("undecodable content must be an error")
 	}
 }
 
-func TestSearchPRsByRepo(t *testing.T) {
+func TestRepoPRs(t *testing.T) {
 	c, last := stub(t, map[string]string{"/search/issues": searchPRBody})
-	prs, err := c.SearchPRsByRepo(context.Background(), "tok", "acme", "phantom-ink")
+	prs, err := c.RepoPRs(context.Background(), refFor("acme", "phantom-ink"))
 	if err != nil {
-		t.Fatalf("SearchPRsByRepo: %v", err)
+		t.Fatalf("RepoPRs: %v", err)
 	}
 	if len(prs) != 1 || !prs[0].IsPullRequest {
 		t.Fatalf("want 1 pr, got %+v", prs)
@@ -187,7 +193,7 @@ func TestSearchPRsByRepo(t *testing.T) {
 	}
 }
 
-func TestSearchIssuesByRepo(t *testing.T) {
+func TestRepoIssues(t *testing.T) {
 	c, last := stub(t, map[string]string{"/search/issues": `{"items":[{
 		"number":9,"title":"Panel blanks on 401","state":"open",
 		"html_url":"https://github.com/acme/phantom-ink/issues/9",
@@ -195,9 +201,9 @@ func TestSearchIssuesByRepo(t *testing.T) {
 		"repository_url":"https://api.github.com/repos/acme/phantom-ink",
 		"user":{"login":"neo"}
 	}]}`})
-	issues, err := c.SearchIssuesByRepo(context.Background(), "tok", "acme", "phantom-ink")
+	issues, err := c.RepoIssues(context.Background(), refFor("acme", "phantom-ink"))
 	if err != nil {
-		t.Fatalf("SearchIssuesByRepo: %v", err)
+		t.Fatalf("RepoIssues: %v", err)
 	}
 	if len(issues) != 1 || issues[0].IsPullRequest {
 		t.Fatalf("want 1 non-pr issue, got %+v", issues)
@@ -216,15 +222,16 @@ func TestRepoDetailReads_UnauthorizedIsTyped(t *testing.T) {
 		_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
 	}))
 	t.Cleanup(srv.Close)
-	c := NewWithBase(srv.URL, srv.Client())
+	c := NewWithBase(srv.URL, "bad", srv.Client())
 	ctx := context.Background()
+	ref := refFor("a", "b")
 
 	calls := map[string]func() error{
-		"ListBranches":       func() error { _, err := c.ListBranches(ctx, "bad", "a", "b"); return err },
-		"ListRecentCommits":  func() error { _, err := c.ListRecentCommits(ctx, "bad", "a", "b", 5); return err },
-		"GetReadme":          func() error { _, _, err := c.GetReadme(ctx, "bad", "a", "b"); return err },
-		"SearchPRsByRepo":    func() error { _, err := c.SearchPRsByRepo(ctx, "bad", "a", "b"); return err },
-		"SearchIssuesByRepo": func() error { _, err := c.SearchIssuesByRepo(ctx, "bad", "a", "b"); return err },
+		"ListBranches":      func() error { _, err := c.ListBranches(ctx, ref); return err },
+		"ListRecentCommits": func() error { _, err := c.ListRecentCommits(ctx, ref, 5); return err },
+		"GetReadme":         func() error { _, _, err := c.GetReadme(ctx, ref); return err },
+		"RepoPRs":           func() error { _, err := c.RepoPRs(ctx, ref); return err },
+		"RepoIssues":        func() error { _, err := c.RepoIssues(ctx, ref); return err },
 	}
 	for name, call := range calls {
 		err := call()
@@ -232,7 +239,7 @@ func TestRepoDetailReads_UnauthorizedIsTyped(t *testing.T) {
 			t.Errorf("%s: 401 must be an error", name)
 			continue
 		}
-		if !IsUnauthorized(err) {
+		if !provider.IsUnauthorized(err) {
 			t.Errorf("%s: 401 must be detectable as unauthorized, got %v", name, err)
 		}
 	}

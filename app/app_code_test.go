@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,165 +14,139 @@ import (
 	"testing"
 
 	"phantom-ink/brainbox"
-	"phantom-ink/githubclient"
+	"phantom-ink/provider"
 )
 
-// fakeGitHub is a githubFetcher whose every section can be made to fail
-// independently — the case the panel's per-section error fields exist for.
-type fakeGitHub struct {
-	repos    []githubclient.Repo
-	authored []githubclient.Issue
-	reviews  []githubclient.Issue
-	issues   []githubclient.Issue
-	notifs   []githubclient.Notification
-
-	reposErr    error
-	authoredErr error
-	reviewsErr  error
-	issuesErr   error
-	notifsErr   error
-
-	gotToken string
+// fakeProvider is a provider.Client whose each method returns canned data or a
+// canned error, for testing the fan-out/merge without a live server.
+type fakeProvider struct {
+	kind     provider.Kind
+	repos    []provider.Repo
+	prs      []provider.Item
+	work     []provider.Item
+	reposErr error
+	prsErr   error
+	workErr  error
 }
 
-func (f *fakeGitHub) ListRepos(_ context.Context, token string) ([]githubclient.Repo, error) {
-	f.gotToken = token
+func (f *fakeProvider) Kind() provider.Kind { return f.kind }
+func (f *fakeProvider) ListRepos(context.Context) ([]provider.Repo, error) {
 	return f.repos, f.reposErr
 }
-func (f *fakeGitHub) SearchPRsAuthored(context.Context, string) ([]githubclient.Issue, error) {
-	return f.authored, f.authoredErr
+func (f *fakeProvider) SearchMyPRs(context.Context) ([]provider.Item, error) { return f.prs, f.prsErr }
+func (f *fakeProvider) ListAssignedWork(context.Context) ([]provider.Item, error) {
+	return f.work, f.workErr
 }
-func (f *fakeGitHub) SearchPRsReviewRequested(context.Context, string) ([]githubclient.Issue, error) {
-	return f.reviews, f.reviewsErr
+func (f *fakeProvider) ListBranches(context.Context, provider.RepoRef) ([]provider.Branch, error) {
+	return nil, nil
 }
-func (f *fakeGitHub) SearchIssuesAssigned(context.Context, string) ([]githubclient.Issue, error) {
-	return f.issues, f.issuesErr
+func (f *fakeProvider) ListRecentCommits(context.Context, provider.RepoRef, int) ([]provider.Commit, error) {
+	return nil, nil
 }
-func (f *fakeGitHub) ListNotifications(context.Context, string) ([]githubclient.Notification, error) {
+func (f *fakeProvider) GetReadme(context.Context, provider.RepoRef) (string, string, error) {
+	return "", "", nil
+}
+func (f *fakeProvider) RepoPRs(context.Context, provider.RepoRef) ([]provider.Item, error) {
+	return nil, nil
+}
+func (f *fakeProvider) RepoIssues(context.Context, provider.RepoRef) ([]provider.Item, error) {
+	return nil, nil
+}
+func (f *fakeProvider) NormalizeCloneURL(u string) string { return u }
+
+// fakeNotifierProvider adds ListNotifications on top of fakeProvider, since
+// only GitHub implements provider.Notifier in production.
+type fakeNotifierProvider struct {
+	fakeProvider
+	notifs    []provider.Notification
+	notifsErr error
+}
+
+func (f *fakeNotifierProvider) ListNotifications(context.Context) ([]provider.Notification, error) {
 	return f.notifs, f.notifsErr
 }
 
-func pr(url, reason, updated string) githubclient.Issue {
-	return githubclient.Issue{HTMLURL: url, Reason: reason, UpdatedAt: updated, IsPullRequest: true}
+func TestBuildCodeOverview_MergesAndTags(t *testing.T) {
+	gh := &fakeProvider{kind: provider.KindGitHub, repos: []provider.Repo{{Provider: provider.KindGitHub, FullName: "me/gh"}}}
+	ado := &fakeProvider{kind: provider.KindADO, repos: []provider.Repo{{Provider: provider.KindADO, FullName: "proj/ado"}}}
+	out := buildCodeOverview(context.Background(), []provider.Client{gh, ado}, "work")
+	if len(out.Repos) != 2 {
+		t.Fatalf("want 2 merged repos, got %d", len(out.Repos))
+	}
+	if out.Profile != "work" {
+		t.Errorf("profile not echoed back: %q", out.Profile)
+	}
 }
 
-func TestBuildCodeOverview_MergesAndTagsPullRequests(t *testing.T) {
-	f := &fakeGitHub{
-		authored: []githubclient.Issue{
-			pr("https://github.com/a/b/pull/1", githubclient.ReasonAuthored, "2026-09-10T00:00:00Z"),
-			pr("https://github.com/a/b/pull/2", githubclient.ReasonAuthored, "2026-09-12T00:00:00Z"),
-		},
-		reviews: []githubclient.Issue{
-			// Same PR as authored #1 — must appear ONCE, tagged with both.
-			pr("https://github.com/a/b/pull/1", githubclient.ReasonReviewRequested, "2026-09-10T00:00:00Z"),
-			pr("https://github.com/c/d/pull/9", githubclient.ReasonReviewRequested, "2026-09-11T00:00:00Z"),
-		},
+func TestBuildCodeOverview_ErrorIsolation(t *testing.T) {
+	gh := &fakeProvider{kind: provider.KindGitHub, repos: []provider.Repo{{FullName: "me/gh"}}}
+	ado := &fakeProvider{kind: provider.KindADO, reposErr: errors.New("boom")}
+	out := buildCodeOverview(context.Background(), []provider.Client{gh, ado}, "work")
+	if len(out.Repos) != 1 {
+		t.Fatalf("healthy provider's repos must still render: got %d", len(out.Repos))
 	}
-	got := buildCodeOverview(context.Background(), f, "work", "tok")
+	if !strings.Contains(out.ReposError, "ado:") {
+		t.Fatalf("failed provider's error must be prefixed: %q", out.ReposError)
+	}
+}
 
-	if len(got.PullRequests) != 3 {
-		t.Fatalf("want 3 deduped PRs, got %d: %+v", len(got.PullRequests), got.PullRequests)
+func TestBuildCodeOverview_PRsAndWorkMergeAcrossProviders(t *testing.T) {
+	gh := &fakeProvider{
+		kind: provider.KindGitHub,
+		prs:  []provider.Item{{Provider: provider.KindGitHub, HTMLURL: "https://github.com/a/b/pull/1", UpdatedAt: "2026-09-10T00:00:00Z"}},
+		work: []provider.Item{{Provider: provider.KindGitHub, Number: 3, UpdatedAt: "2026-09-09T00:00:00Z"}},
+	}
+	ado := &fakeProvider{
+		kind: provider.KindADO,
+		prs:  []provider.Item{{Provider: provider.KindADO, HTMLURL: "https://dev.azure.com/o/p/_git/r/pullrequest/2", UpdatedAt: "2026-09-12T00:00:00Z"}},
+		work: []provider.Item{{Provider: provider.KindADO, Number: 4, UpdatedAt: "2026-09-11T00:00:00Z"}},
+	}
+	out := buildCodeOverview(context.Background(), []provider.Client{gh, ado}, "work")
+	if len(out.PullRequests) != 2 {
+		t.Fatalf("want 2 merged PRs, got %d: %+v", len(out.PullRequests), out.PullRequests)
 	}
 	// Newest first.
-	if got.PullRequests[0].HTMLURL != "https://github.com/a/b/pull/2" {
-		t.Errorf("not sorted updated-desc: %+v", got.PullRequests)
+	if out.PullRequests[0].Provider != provider.KindADO {
+		t.Errorf("not sorted updated-desc: %+v", out.PullRequests)
 	}
-	var merged githubclient.Issue
-	for _, p := range got.PullRequests {
-		if p.HTMLURL == "https://github.com/a/b/pull/1" {
-			merged = p
-		}
-	}
-	if !strings.Contains(merged.Reason, githubclient.ReasonAuthored) ||
-		!strings.Contains(merged.Reason, githubclient.ReasonReviewRequested) {
-		t.Errorf("duplicate PR must carry both reasons, got %q", merged.Reason)
-	}
-	if got.Profile != "work" {
-		t.Errorf("profile not echoed back: %q", got.Profile)
-	}
-	if f.gotToken != "tok" {
-		t.Errorf("token not passed through: %q", f.gotToken)
+	if len(out.Issues) != 2 {
+		t.Fatalf("want 2 merged work items, got %d: %+v", len(out.Issues), out.Issues)
 	}
 }
 
-func TestBuildCodeOverview_OneFailingSectionDoesNotBlankThePage(t *testing.T) {
-	f := &fakeGitHub{
-		repos:     []githubclient.Repo{{FullName: "a/b"}},
-		authored:  []githubclient.Issue{pr("https://github.com/a/b/pull/1", githubclient.ReasonAuthored, "2026-09-10T00:00:00Z")},
-		issues:    []githubclient.Issue{{RepoFullName: "a/b", Number: 3}},
-		notifsErr: &githubclient.StatusError{Code: http.StatusForbidden, Status: "403 Forbidden", Path: "/notifications"},
-	}
-	got := buildCodeOverview(context.Background(), f, "work", "tok")
-
-	if got.NotificationsError == "" {
-		t.Error("failing section must record its error")
-	}
-	if len(got.Repos) != 1 || len(got.PullRequests) != 1 || len(got.Issues) != 1 {
-		t.Errorf("healthy sections must still render: %+v", got)
-	}
-	if got.TokenInvalid {
-		t.Error("a 403 is not a rejected credential")
-	}
-	if got.ReposError != "" || got.IssuesError != "" || got.PullRequestsError != "" {
-		t.Errorf("healthy sections must have no error: %+v", got)
-	}
-}
-
-func TestBuildCodeOverview_HalfFailedPRSectionKeepsTheOtherHalf(t *testing.T) {
-	f := &fakeGitHub{
-		authored:   []githubclient.Issue{pr("https://github.com/a/b/pull/1", githubclient.ReasonAuthored, "2026-09-10T00:00:00Z")},
-		reviewsErr: errors.New("boom"),
-	}
-	got := buildCodeOverview(context.Background(), f, "work", "tok")
-	if len(got.PullRequests) != 1 {
-		t.Errorf("authored half must survive a review-requested failure: %+v", got.PullRequests)
-	}
-	if !strings.Contains(got.PullRequestsError, "boom") {
-		t.Errorf("failure must be named: %q", got.PullRequestsError)
+func TestBuildCodeOverview_SectionErrorsAreJoinedAndPrefixed(t *testing.T) {
+	gh := &fakeProvider{kind: provider.KindGitHub, prsErr: errors.New("gh down")}
+	ado := &fakeProvider{kind: provider.KindADO, prsErr: errors.New("ado down")}
+	out := buildCodeOverview(context.Background(), []provider.Client{gh, ado}, "work")
+	if !strings.Contains(out.PullRequestsError, "github:") || !strings.Contains(out.PullRequestsError, "ado:") {
+		t.Errorf("both providers' failures must be named: %q", out.PullRequestsError)
 	}
 }
 
 func TestBuildCodeOverview_401SetsTokenInvalid(t *testing.T) {
-	unauth := &githubclient.StatusError{Code: http.StatusUnauthorized, Status: "401 Unauthorized", Path: "/user/repos"}
-	f := &fakeGitHub{reposErr: unauth, authoredErr: unauth, reviewsErr: unauth, issuesErr: unauth, notifsErr: unauth}
-	got := buildCodeOverview(context.Background(), f, "work", "bad")
-	if !got.TokenInvalid {
+	unauth := &provider.StatusError{Code: http.StatusUnauthorized, Status: "401 Unauthorized", Path: "/user/repos"}
+	gh := &fakeProvider{kind: provider.KindGitHub, reposErr: unauth}
+	out := buildCodeOverview(context.Background(), []provider.Client{gh}, "work")
+	if !out.TokenInvalid {
 		t.Fatal("401 must set TokenInvalid so the panel shows a reconnect banner")
 	}
-	if got.TokenMissing {
-		t.Error("a rejected token is present, not missing")
+}
+
+func TestBuildCodeOverview_NotificationsOnlyFromNotifier(t *testing.T) {
+	gh := &fakeNotifierProvider{
+		fakeProvider: fakeProvider{kind: provider.KindGitHub},
+		notifs:       []provider.Notification{{ID: "1", RepoFullName: "a/b"}},
+	}
+	ado := &fakeProvider{kind: provider.KindADO}
+	out := buildCodeOverview(context.Background(), []provider.Client{gh, ado}, "work")
+	if len(out.Notifications) != 1 {
+		t.Fatalf("want 1 notification from the Notifier provider, got %d", len(out.Notifications))
 	}
 }
 
-func TestBuildCodeOverview_401OnOneSectionOnly(t *testing.T) {
-	// Fine-grained PATs scope notifications separately from repos; a 401 there
-	// still means the credential was rejected for that read.
-	f := &fakeGitHub{
-		repos:     []githubclient.Repo{{FullName: "a/b"}},
-		notifsErr: &githubclient.StatusError{Code: http.StatusUnauthorized, Status: "401 Unauthorized", Path: "/notifications"},
-	}
-	got := buildCodeOverview(context.Background(), f, "work", "tok")
-	if !got.TokenInvalid {
-		t.Error("a 401 on any section marks the token invalid")
-	}
-	if len(got.Repos) != 1 {
-		t.Error("the section that worked must still render")
-	}
-}
-
-func TestMergePullRequests_KeepsRowsWithNoURL(t *testing.T) {
-	got := mergePullRequests(
-		[]githubclient.Issue{{Title: "no url", Reason: githubclient.ReasonAuthored}},
-		[]githubclient.Issue{{Title: "also no url", Reason: githubclient.ReasonReviewRequested}},
-	)
-	if len(got) != 2 {
-		t.Fatalf("rows without an html_url must not be deduped away: %+v", got)
-	}
-}
-
-// GitHubOverview must return the token-missing state as a VALUE, not an
-// error, so the panel renders a "connect a token" banner instead of a toast.
-func TestGitHubOverview_NoTokenIsNotAnError(t *testing.T) {
+// CodeOverview must return the token-missing state as a VALUE, not an error,
+// so the panel renders a "connect a provider" banner instead of a toast.
+func TestCodeOverview_NoProviderIsNotAnError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/env") {
 			t.Errorf("unexpected call to %s", r.URL.Path)
@@ -181,15 +156,15 @@ func TestGitHubOverview_NoTokenIsNotAnError(t *testing.T) {
 	defer srv.Close()
 	app := &App{client: brainbox.NewClient(srv.URL, ""), ctx: context.Background()}
 
-	got, err := app.GitHubOverview("work")
+	got, err := app.CodeOverview("work")
 	if err != nil {
-		t.Fatalf("missing token must not be an error: %v", err)
+		t.Fatalf("missing provider must not be an error: %v", err)
 	}
 	if !got.TokenMissing {
 		t.Errorf("want TokenMissing, got %+v", got)
 	}
 	if got.TokenInvalid {
-		t.Error("a missing token is not a rejected one")
+		t.Error("a missing provider is not a rejected one")
 	}
 	if got.Profile != "work" {
 		t.Errorf("profile = %q", got.Profile)
@@ -198,19 +173,36 @@ func TestGitHubOverview_NoTokenIsNotAnError(t *testing.T) {
 
 // A profile with no stored env at all (the gateway 404s) is the same
 // actionable state, not a page-breaking error.
-func TestGitHubOverview_NoStoredEnvIsTokenMissing(t *testing.T) {
+func TestCodeOverview_NoStoredEnvIsTokenMissing(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 	app := &App{client: brainbox.NewClient(srv.URL, ""), ctx: context.Background()}
 
-	got, err := app.GitHubOverview("fresh")
+	got, err := app.CodeOverview("fresh")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !got.TokenMissing {
 		t.Errorf("want TokenMissing, got %+v", got)
+	}
+}
+
+// Only an ADO config (no GITHUB_TOKEN) must still count as "configured".
+func TestCodeOverview_ADOOnlyIsConfigured(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"profile":"work","env":{"ADO_ORG":"o","ADO_PROJECT":"p","ADO_PAT":"secret"}}`))
+	}))
+	defer srv.Close()
+	app := &App{client: brainbox.NewClient(srv.URL, ""), ctx: context.Background()}
+
+	got, err := app.CodeOverview("work")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.TokenMissing {
+		t.Errorf("ADO-only config must count as configured: %+v", got)
 	}
 }
 
@@ -279,6 +271,34 @@ func TestNormalizeCloneURL(t *testing.T) {
 	}
 }
 
+func TestNormalizeCloneURL_ADO(t *testing.T) {
+	cases := map[string]string{
+		"https://dev.azure.com/acme/widgets/_git/api":      "https://dev.azure.com/acme/widgets/_git/api",
+		"https://acme@dev.azure.com/acme/widgets/_git/api": "https://dev.azure.com/acme/widgets/_git/api",
+		"https://acme.visualstudio.com/widgets/_git/api":   "https://dev.azure.com/acme/widgets/_git/api",
+		// Fail closed on incomplete ADO refs.
+		"https://dev.azure.com/acme":    "", // org only, no project/repo
+		"https://dev.azure.com":         "", // bare host
+		"https://acme.visualstudio.com": "", // bare legacy host, no path
+		// GitHub still works.
+		"git@github.com:o/r.git": "https://github.com/o/r.git",
+	}
+	for in, want := range cases {
+		if got := normalizeCloneURL(in); got != want {
+			t.Errorf("normalizeCloneURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestIsADOCloneURL(t *testing.T) {
+	if !isADOCloneURL("https://dev.azure.com/acme/widgets/_git/api") {
+		t.Fatal("dev.azure.com should be ADO")
+	}
+	if isADOCloneURL("https://github.com/o/r.git") {
+		t.Fatal("github should not be ADO")
+	}
+}
+
 func TestDeriveCloneDest(t *testing.T) {
 	cases := []struct{ home, url, want string }{
 		{"/ws/work", "https://github.com/o/phantom-ink.git", "/ws/work/code/phantom-ink"},
@@ -299,15 +319,16 @@ func TestDeriveCloneDest(t *testing.T) {
 // stubLanes replaces the clone + terminal seams for the duration of a test and
 // records what they were asked to do.
 type stubLanes struct {
-	clones   [][2]string // (url, dest) per call
-	opened   []string    // dirs the terminal opener saw
-	cloneErr error
-	openErr  error
+	clones     [][2]string // (url, dest) per plain runGitClone call
+	authClones [][3]string // (url, dest, authHeader) per runGitCloneAuth call
+	opened     []string    // dirs the terminal opener saw
+	cloneErr   error
+	openErr    error
 }
 
 func (s *stubLanes) install(t *testing.T) {
 	t.Helper()
-	origClone, origOpen := runGitClone, openTerminalAt
+	origClone, origAuth, origOpen := runGitClone, runGitCloneAuth, openTerminalAt
 	runGitClone = func(cloneURL, dest string) error {
 		s.clones = append(s.clones, [2]string{cloneURL, dest})
 		if s.cloneErr != nil {
@@ -317,11 +338,31 @@ func (s *stubLanes) install(t *testing.T) {
 		// second call would look like a fresh checkout.
 		return os.MkdirAll(dest, 0o755)
 	}
+	runGitCloneAuth = func(cloneURL, dest, authHeader string) error {
+		s.authClones = append(s.authClones, [3]string{cloneURL, dest, authHeader})
+		if s.cloneErr != nil {
+			return s.cloneErr
+		}
+		return os.MkdirAll(dest, 0o755)
+	}
 	openTerminalAt = func(dir string) error {
 		s.opened = append(s.opened, dir)
 		return s.openErr
 	}
-	t.Cleanup(func() { runGitClone, openTerminalAt = origClone, origOpen })
+	t.Cleanup(func() {
+		runGitClone, runGitCloneAuth, openTerminalAt = origClone, origAuth, origOpen
+	})
+}
+
+// stubGatewayEnv makes readProfileGatewayEnv return a fixed env for the test's
+// duration, so the ADO clone path resolves a PAT without a live broker.
+func stubGatewayEnv(t *testing.T, env map[string]string) {
+	t.Helper()
+	orig := readProfileGatewayEnv
+	readProfileGatewayEnv = func(_ *App, _ string) (map[string]string, error) {
+		return env, nil
+	}
+	t.Cleanup(func() { readProfileGatewayEnv = orig })
 }
 
 // laneApp builds an App whose profile scan finds exactly one profile, rooted in
@@ -402,6 +443,57 @@ func TestOpenRepoLocally_ExistingCheckoutIsNotReCloned(t *testing.T) {
 		t.Errorf("terminal opened at %v, want [%s]", stub.opened, dest)
 	}
 }
+
+// An ADO repo clones through the auth seam with the PAT injected via an inline
+// Authorization header — never embedded in the URL — and host git creds are not
+// used.
+func TestOpenRepoLocally_ADOClonesWithPAT(t *testing.T) {
+	app, home := laneApp(t, "work")
+	stub := &stubLanes{}
+	stub.install(t)
+	stubGatewayEnv(t, map[string]string{"ADO_PAT": "secret"})
+
+	dest, err := app.OpenRepoLocally("work", "https://dev.azure.com/acme/widgets/_git/api")
+	if err != nil {
+		t.Fatalf("OpenRepoLocally: %v", err)
+	}
+	want := filepath.Join(home, "code", "api")
+	if dest != want {
+		t.Errorf("dest = %q, want %q", dest, want)
+	}
+	if len(stub.authClones) != 1 {
+		t.Fatalf("want 1 auth clone, got %v", stub.authClones)
+	}
+	if len(stub.clones) != 0 {
+		t.Errorf("ADO must not fall back to plain host-cred clone, got %v", stub.clones)
+	}
+	gotURL, gotDest, gotAuth := stub.authClones[0][0], stub.authClones[0][1], stub.authClones[0][2]
+	if gotURL != "https://dev.azure.com/acme/widgets/_git/api" {
+		t.Errorf("clone url = %q", gotURL)
+	}
+	if gotDest != want {
+		t.Errorf("clone dest = %q, want %q", gotDest, want)
+	}
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(":secret"))
+	if gotAuth != wantAuth {
+		t.Errorf("auth header = %q, want %q", gotAuth, wantAuth)
+	}
+	// The PAT must never leak into the clone URL (which would persist to the
+	// remote/reflog on disk).
+	if strings.Contains(gotURL, "secret") {
+		t.Errorf("PAT leaked into clone url: %q", gotURL)
+	}
+	if len(stub.opened) != 1 || stub.opened[0] != want {
+		t.Errorf("terminal opened at %v, want [%s]", stub.opened, want)
+	}
+}
+
+// Note: the "no PAT" cases now live in TestOpenRepoLocally_ADOAzLoginClone
+// (no PAT → az bearer clone) and TestOpenRepoLocally_ADONoCredErrors (no PAT +
+// no az → clean error, no clone). The former single "missing PAT = error" test
+// was obsoleted by az-login support (a blank PAT is no longer an error) and
+// removed — it shelled out to the real `az` binary, coupling the result to the
+// runner's Azure CLI login state.
 
 // git's own stderr is the useful part of an auth failure — it must survive.
 func TestOpenRepoLocally_ReturnsGitError(t *testing.T) {
@@ -496,5 +588,138 @@ func TestLaunchInteractiveSession_UnknownProfile(t *testing.T) {
 	app, _ := laneApp(t, "work")
 	if _, err := app.LaunchInteractiveSession(InteractiveSessionRequest{Profile: "other"}); err == nil {
 		t.Fatal("want an error for a profile that does not exist")
+	}
+}
+
+// --- az login auth path (provider enablement + PAT-less clone) ---------------
+
+// stubAzHeader swaps the main-package az bearer seam for a test.
+func stubAzHeader(t *testing.T, header string, err error) {
+	t.Helper()
+	orig := adoAzAuthHeader
+	adoAzAuthHeader = func(context.Context, string) (string, error) { return header, err }
+	t.Cleanup(func() { adoAzAuthHeader = orig })
+}
+
+func TestBuildProviders_Enablement(t *testing.T) {
+	kinds := func(cs []provider.Client) []provider.Kind {
+		out := make([]provider.Kind, 0, len(cs))
+		for _, c := range cs {
+			out = append(out, c.Kind())
+		}
+		return out
+	}
+	cases := []struct {
+		name string
+		env  map[string]string
+		want []provider.Kind
+	}{
+		{"github only", map[string]string{"GITHUB_TOKEN": "x"}, []provider.Kind{provider.KindGitHub}},
+		{"ado with pat", map[string]string{"ADO_ORG": "a", "ADO_PROJECT": "p", "ADO_PAT": "t"}, []provider.Kind{provider.KindADO}},
+		{"ado az (no pat)", map[string]string{"ADO_ORG": "a", "ADO_PROJECT": "p"}, []provider.Kind{provider.KindADO}},
+		{"ado org only", map[string]string{"ADO_ORG": "a"}, nil},
+		{"both", map[string]string{"GITHUB_TOKEN": "x", "ADO_ORG": "a", "ADO_PROJECT": "p"}, []provider.Kind{provider.KindGitHub, provider.KindADO}},
+		{"none", map[string]string{}, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := kinds(buildProviders(c.env, "", splitProjects(c.env["ADO_PROJECT"])))
+			if len(got) != len(c.want) {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Fatalf("got %v, want %v", got, c.want)
+				}
+			}
+		})
+	}
+}
+
+// An ADO repo with no PAT clones with a bearer minted from az login; the token
+// never lands in the clone URL and there is no fallback to plain host-cred clone.
+func TestOpenRepoLocally_ADOAzLoginClone(t *testing.T) {
+	app, home := laneApp(t, "work")
+	stub := &stubLanes{}
+	stub.install(t)
+	stubGatewayEnv(t, map[string]string{"ADO_ORG": "acme", "ADO_PROJECT": "widgets"})
+	stubAzHeader(t, "Bearer az-tok", nil)
+
+	dest, err := app.OpenRepoLocally("work", "https://dev.azure.com/acme/widgets/_git/api")
+	if err != nil {
+		t.Fatalf("OpenRepoLocally: %v", err)
+	}
+	if len(stub.authClones) != 1 {
+		t.Fatalf("want 1 authed clone, got %v", stub.authClones)
+	}
+	gotURL, gotAuth := stub.authClones[0][0], stub.authClones[0][2]
+	if gotAuth != "Bearer az-tok" {
+		t.Errorf("auth header = %q, want Bearer az-tok", gotAuth)
+	}
+	if strings.Contains(gotURL, "az-tok") {
+		t.Errorf("token leaked into clone url: %q", gotURL)
+	}
+	if len(stub.clones) != 0 {
+		t.Errorf("must not fall back to unauthenticated clone: %v", stub.clones)
+	}
+	if want := filepath.Join(home, "code", "api"); dest != want {
+		t.Errorf("dest = %q, want %q", dest, want)
+	}
+}
+
+// With neither a PAT nor a usable az login, an ADO clone fails clearly and never
+// shells out to git at all.
+func TestOpenRepoLocally_ADONoCredErrors(t *testing.T) {
+	app, _ := laneApp(t, "work")
+	stub := &stubLanes{}
+	stub.install(t)
+	stubGatewayEnv(t, map[string]string{"ADO_ORG": "acme", "ADO_PROJECT": "widgets"})
+	stubAzHeader(t, "", errors.New("Please run 'az login'"))
+
+	_, err := app.OpenRepoLocally("work", "https://dev.azure.com/acme/widgets/_git/api")
+	if err == nil || !strings.Contains(err.Error(), "az login") {
+		t.Fatalf("want an az login error, got %v", err)
+	}
+	if len(stub.authClones) != 0 || len(stub.clones) != 0 {
+		t.Fatalf("no clone should run without a credential: auth=%v plain=%v", stub.authClones, stub.clones)
+	}
+}
+
+// profileAzureConfigDir must resolve the TARGET profile's <workspace>/.azure,
+// never the AZURE_CONFIG_DIR the app process inherited from its own launch
+// profile (the os.Environ leak that made every profile mint az against the
+// wrong, logged-out session).
+func TestProfileAzureConfigDir_PrefersWorkspaceOverInheritedEnv(t *testing.T) {
+	app, home := laneApp(t, "lakeview")
+	azDir := filepath.Join(home, ".azure")
+	if err := os.MkdirAll(azDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the app having been launched under a DIFFERENT profile.
+	t.Setenv("AZURE_CONFIG_DIR", "/some/other/profile/.azure")
+
+	got := app.profileAzureConfigDir("lakeview")
+	if got != azDir {
+		t.Fatalf("want the profile's own .azure %q, got %q", azDir, got)
+	}
+}
+
+func TestResolveADOProjects_ExplicitListWins(t *testing.T) {
+	app := &App{}
+	got, err := app.resolveADOProjects(context.Background(),
+		map[string]string{"ADO_ORG": "o", "ADO_PROJECT": "a, b ,c"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
+		t.Fatalf("explicit list must win without enumeration: %v", got)
+	}
+}
+
+func TestResolveADOProjects_NoOrgNoProjects(t *testing.T) {
+	app := &App{}
+	got, err := app.resolveADOProjects(context.Background(), map[string]string{}, "")
+	if err != nil || got != nil {
+		t.Fatalf("no ADO_ORG must yield no projects, got %v (err %v)", got, err)
 	}
 }

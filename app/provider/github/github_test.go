@@ -1,10 +1,13 @@
-package githubclient
+package github
 
 import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"phantom-ink/provider"
 )
 
 // stub serves canned JSON per path and records the request it saw. Mirrors the
@@ -23,7 +26,7 @@ func stub(t *testing.T, body map[string]string) (*Client, *http.Request) {
 		_, _ = w.Write([]byte(b))
 	}))
 	t.Cleanup(srv.Close)
-	return NewWithBase(srv.URL, srv.Client()), &last
+	return NewWithBase(srv.URL, "test-token", srv.Client()), &last
 }
 
 func TestListRepos(t *testing.T) {
@@ -37,7 +40,7 @@ func TestListRepos(t *testing.T) {
 			"owner":{"login":"acme"}
 		}]`,
 	})
-	repos, err := c.ListRepos(context.Background(), "tok")
+	repos, err := c.ListRepos(context.Background())
 	if err != nil {
 		t.Fatalf("ListRepos: %v", err)
 	}
@@ -48,13 +51,19 @@ func TestListRepos(t *testing.T) {
 	if r.Owner != "acme" || r.Name != "phantom-ink" || r.FullName != "acme/phantom-ink" {
 		t.Errorf("identity wrong: %+v", r)
 	}
+	if r.Provider != provider.KindGitHub {
+		t.Errorf("provider = %q, want %q", r.Provider, provider.KindGitHub)
+	}
+	if r.ID != "" {
+		t.Errorf("github repo rows need no GUID, got %q", r.ID)
+	}
 	if r.DefaultBranch != "main" || r.Stars != 7 || r.OpenIssues != 3 {
 		t.Errorf("meta wrong: %+v", r)
 	}
 	if r.CloneURL != "https://github.com/acme/phantom-ink.git" {
 		t.Errorf("clone url = %q", r.CloneURL)
 	}
-	if got := last.Header.Get("Authorization"); got != "Bearer tok" {
+	if got := last.Header.Get("Authorization"); got != "Bearer test-token" {
 		t.Errorf("auth header = %q", got)
 	}
 	if got := last.Header.Get("Accept"); got != "application/vnd.github+json" {
@@ -78,11 +87,13 @@ const searchPRBody = `{"items":[{
 	"pull_request":{"url":"https://api.github.com/repos/acme/phantom-ink/pulls/41"}
 }]}`
 
-func TestSearchPRsAuthored(t *testing.T) {
+// TestSearchMyPRs_Authored covers the case where the review-requested search
+// comes back empty and only the authored search hits.
+func TestSearchMyPRs_Authored(t *testing.T) {
 	c, last := stub(t, map[string]string{"/search/issues": searchPRBody})
-	prs, err := c.SearchPRsAuthored(context.Background(), "tok")
+	prs, err := c.SearchMyPRs(context.Background())
 	if err != nil {
-		t.Fatalf("SearchPRsAuthored: %v", err)
+		t.Fatalf("SearchMyPRs: %v", err)
 	}
 	if len(prs) != 1 {
 		t.Fatalf("want 1 pr, got %d", len(prs))
@@ -100,29 +111,61 @@ func TestSearchPRsAuthored(t *testing.T) {
 	if p.User != "octo" {
 		t.Errorf("user = %q", p.User)
 	}
-	if p.Reason != ReasonAuthored {
-		t.Errorf("reason = %q, want %q", p.Reason, ReasonAuthored)
+	if p.Provider != provider.KindGitHub {
+		t.Errorf("provider = %q", p.Provider)
 	}
-	if q := last.URL.Query().Get("q"); q != "is:open is:pr author:@me" {
-		t.Errorf("q = %q", q)
+	// Both the authored and review-requested searches hit the same stub path,
+	// so this asserts the reason set contains at least "authored".
+	if !strings.Contains(p.Reason, provider.ReasonAuthored) {
+		t.Errorf("reason = %q, want to contain %q", p.Reason, provider.ReasonAuthored)
+	}
+	if last.URL.Path != "/search/issues" {
+		t.Errorf("path = %q", last.URL.Path)
 	}
 }
 
-func TestSearchPRsReviewRequested(t *testing.T) {
-	c, last := stub(t, map[string]string{"/search/issues": searchPRBody})
-	prs, err := c.SearchPRsReviewRequested(context.Background(), "tok")
+// TestSearchMyPRs_MergesAuthoredAndReviewRequested exercises the dedupe/merge:
+// a PR that is both authored AND review-requested (same html_url from both
+// searches, since the stub serves the same body for any q=) must appear once
+// with both reasons folded in.
+func TestSearchMyPRs_MergesAuthoredAndReviewRequested(t *testing.T) {
+	var queries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.Query().Get("q"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(searchPRBody))
+	}))
+	t.Cleanup(srv.Close)
+	c := NewWithBase(srv.URL, "test-token", srv.Client())
+
+	prs, err := c.SearchMyPRs(context.Background())
 	if err != nil {
-		t.Fatalf("SearchPRsReviewRequested: %v", err)
+		t.Fatalf("SearchMyPRs: %v", err)
 	}
-	if len(prs) != 1 || prs[0].Reason != ReasonReviewRequested {
-		t.Fatalf("want one review-requested pr, got %+v", prs)
+	if len(prs) != 1 {
+		t.Fatalf("want 1 deduped pr, got %d: %+v", len(prs), prs)
 	}
-	if q := last.URL.Query().Get("q"); q != "is:open is:pr review-requested:@me" {
-		t.Errorf("q = %q", q)
+	p := prs[0]
+	if !strings.Contains(p.Reason, provider.ReasonAuthored) || !strings.Contains(p.Reason, provider.ReasonReviewRequested) {
+		t.Errorf("reason must contain both authored and review-requested, got %q", p.Reason)
+	}
+	wantQueries := map[string]bool{
+		"is:open is:pr author:@me":           false,
+		"is:open is:pr review-requested:@me": false,
+	}
+	for _, q := range queries {
+		if _, ok := wantQueries[q]; ok {
+			wantQueries[q] = true
+		}
+	}
+	for q, hit := range wantQueries {
+		if !hit {
+			t.Errorf("expected a search call with q=%q, calls were %v", q, queries)
+		}
 	}
 }
 
-func TestSearchIssuesAssigned(t *testing.T) {
+func TestListAssignedWork(t *testing.T) {
 	c, last := stub(t, map[string]string{"/search/issues": `{"items":[{
 		"number":9,"title":"Panel blanks on 401","state":"open",
 		"html_url":"https://github.com/acme/phantom-ink/issues/9",
@@ -130,9 +173,9 @@ func TestSearchIssuesAssigned(t *testing.T) {
 		"repository_url":"https://api.github.com/repos/acme/phantom-ink",
 		"user":{"login":"neo"}
 	}]}`})
-	issues, err := c.SearchIssuesAssigned(context.Background(), "tok")
+	issues, err := c.ListAssignedWork(context.Background())
 	if err != nil {
-		t.Fatalf("SearchIssuesAssigned: %v", err)
+		t.Fatalf("ListAssignedWork: %v", err)
 	}
 	if len(issues) != 1 {
 		t.Fatalf("want 1 issue, got %d", len(issues))
@@ -141,7 +184,7 @@ func TestSearchIssuesAssigned(t *testing.T) {
 	if i.IsPullRequest {
 		t.Errorf("no pull_request key → IsPullRequest must be false: %+v", i)
 	}
-	if i.Reason != ReasonAssigned {
+	if i.Reason != provider.ReasonAssigned {
 		t.Errorf("reason = %q", i.Reason)
 	}
 	if q := last.URL.Query().Get("q"); q != "is:open is:issue assignee:@me" {
@@ -161,7 +204,7 @@ func TestListNotifications(t *testing.T) {
 		"subject":{"title":"Panel blanks on 401","type":"Issue",
 		           "url":"https://api.github.com/repos/acme/phantom-ink/issues/9"}
 	}]`})
-	ns, err := c.ListNotifications(context.Background(), "tok")
+	ns, err := c.ListNotifications(context.Background())
 	if err != nil {
 		t.Fatalf("ListNotifications: %v", err)
 	}
@@ -207,12 +250,12 @@ func TestUnauthorizedIsTyped(t *testing.T) {
 		_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
 	}))
 	t.Cleanup(srv.Close)
-	c := NewWithBase(srv.URL, srv.Client())
-	_, err := c.ListRepos(context.Background(), "bad")
+	c := NewWithBase(srv.URL, "bad", srv.Client())
+	_, err := c.ListRepos(context.Background())
 	if err == nil {
 		t.Fatal("401 must be an error")
 	}
-	if !IsUnauthorized(err) {
+	if !provider.IsUnauthorized(err) {
 		t.Fatalf("401 must be detectable as unauthorized, got %v", err)
 	}
 }
@@ -222,26 +265,26 @@ func TestNonOKIsError(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(srv.Close)
-	c := NewWithBase(srv.URL, srv.Client())
-	if _, err := c.ListNotifications(context.Background(), "tok"); err == nil {
+	c := NewWithBase(srv.URL, "test-token", srv.Client())
+	if _, err := c.ListNotifications(context.Background()); err == nil {
 		t.Fatal("500 must be an error")
-	} else if IsUnauthorized(err) {
+	} else if provider.IsUnauthorized(err) {
 		t.Fatal("500 is not an auth failure")
 	}
 }
 
 func TestEmptyTokenRejectedWithoutNetwork(t *testing.T) {
-	c := NewWithBase("http://127.0.0.1:0", http.DefaultClient)
-	if _, err := c.ListRepos(context.Background(), ""); err == nil {
+	c := NewWithBase("http://127.0.0.1:0", "", http.DefaultClient)
+	if _, err := c.ListRepos(context.Background()); err == nil {
 		t.Fatal("empty token must fail fast")
 	}
 }
 
 func TestNewDefaultsToPublicAPI(t *testing.T) {
-	if got := New().base; got != DefaultBase {
+	if got := New("tok").base; got != DefaultBase {
 		t.Errorf("New() base = %q, want %q", got, DefaultBase)
 	}
-	if New().hc == nil {
+	if New("tok").hc == nil {
 		t.Error("New() must carry an http client with a timeout")
 	}
 }

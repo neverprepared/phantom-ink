@@ -3,6 +3,7 @@
 import {brainbox} from '../models';
 import {main} from '../models';
 import {opensearch} from '../models';
+import {provider} from '../models';
 
 export function AddBrainMCP(arg1:string,arg2:string):Promise<string>;
 
@@ -31,6 +32,8 @@ export function CancelHubTask(arg1:string):Promise<void>;
 export function CancelLiveLoop(arg1:string,arg2:string):Promise<brainbox.LiveLoop>;
 
 export function ClearProfileServerOverride(arg1:string,arg2:string):Promise<void>;
+
+export function CodeOverview(arg1:string):Promise<main.CodeOverview>;
 
 export function CopyVaultRecord(arg1:string,arg2:string,arg3:string):Promise<void>;
 
@@ -230,8 +233,6 @@ export function GetVaultToken(arg1:string):Promise<string>;
 
 export function GetWidgetCount(arg1:string,arg2:string):Promise<number>;
 
-export function GitHubOverview(arg1:string):Promise<main.CodeOverview>;
-
 export function HeadArtifactObject(arg1:string,arg2:string):Promise<brainbox.ArtifactObjectHead>;
 
 export function ImportBrainVault(arg1:string,arg2:string):Promise<string>;
@@ -360,7 +361,7 @@ export function RemoveConversationParticipant(arg1:string,arg2:string,arg3:strin
 
 export function RenameArtifactObject(arg1:string,arg2:string,arg3:string):Promise<void>;
 
-export function RepoDetail(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.RepoDetailResult>;
+export function RepoDetail(arg1:string,arg2:provider.RepoRef):Promise<main.RepoDetailResult>;
 
 export function RescanAgents():Promise<Array<main.DetectedAgent>>;
 
@@ -485,6 +486,8 @@ export function UploadArtifactFile(arg1:string,arg2:string):Promise<string>;
 export function UpsertPool(arg1:string,arg2:Array<string>,arg3:string):Promise<brainbox.Pool>;
 
 export function UsableAgents():Promise<Array<main.DetectedAgent>>;
+
+export function ValidateADOConnection(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.ADOConnectionStatus>;
 
 export function ValidateGitHubToken(arg1:string):Promise<main.GitHubTokenStatus>;
 

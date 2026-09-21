@@ -1,18 +1,21 @@
 package main
 
 // The Code page: a profile-scoped, single-pane view of the active profile's
-// GitHub account, plus a one-click hand-off from a repo/PR/issue straight into
-// a fleet agent task. Read-only; nothing here is persisted.
+// configured git providers (GitHub, Azure DevOps), plus a one-click hand-off
+// from a repo/PR/issue straight into a fleet agent task. Read-only; nothing
+// here is persisted.
 //
-// Everything is host-side and profile-scoped: the token is the profile's
-// EXISTING curated GITHUB_TOKEN, read fresh out of the gateway env store on
-// every call. No new secret, no new credential storage, no cache — so a
-// profile can only ever see its own GitHub content, and switching profiles
-// cannot serve stale rows from the previous one.
+// Everything is host-side and profile-scoped: each provider's credential is
+// the profile's EXISTING curated env (GITHUB_TOKEN, ADO_ORG/ADO_PROJECT/
+// ADO_PAT), read fresh out of the gateway env store on every call. No new
+// secret, no new credential storage, no cache — so a profile can only ever
+// see its own content, and switching profiles cannot serve stale rows from
+// the previous one.
 
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,30 +26,36 @@ import (
 	"time"
 
 	"phantom-ink/brainbox"
-	"phantom-ink/githubclient"
+	"phantom-ink/provider"
+	"phantom-ink/provider/ado"
+	"phantom-ink/provider/github"
 )
 
-// CodeOverview is one page-load of the Code panel.
+// CodeOverview is one page-load of the Code panel, merged across every
+// provider the profile has configured.
 //
 // Section errors are per-section STRINGS rather than one returned error on
-// purpose: a 401 on /notifications (the notifications scope is separate from
-// repo scope on fine-grained PATs) must not blank the repositories list. The
-// panel renders each section's error inside that section's card.
+// purpose: a 401 on one provider's notifications (a scope separate from repo
+// scope on fine-grained PATs) must not blank the repositories list, and one
+// provider failing must not blank another provider's results. The panel
+// renders each section's error inside that section's card.
 type CodeOverview struct {
 	// Profile echoes back which profile these rows belong to, so a response
 	// that lands after a profile switch can be discarded by the panel.
 	Profile string `json:"profile"`
-	// TokenMissing is set when the profile has no GITHUB_TOKEN at all. It is
-	// NOT an error: the panel shows a "connect a token" banner pointing at the
-	// Profiles panel instead of an error toast.
+	// TokenMissing is set when the profile has NO provider configured at all
+	// (no GITHUB_TOKEN and no complete ADO_ORG/ADO_PROJECT/ADO_PAT). It is
+	// NOT an error: the panel shows a "connect a provider" banner pointing at
+	// the Profiles panel instead of an error toast.
 	TokenMissing bool `json:"token_missing"`
-	// TokenInvalid is set when GitHub rejected the credential (401).
+	// TokenInvalid is set when ANY configured provider rejected its
+	// credential (401).
 	TokenInvalid bool `json:"token_invalid"`
 
-	Repos         []githubclient.Repo         `json:"repos"`
-	PullRequests  []githubclient.Issue        `json:"pull_requests"`
-	Issues        []githubclient.Issue        `json:"issues"`
-	Notifications []githubclient.Notification `json:"notifications"`
+	Repos         []provider.Repo         `json:"repos"`
+	PullRequests  []provider.Item         `json:"pull_requests"`
+	Issues        []provider.Item         `json:"issues"`
+	Notifications []provider.Notification `json:"notifications"`
 
 	ReposError         string `json:"repos_error"`
 	PullRequestsError  string `json:"pull_requests_error"`
@@ -54,176 +63,260 @@ type CodeOverview struct {
 	NotificationsError string `json:"notifications_error"`
 }
 
-// githubFetcher is the read surface the overview needs. An interface (rather
-// than the concrete *githubclient.Client) keeps buildCodeOverview testable
-// with per-section failures that a live server can't easily be made to produce.
-type githubFetcher interface {
-	ListRepos(ctx context.Context, token string) ([]githubclient.Repo, error)
-	SearchPRsAuthored(ctx context.Context, token string) ([]githubclient.Issue, error)
-	SearchPRsReviewRequested(ctx context.Context, token string) ([]githubclient.Issue, error)
-	SearchIssuesAssigned(ctx context.Context, token string) ([]githubclient.Issue, error)
-	ListNotifications(ctx context.Context, token string) ([]githubclient.Notification, error)
+// providersFor builds the set of providers a profile has configured in its
+// gateway env. Presence is selection: GitHub needs GITHUB_TOKEN; ADO needs all
+// of ADO_ORG/ADO_PROJECT/ADO_PAT. The bool reports whether ANY provider is
+// configured (drives the "connect something" banner).
+// resolveADOProjects returns the ADO projects to surface for a profile. An
+// explicit comma-separated ADO_PROJECT list wins. When it is empty or the
+// wildcard "*" (and ADO_ORG is set), every project in the org is auto-discovered
+// via one list-projects call — so the operator need not hand-maintain the list.
+// Returns (nil, nil) when ADO isn't configured. The error is non-fatal: the
+// caller surfaces it in the ADO repos section without blanking other providers.
+func (a *App) resolveADOProjects(ctx context.Context, env map[string]string, azConfigDir string) ([]string, error) {
+	org := strings.TrimSpace(env["ADO_ORG"])
+	if org == "" {
+		return nil, nil
+	}
+	explicit := splitProjects(env["ADO_PROJECT"])
+	if len(explicit) > 0 && !(len(explicit) == 1 && explicit[0] == "*") {
+		return explicit, nil
+	}
+	// Auto-discover: org-level list, so an empty-project client is fine.
+	lister, ok := adoClientFor(org, "", strings.TrimSpace(env["ADO_PAT"]), azConfigDir).(interface {
+		ListProjects(context.Context) ([]string, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return lister.ListProjects(ctx)
 }
 
-// GitHubOverview fetches the active profile's GitHub launchpad view. Bound to
-// the UI; one call drives the whole panel.
-func (a *App) GitHubOverview(profile string) (CodeOverview, error) {
+// buildProviders maps a profile's gateway env to the set of configured provider
+// clients. Pure (no I/O) so the enablement rules are unit-testable. GitHub is
+// enabled by GITHUB_TOKEN; ADO by ADO_ORG plus one or more comma-separated
+// projects in ADO_PROJECT — one client per project, so the fan-out aggregates
+// repos/PRs/work-items across every listed project. Auth is ADO_PAT when
+// present, otherwise the profile's az login session (azConfigDir).
+func buildProviders(env map[string]string, azConfigDir string, adoProjects []string) []provider.Client {
+	var clients []provider.Client
+	if tok := strings.TrimSpace(env["GITHUB_TOKEN"]); tok != "" {
+		clients = append(clients, github.New(tok))
+	}
+	org := strings.TrimSpace(env["ADO_ORG"])
+	pat := strings.TrimSpace(env["ADO_PAT"])
+	if org != "" {
+		for _, p := range adoProjects {
+			clients = append(clients, adoClientFor(org, p, pat, azConfigDir))
+		}
+	}
+	return clients
+}
+
+// splitProjects parses a comma-separated ADO_PROJECT list, trimming blanks. A
+// single project name (no commas) yields a one-element list.
+func splitProjects(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// adoClientFor builds a single-project ADO client: PAT auth when present, else
+// az login scoped to the profile's az config dir.
+func adoClientFor(org, project, pat, azConfigDir string) provider.Client {
+	if pat != "" {
+		return ado.New(org, project, pat)
+	}
+	return ado.NewAzLogin(org, project, azConfigDir)
+}
+
+// profileAzureConfigDir finds the AZURE_CONFIG_DIR for a profile's az session.
+// az logins are per-profile here (each workspace points its own .azure at a
+// chosen identity). Prefer the conventional <workspace>/.azure: it is the TARGET
+// profile's session. We deliberately do NOT trust resolveProfileEnv first — it
+// is seeded from os.Environ(), so it would leak the AZURE_CONFIG_DIR the app
+// itself was launched under (whatever profile that was) into every other
+// profile. Only if the convention dir is absent do we consult the profile's
+// resolved env as a fallback. "" lets az use its default.
+func (a *App) profileAzureConfigDir(profile string) string {
+	if home := a.profileWorkspaceHome(profile); home != "" {
+		cand := filepath.Join(home, ".azure")
+		if fi, err := os.Stat(cand); err == nil && fi.IsDir() {
+			return cand
+		}
+	}
+	for _, kv := range a.resolveProfileEnv(profile) {
+		if v, ok := strings.CutPrefix(kv, "AZURE_CONFIG_DIR="); ok && strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// CodeOverview fetches the active profile's launchpad across every configured
+// provider (GitHub, ADO), merged. Bound to the UI; one call drives the panel.
+func (a *App) CodeOverview(profile string) (CodeOverview, error) {
 	env, err := a.GetGatewayEnv(profile)
 	if err != nil {
 		return CodeOverview{Profile: profile}, err
-	}
-	token := strings.TrimSpace(env["GITHUB_TOKEN"])
-	if token == "" {
-		// Not an error — a profile that hasn't curated a token yet is a
-		// normal, actionable state.
-		return CodeOverview{Profile: profile, TokenMissing: true}, nil
 	}
 	ctx := a.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return buildCodeOverview(ctx, githubclient.New(), profile, token), nil
+	azConfigDir := a.profileAzureConfigDir(profile)
+	projects, enumErr := a.resolveADOProjects(ctx, env, azConfigDir)
+	clients := buildProviders(env, azConfigDir, projects)
+
+	adoConfigured := strings.TrimSpace(env["ADO_ORG"]) != ""
+	if len(clients) == 0 && !(adoConfigured && enumErr != nil) {
+		// Nothing to fetch and no ADO enumeration error to report.
+		return CodeOverview{Profile: profile, TokenMissing: true}, nil
+	}
+	out := buildCodeOverview(ctx, clients, profile)
+	if enumErr != nil {
+		// Auto-discovery failed (e.g. az login gone): surface it in the ADO
+		// repos section, fail-soft, without blanking GitHub.
+		msg := "ado: " + enumErr.Error()
+		if out.ReposError != "" {
+			msg = out.ReposError + "; " + msg
+		}
+		out.ReposError = msg
+		if provider.IsUnauthorized(enumErr) {
+			out.TokenInvalid = true
+		}
+	}
+	return out, nil
 }
 
-// buildCodeOverview fans the five GitHub reads out concurrently (one page-open
-// is ~5 calls against a 5000/hr authenticated budget) and folds them into one
-// struct, recording failures per section instead of aborting the page.
-func buildCodeOverview(ctx context.Context, gh githubFetcher, profile, token string) CodeOverview {
+// buildCodeOverview fans each configured provider's reads out concurrently and
+// folds them into one struct, recording failures per section (prefixed by the
+// provider that produced them) instead of aborting the page. One provider's
+// failure never blanks another provider's results.
+func buildCodeOverview(ctx context.Context, clients []provider.Client, profile string) CodeOverview {
 	out := CodeOverview{Profile: profile}
 
 	var (
-		mu       sync.Mutex // guards the section results below
-		wg       sync.WaitGroup
-		authored []githubclient.Issue
-		reviews  []githubclient.Issue
-		prErrs   []string
-		auth401  bool
+		mu         sync.Mutex // guards the section results below
+		wg         sync.WaitGroup
+		prs        []provider.Item
+		work       []provider.Item
+		notifs     []provider.Notification
+		reposErrs  []string
+		prsErrs    []string
+		workErrs   []string
+		notifsErrs []string
+		auth401    bool
 	)
 
-	// note records a section failure. A 401 anywhere means the credential
-	// itself is rejected, which the panel surfaces as a reconnect banner.
-	note := func(err error, dst *string) {
-		mu.Lock()
-		defer mu.Unlock()
-		if githubclient.IsUnauthorized(err) {
-			auth401 = true
-		}
-		*dst = err.Error()
-	}
-
+	// Bound concurrency: with all-projects auto-discovery a profile can hold
+	// dozens of ADO clients (one per project), each firing several reads — an
+	// unbounded fan-out would blast hundreds of simultaneous calls and risk ADO
+	// throttling (429). A small semaphore keeps it responsive without a flood.
+	sem := make(chan struct{}, maxConcurrentReads)
 	run := func(fn func()) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			fn()
 		}()
 	}
 
-	run(func() {
-		repos, err := gh.ListRepos(ctx, token)
-		if err != nil {
-			note(err, &out.ReposError)
-			return
-		}
-		mu.Lock()
-		out.Repos = repos
-		mu.Unlock()
-	})
-
-	run(func() {
-		prs, err := gh.SearchPRsAuthored(ctx, token)
-		mu.Lock()
-		defer mu.Unlock()
-		if err != nil {
-			if githubclient.IsUnauthorized(err) {
-				auth401 = true
+	for _, c := range clients {
+		c := c
+		run(func() {
+			repos, err := c.ListRepos(ctx)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				if provider.IsUnauthorized(err) {
+					auth401 = true
+				}
+				reposErrs = append(reposErrs, fmt.Sprintf("%s: %s", c.Kind(), err))
+				return
 			}
-			prErrs = append(prErrs, err.Error())
-			return
-		}
-		authored = prs
-	})
+			out.Repos = append(out.Repos, repos...)
+		})
 
-	run(func() {
-		prs, err := gh.SearchPRsReviewRequested(ctx, token)
-		mu.Lock()
-		defer mu.Unlock()
-		if err != nil {
-			if githubclient.IsUnauthorized(err) {
-				auth401 = true
+		run(func() {
+			items, err := c.SearchMyPRs(ctx)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				if provider.IsUnauthorized(err) {
+					auth401 = true
+				}
+				prsErrs = append(prsErrs, fmt.Sprintf("%s: %s", c.Kind(), err))
+				return
 			}
-			prErrs = append(prErrs, err.Error())
-			return
-		}
-		reviews = prs
-	})
+			prs = append(prs, items...)
+		})
 
-	run(func() {
-		issues, err := gh.SearchIssuesAssigned(ctx, token)
-		if err != nil {
-			note(err, &out.IssuesError)
-			return
-		}
-		sortIssues(issues)
-		mu.Lock()
-		out.Issues = issues
-		mu.Unlock()
-	})
+		run(func() {
+			items, err := c.ListAssignedWork(ctx)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				if provider.IsUnauthorized(err) {
+					auth401 = true
+				}
+				workErrs = append(workErrs, fmt.Sprintf("%s: %s", c.Kind(), err))
+				return
+			}
+			work = append(work, items...)
+		})
 
-	run(func() {
-		ns, err := gh.ListNotifications(ctx, token)
-		if err != nil {
-			note(err, &out.NotificationsError)
-			return
+		if notifier, ok := c.(provider.Notifier); ok {
+			run(func() {
+				ns, err := notifier.ListNotifications(ctx)
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					if provider.IsUnauthorized(err) {
+						auth401 = true
+					}
+					notifsErrs = append(notifsErrs, fmt.Sprintf("%s: %s", c.Kind(), err))
+					return
+				}
+				notifs = append(notifs, ns...)
+			})
 		}
-		mu.Lock()
-		out.Notifications = ns
-		mu.Unlock()
-	})
+	}
 
 	wg.Wait()
 
-	out.PullRequests = mergePullRequests(authored, reviews)
-	// A half-failed PR section still renders the half that worked, with the
-	// failure named alongside it.
-	out.PullRequestsError = strings.Join(prErrs, "; ")
+	sortRepos(out.Repos)
+	sortItems(prs)
+	sortItems(work)
+
+	out.PullRequests = prs
+	out.Issues = work
+	out.Notifications = notifs
+
+	out.ReposError = strings.Join(reposErrs, "; ")
+	out.PullRequestsError = strings.Join(prsErrs, "; ")
+	out.IssuesError = strings.Join(workErrs, "; ")
+	out.NotificationsError = strings.Join(notifsErrs, "; ")
 	out.TokenInvalid = auth401
 	return out
 }
 
-// mergePullRequests unions the authored and review-requested lists, deduping on
-// html_url. A PR that is both mine AND waiting on my review appears once,
-// tagged with both reasons, so the row explains why it is on the list.
-func mergePullRequests(lists ...[]githubclient.Issue) []githubclient.Issue {
-	byURL := map[string]int{}
-	out := make([]githubclient.Issue, 0, 16)
-	for _, list := range lists {
-		for _, pr := range list {
-			key := pr.HTMLURL
-			if key == "" {
-				// No URL to dedupe on (shouldn't happen); keep the row rather
-				// than silently dropping work.
-				out = append(out, pr)
-				continue
-			}
-			if i, seen := byURL[key]; seen {
-				if !strings.Contains(out[i].Reason, pr.Reason) {
-					out[i].Reason += ", " + pr.Reason
-				}
-				continue
-			}
-			byURL[key] = len(out)
-			out = append(out, pr)
-		}
-	}
-	sortIssues(out)
-	return out
+// sortItems orders rows most-recently-updated first. UpdatedAt is RFC3339, so
+// a plain string compare is already chronological.
+func sortItems(rows []provider.Item) {
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].UpdatedAt > rows[j].UpdatedAt })
 }
 
-// sortIssues orders rows most-recently-updated first. UpdatedAt is RFC3339 from
-// GitHub, so a plain string compare is already chronological.
-func sortIssues(rows []githubclient.Issue) {
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].UpdatedAt > rows[j].UpdatedAt })
+// sortRepos orders repos most-recently-pushed first. PushedAt is RFC3339, so a
+// plain string compare is already chronological.
+func sortRepos(rows []provider.Repo) {
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].PushedAt > rows[j].PushedAt })
 }
 
 // --- Repository detail ------------------------------------------------------
@@ -238,10 +331,12 @@ type RepoDetailResult struct {
 	// Profile / Owner / Repo echo the request back so a response that lands
 	// after the operator navigated away can be discarded by the panel.
 	Profile string `json:"profile"`
-	Owner   string `json:"owner"`
-	Repo    string `json:"repo"`
+	// Provider echoes which provider this detail view was fetched from.
+	Provider provider.Kind `json:"provider"`
+	Owner    string        `json:"owner"`
+	Repo     string        `json:"repo"`
 	// DefaultBranch comes from the caller's already-loaded Repo row rather than
-	// a sixth GitHub call — the overview fetched it seconds ago.
+	// a sixth call — the overview fetched it seconds ago.
 	DefaultBranch string `json:"default_branch"`
 
 	// TokenMissing / TokenInvalid mirror CodeOverview so the panel reuses one
@@ -249,10 +344,10 @@ type RepoDetailResult struct {
 	TokenMissing bool `json:"token_missing"`
 	TokenInvalid bool `json:"token_invalid"`
 
-	Branches []githubclient.Branch `json:"branches"`
-	Commits  []githubclient.Commit `json:"commits"`
-	PRs      []githubclient.Issue  `json:"prs"`
-	Issues   []githubclient.Issue  `json:"issues"`
+	Branches []provider.Branch `json:"branches"`
+	Commits  []provider.Commit `json:"commits"`
+	PRs      []provider.Item   `json:"prs"`
+	Issues   []provider.Item   `json:"issues"`
 	// Readme is RAW markdown. Rendering (and sanitizing — a README is
 	// untrusted repo content) happens in the frontend.
 	Readme    string `json:"readme"`
@@ -269,32 +364,35 @@ type RepoDetailResult struct {
 // to see the shape of the week without paging.
 const repoDetailCommitLimit = 20
 
-// githubRepoFetcher is the read surface the detail view needs — separate from
-// githubFetcher so each build function can be tested against a fake that only
-// implements what it uses.
-type githubRepoFetcher interface {
-	ListBranches(ctx context.Context, token, owner, repo string) ([]githubclient.Branch, error)
-	ListRecentCommits(ctx context.Context, token, owner, repo string, limit int) ([]githubclient.Commit, error)
-	GetReadme(ctx context.Context, token, owner, repo string) (string, string, error)
-	SearchPRsByRepo(ctx context.Context, token, owner, repo string) ([]githubclient.Issue, error)
-	SearchIssuesByRepo(ctx context.Context, token, owner, repo string) ([]githubclient.Issue, error)
-}
+// maxConcurrentReads caps how many provider section-reads run at once, so a
+// profile with many ADO project clients doesn't fan out into hundreds of
+// simultaneous calls (ADO throttles).
+const maxConcurrentReads = 8
 
-// RepoDetail fetches one repository's detail view for the active profile.
-// Bound to the UI; one call drives the whole detail pane.
-//
-// defaultBranch is passed in (not fetched) so opening a repo costs five calls,
-// not six — the caller already has the row the operator clicked.
-func (a *App) RepoDetail(profile, owner, repo, defaultBranch string) (RepoDetailResult, error) {
-	base := RepoDetailResult{Profile: profile, Owner: owner, Repo: repo, DefaultBranch: defaultBranch}
+// RepoDetail fetches one repository's detail view. The RepoRef (carried from
+// the overview row the operator clicked) names the provider AND the repo, so
+// routing needs no lookup.
+func (a *App) RepoDetail(profile string, ref provider.RepoRef) (RepoDetailResult, error) {
+	base := RepoDetailResult{Profile: profile, Provider: ref.Provider, Owner: ref.Owner, Repo: ref.Name, DefaultBranch: ref.DefaultBranch}
 	env, err := a.GetGatewayEnv(profile)
 	if err != nil {
 		return base, err
 	}
-	token := strings.TrimSpace(env["GITHUB_TOKEN"])
-	if token == "" {
-		// Not an error, same as GitHubOverview: the panel shows the
-		// "connect a token" banner.
+	// Build the client that owns this ref. For ADO the project comes from
+	// ref.Owner (each ADO repo row carries its own project), so a multi-project
+	// profile routes to the right project rather than guessing the first client.
+	var client provider.Client
+	switch ref.Provider {
+	case provider.KindGitHub:
+		if tok := strings.TrimSpace(env["GITHUB_TOKEN"]); tok != "" {
+			client = github.New(tok)
+		}
+	case provider.KindADO:
+		if org := strings.TrimSpace(env["ADO_ORG"]); org != "" && strings.TrimSpace(ref.Owner) != "" {
+			client = adoClientFor(org, ref.Owner, strings.TrimSpace(env["ADO_PAT"]), a.profileAzureConfigDir(profile))
+		}
+	}
+	if client == nil {
 		base.TokenMissing = true
 		return base, nil
 	}
@@ -302,13 +400,14 @@ func (a *App) RepoDetail(profile, owner, repo, defaultBranch string) (RepoDetail
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return buildRepoDetail(ctx, githubclient.New(), profile, owner, repo, defaultBranch, token), nil
+	return buildRepoDetail(ctx, client, profile, ref), nil
 }
 
 // buildRepoDetail fans the five reads out concurrently and folds them into one
-// struct, recording failures per section instead of aborting the view.
-func buildRepoDetail(ctx context.Context, gh githubRepoFetcher, profile, owner, repo, defaultBranch, token string) RepoDetailResult {
-	out := RepoDetailResult{Profile: profile, Owner: owner, Repo: repo, DefaultBranch: defaultBranch}
+// struct, recording failures per section (prefixed by the provider that
+// produced them) instead of aborting the view.
+func buildRepoDetail(ctx context.Context, c provider.Client, profile string, ref provider.RepoRef) RepoDetailResult {
+	out := RepoDetailResult{Profile: profile, Provider: ref.Provider, Owner: ref.Owner, Repo: ref.Name, DefaultBranch: ref.DefaultBranch}
 
 	var (
 		mu      sync.Mutex // guards out and auth401
@@ -319,10 +418,10 @@ func buildRepoDetail(ctx context.Context, gh githubRepoFetcher, profile, owner, 
 	note := func(err error, dst *string) {
 		mu.Lock()
 		defer mu.Unlock()
-		if githubclient.IsUnauthorized(err) {
+		if provider.IsUnauthorized(err) {
 			auth401 = true
 		}
-		*dst = err.Error()
+		*dst = fmt.Sprintf("%s: %s", c.Kind(), err)
 	}
 
 	run := func(fn func()) {
@@ -334,7 +433,7 @@ func buildRepoDetail(ctx context.Context, gh githubRepoFetcher, profile, owner, 
 	}
 
 	run(func() {
-		bs, err := gh.ListBranches(ctx, token, owner, repo)
+		bs, err := c.ListBranches(ctx, ref)
 		if err != nil {
 			note(err, &out.BranchesError)
 			return
@@ -345,7 +444,7 @@ func buildRepoDetail(ctx context.Context, gh githubRepoFetcher, profile, owner, 
 	})
 
 	run(func() {
-		cs, err := gh.ListRecentCommits(ctx, token, owner, repo, repoDetailCommitLimit)
+		cs, err := c.ListRecentCommits(ctx, ref, repoDetailCommitLimit)
 		if err != nil {
 			note(err, &out.CommitsError)
 			return
@@ -358,7 +457,7 @@ func buildRepoDetail(ctx context.Context, gh githubRepoFetcher, profile, owner, 
 	run(func() {
 		// A repo with no README returns empty markdown and a nil error — it is
 		// not a failure, and must not paint a red box on a healthy repo.
-		md, htmlURL, err := gh.GetReadme(ctx, token, owner, repo)
+		md, htmlURL, err := c.GetReadme(ctx, ref)
 		if err != nil {
 			note(err, &out.ReadmeError)
 			return
@@ -369,24 +468,24 @@ func buildRepoDetail(ctx context.Context, gh githubRepoFetcher, profile, owner, 
 	})
 
 	run(func() {
-		prs, err := gh.SearchPRsByRepo(ctx, token, owner, repo)
+		prs, err := c.RepoPRs(ctx, ref)
 		if err != nil {
 			note(err, &out.PRsError)
 			return
 		}
-		sortIssues(prs)
+		sortItems(prs)
 		mu.Lock()
 		out.PRs = prs
 		mu.Unlock()
 	})
 
 	run(func() {
-		issues, err := gh.SearchIssuesByRepo(ctx, token, owner, repo)
+		issues, err := c.RepoIssues(ctx, ref)
 		if err != nil {
 			note(err, &out.IssuesError)
 			return
 		}
-		sortIssues(issues)
+		sortItems(issues)
 		mu.Lock()
 		out.Issues = issues
 		mu.Unlock()
@@ -459,6 +558,39 @@ var runGitClone = func(cloneURL, dest string) error {
 	return nil
 }
 
+// isADOCloneURL reports whether a normalized clone URL points at Azure DevOps.
+func isADOCloneURL(cloneURL string) bool {
+	return strings.Contains(cloneURL, "dev.azure.com/") || strings.Contains(cloneURL, ".visualstudio.com/")
+}
+
+// runGitCloneAuth clones with an inline Authorization header (never persisted to
+// the clone's config). Used for ADO, where host git has no credential. A package
+// var so a test can assert the header-carrying branch without a network.
+var runGitCloneAuth = func(cloneURL, dest, authHeader string) error {
+	cmd := exec.Command("git", "-c", "http.extraheader=Authorization: "+authHeader, "clone", cloneURL, dest)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("git clone: %s", msg)
+		}
+		return fmt.Errorf("git clone: %w", err)
+	}
+	return nil
+}
+
+// readProfileGatewayEnv resolves a profile's gateway env for the clone path. A
+// package var (like runGitClone) so a test can supply an ADO_PAT without a live
+// broker; production delegates to the real GetGatewayEnv.
+var readProfileGatewayEnv = func(a *App, profile string) (map[string]string, error) {
+	return a.GetGatewayEnv(profile)
+}
+
+// adoAzAuthHeader mints a one-shot ADO bearer header from the operator's az
+// login session. A package var (like runGitClone) so the PAT-less clone and
+// validation paths are testable without a real az binary.
+var adoAzAuthHeader = ado.AzAuthHeader
+
 // openTerminalAt opens a host terminal tab running claude in a directory. A var
 // over the EXISTING opener (shared with OpenLocalSession) so tests don't drive
 // AppleScript and there is exactly one implementation of "open a tab".
@@ -494,7 +626,30 @@ func (a *App) OpenRepoLocally(profile, repoURL string) (string, error) {
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return "", err
 		}
-		if err := runGitClone(cloneURL, dest); err != nil {
+		if isADOCloneURL(cloneURL) {
+			env, err := readProfileGatewayEnv(a, profile)
+			if err != nil {
+				return "", err
+			}
+			var auth string
+			if pat := strings.TrimSpace(env["ADO_PAT"]); pat != "" {
+				auth = "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+pat))
+			} else {
+				// No PAT: mint a bearer from the profile's az login session.
+				ctx := a.ctx
+				if ctx == nil {
+					ctx = context.Background()
+				}
+				h, azErr := adoAzAuthHeader(ctx, a.profileAzureConfigDir(profile))
+				if azErr != nil {
+					return "", fmt.Errorf("cloning %s needs an ADO_PAT or an az login: %w", cloneURL, azErr)
+				}
+				auth = h
+			}
+			if err := runGitCloneAuth(cloneURL, dest, auth); err != nil {
+				return "", err
+			}
+		} else if err := runGitClone(cloneURL, dest); err != nil {
 			return "", err
 		}
 	}
@@ -589,19 +744,89 @@ func repoNameFromURL(repoURL string) string {
 	return name
 }
 
-// normalizeCloneURL turns any GitHub reference to a repo into an https clone
-// URL, so the same helper serves a repo row's clone_url, a search hit's
-// html_url, an api.github.com URL, and an ssh remote pasted by hand:
+// normalizeADOCloneURL turns any Azure DevOps reference into an https _git
+// clone URL, handling dev.azure.com (with or without a user@ prefix) and
+// legacy {org}.visualstudio.com. Returns "" when it can't parse a full
+// {org}/{project}/_git/{repo} — mirrors provider/ado.Client.NormalizeCloneURL
+// so the main-package free function used by the local-clone lane agrees with
+// the ado provider client on what counts as a valid ADO clone URL.
+func normalizeADOCloneURL(repoURL string) string {
+	s := strings.TrimSpace(repoURL)
+	s = strings.TrimSuffix(s, "/")
+	if s == "" {
+		return ""
+	}
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if at := strings.Index(s, "@"); at >= 0 {
+		s = s[at+1:]
+	}
+	slash := strings.Index(s, "/")
+	if slash < 0 {
+		return "" // bare host, no path
+	}
+	host, rest := s[:slash], s[slash+1:]
+	var org, tail string
+	switch {
+	case host == "dev.azure.com":
+		i := strings.Index(rest, "/")
+		if i < 0 {
+			return ""
+		}
+		org, tail = rest[:i], rest[i+1:]
+	case strings.HasSuffix(host, ".visualstudio.com"):
+		org, tail = strings.TrimSuffix(host, ".visualstudio.com"), rest
+	default:
+		return ""
+	}
+	segs := strings.Split(tail, "/")
+	if org == "" || len(segs) < 3 || segs[0] == "" || segs[1] != "_git" || segs[2] == "" {
+		return ""
+	}
+	return "https://dev.azure.com/" + org + "/" + segs[0] + "/_git/" + segs[2]
+}
+
+// isADOCloneHost reports whether repoURL's host looks like Azure DevOps, so
+// normalizeCloneURL knows to route it through normalizeADOCloneURL instead of
+// the GitHub logic below.
+func isADOCloneHost(repoURL string) bool {
+	s := strings.TrimSpace(repoURL)
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if at := strings.Index(s, "@"); at >= 0 {
+		s = s[at+1:]
+	}
+	host := s
+	if slash := strings.Index(host, "/"); slash >= 0 {
+		host = host[:slash]
+	}
+	return host == "dev.azure.com" || strings.HasSuffix(host, ".visualstudio.com")
+}
+
+// normalizeCloneURL turns any GitHub or Azure DevOps reference to a repo into
+// an https clone URL, so the same helper serves a repo row's clone_url, a
+// search hit's html_url, an api.github.com URL, and an ssh remote pasted by
+// hand:
 //
 //	git@github.com:o/r.git              → https://github.com/o/r.git
 //	ssh://git@github.com/o/r            → https://github.com/o/r.git
 //	https://github.com/o/r              → https://github.com/o/r.git
 //	https://api.github.com/repos/o/r    → https://github.com/o/r.git
+//	https://dev.azure.com/o/p/_git/r    → https://dev.azure.com/o/p/_git/r
+//	https://o.visualstudio.com/p/_git/r → https://dev.azure.com/o/p/_git/r
 //
-// The host is PRESERVED (only api.github.com is rewritten to github.com) so a
-// GitHub Enterprise remote still clones from its own host. Returns "" when no
-// owner/repo pair can be read out.
+// ADO hosts are detected and normalized BEFORE the GitHub logic below; GitHub
+// URLs fall through unchanged. The host is otherwise PRESERVED (only
+// api.github.com is rewritten to github.com) so a GitHub Enterprise remote
+// still clones from its own host. Returns "" when no owner/repo pair (or,
+// for ADO, no org/project/_git/repo) can be read out.
 func normalizeCloneURL(repoURL string) string {
+	if isADOCloneHost(repoURL) {
+		return normalizeADOCloneURL(repoURL)
+	}
+
 	s := strings.TrimSpace(repoURL)
 	s = strings.TrimSuffix(s, "/")
 	if s == "" {

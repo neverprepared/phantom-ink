@@ -257,8 +257,8 @@ func (a *App) profileWorkspaceHome(profile string) string {
 	if profile == "" {
 		return ""
 	}
-	if root := a.config.WorkspacesRoot; root != "" {
-		candidate := filepath.Join(root, profile)
+	if a.config != nil && a.config.WorkspacesRoot != "" {
+		candidate := filepath.Join(a.config.WorkspacesRoot, profile)
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate
 		}

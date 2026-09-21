@@ -1,13 +1,14 @@
-// Package githubclient is a tiny READ-ONLY GitHub REST client for the Code
-// panel's launchpad view: repositories, open PRs, assigned issues, and
-// notifications for whoever the supplied token belongs to.
+// Package github is a tiny READ-ONLY GitHub REST client for the Code panel's
+// launchpad view: repositories, open PRs, assigned issues, and notifications
+// for whoever the client's bound token belongs to.
 //
-// It is deliberately not a general GitHub SDK. Every method takes the token
-// per-call (the Code panel resolves it from the ACTIVE profile's gateway env on
-// each request, so nothing is cached across profiles) and returns small structs
-// holding only the fields the UI renders. The base URL is injectable so tests
-// run against an httptest.Server — the same shape as app/app_github_token.go.
-package githubclient
+// It is deliberately not a general GitHub SDK. The token is bound once at
+// construction (the Code panel resolves it from the ACTIVE profile's gateway
+// env when it builds the client, so nothing is cached across profiles) and
+// every method returns small provider.* structs holding only the fields the
+// UI renders. The base URL is injectable so tests run against an
+// httptest.Server.
+package github
 
 import (
 	"context"
@@ -17,8 +18,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
+
+	"phantom-ink/provider"
 )
 
 // DefaultBase is the public GitHub REST endpoint.
@@ -28,56 +32,34 @@ const DefaultBase = "https://api.github.com"
 // concurrently, so a hung endpoint must not hold the page open.
 const requestTimeout = 10 * time.Second
 
-// Reasons a PR or issue made it onto the "needs attention" list. Carried on
-// every row so the UI can say WHY it is listed rather than showing a flat pile.
-const (
-	ReasonAuthored        = "authored"
-	ReasonReviewRequested = "review-requested"
-	ReasonAssigned        = "assigned"
-)
-
-// Client talks to one GitHub REST base.
+// Client talks to one GitHub REST base with one bound token.
 type Client struct {
-	base string
-	hc   *http.Client
+	base  string
+	token string
+	hc    *http.Client
 }
 
-// New returns a client against the public GitHub API.
-func New() *Client {
-	return NewWithBase(DefaultBase, &http.Client{Timeout: requestTimeout})
+// New returns a client against the public GitHub API, bound to token.
+func New(token string) *Client {
+	return NewWithBase(DefaultBase, token, &http.Client{Timeout: requestTimeout})
 }
 
 // NewWithBase returns a client against an arbitrary base — used by tests to
 // point at an httptest.Server. A nil client falls back to a timed default.
-func NewWithBase(base string, hc *http.Client) *Client {
+func NewWithBase(base, token string, hc *http.Client) *Client {
 	if hc == nil {
 		hc = &http.Client{Timeout: requestTimeout}
 	}
-	return &Client{base: strings.TrimRight(base, "/"), hc: hc}
+	return &Client{base: strings.TrimRight(base, "/"), token: token, hc: hc}
 }
 
-// StatusError is a non-2xx response from GitHub. It keeps the status code so
-// callers can tell "your token is bad" (401) from "GitHub is having a day"
-// (5xx) — the Code panel renders a reconnect banner for the former and a
-// per-section error for the latter.
-type StatusError struct {
-	Code   int
-	Status string
-	Path   string
-}
+var (
+	_ provider.Client   = (*Client)(nil)
+	_ provider.Notifier = (*Client)(nil)
+)
 
-func (e *StatusError) Error() string {
-	return fmt.Sprintf("github %s: %s", e.Path, e.Status)
-}
-
-// IsUnauthorized reports whether err is GitHub rejecting the credential.
-func IsUnauthorized(err error) bool {
-	var se *StatusError
-	if errors.As(err, &se) {
-		return se.Code == http.StatusUnauthorized
-	}
-	return false
-}
+// Kind reports this client's provider tag.
+func (c *Client) Kind() provider.Kind { return provider.KindGitHub }
 
 // errNoToken is returned before any network call when the profile has no
 // GITHUB_TOKEN. Hitting GitHub unauthenticated would return a *different*
@@ -85,15 +67,15 @@ func IsUnauthorized(err error) bool {
 var errNoToken = errors.New("no GITHUB_TOKEN for this profile")
 
 // get issues one authenticated GET and decodes the JSON body into out.
-func (c *Client) get(ctx context.Context, token, path string, out any) error {
-	if token == "" {
+func (c *Client) get(ctx context.Context, path string, out any) error {
+	if c.token == "" {
 		return errNoToken
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	resp, err := c.hc.Do(req)
@@ -102,26 +84,12 @@ func (c *Client) get(ctx context.Context, token, path string, out any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return &StatusError{Code: resp.StatusCode, Status: resp.Status, Path: path}
+		return &provider.StatusError{Code: resp.StatusCode, Status: resp.Status, Path: path}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
 // --- Repositories -----------------------------------------------------------
-
-// Repo is one repository as the launchpad lists it.
-type Repo struct {
-	Owner         string `json:"owner"`
-	Name          string `json:"name"`
-	FullName      string `json:"full_name"`
-	Description   string `json:"description"`
-	HTMLURL       string `json:"html_url"`
-	CloneURL      string `json:"clone_url"`
-	DefaultBranch string `json:"default_branch"`
-	PushedAt      string `json:"pushed_at"`
-	Stars         int    `json:"stars"`
-	OpenIssues    int    `json:"open_issues"`
-}
 
 // wireRepo is the subset of GitHub's repository payload we decode.
 type wireRepo struct {
@@ -140,19 +108,21 @@ type wireRepo struct {
 }
 
 // ListRepos returns the token owner's repositories, most recently pushed first.
-func (c *Client) ListRepos(ctx context.Context, token string) ([]Repo, error) {
+func (c *Client) ListRepos(ctx context.Context) ([]provider.Repo, error) {
 	q := url.Values{
 		"sort":        {"pushed"},
 		"per_page":    {"50"},
 		"affiliation": {"owner,collaborator,organization_member"},
 	}
 	var wire []wireRepo
-	if err := c.get(ctx, token, "/user/repos?"+q.Encode(), &wire); err != nil {
+	if err := c.get(ctx, "/user/repos?"+q.Encode(), &wire); err != nil {
 		return nil, err
 	}
-	out := make([]Repo, 0, len(wire))
+	out := make([]provider.Repo, 0, len(wire))
 	for _, w := range wire {
-		out = append(out, Repo{
+		out = append(out, provider.Repo{
+			Provider:      provider.KindGitHub,
+			ID:            "",
 			Owner:         w.Owner.Login,
 			Name:          w.Name,
 			FullName:      w.FullName,
@@ -169,23 +139,6 @@ func (c *Client) ListRepos(ctx context.Context, token string) ([]Repo, error) {
 }
 
 // --- Issues & pull requests -------------------------------------------------
-
-// Issue is one PR or issue row. GitHub's search API returns both through the
-// same shape; IsPullRequest distinguishes them.
-type Issue struct {
-	RepoFullName  string `json:"repo_full_name"`
-	Number        int    `json:"number"`
-	Title         string `json:"title"`
-	State         string `json:"state"`
-	HTMLURL       string `json:"html_url"`
-	UpdatedAt     string `json:"updated_at"`
-	User          string `json:"user"`
-	Draft         bool   `json:"draft"`
-	IsPullRequest bool   `json:"is_pull_request"`
-	// Reason is why this row is on the list (authored / review-requested /
-	// assigned), not a GitHub field.
-	Reason string `json:"reason"`
-}
 
 type wireSearch struct {
 	Items []struct {
@@ -206,30 +159,41 @@ type wireSearch struct {
 	} `json:"items"`
 }
 
-// SearchPRsAuthored lists the token owner's own open pull requests.
-func (c *Client) SearchPRsAuthored(ctx context.Context, token string) ([]Issue, error) {
-	return c.search(ctx, token, "is:open is:pr author:@me", ReasonAuthored)
-}
-
-// SearchPRsReviewRequested lists open PRs waiting on the owner's review.
-func (c *Client) SearchPRsReviewRequested(ctx context.Context, token string) ([]Issue, error) {
-	return c.search(ctx, token, "is:open is:pr review-requested:@me", ReasonReviewRequested)
-}
-
-// SearchIssuesAssigned lists open issues assigned to the owner.
-func (c *Client) SearchIssuesAssigned(ctx context.Context, token string) ([]Issue, error) {
-	return c.search(ctx, token, "is:open is:issue assignee:@me", ReasonAssigned)
-}
-
-func (c *Client) search(ctx context.Context, token, q, reason string) ([]Issue, error) {
-	var wire wireSearch
-	path := "/search/issues?" + url.Values{"q": {q}, "per_page": {"50"}}.Encode()
-	if err := c.get(ctx, token, path, &wire); err != nil {
+// SearchMyPRs runs the authored and review-requested searches and folds them
+// through the dedupe-by-HTMLURL-merging-reasons logic, so a PR that is both
+// mine AND waiting on my review appears once, tagged with both reasons.
+func (c *Client) SearchMyPRs(ctx context.Context) ([]provider.Item, error) {
+	authored, err := c.search(ctx, "is:open is:pr author:@me", provider.ReasonAuthored)
+	if err != nil {
 		return nil, err
 	}
-	out := make([]Issue, 0, len(wire.Items))
+	reviews, err := c.search(ctx, "is:open is:pr review-requested:@me", provider.ReasonReviewRequested)
+	if err != nil {
+		return nil, err
+	}
+	return mergePRs(authored, reviews), nil
+}
+
+// ListAssignedWork lists open issues assigned to the owner, newest first.
+func (c *Client) ListAssignedWork(ctx context.Context) ([]provider.Item, error) {
+	items, err := c.search(ctx, "is:open is:issue assignee:@me", provider.ReasonAssigned)
+	if err != nil {
+		return nil, err
+	}
+	sortItems(items)
+	return items, nil
+}
+
+func (c *Client) search(ctx context.Context, q, reason string) ([]provider.Item, error) {
+	var wire wireSearch
+	path := "/search/issues?" + url.Values{"q": {q}, "per_page": {"50"}}.Encode()
+	if err := c.get(ctx, path, &wire); err != nil {
+		return nil, err
+	}
+	out := make([]provider.Item, 0, len(wire.Items))
 	for _, it := range wire.Items {
-		out = append(out, Issue{
+		out = append(out, provider.Item{
+			Provider:      provider.KindGitHub,
 			RepoFullName:  repoFullNameFromAPIURL(it.RepositoryURL),
 			Number:        it.Number,
 			Title:         it.Title,
@@ -240,24 +204,48 @@ func (c *Client) search(ctx context.Context, token, q, reason string) ([]Issue, 
 			Draft:         it.Draft,
 			IsPullRequest: it.PullRequest != nil,
 			Reason:        reason,
+			RepoID:        "",
 		})
 	}
 	return out, nil
 }
 
-// --- Notifications ----------------------------------------------------------
-
-// Notification is one inbox row.
-type Notification struct {
-	ID           string `json:"id"`
-	RepoFullName string `json:"repo_full_name"`
-	SubjectTitle string `json:"subject_title"`
-	SubjectType  string `json:"subject_type"`
-	Reason       string `json:"reason"`
-	UpdatedAt    string `json:"updated_at"`
-	// URL is a github.com link (the API's subject.url is not browsable).
-	URL string `json:"url"`
+// mergePRs unions the authored and review-requested lists, deduping on
+// html_url. A PR that is both mine AND waiting on my review appears once,
+// tagged with both reasons, so the row explains why it is on the list.
+func mergePRs(lists ...[]provider.Item) []provider.Item {
+	byURL := map[string]int{}
+	out := make([]provider.Item, 0, 16)
+	for _, list := range lists {
+		for _, pr := range list {
+			key := pr.HTMLURL
+			if key == "" {
+				// No URL to dedupe on (shouldn't happen); keep the row rather
+				// than silently dropping work.
+				out = append(out, pr)
+				continue
+			}
+			if i, seen := byURL[key]; seen {
+				if !strings.Contains(out[i].Reason, pr.Reason) {
+					out[i].Reason += ", " + pr.Reason
+				}
+				continue
+			}
+			byURL[key] = len(out)
+			out = append(out, pr)
+		}
+	}
+	sortItems(out)
+	return out
 }
+
+// sortItems orders rows most-recently-updated first. UpdatedAt is RFC3339 from
+// GitHub, so a plain string compare is already chronological.
+func sortItems(rows []provider.Item) {
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].UpdatedAt > rows[j].UpdatedAt })
+}
+
+// --- Notifications ----------------------------------------------------------
 
 type wireNotification struct {
 	ID         string `json:"id"`
@@ -274,14 +262,14 @@ type wireNotification struct {
 }
 
 // ListNotifications returns the owner's unread notifications.
-func (c *Client) ListNotifications(ctx context.Context, token string) ([]Notification, error) {
+func (c *Client) ListNotifications(ctx context.Context) ([]provider.Notification, error) {
 	var wire []wireNotification
-	if err := c.get(ctx, token, "/notifications", &wire); err != nil {
+	if err := c.get(ctx, "/notifications", &wire); err != nil {
 		return nil, err
 	}
-	out := make([]Notification, 0, len(wire))
+	out := make([]provider.Notification, 0, len(wire))
 	for _, w := range wire {
-		out = append(out, Notification{
+		out = append(out, provider.Notification{
 			ID:           w.ID,
 			RepoFullName: w.Repository.FullName,
 			SubjectTitle: w.Subject.Title,
@@ -334,17 +322,60 @@ func subjectBrowserURL(subjectURL, repoFullName string) string {
 	}
 }
 
+// NormalizeCloneURL turns any GitHub reference to a repo into an https clone
+// URL, so the same helper serves a repo row's clone_url, a search hit's
+// html_url, an api.github.com URL, and an ssh remote pasted by hand:
+//
+//	git@github.com:o/r.git              → https://github.com/o/r.git
+//	ssh://git@github.com/o/r            → https://github.com/o/r.git
+//	https://github.com/o/r              → https://github.com/o/r.git
+//	https://api.github.com/repos/o/r    → https://github.com/o/r.git
+//
+// The host is PRESERVED (only api.github.com is rewritten to github.com) so a
+// GitHub Enterprise remote still clones from its own host. Returns "" when no
+// owner/repo pair can be read out.
+func (c *Client) NormalizeCloneURL(repoURL string) string {
+	s := strings.TrimSpace(repoURL)
+	s = strings.TrimSuffix(s, "/")
+	if s == "" {
+		return ""
+	}
+	// Strip the scheme, then any user@ — leaves host/owner/repo for both
+	// "https://github.com/..." and "ssh://git@github.com/...".
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	} else if at := strings.Index(s, "@"); at >= 0 {
+		// scp-style ssh (git@github.com:owner/repo.git): the colon separating
+		// host from path is a path separator here, not a port.
+		s = strings.Replace(s[at+1:], ":", "/", 1)
+	}
+	if at := strings.Index(s, "@"); at >= 0 {
+		s = s[at+1:]
+	}
+
+	segs := strings.Split(s, "/")
+	if len(segs) < 3 {
+		return ""
+	}
+	host, segs := segs[0], segs[1:]
+	if host == "api.github.com" && segs[0] == "repos" {
+		host, segs = "github.com", segs[1:]
+	}
+	if len(segs) < 2 {
+		return ""
+	}
+	owner, repo := segs[0], strings.TrimSuffix(segs[1], ".git")
+	if host == "" || owner == "" || repo == "" {
+		return ""
+	}
+	return "https://" + host + "/" + owner + "/" + repo + ".git"
+}
+
 // --- Repository detail ------------------------------------------------------
 //
 // The five reads behind the Code panel's single-repo view. Same shape as the
-// launchpad methods: token per call, small structs, no caching. Every one is a
+// launchpad methods: bound token, small structs, no caching. Every one is a
 // plain GET — nothing here can mutate a repository.
-
-// Branch is one branch head.
-type Branch struct {
-	Name string `json:"name"`
-	SHA  string `json:"sha"`
-}
 
 type wireBranch struct {
 	Name   string `json:"name"`
@@ -354,33 +385,17 @@ type wireBranch struct {
 }
 
 // ListBranches returns up to 50 branches of one repository.
-func (c *Client) ListBranches(ctx context.Context, token, owner, repo string) ([]Branch, error) {
+func (c *Client) ListBranches(ctx context.Context, ref provider.RepoRef) ([]provider.Branch, error) {
 	var wire []wireBranch
-	path := fmt.Sprintf("/repos/%s/%s/branches?per_page=50", url.PathEscape(owner), url.PathEscape(repo))
-	if err := c.get(ctx, token, path, &wire); err != nil {
+	path := fmt.Sprintf("/repos/%s/%s/branches?per_page=50", url.PathEscape(ref.Owner), url.PathEscape(ref.Name))
+	if err := c.get(ctx, path, &wire); err != nil {
 		return nil, err
 	}
-	out := make([]Branch, 0, len(wire))
+	out := make([]provider.Branch, 0, len(wire))
 	for _, w := range wire {
-		out = append(out, Branch{Name: w.Name, SHA: w.Commit.SHA})
+		out = append(out, provider.Branch{Name: w.Name, SHA: w.Commit.SHA})
 	}
 	return out, nil
-}
-
-// Commit is one entry from a repository's commit log.
-//
-// Message is the FULL commit message; the panel renders only its first line.
-// Truncating here would throw away the body for every future caller to save a
-// few bytes on the wire.
-type Commit struct {
-	SHA     string `json:"sha"`
-	Message string `json:"message"`
-	// Author is the GitHub login when the commit is attributed to an account,
-	// falling back to the git author name when it isn't (an unlinked email, a
-	// bot, a rewritten history). One of the two is nearly always present.
-	Author  string `json:"author"`
-	Date    string `json:"date"`
-	HTMLURL string `json:"html_url"`
 }
 
 // wireCommit mirrors GitHub's two-level nesting: the ACCOUNT that authored the
@@ -409,7 +424,7 @@ const defaultCommitLimit = 30
 const maxCommitLimit = 100
 
 // ListRecentCommits returns the most recent commits on the default branch.
-func (c *Client) ListRecentCommits(ctx context.Context, token, owner, repo string, limit int) ([]Commit, error) {
+func (c *Client) ListRecentCommits(ctx context.Context, ref provider.RepoRef, limit int) ([]provider.Commit, error) {
 	if limit <= 0 {
 		limit = defaultCommitLimit
 	}
@@ -417,11 +432,11 @@ func (c *Client) ListRecentCommits(ctx context.Context, token, owner, repo strin
 		limit = maxCommitLimit
 	}
 	var wire []wireCommit
-	path := fmt.Sprintf("/repos/%s/%s/commits?per_page=%d", url.PathEscape(owner), url.PathEscape(repo), limit)
-	if err := c.get(ctx, token, path, &wire); err != nil {
+	path := fmt.Sprintf("/repos/%s/%s/commits?per_page=%d", url.PathEscape(ref.Owner), url.PathEscape(ref.Name), limit)
+	if err := c.get(ctx, path, &wire); err != nil {
 		return nil, err
 	}
-	out := make([]Commit, 0, len(wire))
+	out := make([]provider.Commit, 0, len(wire))
 	for _, w := range wire {
 		author := ""
 		if w.Author != nil {
@@ -430,7 +445,7 @@ func (c *Client) ListRecentCommits(ctx context.Context, token, owner, repo strin
 		if author == "" {
 			author = w.Commit.Author.Name
 		}
-		out = append(out, Commit{
+		out = append(out, provider.Commit{
 			SHA:     w.SHA,
 			Message: w.Commit.Message,
 			Author:  author,
@@ -455,11 +470,11 @@ type wireReadme struct {
 // A repository with NO README is a normal state, not a failure: GitHub answers
 // 404 and this returns empty markdown with a nil error, so the detail view
 // renders "No README" instead of a red error box in a perfectly healthy repo.
-func (c *Client) GetReadme(ctx context.Context, token, owner, repo string) (string, string, error) {
+func (c *Client) GetReadme(ctx context.Context, ref provider.RepoRef) (string, string, error) {
 	var wire wireReadme
-	path := fmt.Sprintf("/repos/%s/%s/readme", url.PathEscape(owner), url.PathEscape(repo))
-	if err := c.get(ctx, token, path, &wire); err != nil {
-		var se *StatusError
+	path := fmt.Sprintf("/repos/%s/%s/readme", url.PathEscape(ref.Owner), url.PathEscape(ref.Name))
+	if err := c.get(ctx, path, &wire); err != nil {
+		var se *provider.StatusError
 		if errors.As(err, &se) && se.Code == http.StatusNotFound {
 			return "", "", nil
 		}
@@ -480,13 +495,23 @@ func (c *Client) GetReadme(ctx context.Context, token, owner, repo string) (stri
 	return string(decoded), wire.HTMLURL, nil
 }
 
-// SearchPRsByRepo lists one repository's open pull requests.
-func (c *Client) SearchPRsByRepo(ctx context.Context, token, owner, repo string) ([]Issue, error) {
-	return c.search(ctx, token, fmt.Sprintf("is:open is:pr repo:%s/%s", owner, repo), "")
+// RepoPRs lists one repository's open pull requests.
+func (c *Client) RepoPRs(ctx context.Context, ref provider.RepoRef) ([]provider.Item, error) {
+	items, err := c.search(ctx, fmt.Sprintf("is:open is:pr repo:%s/%s", ref.Owner, ref.Name), "")
+	if err != nil {
+		return nil, err
+	}
+	sortItems(items)
+	return items, nil
 }
 
-// SearchIssuesByRepo lists one repository's open issues (pull requests
-// excluded — GitHub counts a PR as an issue unless is:issue says otherwise).
-func (c *Client) SearchIssuesByRepo(ctx context.Context, token, owner, repo string) ([]Issue, error) {
-	return c.search(ctx, token, fmt.Sprintf("is:open is:issue repo:%s/%s", owner, repo), "")
+// RepoIssues lists one repository's open issues (pull requests excluded —
+// GitHub counts a PR as an issue unless is:issue says otherwise).
+func (c *Client) RepoIssues(ctx context.Context, ref provider.RepoRef) ([]provider.Item, error) {
+	items, err := c.search(ctx, fmt.Sprintf("is:open is:issue repo:%s/%s", ref.Owner, ref.Name), "")
+	if err != nil {
+		return nil, err
+	}
+	sortItems(items)
+	return items, nil
 }
