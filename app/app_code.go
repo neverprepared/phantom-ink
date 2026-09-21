@@ -72,30 +72,70 @@ func (a *App) providersFor(profile string) ([]provider.Client, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	clients := buildProviders(env)
+	clients := buildProviders(env, a.profileAzureConfigDir(profile))
 	return clients, len(clients) > 0, nil
 }
 
 // buildProviders maps a profile's gateway env to the set of configured provider
 // clients. Pure (no I/O) so the enablement rules are unit-testable. GitHub is
-// enabled by GITHUB_TOKEN; ADO by ADO_ORG+ADO_PROJECT, authenticating with
-// ADO_PAT when present or the operator's az login session when it is blank.
-func buildProviders(env map[string]string) []provider.Client {
+// enabled by GITHUB_TOKEN; ADO by ADO_ORG plus one or more comma-separated
+// projects in ADO_PROJECT — one client per project, so the fan-out aggregates
+// repos/PRs/work-items across every listed project. Auth is ADO_PAT when
+// present, otherwise the profile's az login session (azConfigDir).
+func buildProviders(env map[string]string, azConfigDir string) []provider.Client {
 	var clients []provider.Client
 	if tok := strings.TrimSpace(env["GITHUB_TOKEN"]); tok != "" {
 		clients = append(clients, github.New(tok))
 	}
 	org := strings.TrimSpace(env["ADO_ORG"])
-	proj := strings.TrimSpace(env["ADO_PROJECT"])
 	pat := strings.TrimSpace(env["ADO_PAT"])
-	if org != "" && proj != "" {
-		if pat != "" {
-			clients = append(clients, ado.New(org, proj, pat))
-		} else {
-			clients = append(clients, ado.NewAzLogin(org, proj))
+	if org != "" {
+		for _, p := range splitProjects(env["ADO_PROJECT"]) {
+			clients = append(clients, adoClientFor(org, p, pat, azConfigDir))
 		}
 	}
 	return clients
+}
+
+// splitProjects parses a comma-separated ADO_PROJECT list, trimming blanks. A
+// single project name (no commas) yields a one-element list.
+func splitProjects(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// adoClientFor builds a single-project ADO client: PAT auth when present, else
+// az login scoped to the profile's az config dir.
+func adoClientFor(org, project, pat, azConfigDir string) provider.Client {
+	if pat != "" {
+		return ado.New(org, project, pat)
+	}
+	return ado.NewAzLogin(org, project, azConfigDir)
+}
+
+// profileAzureConfigDir finds the AZURE_CONFIG_DIR for a profile's az session.
+// az logins are per-profile here (each workspace points its own .azure at a
+// chosen identity). Prefer the value the profile's env resolves; fall back to
+// the conventional <workspace>/.azure when that directory exists. "" lets az use
+// its default.
+func (a *App) profileAzureConfigDir(profile string) string {
+	for _, kv := range a.resolveProfileEnv(profile) {
+		if v, ok := strings.CutPrefix(kv, "AZURE_CONFIG_DIR="); ok && strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	if home := a.profileWorkspaceHome(profile); home != "" {
+		cand := filepath.Join(home, ".azure")
+		if fi, err := os.Stat(cand); err == nil && fi.IsDir() {
+			return cand
+		}
+	}
+	return ""
 }
 
 // CodeOverview fetches the active profile's launchpad across every configured
@@ -284,19 +324,22 @@ const repoDetailCommitLimit = 20
 // routing needs no lookup.
 func (a *App) RepoDetail(profile string, ref provider.RepoRef) (RepoDetailResult, error) {
 	base := RepoDetailResult{Profile: profile, Provider: ref.Provider, Owner: ref.Owner, Repo: ref.Name, DefaultBranch: ref.DefaultBranch}
-	clients, any, err := a.providersFor(profile)
+	env, err := a.GetGatewayEnv(profile)
 	if err != nil {
 		return base, err
 	}
-	if !any {
-		base.TokenMissing = true
-		return base, nil
-	}
+	// Build the client that owns this ref. For ADO the project comes from
+	// ref.Owner (each ADO repo row carries its own project), so a multi-project
+	// profile routes to the right project rather than guessing the first client.
 	var client provider.Client
-	for _, c := range clients {
-		if c.Kind() == ref.Provider {
-			client = c
-			break
+	switch ref.Provider {
+	case provider.KindGitHub:
+		if tok := strings.TrimSpace(env["GITHUB_TOKEN"]); tok != "" {
+			client = github.New(tok)
+		}
+	case provider.KindADO:
+		if org := strings.TrimSpace(env["ADO_ORG"]); org != "" && strings.TrimSpace(ref.Owner) != "" {
+			client = adoClientFor(org, ref.Owner, strings.TrimSpace(env["ADO_PAT"]), a.profileAzureConfigDir(profile))
 		}
 	}
 	if client == nil {
@@ -542,12 +585,12 @@ func (a *App) OpenRepoLocally(profile, repoURL string) (string, error) {
 			if pat := strings.TrimSpace(env["ADO_PAT"]); pat != "" {
 				auth = "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+pat))
 			} else {
-				// No PAT: mint a bearer from the operator's az login session.
+				// No PAT: mint a bearer from the profile's az login session.
 				ctx := a.ctx
 				if ctx == nil {
 					ctx = context.Background()
 				}
-				h, azErr := adoAzAuthHeader(ctx)
+				h, azErr := adoAzAuthHeader(ctx, a.profileAzureConfigDir(profile))
 				if azErr != nil {
 					return "", fmt.Errorf("cloning %s needs an ADO_PAT or an az login: %w", cloneURL, azErr)
 				}

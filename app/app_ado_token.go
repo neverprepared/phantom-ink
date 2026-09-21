@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/base64"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -21,31 +22,39 @@ type ADOConnectionStatus struct {
 	Message string `json:"message"`
 }
 
-// ValidateADOConnection checks whether ADO accepts the org/project/PAT. Bound to the UI.
-func (a *App) ValidateADOConnection(org, project, pat string) ADOConnectionStatus {
-	return checkADOConnection(adoAPIBase, org, project, pat, &http.Client{Timeout: 10 * time.Second})
+// ValidateADOConnection checks whether ADO accepts the org + (first) project +
+// credential for a profile. Bound to the UI. project may be a comma-separated
+// list (multi-project profiles); the first is probed as a representative check.
+// A blank PAT validates the profile's az login path.
+func (a *App) ValidateADOConnection(profile, org, project, pat string) ADOConnectionStatus {
+	first := ""
+	if ps := splitProjects(project); len(ps) > 0 {
+		first = ps[0]
+	}
+	return checkADOConnection(adoAPIBase, org, first, pat, a.profileAzureConfigDir(profile), &http.Client{Timeout: 10 * time.Second})
 }
 
 // checkADOConnection probes the project's repositories endpoint (which requires
 // a resolvable org+project AND a working credential). The credential is the PAT
 // when given (Basic), otherwise a bearer minted from the operator's az login
 // session. 200 → valid; 401/403 → rejected; anything else → inconclusive.
-func checkADOConnection(base, org, project, pat string, hc *http.Client) ADOConnectionStatus {
+func checkADOConnection(base, org, project, pat, azConfigDir string, hc *http.Client) ADOConnectionStatus {
 	if org == "" || project == "" {
-		return ADOConnectionStatus{Valid: false, Checked: true, Message: "org and project are required"}
+		return ADOConnectionStatus{Valid: false, Checked: true, Message: "org and at least one project are required"}
 	}
 	var auth string
 	if pat != "" {
 		auth = "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+pat))
 	} else {
-		// No PAT — validate the az login path the client will actually use.
-		h, err := adoAzAuthHeader(context.Background())
+		// No PAT — validate the az login path the client will actually use,
+		// scoped to this profile's az session.
+		h, err := adoAzAuthHeader(context.Background(), azConfigDir)
 		if err != nil {
 			return ADOConnectionStatus{Checked: false, Message: "no ADO_PAT and az login unavailable: " + err.Error()}
 		}
 		auth = h
 	}
-	uri := base + "/" + org + "/" + project + "/_apis/git/repositories?api-version=7.1"
+	uri := base + "/" + url.PathEscape(org) + "/" + url.PathEscape(project) + "/_apis/git/repositories?api-version=7.1"
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, uri, nil)
 	if err != nil {
 		return ADOConnectionStatus{Checked: false, Message: "could not build request"}

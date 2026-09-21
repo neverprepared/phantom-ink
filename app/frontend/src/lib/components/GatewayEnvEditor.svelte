@@ -222,7 +222,7 @@
       const org = env['ADO_ORG'], project = env['ADO_PROJECT'], pat = env['ADO_PAT'] ?? '';
       if (org && project) {
         try {
-          const st = await a.ValidateADOConnection(org, project, pat);
+          const st = await a.ValidateADOConnection(profile, org, project, pat);
           if (st.checked && !st.valid) {
             notifications.warning(`ADO connection saved, but ${st.message}`);
           }

@@ -487,7 +487,7 @@ export function UpsertPool(arg1:string,arg2:Array<string>,arg3:string):Promise<b
 
 export function UsableAgents():Promise<Array<main.DetectedAgent>>;
 
-export function ValidateADOConnection(arg1:string,arg2:string,arg3:string):Promise<main.ADOConnectionStatus>;
+export function ValidateADOConnection(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.ADOConnectionStatus>;
 
 export function ValidateGitHubToken(arg1:string):Promise<main.GitHubTokenStatus>;
 

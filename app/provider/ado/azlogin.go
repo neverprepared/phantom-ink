@@ -24,14 +24,19 @@ import (
 const adoResourceID = "499b84ac-1321-427f-aa17-267ca6975798"
 
 // azTokenCmd runs `az account get-access-token` for the ADO resource and returns
-// raw stdout JSON. A package var so tests stub it without a real az / az login.
-var azTokenCmd = func(ctx context.Context) ([]byte, error) {
+// raw stdout JSON. azConfigDir, when non-empty, selects the az session via
+// AZURE_CONFIG_DIR (sessions are per-profile here). A package var so tests stub
+// it without a real az / az login.
+var azTokenCmd = func(ctx context.Context, azConfigDir string) ([]byte, error) {
 	bin := azBinary()
 	if bin == "" {
 		return nil, errors.New("Azure CLI (az) not found — install it or set ADO_PAT")
 	}
 	cmd := exec.CommandContext(ctx, bin, "account", "get-access-token",
 		"--resource", adoResourceID, "--output", "json")
+	if azConfigDir != "" {
+		cmd.Env = append(os.Environ(), "AZURE_CONFIG_DIR="+azConfigDir)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -82,11 +87,11 @@ func parseAzToken(raw []byte) (string, time.Time, error) {
 	return t.AccessToken, exp, nil
 }
 
-// AzAuthHeader mints a one-shot `Bearer <token>` header from the current az
-// login session — for callers that need a single fresh token (e.g. a git clone)
-// rather than a long-lived client.
-func AzAuthHeader(ctx context.Context) (string, error) {
-	raw, err := azTokenCmd(ctx)
+// AzAuthHeader mints a one-shot `Bearer <token>` header from an az login session
+// (azConfigDir selects which; "" = default) — for callers that need a single
+// fresh token (e.g. a git clone) rather than a long-lived client.
+func AzAuthHeader(ctx context.Context, azConfigDir string) (string, error) {
+	raw, err := azTokenCmd(ctx, azConfigDir)
 	if err != nil {
 		return "", err
 	}
@@ -99,7 +104,10 @@ func AzAuthHeader(ctx context.Context) (string, error) {
 
 // azTokenSource caches a bearer token on one client and re-mints ~5 min before
 // expiry, so a page-load's read fan-out doesn't spawn az per request.
+// azConfigDir selects the per-profile az session.
 type azTokenSource struct {
+	azConfigDir string
+
 	mu    sync.Mutex
 	token string
 	exp   time.Time
@@ -111,7 +119,7 @@ func (s *azTokenSource) header(ctx context.Context) (string, error) {
 	if s.token != "" && time.Now().Before(s.exp.Add(-5*time.Minute)) {
 		return "Bearer " + s.token, nil
 	}
-	raw, err := azTokenCmd(ctx)
+	raw, err := azTokenCmd(ctx, s.azConfigDir)
 	if err != nil {
 		return "", err
 	}

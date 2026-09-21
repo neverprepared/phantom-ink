@@ -597,7 +597,7 @@ func TestLaunchInteractiveSession_UnknownProfile(t *testing.T) {
 func stubAzHeader(t *testing.T, header string, err error) {
 	t.Helper()
 	orig := adoAzAuthHeader
-	adoAzAuthHeader = func(context.Context) (string, error) { return header, err }
+	adoAzAuthHeader = func(context.Context, string) (string, error) { return header, err }
 	t.Cleanup(func() { adoAzAuthHeader = orig })
 }
 
@@ -623,7 +623,7 @@ func TestBuildProviders_Enablement(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := kinds(buildProviders(c.env))
+			got := kinds(buildProviders(c.env, ""))
 			if len(got) != len(c.want) {
 				t.Fatalf("got %v, want %v", got, c.want)
 			}

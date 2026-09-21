@@ -56,14 +56,17 @@ func NewWithBase(base, org, project, pat string, hc *http.Client) *Client {
 }
 
 // NewAzLogin returns a client that authenticates with a bearer token minted from
-// the operator's current Azure CLI (`az login`) session instead of a PAT.
-func NewAzLogin(org, project string) *Client {
-	return NewAzLoginWithBase(defaultBase, org, project, nil)
+// an Azure CLI (`az login`) session instead of a PAT. azConfigDir selects WHICH
+// session — az sessions are per-profile here (each workspace has its own
+// AZURE_CONFIG_DIR), so the caller passes the target profile's dir; "" uses az's
+// default location.
+func NewAzLogin(org, project, azConfigDir string) *Client {
+	return NewAzLoginWithBase(defaultBase, org, project, azConfigDir, nil)
 }
 
-func NewAzLoginWithBase(base, org, project string, hc *http.Client) *Client {
+func NewAzLoginWithBase(base, org, project, azConfigDir string, hc *http.Client) *Client {
 	c := newClient(base, org, project, hc)
-	src := &azTokenSource{}
+	src := &azTokenSource{azConfigDir: azConfigDir}
 	c.authFn = src.header
 	return c
 }
@@ -136,8 +139,14 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, out a
 
 // orgPath / projPath build the two scopes. Project-scoped resources sit under
 // /{org}/{project}; identity and work-item hydrate sit under /{org}.
-func (c *Client) orgPath(p string) string  { return "/" + c.org + p }
-func (c *Client) projPath(p string) string { return "/" + c.org + "/" + c.project + p }
+// Path segments are URL-encoded: ADO project names routinely contain spaces
+// (e.g. "LAKEVIEW ENTERPRISE AUTOMATION"), which would otherwise break the path.
+func (c *Client) orgPath(p string) string {
+	return "/" + url.PathEscape(c.org) + p
+}
+func (c *Client) projPath(p string) string {
+	return "/" + url.PathEscape(c.org) + "/" + url.PathEscape(c.project) + p
+}
 
 // me resolves and caches the authenticated user's GUID.
 func (c *Client) me(ctx context.Context) (string, error) {
@@ -196,7 +205,7 @@ func (c *Client) ListRepos(ctx context.Context) ([]provider.Repo, error) {
 }
 
 func (c *Client) cloneURLFor(repo string) string {
-	return fmt.Sprintf("%s/%s/%s/_git/%s", c.base, c.org, c.project, repo)
+	return fmt.Sprintf("%s/%s/%s/_git/%s", c.base, url.PathEscape(c.org), url.PathEscape(c.project), url.PathEscape(repo))
 }
 
 // --- Pull requests ----------------------------------------------------------
@@ -217,7 +226,7 @@ type wirePR struct {
 }
 
 func (c *Client) prURL(repo string, id int) string {
-	return fmt.Sprintf("%s/%s/%s/_git/%s/pullrequest/%d", c.base, c.org, c.project, repo, id)
+	return fmt.Sprintf("%s/%s/%s/_git/%s/pullrequest/%d", c.base, url.PathEscape(c.org), url.PathEscape(c.project), url.PathEscape(repo), id)
 }
 
 func (c *Client) prItem(w wirePR, reason string) provider.Item {
@@ -332,7 +341,7 @@ func (c *Client) ListAssignedWork(ctx context.Context) ([]provider.Item, error) 
 			Number:        w.ID,
 			Title:         w.Fields.Title,
 			State:         w.Fields.State,
-			HTMLURL:       fmt.Sprintf("%s/%s/%s/_workitems/edit/%d", c.base, c.org, c.project, w.ID),
+			HTMLURL:       fmt.Sprintf("%s/%s/%s/_workitems/edit/%d", c.base, url.PathEscape(c.org), url.PathEscape(c.project), w.ID),
 			UpdatedAt:     w.Fields.Changed,
 			IsPullRequest: false,
 			Reason:        provider.ReasonAssigned,
@@ -409,7 +418,7 @@ func (c *Client) GetReadme(ctx context.Context, ref provider.RepoRef) (string, s
 		}
 		return "", "", err
 	}
-	htmlURL := fmt.Sprintf("%s/%s/%s/_git/%s?path=/README.md", c.base, c.org, c.project, url.PathEscape(ref.Name))
+	htmlURL := fmt.Sprintf("%s/%s/%s/_git/%s?path=/README.md", c.base, url.PathEscape(c.org), url.PathEscape(c.project), url.PathEscape(ref.Name))
 	return wire.Content, htmlURL, nil
 }
 

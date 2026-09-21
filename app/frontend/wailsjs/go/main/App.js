@@ -966,8 +966,8 @@ export function UsableAgents() {
   return window['go']['main']['App']['UsableAgents']();
 }
 
-export function ValidateADOConnection(arg1, arg2, arg3) {
-  return window['go']['main']['App']['ValidateADOConnection'](arg1, arg2, arg3);
+export function ValidateADOConnection(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ValidateADOConnection'](arg1, arg2, arg3, arg4);
 }
 
 export function ValidateGitHubToken(arg1) {
