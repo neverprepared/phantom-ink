@@ -429,18 +429,21 @@
       {:else}
         <ul class="rows">
           {#each codeState.notifications as n (n.id)}
-            <li class="row">
-              <div class="row-main">
-                <span class="title">{n.subject_title}</span>
-              </div>
-              <div class="row-meta">
-                <span class="badge">{n.subject_type}</span>
-                <span class="badge why">{n.reason}</span>
+            <li class="row with-logo">
+              {@render providerLogo('github')}
+              <div class="row-body">
+                <div class="row-main">
+                  <span class="title">{n.subject_title}</span>
+                </div>
                 <code class="repo">{n.repo_full_name}</code>
-                <span class="ago">{timeAgoOrDate(ts(n.updated_at))}</span>
-                {#if n.url}
-                  <button class="link" onclick={() => openInBrowser(n.url)}>open ↗</button>
-                {/if}
+                <div class="row-meta">
+                  <span class="badge">{n.subject_type}</span>
+                  <span class="badge why">{n.reason}</span>
+                  <span class="ago">{timeAgoOrDate(ts(n.updated_at))}</span>
+                  {#if n.url}
+                    <button class="link" onclick={() => openInBrowser(n.url)}>open ↗</button>
+                  {/if}
+                </div>
               </div>
             </li>
           {/each}
