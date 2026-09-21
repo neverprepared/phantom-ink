@@ -488,28 +488,12 @@ func TestOpenRepoLocally_ADOClonesWithPAT(t *testing.T) {
 	}
 }
 
-// An ADO repo with no PAT configured fails with a clear error and never falls
-// back to a plain host-cred clone.
-func TestOpenRepoLocally_ADOMissingPATErrors(t *testing.T) {
-	app, _ := laneApp(t, "work")
-	stub := &stubLanes{}
-	stub.install(t)
-	stubGatewayEnv(t, map[string]string{}) // no ADO_PAT
-
-	_, err := app.OpenRepoLocally("work", "https://dev.azure.com/acme/widgets/_git/api")
-	if err == nil {
-		t.Fatal("want an error when ADO_PAT is absent")
-	}
-	if !strings.Contains(err.Error(), "ADO_PAT") {
-		t.Errorf("error must mention ADO_PAT, got %v", err)
-	}
-	if len(stub.authClones) != 0 {
-		t.Errorf("no PAT must mean no auth clone, got %v", stub.authClones)
-	}
-	if len(stub.clones) != 0 {
-		t.Errorf("no PAT must not fall back to host-cred clone, got %v", stub.clones)
-	}
-}
+// Note: the "no PAT" cases now live in TestOpenRepoLocally_ADOAzLoginClone
+// (no PAT → az bearer clone) and TestOpenRepoLocally_ADONoCredErrors (no PAT +
+// no az → clean error, no clone). The former single "missing PAT = error" test
+// was obsoleted by az-login support (a blank PAT is no longer an error) and
+// removed — it shelled out to the real `az` binary, coupling the result to the
+// runner's Azure CLI login state.
 
 // git's own stderr is the useful part of an auth failure — it must survive.
 func TestOpenRepoLocally_ReturnsGitError(t *testing.T) {
