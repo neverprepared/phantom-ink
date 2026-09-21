@@ -391,10 +391,10 @@
               {@render providerLogo(row.provider)}
               <div class="row-body">
                 <div class="row-main">
-                  <code class="repo">{row.repo_full_name}</code>
                   <span class="num">#{row.number}</span>
                   <span class="title">{row.title}</span>
                 </div>
+                <code class="repo">{row.repo_full_name}</code>
                 <div class="row-meta">
                   <span class="badge">{row.is_pull_request ? 'pr' : (row.provider === 'ado' ? 'work item' : 'issue')}</span>
                   {#if row.draft}<span class="badge muted">draft</span>{/if}
