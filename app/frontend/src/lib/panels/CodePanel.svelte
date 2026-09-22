@@ -394,6 +394,9 @@
       {#if codeState.issuesError}
         <p class="section-error">issues: {codeState.issuesError}</p>
       {/if}
+      {#if codeState.jiraError}
+        <p class="section-error">jira unavailable — issue status hidden. {codeState.jiraError}</p>
+      {/if}
       {#if codeState.reasonsPresent.length > 1}
         <div class="reason-chips" role="group" aria-label="Filter by reason">
           <button class="chip" class:active={codeState.reasonFilter === 'all'} onclick={() => (codeState.reasonFilter = 'all')}>all</button>
@@ -416,6 +419,21 @@
                   <span class="num">#{row.number}</span>
                   <span class="title">{row.title}</span>
                 </div>
+                {#if codeState.jiraFor(row).length > 0}
+                  <div class="jira-chips">
+                    {#each codeState.jiraFor(row) as issue (issue.key)}
+                      <button
+                        class="jira-chip jira-{issue.status_category || 'new'}"
+                        title={issue.summary}
+                        onclick={() => openInBrowser(issue.url)}
+                      >
+                        <span class="jira-key">{issue.key}</span>
+                        <span class="jira-status">{issue.status}</span>
+                        {#if issue.assignee}<span class="jira-who">{issue.assignee}</span>{/if}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
                 <code class="repo">{row.repo_full_name}</code>
                 <div class="row-meta">
                   <span class="badge">{row.is_pull_request ? 'pr' : (row.provider === 'ado' ? 'work item' : 'issue')}</span>
@@ -730,4 +748,34 @@
 
   .dispatched { font-size: 0.8rem; color: var(--color-text-muted); }
   .dispatched code { font-family: var(--font-mono); }
+
+  /* Jira issue chips. Namespaced away from .chip, which is already the
+     reason-filter button in this panel. */
+  .jira-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 2px 0 4px;
+  }
+  .jira-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 1px 7px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .jira-chip:hover { border-color: var(--accent); }
+  .jira-key { font-weight: 600; }
+  .jira-status { opacity: 0.85; }
+  .jira-who { opacity: 0.6; }
+  /* Jira's statusCategory is a closed 3-value enum, so this mapping is total. */
+  .jira-done { border-color: #3fb950; }
+  .jira-indeterminate { border-color: #d29922; }
+  .jira-new { opacity: 0.8; }
 </style>

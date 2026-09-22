@@ -298,6 +298,10 @@ export function GetHubState() {
   return window['go']['main']['App']['GetHubState']();
 }
 
+export function GetJiraSettings() {
+  return window['go']['main']['App']['GetJiraSettings']();
+}
+
 export function GetLANIP() {
   return window['go']['main']['App']['GetLANIP']();
 }
@@ -472,6 +476,10 @@ export function ImportEnvFile() {
 
 export function InitBrainProfile(arg1) {
   return window['go']['main']['App']['InitBrainProfile'](arg1);
+}
+
+export function JiraEnabledForProfile(arg1) {
+  return window['go']['main']['App']['JiraEnabledForProfile'](arg1);
 }
 
 export function LaunchInteractiveSession(arg1) {
@@ -842,6 +850,14 @@ export function SetHiddenProfiles(arg1) {
   return window['go']['main']['App']['SetHiddenProfiles'](arg1);
 }
 
+export function SetJiraEnabledForProfile(arg1, arg2) {
+  return window['go']['main']['App']['SetJiraEnabledForProfile'](arg1, arg2);
+}
+
+export function SetJiraSettings(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SetJiraSettings'](arg1, arg2, arg3, arg4);
+}
+
 export function SetOTLPHost(arg1) {
   return window['go']['main']['App']['SetOTLPHost'](arg1);
 }
@@ -988,4 +1004,8 @@ export function ValidateLoopTemplate(arg1) {
 
 export function VaultAuthStatus() {
   return window['go']['main']['App']['VaultAuthStatus']();
+}
+
+export function VerifyJira() {
+  return window['go']['main']['App']['VerifyJira']();
 }

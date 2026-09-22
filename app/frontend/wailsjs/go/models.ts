@@ -2368,6 +2368,33 @@ export namespace brainbox {
 
 }
 
+export namespace jira {
+	
+	export class Issue {
+	    key: string;
+	    summary: string;
+	    status: string;
+	    status_category: string;
+	    assignee: string;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Issue(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.summary = source["summary"];
+	        this.status = source["status"];
+	        this.status_category = source["status_category"];
+	        this.assignee = source["assignee"];
+	        this.url = source["url"];
+	    }
+	}
+
+}
+
 export namespace main {
 	
 	export class ADOConnectionStatus {
@@ -2640,6 +2667,9 @@ export namespace main {
 	    pull_requests_error: string;
 	    issues_error: string;
 	    notifications_error: string;
+	    issue_keys: Record<string, Array<string>>;
+	    jira_issues: Record<string, jira.Issue>;
+	    jira_error: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CodeOverview(source);
@@ -2658,6 +2688,9 @@ export namespace main {
 	        this.pull_requests_error = source["pull_requests_error"];
 	        this.issues_error = source["issues_error"];
 	        this.notifications_error = source["notifications_error"];
+	        this.issue_keys = source["issue_keys"];
+	        this.jira_issues = this.convertValues(source["jira_issues"], jira.Issue, true);
+	        this.jira_error = source["jira_error"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

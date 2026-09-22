@@ -28,8 +28,8 @@ const (
 	// settingPlatformNode names the fleet node whose runner drives the
 	// phantom-platform compose stack. Empty ⇒ manage the local docker daemon
 	// (app co-located with the platform, the original behaviour).
-	settingPlatformNode = "platform_node"
-	settingLocalRunnerWorkDir = "local_runner_work_dir"
+	settingPlatformNode         = "platform_node"
+	settingLocalRunnerWorkDir   = "local_runner_work_dir"
 	settingLocalRunnerMachineID = "local_runner_machine_id"
 	// Jira credentials are app-level (one set) and each profile opts in
 	// separately via settingJiraProfilePrefix+<profile>. The site URL is NOT
