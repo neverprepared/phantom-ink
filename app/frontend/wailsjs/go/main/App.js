@@ -626,6 +626,14 @@ export function ListServices() {
   return window['go']['main']['App']['ListServices']();
 }
 
+export function MarkAllNotificationsRead(arg1) {
+  return window['go']['main']['App']['MarkAllNotificationsRead'](arg1);
+}
+
+export function MarkNotificationRead(arg1, arg2) {
+  return window['go']['main']['App']['MarkNotificationRead'](arg1, arg2);
+}
+
 export function MinioIntegrationEnabled() {
   return window['go']['main']['App']['MinioIntegrationEnabled']();
 }

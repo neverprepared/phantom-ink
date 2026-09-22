@@ -368,6 +368,18 @@
     <Spinner />
   {/if}
 
+  {#if codeState.showProviderFilter}
+    <div class="provider-filter" role="group" aria-label="Filter by provider">
+      <button class="pf-btn" class:active={codeState.providerFilter === 'all'} onclick={() => (codeState.providerFilter = 'all')}>All</button>
+      <button class="pf-btn" class:active={codeState.providerFilter === 'github'} onclick={() => (codeState.providerFilter = 'github')}>
+        {@render providerLogo('github')}<span>GitHub</span>
+      </button>
+      <button class="pf-btn" class:active={codeState.providerFilter === 'ado'} onclick={() => (codeState.providerFilter = 'ado')}>
+        {@render providerLogo('ado')}<span>Azure DevOps</span>
+      </button>
+    </div>
+  {/if}
+
   <!-- 1 · Needs attention: open PRs (mine + awaiting my review) + my issues -->
   <section class="card">
     <CardExpander
@@ -382,11 +394,21 @@
       {#if codeState.issuesError}
         <p class="section-error">issues: {codeState.issuesError}</p>
       {/if}
+      {#if codeState.reasonsPresent.length > 1}
+        <div class="reason-chips" role="group" aria-label="Filter by reason">
+          <button class="chip" class:active={codeState.reasonFilter === 'all'} onclick={() => (codeState.reasonFilter = 'all')}>all</button>
+          {#each codeState.reasonsPresent as reason}
+            <button class="chip" class:active={codeState.reasonFilter === reason} onclick={() => (codeState.reasonFilter = reason)}>{reason}</button>
+          {/each}
+        </div>
+      {/if}
       {#if codeState.attentionCount === 0}
         <p class="muted-note">Nothing open against you. Enjoy it.</p>
+      {:else if codeState.filteredAttention.length === 0}
+        <p class="muted-note">No items match these filters.</p>
       {:else}
         <ul class="rows">
-          {#each [...codeState.pullRequests, ...codeState.issues] as row (row.html_url)}
+          {#each codeState.filteredAttention as row (row.html_url)}
             <li class="row with-logo">
               {@render providerLogo(row.provider)}
               <div class="row-body">
@@ -424,11 +446,14 @@
       {#if codeState.notificationsError}
         <p class="section-error">{codeState.notificationsError}</p>
       {/if}
-      {#if codeState.notifications.length === 0}
+      {#if codeState.filteredNotifications.length === 0}
         <p class="muted-note">Inbox clear.</p>
       {:else}
+        <div class="card-actions">
+          <button class="link" onclick={() => codeState.markAllNotificationsRead()}>mark all read</button>
+        </div>
         <ul class="rows">
-          {#each codeState.notifications as n (n.id)}
+          {#each codeState.filteredNotifications as n (n.id)}
             <li class="row with-logo">
               {@render providerLogo('github')}
               <div class="row-body">
@@ -443,6 +468,7 @@
                   {#if n.url}
                     <button class="link" onclick={() => openInBrowser(n.url)}>open ↗</button>
                   {/if}
+                  <button class="link accent" title="Mark this notification read" onclick={() => codeState.markNotificationRead(n.id)}>✓ read</button>
                 </div>
               </div>
             </li>
@@ -630,6 +656,36 @@
   .provider-logo { width: 18px; height: 18px; display: block; flex: none; }
   .provider-logo.github { color: var(--color-text-primary); }
   .provider-logo.ado { color: #2b88d8; }
+
+  /* Provider segmented control (top of overview) */
+  .provider-filter {
+    display: flex; gap: 2px; margin-bottom: var(--spacing-sm);
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-sm);
+    padding: 2px; width: fit-content;
+  }
+  .pf-btn {
+    display: flex; align-items: center; gap: 6px;
+    background: transparent; border: none; cursor: pointer;
+    color: var(--color-text-secondary); font-size: 0.78rem; font-family: inherit;
+    padding: 4px 10px; border-radius: calc(var(--radius-sm) - 2px);
+  }
+  .pf-btn:hover { color: var(--color-text-primary); }
+  .pf-btn.active { background: var(--color-bg-elev, var(--color-bg-secondary)); color: var(--color-text-primary); }
+  .pf-btn .provider-logo { width: 14px; height: 14px; }
+
+  /* Reason filter chips (needs-attention card) */
+  .reason-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: var(--spacing-sm); }
+  .chip {
+    background: transparent; cursor: pointer; font-family: inherit;
+    border: 1px solid var(--color-border-secondary); color: var(--color-text-secondary);
+    font-size: 0.7rem; padding: 2px 9px; border-radius: 999px; text-transform: lowercase;
+  }
+  .chip:hover { color: var(--color-text-primary); }
+  .chip.active { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+
+  .card-actions { display: flex; justify-content: flex-end; margin-bottom: 4px; }
 
   .link {
     background: transparent; border: none; padding: 0;
