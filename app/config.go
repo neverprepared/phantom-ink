@@ -31,6 +31,14 @@ const (
 	settingPlatformNode = "platform_node"
 	settingLocalRunnerWorkDir = "local_runner_work_dir"
 	settingLocalRunnerMachineID = "local_runner_machine_id"
+	// Jira credentials are app-level (one set) and each profile opts in
+	// separately via settingJiraProfilePrefix+<profile>. The site URL is NOT
+	// here — it is the remote_url of the "jira" row in the integrations table,
+	// so the global on/off and the URL travel together like every other
+	// integration.
+	settingJiraUsername      = "jira_username"
+	settingJiraToken         = "jira_token"
+	settingJiraProfilePrefix = "jira_enabled:"
 )
 
 // Config is the in-memory representation of app settings.
