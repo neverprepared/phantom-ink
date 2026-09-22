@@ -24,6 +24,13 @@ func newJiraTestApp(t *testing.T) *App {
 			remote     INTEGER NOT NULL DEFAULT 0,
 			local_url  TEXT NOT NULL DEFAULT '',
 			remote_url TEXT NOT NULL DEFAULT ''
+		);
+		CREATE TABLE jira_links (
+			profile    TEXT NOT NULL,
+			issue_key  TEXT NOT NULL,
+			row_key    TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (profile, issue_key, row_key)
 		);`); err != nil {
 		t.Fatalf("schema: %v", err)
 	}

@@ -413,6 +413,23 @@ var migrations = []migration{
 	{version: 26, fn: func(conn *sql.DB) error {
 		return addColumnIfMissing(conn, "collect_jobs", "run_once_at_ms", "INTEGER")
 	}},
+	// v27: manual code<->Jira links. Conventional links are DERIVED from PR
+	// titles and never stored; this table holds only the EXCEPTIONS, where the
+	// convention was not followed and the operator linked them by hand. profile
+	// is in the primary key, so a link can never cross profiles. row_key is the
+	// same composite rowKey() builds (provider:repo#number) — one identity for
+	// a PR, not a second one — and is deliberately a plain string: there is no
+	// server behind this, so a repo rename leaves a dangling row rather than
+	// failing a constraint.
+	{version: 27, sql: `
+		CREATE TABLE IF NOT EXISTS jira_links (
+			profile    TEXT NOT NULL,
+			issue_key  TEXT NOT NULL,
+			row_key    TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (profile, issue_key, row_key)
+		);
+	`},
 }
 
 func (db *DB) migrate() error {
