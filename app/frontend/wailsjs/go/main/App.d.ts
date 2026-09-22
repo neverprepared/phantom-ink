@@ -153,6 +153,8 @@ export function GetHiddenProfiles():Promise<Array<string>>;
 
 export function GetHubState():Promise<main.HubStateView>;
 
+export function GetJiraJQL(arg1:string):Promise<string>;
+
 export function GetLANIP():Promise<string>;
 
 export function GetLangfuseHealth():Promise<brainbox.HealthStatus>;
@@ -247,9 +249,13 @@ export function JiraOptedIn(arg1:string):Promise<boolean>;
 
 export function JiraStatus(arg1:string):Promise<main.JiraProfileStatus>;
 
+export function JiraTickets(arg1:string):Promise<main.JiraTicketsResult>;
+
 export function LaunchInteractiveSession(arg1:main.InteractiveSessionRequest):Promise<brainbox.SessionActionResponse>;
 
 export function LaunchTeam(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<brainbox.SessionActionResponse>;
+
+export function LinkJiraIssue(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function ListAgentEvents(arg1:string,arg2:string,arg3:number):Promise<Array<brainbox.AgentEventEntry>>;
 
@@ -435,6 +441,8 @@ export function SetJiraEnabled(arg1:boolean):Promise<void>;
 
 export function SetJiraEnabledForProfile(arg1:string,arg2:boolean):Promise<void>;
 
+export function SetJiraJQL(arg1:string,arg2:string):Promise<void>;
+
 export function SetOTLPHost(arg1:string):Promise<void>;
 
 export function SetPlatformNode(arg1:string):Promise<void>;
@@ -488,6 +496,8 @@ export function TestGatewayTools(arg1:string):Promise<brainbox.GatewayToolsResul
 export function TestRuleEvent(arg1:Record<string, any>,arg2:Record<string, any>):Promise<brainbox.RuleTestResult>;
 
 export function TestRulePattern(arg1:Record<string, any>,arg2:number):Promise<brainbox.RuleTestResult>;
+
+export function UnlinkJiraIssue(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function UnsubscribeConversation(arg1:string):Promise<void>;
 

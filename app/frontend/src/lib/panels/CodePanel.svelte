@@ -430,6 +430,7 @@
                         <span class="jira-key">{issue.key}</span>
                         <span class="jira-status">{issue.status}</span>
                         {#if issue.assignee}<span class="jira-who">{issue.assignee}</span>{/if}
+                        {#if issue.manual}<span class="jira-manual" title="linked by hand, not derived from the title">·</span>{/if}
                       </button>
                     {/each}
                   </div>
@@ -774,6 +775,9 @@
   .jira-key { font-weight: 600; }
   .jira-status { opacity: 0.85; }
   .jira-who { opacity: 0.6; }
+  /* A manual link is marked so it is distinguishable from one the title
+     produced — removing it is only possible on the jira tab. */
+  .jira-manual { opacity: 0.55; font-weight: 700; }
   /* Jira's statusCategory is a closed 3-value enum, so this mapping is total. */
   .jira-done { border-color: #3fb950; }
   .jira-indeterminate { border-color: #d29922; }

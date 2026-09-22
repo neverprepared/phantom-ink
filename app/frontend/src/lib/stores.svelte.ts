@@ -182,6 +182,21 @@ export const JOBS_TAB_PANELS: Record<string, JobsTab> = {
   automations: 'rules',
 };
 
+/** Tabs of the Work hub (panel id stays 'code' — label-only rename). */
+export type WorkTab = 'code' | 'jira';
+
+let _workTab = $state<WorkTab>('code');
+
+export const workState = {
+  get tab(): WorkTab { return _workTab; },
+  set tab(v: WorkTab) { _workTab = v; },
+  /** Navigate to the hub with a specific tab pre-selected. */
+  open(tab: WorkTab): void {
+    _workTab = tab;
+    currentPanel.value = 'code';
+  },
+};
+
 let _jobsTab = $state<JobsTab>('jobs');
 
 export const jobsState = {

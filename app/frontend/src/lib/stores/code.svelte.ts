@@ -65,6 +65,12 @@ export interface GitHubNotification {
   url: string;
 }
 
+/** One code->ticket link. Manual ones can be removed; derived ones cannot. */
+export interface IssueLink {
+  key: string;
+  manual: boolean;
+}
+
 export interface JiraIssue {
   key: string;
   summary: string;
@@ -87,8 +93,8 @@ export interface CodeOverview {
   pull_requests_error: string;
   issues_error: string;
   notifications_error: string;
-  /** Row key (provider:repo#number) -> Jira issue keys found in its title. */
-  issue_keys: Record<string, string[]>;
+  /** Row key (provider:repo#number) -> that row's Jira links. */
+  issue_keys: Record<string, IssueLink[]>;
   jira_issues: Record<string, JiraIssue>;
   /** Non-fatal: a Jira outage costs the chips, never the git rows. */
   jira_error: string;
@@ -305,7 +311,7 @@ class CodeStore {
   issues = $state<Issue[]>([]);
   notifications = $state<GitHubNotification[]>([]);
 
-  issueKeys = $state<Record<string, string[]>>({});
+  issueKeys = $state<Record<string, IssueLink[]>>({});
   jiraIssues = $state<Record<string, JiraIssue>>({});
   jiraError = $state('');
 
@@ -497,11 +503,14 @@ class CodeStore {
    * Jira issues linked to one row. Mirrors rowKey() in app/app_code.go —
    * keep the two in lockstep or every chip silently vanishes.
    */
-  jiraFor(row: Issue): JiraIssue[] {
+  jiraFor(row: Issue): (JiraIssue & { manual: boolean })[] {
     const key = `${row.provider}:${row.repo_full_name}#${row.number}`;
     return (this.issueKeys[key] ?? [])
-      .map((k) => this.jiraIssues[k])
-      .filter((i): i is JiraIssue => Boolean(i));
+      .map((l) => {
+        const issue = this.jiraIssues[l.key];
+        return issue ? { ...issue, manual: l.manual } : null;
+      })
+      .filter((i): i is JiraIssue & { manual: boolean } => Boolean(i));
   }
 
   reset(): void {

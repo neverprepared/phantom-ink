@@ -2667,7 +2667,7 @@ export namespace main {
 	    pull_requests_error: string;
 	    issues_error: string;
 	    notifications_error: string;
-	    issue_keys: Record<string, Array<string>>;
+	    issue_keys: Record<string, Array<IssueLink>>;
 	    jira_issues: Record<string, jira.Issue>;
 	    jira_error: string;
 	
@@ -2688,7 +2688,7 @@ export namespace main {
 	        this.pull_requests_error = source["pull_requests_error"];
 	        this.issues_error = source["issues_error"];
 	        this.notifications_error = source["notifications_error"];
-	        this.issue_keys = source["issue_keys"];
+	        this.issue_keys = this.convertValues(source["issue_keys"], Array<IssueLink>, true);
 	        this.jira_issues = this.convertValues(source["jira_issues"], jira.Issue, true);
 	        this.jira_error = source["jira_error"];
 	    }
@@ -2710,6 +2710,30 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class CodeRef {
+	    row_key: string;
+	    number: number;
+	    title: string;
+	    repo: string;
+	    url: string;
+	    state: string;
+	    manual: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new CodeRef(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.row_key = source["row_key"];
+	        this.number = source["number"];
+	        this.title = source["title"];
+	        this.repo = source["repo"];
+	        this.url = source["url"];
+	        this.state = source["state"];
+	        this.manual = source["manual"];
+	    }
 	}
 	export class CollectJob {
 	    id: string;
@@ -3143,6 +3167,20 @@ export namespace main {
 	        this.task = source["task"];
 	    }
 	}
+	export class IssueLink {
+	    key: string;
+	    manual: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new IssueLink(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.manual = source["manual"];
+	    }
+	}
 	export class JiraProfileStatus {
 	    profile: string;
 	    configured: boolean;
@@ -3162,6 +3200,86 @@ export namespace main {
 	        this.url = source["url"];
 	        this.username = source["username"];
 	    }
+	}
+	export class JiraTicket {
+	    key: string;
+	    summary: string;
+	    status: string;
+	    status_category: string;
+	    assignee: string;
+	    url: string;
+	    refs: CodeRef[];
+	    orphan_rows: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new JiraTicket(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.summary = source["summary"];
+	        this.status = source["status"];
+	        this.status_category = source["status_category"];
+	        this.assignee = source["assignee"];
+	        this.url = source["url"];
+	        this.refs = this.convertValues(source["refs"], CodeRef);
+	        this.orphan_rows = source["orphan_rows"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class JiraTicketsResult {
+	    profile: string;
+	    jql: string;
+	    tickets: JiraTicket[];
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new JiraTicketsResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.jql = source["jql"];
+	        this.tickets = this.convertValues(source["tickets"], JiraTicket);
+	        this.error = source["error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class LocalProcess {
 	    pid: string;

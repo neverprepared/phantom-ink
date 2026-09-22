@@ -298,6 +298,10 @@ export function GetHubState() {
   return window['go']['main']['App']['GetHubState']();
 }
 
+export function GetJiraJQL(arg1) {
+  return window['go']['main']['App']['GetJiraJQL'](arg1);
+}
+
 export function GetLANIP() {
   return window['go']['main']['App']['GetLANIP']();
 }
@@ -486,12 +490,20 @@ export function JiraStatus(arg1) {
   return window['go']['main']['App']['JiraStatus'](arg1);
 }
 
+export function JiraTickets(arg1) {
+  return window['go']['main']['App']['JiraTickets'](arg1);
+}
+
 export function LaunchInteractiveSession(arg1) {
   return window['go']['main']['App']['LaunchInteractiveSession'](arg1);
 }
 
 export function LaunchTeam(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['LaunchTeam'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
+export function LinkJiraIssue(arg1, arg2, arg3) {
+  return window['go']['main']['App']['LinkJiraIssue'](arg1, arg2, arg3);
 }
 
 export function ListAgentEvents(arg1, arg2, arg3) {
@@ -862,6 +874,10 @@ export function SetJiraEnabledForProfile(arg1, arg2) {
   return window['go']['main']['App']['SetJiraEnabledForProfile'](arg1, arg2);
 }
 
+export function SetJiraJQL(arg1, arg2) {
+  return window['go']['main']['App']['SetJiraJQL'](arg1, arg2);
+}
+
 export function SetOTLPHost(arg1) {
   return window['go']['main']['App']['SetOTLPHost'](arg1);
 }
@@ -968,6 +984,10 @@ export function TestRuleEvent(arg1, arg2) {
 
 export function TestRulePattern(arg1, arg2) {
   return window['go']['main']['App']['TestRulePattern'](arg1, arg2);
+}
+
+export function UnlinkJiraIssue(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UnlinkJiraIssue'](arg1, arg2, arg3);
 }
 
 export function UnsubscribeConversation(arg1) {
