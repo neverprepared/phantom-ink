@@ -64,9 +64,9 @@ type CodeOverview struct {
 	IssuesError        string `json:"issues_error"`
 	NotificationsError string `json:"notifications_error"`
 
-	// IssueKeys maps a row key (see rowKey) to the Jira issue keys found in
-	// that row's title. Rows with no key are absent, not present-and-empty.
-	IssueKeys map[string][]string `json:"issue_keys"`
+	// IssueKeys maps a row key (see rowKey) to that row's Jira links, derived
+	// and manual together. Rows with no link are absent, not present-and-empty.
+	IssueKeys map[string][]IssueLink `json:"issue_keys"`
 	// JiraIssues maps an issue key to the resolved issue. Named for Jira
 	// because Issues above is already the git providers' issue list. Derived
 	// per request; nothing is persisted, so there is no index to drift.
@@ -74,6 +74,14 @@ type CodeOverview struct {
 	// JiraError is non-fatal, exactly like the per-section errors above: a
 	// Jira outage costs the chips, never the git rows.
 	JiraError string `json:"jira_error"`
+}
+
+// IssueLink is one code->ticket link. Manual distinguishes a stored override
+// from one derived out of the PR title: only a manual link can be removed,
+// because a derived one would simply come back on the next read.
+type IssueLink struct {
+	Key    string `json:"key"`
+	Manual bool   `json:"manual"`
 }
 
 var errJiraUnavailable = errors.New("jira unavailable")
@@ -107,9 +115,52 @@ func collectIssueKeys(items []provider.Item) (map[string][]string, []string) {
 	return byRow, all
 }
 
+// mergeLinks folds stored overrides into the derived links. A key already in
+// the title stays DERIVED even if it was also linked by hand — it cannot be
+// unlinked, so offering an × for it would be a lie.
+func mergeLinks(derived, manual map[string][]string) map[string][]IssueLink {
+	out := make(map[string][]IssueLink, len(derived)+len(manual))
+	for row, keys := range derived {
+		for _, k := range keys {
+			out[row] = append(out[row], IssueLink{Key: k})
+		}
+	}
+	for row, keys := range manual {
+		for _, k := range keys {
+			dup := false
+			for _, existing := range out[row] {
+				if existing.Key == k {
+					dup = true
+					break
+				}
+			}
+			if !dup {
+				out[row] = append(out[row], IssueLink{Key: k, Manual: true})
+			}
+		}
+	}
+	return out
+}
+
+// allLinkedKeys is the deduped set of issue keys across every row — what the
+// Jira client resolves in one batched call.
+func allLinkedKeys(links map[string][]IssueLink) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, ls := range links {
+		for _, l := range ls {
+			if !seen[l.Key] {
+				seen[l.Key] = true
+				out = append(out, l.Key)
+			}
+		}
+	}
+	return out
+}
+
 // decorateJira folds resolved issues into the overview. A non-nil err records
 // the failure and leaves every git row exactly as it was.
-func decorateJira(out *CodeOverview, issues map[string]jira.Issue, err error) {
+func decorateJira(out *CodeOverview, links map[string][]IssueLink, issues map[string]jira.Issue, err error) {
 	if err != nil {
 		out.JiraError = err.Error()
 		return
@@ -117,8 +168,7 @@ func decorateJira(out *CodeOverview, issues map[string]jira.Issue, err error) {
 	if len(issues) == 0 {
 		return
 	}
-	byRow, _ := collectIssueKeys(out.PullRequests)
-	out.IssueKeys = byRow
+	out.IssueKeys = links
 	out.JiraIssues = issues
 }
 
@@ -252,9 +302,15 @@ func (a *App) CodeOverview(profile string) (CodeOverview, error) {
 	// env is the profile's own gateway env, already fetched above — Jira
 	// credentials are per profile, exactly like GITHUB_TOKEN and ADO_PAT.
 	if c := a.jiraClientForEnv(profile, env); c != nil {
-		if _, keys := collectIssueKeys(out.PullRequests); len(keys) > 0 {
+		derived, _ := collectIssueKeys(out.PullRequests)
+		var manual map[string][]string
+		if a.db != nil {
+			manual, _ = a.db.JiraLinks(profile)
+		}
+		links := mergeLinks(derived, manual)
+		if keys := allLinkedKeys(links); len(keys) > 0 {
 			issues, jerr := c.Resolve(ctx, keys)
-			decorateJira(&out, issues, jerr)
+			decorateJira(&out, links, issues, jerr)
 		}
 	}
 	return out, nil
