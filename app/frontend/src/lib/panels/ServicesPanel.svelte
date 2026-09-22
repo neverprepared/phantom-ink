@@ -253,7 +253,7 @@
 
   <!-- Platform service stack (primary): status + start/stop/restart. Open by
        default — this is the at-a-glance health of the platform. -->
-  <PlatformServicesCard startExpanded />
+  <PlatformServicesCard />
 
   <!-- On-demand integrations (ADR-003): place compose stacks on fleet nodes -->
   <IntegrationsCard />
