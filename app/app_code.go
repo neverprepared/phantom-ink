@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,6 +27,7 @@ import (
 	"time"
 
 	"phantom-ink/brainbox"
+	"phantom-ink/jira"
 	"phantom-ink/provider"
 	"phantom-ink/provider/ado"
 	"phantom-ink/provider/github"
@@ -61,6 +63,63 @@ type CodeOverview struct {
 	PullRequestsError  string `json:"pull_requests_error"`
 	IssuesError        string `json:"issues_error"`
 	NotificationsError string `json:"notifications_error"`
+
+	// IssueKeys maps a row key (see rowKey) to the Jira issue keys found in
+	// that row's title. Rows with no key are absent, not present-and-empty.
+	IssueKeys map[string][]string `json:"issue_keys"`
+	// JiraIssues maps an issue key to the resolved issue. Named for Jira
+	// because Issues above is already the git providers' issue list. Derived
+	// per request; nothing is persisted, so there is no index to drift.
+	JiraIssues map[string]jira.Issue `json:"jira_issues"`
+	// JiraError is non-fatal, exactly like the per-section errors above: a
+	// Jira outage costs the chips, never the git rows.
+	JiraError string `json:"jira_error"`
+}
+
+var errJiraUnavailable = errors.New("jira unavailable")
+
+// rowKey identifies one PR row. provider.Item has no id field, so the
+// composite is the identity — and it is built HERE only, so the Go producer
+// and the Svelte consumer cannot disagree about its shape.
+func rowKey(it provider.Item) string {
+	return fmt.Sprintf("%s:%s#%d", it.Provider, it.RepoFullName, it.Number)
+}
+
+// collectIssueKeys parses every row's title once, returning the per-row keys
+// and the deduped set to resolve.
+func collectIssueKeys(items []provider.Item) (map[string][]string, []string) {
+	byRow := make(map[string][]string)
+	seen := make(map[string]bool)
+	var all []string
+	for _, it := range items {
+		keys := jira.ParseKeys(it.Title)
+		if len(keys) == 0 {
+			continue
+		}
+		byRow[rowKey(it)] = keys
+		for _, k := range keys {
+			if !seen[k] {
+				seen[k] = true
+				all = append(all, k)
+			}
+		}
+	}
+	return byRow, all
+}
+
+// decorateJira folds resolved issues into the overview. A non-nil err records
+// the failure and leaves every git row exactly as it was.
+func decorateJira(out *CodeOverview, issues map[string]jira.Issue, err error) {
+	if err != nil {
+		out.JiraError = err.Error()
+		return
+	}
+	if len(issues) == 0 {
+		return
+	}
+	byRow, _ := collectIssueKeys(out.PullRequests)
+	out.IssueKeys = byRow
+	out.JiraIssues = issues
 }
 
 // providersFor builds the set of providers a profile has configured in its
@@ -188,6 +247,12 @@ func (a *App) CodeOverview(profile string) (CodeOverview, error) {
 		out.ReposError = msg
 		if provider.IsUnauthorized(enumErr) {
 			out.TokenInvalid = true
+		}
+	}
+	if c := a.jiraClientFor(profile); c != nil {
+		if _, keys := collectIssueKeys(out.PullRequests); len(keys) > 0 {
+			issues, jerr := c.Resolve(ctx, keys)
+			decorateJira(&out, issues, jerr)
 		}
 	}
 	return out, nil
