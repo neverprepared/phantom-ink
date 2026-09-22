@@ -3143,6 +3143,26 @@ export namespace main {
 	        this.task = source["task"];
 	    }
 	}
+	export class JiraProfileStatus {
+	    profile: string;
+	    configured: boolean;
+	    opted_in: boolean;
+	    url: string;
+	    username: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new JiraProfileStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.configured = source["configured"];
+	        this.opted_in = source["opted_in"];
+	        this.url = source["url"];
+	        this.username = source["username"];
+	    }
+	}
 	export class LocalProcess {
 	    pid: string;
 	    tty: string;

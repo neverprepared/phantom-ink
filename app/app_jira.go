@@ -11,39 +11,69 @@ import (
 // jiraIntegrationName is the row key in the integrations table.
 const jiraIntegrationName = "jira"
 
-// jiraConfig returns the app-level credential set and whether it is usable.
-// Usable means BOTH gates that are not profile-specific: the operator enabled
-// the integration, and all three credential parts are present.
-func (a *App) jiraConfig() (jira.Config, bool) {
-	if a.db == nil {
-		return jira.Config{}, false
-	}
-	row, ok := a.db.GetIntegration(jiraIntegrationName)
-	if !ok || !row.Enabled {
-		return jira.Config{}, false
-	}
+// JiraProfileStatus is what the settings card renders for one profile. It
+// carries the site and account so the operator can see WHICH Jira a profile is
+// pointed at — never the token.
+type JiraProfileStatus struct {
+	Profile    string `json:"profile"`
+	Configured bool   `json:"configured"`
+	OptedIn    bool   `json:"opted_in"`
+	URL        string `json:"url"`
+	Username   string `json:"username"`
+}
+
+// jiraConfigFromEnv reads a profile's Jira credentials out of its gateway env.
+//
+// These are the SAME three vars the mcp-atlassian server consumes, so a profile
+// configures its Jira once and both the MCP server and the Code panel chips use
+// it. Credentials are per profile by construction: two profiles can point at
+// two different Atlassian sites, and neither can reach the other's token.
+func jiraConfigFromEnv(env map[string]string) (jira.Config, bool) {
 	cfg := jira.Config{
-		BaseURL:  strings.TrimSpace(row.RemoteURL),
-		Username: strings.TrimSpace(a.db.GetSetting(settingJiraUsername, "")),
-		Token:    strings.TrimSpace(a.db.GetSetting(settingJiraToken, "")),
+		BaseURL:  strings.TrimSpace(env["JIRA_URL"]),
+		Username: strings.TrimSpace(env["JIRA_USERNAME"]),
+		Token:    strings.TrimSpace(env["JIRA_API_TOKEN"]),
 	}
 	return cfg, cfg.BaseURL != "" && cfg.Username != "" && cfg.Token != ""
 }
 
-// JiraEnabledForProfile reports whether this profile should see Jira data.
-// All three gates must pass. The opt-in defaults off, so a profile never gains
-// a new surface merely because the operator configured credentials.
-func (a *App) JiraEnabledForProfile(profile string) bool {
-	if _, ok := a.jiraConfig(); !ok {
+// jiraGloballyEnabled reports the operator-level switch: is this integration
+// available in the app at all. It says nothing about any one profile.
+func (a *App) jiraGloballyEnabled() bool {
+	if a.db == nil {
 		return false
 	}
+	row, ok := a.db.GetIntegration(jiraIntegrationName)
+	return ok && row.Enabled
+}
+
+// SetJiraEnabled flips the global switch. Credentials are NOT stored here —
+// they live in each profile's gateway env.
+func (a *App) SetJiraEnabled(enabled bool) error {
+	if a.db == nil {
+		return errNoDB
+	}
+	row, _ := a.db.GetIntegration(jiraIntegrationName)
+	row.Name = jiraIntegrationName
+	row.Enabled = enabled
+	row.Remote = true // saas: never a placed compose stack
+	return a.db.UpsertIntegration(row)
+}
+
+// JiraGloballyEnabled is the Wails-bound read of the global switch.
+func (a *App) JiraGloballyEnabled() bool { return a.jiraGloballyEnabled() }
+
+// JiraOptedIn reports one profile's opt-in. Defaults off, so configuring
+// credentials for the MCP server never silently adds a Code-panel surface.
+func (a *App) JiraOptedIn(profile string) bool {
 	if a.db == nil || strings.TrimSpace(profile) == "" {
 		return false
 	}
 	return a.db.GetSetting(settingJiraProfilePrefix+profile, "") == "true"
 }
 
-// SetJiraEnabledForProfile records one profile's opt-in.
+// SetJiraEnabledForProfile records one profile's opt-in. Opting out leaves the
+// credentials in place, so it is reversible without re-entering a token.
 func (a *App) SetJiraEnabledForProfile(profile string, enabled bool) error {
 	if a.db == nil {
 		return errNoDB
@@ -58,70 +88,51 @@ func (a *App) SetJiraEnabledForProfile(profile string, enabled bool) error {
 	return a.db.SetSetting(settingJiraProfilePrefix+profile, v)
 }
 
-// GetJiraSettings returns the non-secret settings for the Integrations UI.
-// The token is deliberately absent: same contract as GetRegistrySettings.
-func (a *App) GetJiraSettings() map[string]string {
-	if a.db == nil {
-		return map[string]string{"url": "", "username": "", "enabled": "false", "token_set": "false"}
-	}
-	row, _ := a.db.GetIntegration(jiraIntegrationName)
-	enabled := "false"
-	if row.Enabled {
-		enabled = "true"
-	}
-	// token_set reports PRESENCE only — never the value — so the UI can say
-	// "stored, leave blank to keep" without the token crossing the boundary.
-	tokenSet := "false"
-	if strings.TrimSpace(a.db.GetSetting(settingJiraToken, "")) != "" {
-		tokenSet = "true"
-	}
-	return map[string]string{
-		"url":       strings.TrimSpace(row.RemoteURL),
-		"username":  strings.TrimSpace(a.db.GetSetting(settingJiraUsername, "")),
-		"enabled":   enabled,
-		"token_set": tokenSet,
-	}
-}
-
-// SetJiraSettings stores the app-level credential set and the integration row.
-// Enabling here is the operator's global switch; profiles still opt in.
-func (a *App) SetJiraSettings(url, username, token string, enabled bool) error {
-	if a.db == nil {
-		return errNoDB
-	}
-	if err := a.db.UpsertIntegration(IntegrationRow{
-		Name:      jiraIntegrationName,
-		Enabled:   enabled,
-		Remote:    true, // saas: always remote, never a placed compose stack
-		RemoteURL: strings.TrimRight(strings.TrimSpace(url), "/"),
-	}); err != nil {
-		return err
-	}
-	if err := a.db.SetSetting(settingJiraUsername, strings.TrimSpace(username)); err != nil {
-		return err
-	}
-	return a.db.SetSetting(settingJiraToken, strings.TrimSpace(token))
-}
-
-// jiraClientFor returns a client, or nil when this profile must see no Jira
-// data. Callers treat nil as "skip Jira entirely" — not as an error.
-func (a *App) jiraClientFor(profile string) *jira.Client {
-	if !a.JiraEnabledForProfile(profile) {
+// jiraClientForEnv applies all three gates. Returns nil when this profile must
+// see no Jira data; callers treat nil as "skip Jira entirely", not an error.
+func (a *App) jiraClientForEnv(profile string, env map[string]string) *jira.Client {
+	if !a.jiraGloballyEnabled() || !a.JiraOptedIn(profile) {
 		return nil
 	}
-	cfg, ok := a.jiraConfig()
+	cfg, ok := jiraConfigFromEnv(env)
 	if !ok {
 		return nil
 	}
 	return jira.New(cfg, nil)
 }
 
-// VerifyJira is the Integrations status probe: a saas integration has no
-// container to inspect, so "up" means the credentials work.
-func (a *App) VerifyJira() error {
-	cfg, ok := a.jiraConfig()
+// jiraStatusForEnv is the testable core of JiraStatus.
+func (a *App) jiraStatusForEnv(profile string, env map[string]string) JiraProfileStatus {
+	cfg, ok := jiraConfigFromEnv(env)
+	return JiraProfileStatus{
+		Profile:    profile,
+		Configured: ok,
+		OptedIn:    a.JiraOptedIn(profile),
+		URL:        cfg.BaseURL,
+		Username:   cfg.Username,
+	}
+}
+
+// JiraStatus reports one profile's Jira wiring for the settings card. The
+// token never crosses the boundary — only whether the profile is configured.
+func (a *App) JiraStatus(profile string) (JiraProfileStatus, error) {
+	env, err := a.GetGatewayEnv(profile)
+	if err != nil {
+		return JiraProfileStatus{Profile: profile}, err
+	}
+	return a.jiraStatusForEnv(profile, env), nil
+}
+
+// VerifyJira probes ONE profile's credentials. A saas integration has no
+// container to inspect, so "up" means that profile's credentials work.
+func (a *App) VerifyJira(profile string) error {
+	env, err := a.GetGatewayEnv(profile)
+	if err != nil {
+		return err
+	}
+	cfg, ok := jiraConfigFromEnv(env)
 	if !ok {
-		return errors.New("jira: not enabled or credentials incomplete")
+		return errors.New("jira: set JIRA_URL, JIRA_USERNAME and JIRA_API_TOKEN in this profile's gateway env")
 	}
 	ctx := a.ctx
 	if ctx == nil {

@@ -31,13 +31,10 @@ const (
 	settingPlatformNode         = "platform_node"
 	settingLocalRunnerWorkDir   = "local_runner_work_dir"
 	settingLocalRunnerMachineID = "local_runner_machine_id"
-	// Jira credentials are app-level (one set) and each profile opts in
-	// separately via settingJiraProfilePrefix+<profile>. The site URL is NOT
-	// here — it is the remote_url of the "jira" row in the integrations table,
-	// so the global on/off and the URL travel together like every other
-	// integration.
-	settingJiraUsername      = "jira_username"
-	settingJiraToken         = "jira_token"
+	// Jira credentials are NOT stored here: they live in each profile's
+	// gateway env (JIRA_URL / JIRA_USERNAME / JIRA_API_TOKEN), the same vars
+	// the mcp-atlassian server consumes, so two profiles can point at two
+	// different Atlassian sites. Only the per-profile opt-in is app state.
 	settingJiraProfilePrefix = "jira_enabled:"
 )
 

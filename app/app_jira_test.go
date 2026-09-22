@@ -30,89 +30,142 @@ func newJiraTestApp(t *testing.T) *App {
 	return &App{db: &DB{conn: conn}}
 }
 
-func TestJiraDisabledWhenIntegrationOff(t *testing.T) {
-	a := newJiraTestApp(t)
-	// Credentials present, profile opted in, but the operator has NOT enabled
-	// the integration: the global gate alone must keep it off.
-	if err := a.SetJiraSettings("https://x.atlassian.net", "me@example.com", "tok", false); err != nil {
-		t.Fatalf("SetJiraSettings: %v", err)
-	}
-	if err := a.SetJiraEnabledForProfile("work", true); err != nil {
-		t.Fatalf("SetJiraEnabledForProfile: %v", err)
-	}
-	if a.JiraEnabledForProfile("work") {
-		t.Fatal("enabled while the integration itself is off")
+func workEnv() map[string]string {
+	return map[string]string{
+		"JIRA_URL":       "https://work.atlassian.net",
+		"JIRA_USERNAME":  "me@work.com",
+		"JIRA_API_TOKEN": "work-token",
 	}
 }
 
-func TestJiraDisabledWhenCredentialsIncomplete(t *testing.T) {
-	a := newJiraTestApp(t)
-	if err := a.SetJiraSettings("https://x.atlassian.net", "me@example.com", "", true); err != nil {
-		t.Fatalf("SetJiraSettings: %v", err)
+// --- credentials come from the PROFILE's gateway env, never app-level -------
+
+func TestJiraConfigFromEnv(t *testing.T) {
+	cfg, ok := jiraConfigFromEnv(workEnv())
+	if !ok {
+		t.Fatal("complete env reported unusable")
 	}
-	a.SetJiraEnabledForProfile("work", true)
-	if a.JiraEnabledForProfile("work") {
-		t.Fatal("enabled with an empty token")
+	if cfg.BaseURL != "https://work.atlassian.net" || cfg.Username != "me@work.com" || cfg.Token != "work-token" {
+		t.Fatalf("config not mapped: %+v", cfg)
 	}
 }
 
-func TestJiraDisabledUntilProfileOptsIn(t *testing.T) {
-	a := newJiraTestApp(t)
-	if err := a.SetJiraSettings("https://x.atlassian.net", "me@example.com", "tok", true); err != nil {
-		t.Fatalf("SetJiraSettings: %v", err)
-	}
-	if a.JiraEnabledForProfile("work") {
-		t.Fatal("profile enabled by default; opt-in must default off")
-	}
-	if err := a.SetJiraEnabledForProfile("work", true); err != nil {
-		t.Fatalf("SetJiraEnabledForProfile: %v", err)
-	}
-	if !a.JiraEnabledForProfile("work") {
-		t.Fatal("profile not enabled after opting in")
-	}
-	if a.JiraEnabledForProfile("personal") {
-		t.Fatal("opting in one profile enabled another")
-	}
-}
-
-func TestJiraOptOutIsReversible(t *testing.T) {
-	a := newJiraTestApp(t)
-	a.SetJiraSettings("https://x.atlassian.net", "me@example.com", "tok", true)
-	a.SetJiraEnabledForProfile("work", true)
-	if err := a.SetJiraEnabledForProfile("work", false); err != nil {
-		t.Fatalf("opt out: %v", err)
-	}
-	if a.JiraEnabledForProfile("work") {
-		t.Fatal("still enabled after opting out")
-	}
-}
-
-func TestGetJiraSettingsNeverReturnsToken(t *testing.T) {
-	a := newJiraTestApp(t)
-	a.SetJiraSettings("https://x.atlassian.net", "me@example.com", "supersecret", true)
-	for k, v := range a.GetJiraSettings() {
-		if v == "supersecret" {
-			t.Fatalf("GetJiraSettings leaked the token in key %q", k)
+func TestJiraConfigFromEnvIncomplete(t *testing.T) {
+	for name, env := range map[string]map[string]string{
+		"no url":      {"JIRA_USERNAME": "u", "JIRA_API_TOKEN": "t"},
+		"no username": {"JIRA_URL": "https://x", "JIRA_API_TOKEN": "t"},
+		"no token":    {"JIRA_URL": "https://x", "JIRA_USERNAME": "u"},
+		"empty":       {},
+		"blank token": {"JIRA_URL": "https://x", "JIRA_USERNAME": "u", "JIRA_API_TOKEN": "   "},
+	} {
+		if _, ok := jiraConfigFromEnv(env); ok {
+			t.Fatalf("%s: reported usable", name)
 		}
 	}
 }
 
-func TestGetJiraSettingsReportsTokenPresence(t *testing.T) {
-	a := newJiraTestApp(t)
-	a.SetJiraSettings("https://x.atlassian.net", "me@example.com", "", true)
-	if got := a.GetJiraSettings()["token_set"]; got != "false" {
-		t.Fatalf("token_set = %q with no token, want false", got)
-	}
-	a.SetJiraSettings("https://x.atlassian.net", "me@example.com", "supersecret", true)
-	if got := a.GetJiraSettings()["token_set"]; got != "true" {
-		t.Fatalf("token_set = %q with a token stored, want true", got)
+func TestJiraConfigIsPerProfile(t *testing.T) {
+	// The whole point of the fix: two profiles, two different Jira sites.
+	work, _ := jiraConfigFromEnv(workEnv())
+	client, _ := jiraConfigFromEnv(map[string]string{
+		"JIRA_URL":       "https://client.atlassian.net",
+		"JIRA_USERNAME":  "me@client.com",
+		"JIRA_API_TOKEN": "client-token",
+	})
+	if work.BaseURL == client.BaseURL || work.Token == client.Token {
+		t.Fatal("profiles share credentials; they must not")
 	}
 }
 
-func TestJiraClientNilWhenProfileDisabled(t *testing.T) {
+// --- the two DB-backed gates ------------------------------------------------
+
+func TestJiraGloballyDisabledByDefault(t *testing.T) {
 	a := newJiraTestApp(t)
-	a.SetJiraSettings("https://x.atlassian.net", "me@example.com", "tok", true)
-	if a.jiraClientFor("work") != nil {
-		t.Fatal("client returned for a profile that has not opted in")
+	if a.jiraGloballyEnabled() {
+		t.Fatal("integration enabled with no row present")
+	}
+}
+
+func TestSetJiraEnabledTogglesGlobalGate(t *testing.T) {
+	a := newJiraTestApp(t)
+	if err := a.SetJiraEnabled(true); err != nil {
+		t.Fatalf("SetJiraEnabled: %v", err)
+	}
+	if !a.jiraGloballyEnabled() {
+		t.Fatal("not enabled after SetJiraEnabled(true)")
+	}
+	if err := a.SetJiraEnabled(false); err != nil {
+		t.Fatalf("SetJiraEnabled(false): %v", err)
+	}
+	if a.jiraGloballyEnabled() {
+		t.Fatal("still enabled after SetJiraEnabled(false)")
+	}
+}
+
+func TestJiraOptInIsPerProfileAndDefaultsOff(t *testing.T) {
+	a := newJiraTestApp(t)
+	if a.JiraOptedIn("work") {
+		t.Fatal("opt-in defaults on; it must default off")
+	}
+	if err := a.SetJiraEnabledForProfile("work", true); err != nil {
+		t.Fatalf("opt in: %v", err)
+	}
+	if !a.JiraOptedIn("work") {
+		t.Fatal("not opted in after enabling")
+	}
+	if a.JiraOptedIn("personal") {
+		t.Fatal("opting in one profile enabled another")
+	}
+	if err := a.SetJiraEnabledForProfile("work", false); err != nil {
+		t.Fatalf("opt out: %v", err)
+	}
+	if a.JiraOptedIn("work") {
+		t.Fatal("still opted in after opting out")
+	}
+}
+
+// --- the composite gate -----------------------------------------------------
+
+func TestJiraClientForEnvRequiresAllThreeGates(t *testing.T) {
+	a := newJiraTestApp(t)
+	env := workEnv()
+
+	// credentials only
+	if a.jiraClientForEnv("work", env) != nil {
+		t.Fatal("client built with integration off and no opt-in")
+	}
+	// + global
+	a.SetJiraEnabled(true)
+	if a.jiraClientForEnv("work", env) != nil {
+		t.Fatal("client built without the profile opting in")
+	}
+	// + opt-in
+	a.SetJiraEnabledForProfile("work", true)
+	if a.jiraClientForEnv("work", env) == nil {
+		t.Fatal("client not built with all three gates passing")
+	}
+	// a DIFFERENT profile, opted in but with no credentials of its own
+	a.SetJiraEnabledForProfile("personal", true)
+	if a.jiraClientForEnv("personal", map[string]string{}) != nil {
+		t.Fatal("profile with no credentials of its own got a client")
+	}
+}
+
+func TestJiraStatusReportsPerProfileWithoutLeakingToken(t *testing.T) {
+	a := newJiraTestApp(t)
+	a.SetJiraEnabled(true)
+	a.SetJiraEnabledForProfile("work", true)
+
+	st := a.jiraStatusForEnv("work", workEnv())
+	if !st.Configured || !st.OptedIn {
+		t.Fatalf("status = %+v, want configured and opted in", st)
+	}
+	if st.URL != "https://work.atlassian.net" || st.Username != "me@work.com" {
+		t.Fatalf("status did not surface url/username: %+v", st)
+	}
+
+	bare := a.jiraStatusForEnv("personal", map[string]string{})
+	if bare.Configured {
+		t.Fatal("profile with no env reported configured")
 	}
 }

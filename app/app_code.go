@@ -249,7 +249,9 @@ func (a *App) CodeOverview(profile string) (CodeOverview, error) {
 			out.TokenInvalid = true
 		}
 	}
-	if c := a.jiraClientFor(profile); c != nil {
+	// env is the profile's own gateway env, already fetched above — Jira
+	// credentials are per profile, exactly like GITHUB_TOKEN and ADO_PAT.
+	if c := a.jiraClientForEnv(profile, env); c != nil {
 		if _, keys := collectIssueKeys(out.PullRequests); len(keys) > 0 {
 			issues, jerr := c.Resolve(ctx, keys)
 			decorateJira(&out, issues, jerr)

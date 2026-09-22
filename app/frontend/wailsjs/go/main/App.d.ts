@@ -153,8 +153,6 @@ export function GetHiddenProfiles():Promise<Array<string>>;
 
 export function GetHubState():Promise<main.HubStateView>;
 
-export function GetJiraSettings():Promise<Record<string, string>>;
-
 export function GetLANIP():Promise<string>;
 
 export function GetLangfuseHealth():Promise<brainbox.HealthStatus>;
@@ -243,7 +241,11 @@ export function ImportEnvFile():Promise<string>;
 
 export function InitBrainProfile(arg1:string):Promise<brainbox.BrainProfileInitResult>;
 
-export function JiraEnabledForProfile(arg1:string):Promise<boolean>;
+export function JiraGloballyEnabled():Promise<boolean>;
+
+export function JiraOptedIn(arg1:string):Promise<boolean>;
+
+export function JiraStatus(arg1:string):Promise<main.JiraProfileStatus>;
 
 export function LaunchInteractiveSession(arg1:main.InteractiveSessionRequest):Promise<brainbox.SessionActionResponse>;
 
@@ -429,9 +431,9 @@ export function SetGatewayServerEnabled(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetHiddenProfiles(arg1:Array<string>):Promise<void>;
 
-export function SetJiraEnabledForProfile(arg1:string,arg2:boolean):Promise<void>;
+export function SetJiraEnabled(arg1:boolean):Promise<void>;
 
-export function SetJiraSettings(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
+export function SetJiraEnabledForProfile(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetOTLPHost(arg1:string):Promise<void>;
 
@@ -507,4 +509,4 @@ export function ValidateLoopTemplate(arg1:string):Promise<brainbox.LoopTemplateV
 
 export function VaultAuthStatus():Promise<Array<main.VaultAuth>>;
 
-export function VerifyJira():Promise<void>;
+export function VerifyJira(arg1:string):Promise<void>;
