@@ -139,11 +139,14 @@ export const commandPalette = {
 // are redirected to Settings with the matching tab pre-selected.
 // ---------------------------------------------------------------------------
 
-export type SettingsTab = 'general' | 'runners' | 'profiles' | 'gateway' | 'tokens';
+export type SettingsTab = 'general' | 'infrastructure' | 'runners' | 'profiles' | 'gateway' | 'tokens';
 
 // Legacy panel ids that are now Settings tabs → their tab. Used by AppShell to
 // redirect stale navigation/deep-links and by the command palette.
 export const SETTINGS_TAB_PANELS: Record<string, SettingsTab> = {
+  // 'integrations' was the Infrastructure panel's id; it keeps working as a
+  // deep-link target rather than landing on a blank screen.
+  integrations: 'infrastructure',
   runners: 'runners',
   profiles: 'profiles',
   gateway: 'gateway',

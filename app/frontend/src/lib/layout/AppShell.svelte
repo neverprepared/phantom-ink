@@ -10,7 +10,6 @@
   // inside SettingsPanel as tabs, so they are imported there, not here.
   import SessionsPanel from '../panels/SessionsPanel.svelte';
   import ConversationsPanel from '../panels/ConversationsPanel.svelte';
-  import ServicesPanel from '../panels/ServicesPanel.svelte';
   import JobsHubPanel from '../panels/JobsHubPanel.svelte';
   import WorkHubPanel from '../panels/WorkHubPanel.svelte';
   import MeshPanel from '../panels/MeshPanel.svelte';
@@ -107,8 +106,6 @@
         <SessionsPanel />
       {:else if currentPanel.value === 'dashboard'}
         <DashboardPanel />
-      {:else if currentPanel.value === 'integrations'}
-        <ServicesPanel />
       {:else if currentPanel.value === 'conversations'}
         <ConversationsPanel />
       {:else if currentPanel.value === 'jobs'}
