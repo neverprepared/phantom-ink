@@ -317,6 +317,10 @@ export function ListRunners():Promise<Array<brainbox.Runner>>;
 
 export function ListServices():Promise<Array<main.ServiceStatus>>;
 
+export function MarkAllNotificationsRead(arg1:string):Promise<void>;
+
+export function MarkNotificationRead(arg1:string,arg2:string):Promise<void>;
+
 export function MinioIntegrationEnabled():Promise<boolean>;
 
 export function MintGatewayToken(arg1:string,arg2:Array<string>,arg3:number,arg4:string):Promise<brainbox.GatewayToken>;

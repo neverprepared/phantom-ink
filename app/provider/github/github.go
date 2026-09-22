@@ -11,6 +11,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -87,6 +88,44 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 		return &provider.StatusError{Code: resp.StatusCode, Status: resp.Status, Path: path}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// write performs a mutating request (PATCH/PUT) and treats any 2xx as success —
+// GitHub's notification writes answer 205/202 with no body worth decoding.
+func (c *Client) write(ctx context.Context, method, path string, body []byte) error {
+	if c.token == "" {
+		return errNoToken
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return &provider.StatusError{Code: resp.StatusCode, Status: resp.Status, Path: path}
+	}
+	return nil
+}
+
+// MarkNotificationRead marks one notification thread as read. The thread id is
+// the Notification.ID returned by ListNotifications.
+func (c *Client) MarkNotificationRead(ctx context.Context, threadID string) error {
+	return c.write(ctx, http.MethodPatch, "/notifications/threads/"+url.PathEscape(threadID), nil)
+}
+
+// MarkAllNotificationsRead marks every notification as read.
+func (c *Client) MarkAllNotificationsRead(ctx context.Context) error {
+	return c.write(ctx, http.MethodPut, "/notifications", []byte(`{"read":true}`))
 }
 
 // --- Repositories -----------------------------------------------------------

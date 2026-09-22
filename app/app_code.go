@@ -403,6 +403,51 @@ func (a *App) RepoDetail(profile string, ref provider.RepoRef) (RepoDetailResult
 	return buildRepoDetail(ctx, client, profile, ref), nil
 }
 
+// --- Notification writes ----------------------------------------------------
+//
+// The only mutations in an otherwise read-only panel. Notifications are
+// GitHub-only, so these resolve the profile's GITHUB_TOKEN and act through the
+// GitHub client directly. The token needs the `notifications` scope; without it
+// GitHub returns 401, which the UI surfaces and keeps the row.
+
+func (a *App) githubForProfile(profile string) (*github.Client, error) {
+	env, err := a.GetGatewayEnv(profile)
+	if err != nil {
+		return nil, err
+	}
+	tok := strings.TrimSpace(env["GITHUB_TOKEN"])
+	if tok == "" {
+		return nil, fmt.Errorf("profile %q has no GITHUB_TOKEN", profile)
+	}
+	return github.New(tok), nil
+}
+
+// MarkNotificationRead marks one GitHub notification thread read. Bound to the UI.
+func (a *App) MarkNotificationRead(profile, id string) error {
+	c, err := a.githubForProfile(profile)
+	if err != nil {
+		return err
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return c.MarkNotificationRead(ctx, id)
+}
+
+// MarkAllNotificationsRead marks all of the profile's GitHub notifications read.
+func (a *App) MarkAllNotificationsRead(profile string) error {
+	c, err := a.githubForProfile(profile)
+	if err != nil {
+		return err
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return c.MarkAllNotificationsRead(ctx)
+}
+
 // buildRepoDetail fans the five reads out concurrently and folds them into one
 // struct, recording failures per section (prefixed by the provider that
 // produced them) instead of aborting the view.

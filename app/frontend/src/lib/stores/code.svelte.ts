@@ -252,6 +252,14 @@ function withCloneInstruction(prompt: string, t: DispatchTarget): string {
 
 const DEFAULT_AGENT = 'worker';
 
+/** Split a possibly-multi reason ("authored, review-requested") into parts. */
+function splitReasons(reason: string): string[] {
+  return (reason ?? '')
+    .split(',')
+    .map((r) => r.trim())
+    .filter(Boolean);
+}
+
 class CodeStore {
   // ── Overview ─────────────────────────────────────────────────────────────
   profile = $state('');
@@ -273,6 +281,11 @@ class CodeStore {
 
   /** Client-side filter over the repositories list. */
   repoFilter = $state('');
+
+  /** Provider filter across every section: 'all' | 'github' | 'ado'. */
+  providerFilter = $state<'all' | 'github' | 'ado'>('all');
+  /** Reason filter for the needs-attention list: 'all' | a reason string. */
+  reasonFilter = $state('all');
 
   // ── Repo detail ──────────────────────────────────────────────────────────
   //
@@ -321,16 +334,63 @@ class CodeStore {
   /** git's own stderr from the last failed clone, kept for the panel to show. */
   cloneError = $state('');
 
-  /** Repos narrowed by the filter box (matches name or description). */
+  /** Which providers appear in the loaded data — drives whether the provider
+   *  toggle is worth showing (only when both are present). Notifications are
+   *  GitHub-only, so they count toward GitHub. */
+  hasGitHub = $derived(
+    this.repos.some((r) => r.provider === 'github') ||
+      this.pullRequests.some((i) => i.provider === 'github') ||
+      this.issues.some((i) => i.provider === 'github') ||
+      this.notifications.length > 0
+  );
+  hasADO = $derived(
+    this.repos.some((r) => r.provider === 'ado') ||
+      this.pullRequests.some((i) => i.provider === 'ado') ||
+      this.issues.some((i) => i.provider === 'ado')
+  );
+  showProviderFilter = $derived(this.hasGitHub && this.hasADO);
+
+  /** Repos narrowed by the provider filter and the text filter box. */
   filteredRepos = $derived.by(() => {
     const q = this.repoFilter.trim().toLowerCase();
-    if (!q) return this.repos;
+    const pf = this.providerFilter;
     return this.repos.filter(
-      (r) => r.full_name.toLowerCase().includes(q) || (r.description ?? '').toLowerCase().includes(q)
+      (r) =>
+        (pf === 'all' || r.provider === pf) &&
+        (!q ||
+          r.full_name.toLowerCase().includes(q) ||
+          (r.description ?? '').toLowerCase().includes(q))
     );
   });
 
-  /** Rows the operator is on the hook for — PRs plus assigned issues. */
+  /** The merged needs-attention rows (PRs + assigned issues/work-items). */
+  attention = $derived.by(() => [...this.pullRequests, ...this.issues]);
+
+  /** Distinct reasons present across attention rows (for the reason chips).
+   *  A row may carry several ("authored, review-requested"). */
+  reasonsPresent = $derived.by(() => {
+    const set = new Set<string>();
+    for (const i of this.attention) for (const r of splitReasons(i.reason)) set.add(r);
+    return [...set];
+  });
+
+  /** Attention rows after the provider + reason filters. */
+  filteredAttention = $derived.by(() => {
+    const pf = this.providerFilter;
+    const rf = this.reasonFilter;
+    return this.attention.filter(
+      (i) =>
+        (pf === 'all' || i.provider === pf) &&
+        (rf === 'all' || splitReasons(i.reason).includes(rf))
+    );
+  });
+
+  /** Notifications after the provider filter (GitHub-only, so ADO hides them). */
+  filteredNotifications = $derived.by(() =>
+    this.providerFilter === 'ado' ? [] : this.notifications
+  );
+
+  /** Total rows the operator is on the hook for (unfiltered), for the header. */
   attentionCount = $derived(this.pullRequests.length + this.issues.length);
 
   templates = $derived.by(() =>
@@ -415,6 +475,49 @@ class CodeStore {
     this.lastSessionURL = '';
     this.lastClonePath = '';
     this.cloneError = '';
+    // View filters reset with the profile — an 'ado' filter carried onto a
+    // GitHub-only profile would blank every section confusingly.
+    this.providerFilter = 'all';
+    this.reasonFilter = 'all';
+  }
+
+  // ── Notifications: mark read ───────────────────────────────────────────────
+
+  /**
+   * Mark one notification read on GitHub and drop it from the list.
+   * Optimistic: the row disappears immediately; a failed write (e.g. the token
+   * lacks the `notifications` scope) restores it and shows the error.
+   */
+  async markNotificationRead(id: string): Promise<void> {
+    const profile = this.profile;
+    if (!profile || !id) return;
+    const a = await getApi();
+    if (!a) return;
+    const prev = this.notifications;
+    this.notifications = this.notifications.filter((n) => n.id !== id);
+    try {
+      await (a as any).MarkNotificationRead(profile, id);
+    } catch (e: any) {
+      this.notifications = prev;
+      notifications.error(`Couldn't mark read: ${e?.message ?? e}`);
+    }
+  }
+
+  /** Mark every notification read on GitHub and clear the list (optimistic). */
+  async markAllNotificationsRead(): Promise<void> {
+    const profile = this.profile;
+    if (!profile || this.notifications.length === 0) return;
+    const a = await getApi();
+    if (!a) return;
+    const prev = this.notifications;
+    this.notifications = [];
+    try {
+      await (a as any).MarkAllNotificationsRead(profile);
+      notifications.success('All notifications marked read');
+    } catch (e: any) {
+      this.notifications = prev;
+      notifications.error(`Couldn't mark all read: ${e?.message ?? e}`);
+    }
   }
 
   // ── Repo detail ──────────────────────────────────────────────────────────

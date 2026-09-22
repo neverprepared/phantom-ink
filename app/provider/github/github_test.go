@@ -288,3 +288,44 @@ func TestNewDefaultsToPublicAPI(t *testing.T) {
 		t.Error("New() must carry an http client with a timeout")
 	}
 }
+
+func TestMarkNotificationRead(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(http.StatusResetContent) // 205, GitHub's success for this
+	}))
+	defer srv.Close()
+	if err := NewWithBase(srv.URL, "test-token", nil).MarkNotificationRead(context.Background(), "thread-42"); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPatch || gotPath != "/notifications/threads/thread-42" {
+		t.Fatalf("got %s %s, want PATCH /notifications/threads/thread-42", gotMethod, gotPath)
+	}
+}
+
+func TestMarkAllNotificationsRead(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(http.StatusAccepted) // 202
+	}))
+	defer srv.Close()
+	if err := NewWithBase(srv.URL, "test-token", nil).MarkAllNotificationsRead(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPut || gotPath != "/notifications" {
+		t.Fatalf("got %s %s, want PUT /notifications", gotMethod, gotPath)
+	}
+}
+
+func TestMarkNotificationRead_SurfacesError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized) // token lacks notifications scope
+	}))
+	defer srv.Close()
+	err := NewWithBase(srv.URL, "test-token", nil).MarkNotificationRead(context.Background(), "t1")
+	if err == nil || !provider.IsUnauthorized(err) {
+		t.Fatalf("want unauthorized error, got %v", err)
+	}
+}
