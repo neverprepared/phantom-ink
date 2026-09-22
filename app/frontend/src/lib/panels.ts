@@ -83,13 +83,6 @@ export const panels: Panel[] = [
     icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="18" r="2"/><line x1="10" y1="10" x2="6.5" y2="7.5"/><line x1="14" y1="10" x2="17.5" y2="7.5"/><line x1="10.5" y1="14" x2="7" y2="17.5"/><line x1="13.5" y1="14" x2="16.5" y2="16.5"/></svg>`,
   },
   {
-    id: 'integrations',
-    label: 'Infrastructure',
-    section: 'system',
-    shortcut: '⌘8',
-    icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>`,
-  },
-  {
     id: 'files',
     label: 'Files',
     section: 'system',

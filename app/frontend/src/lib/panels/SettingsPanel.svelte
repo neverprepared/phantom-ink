@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { notifications } from '../notifications.svelte';
   import { profileState, settingsState, type Profile, type SettingsTab } from '../stores.svelte';
+  import ServicesPanel from './ServicesPanel.svelte';
   import RunnersPanel from './RunnersPanel.svelte';
   import ProfilesPanel from './ProfilesPanel.svelte';
   import GatewayPanel from './GatewayPanel.svelte';
@@ -12,6 +13,7 @@
   // that used to be top-level sidebar entries.
   const TABS: { id: SettingsTab; label: string }[] = [
     { id: 'general', label: 'general' },
+    { id: 'infrastructure', label: 'infrastructure' },
     { id: 'runners', label: 'runners' },
     { id: 'profiles', label: 'profiles' },
     { id: 'gateway', label: 'gateway' },
@@ -418,6 +420,8 @@
           </div>
         {/if}
       </div>
+    {:else if activeTab === 'infrastructure'}
+      <ServicesPanel />
     {:else if activeTab === 'runners'}
       <RunnersPanel />
     {:else if activeTab === 'profiles'}
