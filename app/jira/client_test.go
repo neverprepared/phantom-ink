@@ -109,3 +109,69 @@ func TestResolveEmptyKeysMakesNoCall(t *testing.T) {
 		t.Fatalf("search called %d times for empty input, want 0", *calls)
 	}
 }
+
+func TestSearchRunsTheGivenJQL(t *testing.T) {
+	var seen string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/rest/api/3/search/jql", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			JQL string `json:"jql"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		seen = body.JQL
+		json.NewEncoder(w).Encode(map[string]any{
+			"issues": []map[string]any{{
+				"key": "ABC-130",
+				"fields": map[string]any{
+					"summary":  "flaky test",
+					"status":   map[string]any{"name": "To Do", "statusCategory": map[string]any{"key": "new"}},
+					"assignee": map[string]any{"displayName": "Curtis"},
+				},
+			}},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	c := New(Config{BaseURL: srv.URL, Username: "u", Token: "t"}, http.DefaultClient)
+	got, err := c.Search(context.Background(), "assignee = currentUser()", 50)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if seen != "assignee = currentUser()" {
+		t.Fatalf("jql sent = %q", seen)
+	}
+	if len(got) != 1 || got[0].Key != "ABC-130" || got[0].Status != "To Do" {
+		t.Fatalf("issues = %+v", got)
+	}
+	if got[0].URL != srv.URL+"/browse/ABC-130" {
+		t.Fatalf("URL = %q", got[0].URL)
+	}
+}
+
+func TestSearchSurfacesBadJQL(t *testing.T) {
+	// A typo in the user's JQL is a 400. It must surface as an error, never as
+	// an empty list that reads like "no tickets".
+	mux := http.NewServeMux()
+	mux.HandleFunc("/rest/api/3/search/jql", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	c := New(Config{BaseURL: srv.URL, Username: "u", Token: "t"}, http.DefaultClient)
+	got, err := c.Search(context.Background(), "assignee = nonsense(", 50)
+	if err == nil {
+		t.Fatal("bad JQL returned nil error")
+	}
+	if got != nil {
+		t.Fatalf("bad JQL returned issues: %v", got)
+	}
+}
+
+func TestSearchRejectsEmptyJQL(t *testing.T) {
+	c := New(Config{BaseURL: "https://x", Username: "u", Token: "t"}, http.DefaultClient)
+	if _, err := c.Search(context.Background(), "   ", 50); err == nil {
+		t.Fatal("empty JQL accepted; it would fetch the entire instance")
+	}
+}

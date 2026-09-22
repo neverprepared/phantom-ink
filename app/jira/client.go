@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -33,6 +34,7 @@ type Client struct {
 	hc       *http.Client
 	issues   *cache[Issue]
 	projects *cache[map[string]bool]
+	searches *cache[[]Issue]
 }
 
 func New(cfg Config, hc *http.Client) *Client {
@@ -45,6 +47,7 @@ func New(cfg Config, hc *http.Client) *Client {
 		hc:       hc,
 		issues:   newCache[Issue](5 * time.Minute),
 		projects: newCache[map[string]bool](24 * time.Hour),
+		searches: newCache[[]Issue](2 * time.Minute),
 	}
 }
 
@@ -135,37 +138,87 @@ func (c *Client) Resolve(ctx context.Context, keys []string) (map[string]Issue, 
 		"fields":     []string{"summary", "status", "assignee"},
 		"maxResults": len(want),
 	}
-	var raw struct {
-		Issues []struct {
-			Key    string `json:"key"`
-			Fields struct {
-				Summary string `json:"summary"`
-				Status  struct {
-					Name           string `json:"name"`
-					StatusCategory struct {
-						Key string `json:"key"`
-					} `json:"statusCategory"`
-				} `json:"status"`
-				Assignee struct {
-					DisplayName string `json:"displayName"`
-				} `json:"assignee"`
-			} `json:"fields"`
-		} `json:"issues"`
+	found, err := c.search(ctx, body)
+	if err != nil {
+		return nil, err
 	}
+	for _, iss := range found {
+		c.issues.put(iss.Key, iss)
+		out[iss.Key] = iss
+	}
+	return out, nil
+}
+
+// searchResponse is the wire shape of a JQL search; Resolve and Search share it.
+type searchResponse struct {
+	Issues []struct {
+		Key    string `json:"key"`
+		Fields struct {
+			Summary string `json:"summary"`
+			Status  struct {
+				Name           string `json:"name"`
+				StatusCategory struct {
+					Key string `json:"key"`
+				} `json:"statusCategory"`
+			} `json:"status"`
+			Assignee struct {
+				DisplayName string `json:"displayName"`
+			} `json:"assignee"`
+		} `json:"fields"`
+	} `json:"issues"`
+}
+
+func (c *Client) search(ctx context.Context, body map[string]any) ([]Issue, error) {
+	var raw searchResponse
 	if err := c.do(ctx, http.MethodPost, "/rest/api/3/search/jql", body, &raw); err != nil {
 		return nil, err
 	}
+	out := make([]Issue, 0, len(raw.Issues))
 	for _, i := range raw.Issues {
-		iss := Issue{
+		out = append(out, Issue{
 			Key:            i.Key,
 			Summary:        i.Fields.Summary,
 			Status:         i.Fields.Status.Name,
 			StatusCategory: i.Fields.Status.StatusCategory.Key,
 			Assignee:       i.Fields.Assignee.DisplayName,
 			URL:            c.cfg.BaseURL + "/browse/" + i.Key,
-		}
-		c.issues.put(iss.Key, iss)
-		out[iss.Key] = iss
+		})
 	}
 	return out, nil
+}
+
+// Search runs an operator-supplied JQL query and returns the matching issues in
+// Jira's own order (the JQL's ORDER BY), which a map could not preserve.
+//
+// The results are cached under the query string: the ticket list is a second
+// Jira call on every panel load, and the JQL rarely changes between them.
+//
+// An empty query is refused rather than sent: Jira treats it as "everything",
+// which would pull the whole instance.
+func (c *Client) Search(ctx context.Context, jql string, max int) ([]Issue, error) {
+	jql = strings.TrimSpace(jql)
+	if jql == "" {
+		return nil, errors.New("jira: empty JQL")
+	}
+	if max <= 0 || max > 100 {
+		max = 50
+	}
+	if v, ok := c.searches.get(jql); ok {
+		return v, nil
+	}
+	found, err := c.search(ctx, map[string]any{
+		"jql":        jql,
+		"fields":     []string{"summary", "status", "assignee"},
+		"maxResults": max,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Individual issues warm the per-key cache too, so opening the Jira tab
+	// makes the Code tab's chips free.
+	for _, iss := range found {
+		c.issues.put(iss.Key, iss)
+	}
+	c.searches.put(jql, found)
+	return found, nil
 }
