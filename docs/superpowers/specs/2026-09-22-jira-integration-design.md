@@ -25,22 +25,38 @@ beyond issue transitions, Confluence, and a general-purpose platform cache.
 
 Three gates, all must pass before a profile sees anything Jira:
 
-1. **Global.** `jira` is an Integrations catalog entry with `kind: "saas"`.
-   ADR-003 currently assumes every integration is a relocatable compose stack;
-   `saas` is a new kind that skips fleet placement entirely. "On" means
-   credentials configured and validated. `GET /api/integrations/jira/status`
-   calls `GET /rest/api/3/myself` in place of `docker compose ps`.
-2. **Credentials.** One app-level set: `JIRA_URL`, `JIRA_USERNAME`,
-   `JIRA_API_TOKEN`, stored where gateway secrets already live — not copied
-   into each profile's env.
-3. **Per profile.** Explicit opt-in, default off. One flag gates all three
-   consumers: Code-panel chips, the Jira panel, and the `atlassian` MCP server
-   in that profile's gateway allowlist. A single flag so they cannot drift.
+1. **Global.** `jira` is a row in the app's existing `integrations` table
+   (`DB.GetIntegration`), the registry every other integration already uses.
+   `kind` is effectively `saas`: there is no compose stack to place, so ADR-003's
+   fleet dispatch is skipped and "enabled" means the feature is available in the
+   app at all. `VerifyJira(profile)` calls `GET /rest/api/3/myself` in place of
+   `docker compose ps`.
+2. **Credentials — PER PROFILE.** Read from that profile's gateway env:
+   `JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`. These are the SAME three vars
+   `mcp-atlassian` consumes, so a profile is configured once and both the MCP
+   server and the Code-panel chips use it. Two profiles can point at two
+   different Atlassian sites; neither can reach the other's token.
+3. **Per profile opt-in.** Explicit, default off, stored as
+   `jira_enabled:<profile>`. Opting out leaves credentials in place, so it is
+   reversible without re-entering a token. Gates all three consumers — chips,
+   panel, and the `atlassian` MCP server — from one flag.
 
-This diverges from the Code panel's existing presence-is-selection idiom
-(`GITHUB_TOKEN` present => GitHub on). Deliberate: presence-is-selection makes
-"why is this showing up?" unanswerable. Documented so the divergence is not
-read as an oversight.
+**CORRECTED 2026-09-22.** The first version of this spec put ONE app-level
+credential set behind a per-profile opt-in. That was wrong: it assumed every
+profile points at the same Jira, and made one profile's token reachable from
+another's context — a cross-profile leak, which this codebase treats as a bug,
+not a tradeoff. Credentials are per profile.
+
+Reading credentials from the gateway env also matches how the Code panel
+already finds `GITHUB_TOKEN` and `ADO_PAT` — `CodeOverview` opens with
+`a.GetGatewayEnv(profile)`, so Jira adds no new configuration path and needs no
+second fetch. The earlier note about diverging from "presence-is-selection"
+still holds for the OPT-IN only: credentials present does not turn chips on.
+
+The settings card deliberately does NOT write credentials. `SetGatewayEnv` is a
+full overwrite, and a blank or masked secret field clobbers a real token — a
+failure this project has already hit on the kuma user/pass. Credentials are
+entered in the gateway env editor; the card reads, reports, and toggles.
 
 ### Resolver — `app/jira/`
 
@@ -71,9 +87,10 @@ design a platform primitive.
 
 `profileAzureConfigDir` (`app/app_code.go:152`) returns a raw env value with no
 expansion, which is why a literal `app/$WORKSPACE_HOME/.azure` directory exists
-in the working tree. Jira credential resolution runs through the same env path
-and MUST NOT repeat it: expand the value and require an absolute path before
-use. Fixing the Azure case is adjacent and optional.
+in the working tree. Jira reads the same gateway env, but only URL and
+credential STRINGS — no path values — so there is nothing to expand and the bug
+is not repeated. Should a path-valued Jira setting ever be added, expand it and
+require absolute. Fixing the Azure case is adjacent and still open.
 
 ## Section 2 — Code panel decoration (slice 1)
 
