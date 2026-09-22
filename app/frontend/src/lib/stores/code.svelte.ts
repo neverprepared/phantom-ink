@@ -138,10 +138,22 @@ export interface PromptTemplate {
 }
 
 /**
+ * House style appended to every template. The operator wants terse,
+ * WHY-focused writing — PR/review text that explains the reason, not the diff,
+ * and no padding the code with explanatory comments. One place to tune it.
+ */
+export const STYLE_NOTE =
+  'Style: keep all writing terse. Any PR description or review comment must be ' +
+  'short and to the point — lead with WHY (the reason/decision), not a ' +
+  'restatement of what the diff does. No lengthy explanations, and do not add ' +
+  'explanatory code comments.';
+
+/**
  * Prompt templates per target kind. These SEED an editable textarea — the
  * operator is expected to tweak before sending, so each one bakes the context
  * (repo, number, title, url) into prose the agent can act on without a second
- * lookup rather than trying to be a complete brief.
+ * lookup rather than trying to be a complete brief. Every template ends with
+ * STYLE_NOTE so the agent's PR/review writing stays terse by default.
  */
 export const PROMPT_TEMPLATES: Record<DispatchKind, PromptTemplate[]> = {
   pr: [
@@ -150,14 +162,16 @@ export const PROMPT_TEMPLATES: Record<DispatchKind, PromptTemplate[]> = {
       build: (t) =>
         `Review pull request #${t.number} ("${t.title}") in ${t.repoFullName}.\n${t.htmlURL}\n\n` +
         `Read the diff, then report correctness bugs, missing test coverage, and anything that ` +
-        `breaks the repo's conventions. Post the review as PR comments. Do not push code.`,
+        `breaks the repo's conventions. Post the review as PR comments. Do not push code.\n\n` +
+        STYLE_NOTE,
     },
     {
       label: 'Fix failing CI',
       build: (t) =>
         `CI is failing on pull request #${t.number} ("${t.title}") in ${t.repoFullName}.\n${t.htmlURL}\n\n` +
         `Check out the PR branch, reproduce the failure locally, fix the cause (not the symptom), ` +
-        `and push to the SAME branch. Wait for CI to go green.`,
+        `and push to the SAME branch. Wait for CI to go green.\n\n` +
+        STYLE_NOTE,
     },
   ],
   issue: [
@@ -166,7 +180,8 @@ export const PROMPT_TEMPLATES: Record<DispatchKind, PromptTemplate[]> = {
       build: (t) =>
         `Address issue #${t.number} ("${t.title}") in ${t.repoFullName}.\n${t.htmlURL}\n\n` +
         `Read the issue, implement the fix on a feature branch with tests, and open a PR that ` +
-        `references the issue. Stay in scope — note anything else you find in the PR body.`,
+        `references the issue. Stay in scope.\n\n` +
+        STYLE_NOTE,
     },
   ],
   repo: [
@@ -175,7 +190,8 @@ export const PROMPT_TEMPLATES: Record<DispatchKind, PromptTemplate[]> = {
       build: (t) =>
         `Repository: ${t.repoFullName}\n${t.htmlURL}\n\n` +
         `<describe the work here>\n\n` +
-        `Work on a feature branch, add tests for every behaviour you touch, and open a PR.`,
+        `Work on a feature branch, add tests for every behaviour you touch, and open a PR.\n\n` +
+        STYLE_NOTE,
     },
   ],
 };
