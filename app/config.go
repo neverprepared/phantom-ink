@@ -28,9 +28,14 @@ const (
 	// settingPlatformNode names the fleet node whose runner drives the
 	// phantom-platform compose stack. Empty ⇒ manage the local docker daemon
 	// (app co-located with the platform, the original behaviour).
-	settingPlatformNode = "platform_node"
-	settingLocalRunnerWorkDir = "local_runner_work_dir"
+	settingPlatformNode         = "platform_node"
+	settingLocalRunnerWorkDir   = "local_runner_work_dir"
 	settingLocalRunnerMachineID = "local_runner_machine_id"
+	// Jira credentials are NOT stored here: they live in each profile's
+	// gateway env (JIRA_URL / JIRA_USERNAME / JIRA_API_TOKEN), the same vars
+	// the mcp-atlassian server consumes, so two profiles can point at two
+	// different Atlassian sites. Only the per-profile opt-in is app state.
+	settingJiraProfilePrefix = "jira_enabled:"
 )
 
 // Config is the in-memory representation of app settings.

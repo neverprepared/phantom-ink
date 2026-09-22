@@ -7,6 +7,7 @@
   import Spinner from '../components/Spinner.svelte';
   import PlatformServicesCard from '../components/PlatformServicesCard.svelte';
   import IntegrationsCard from '../components/IntegrationsCard.svelte';
+  import JiraCard from '../components/JiraCard.svelte';
   import DatabasesCard from '../components/DatabasesCard.svelte';
 
   interface Service {
@@ -256,6 +257,9 @@
 
   <!-- On-demand integrations (ADR-003): place compose stacks on fleet nodes -->
   <IntegrationsCard />
+
+  <!-- SaaS integration: credentials, not a placed stack -->
+  <JiraCard />
 
   <!-- Platform database backup / restore -->
   <DatabasesCard />

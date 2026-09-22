@@ -65,6 +65,22 @@ export interface GitHubNotification {
   url: string;
 }
 
+/** One code->ticket link. Manual ones can be removed; derived ones cannot. */
+export interface IssueLink {
+  key: string;
+  manual: boolean;
+}
+
+export interface JiraIssue {
+  key: string;
+  summary: string;
+  status: string;
+  /** new | indeterminate | done — Jira's 3-value status category. */
+  status_category: string;
+  assignee: string;
+  url: string;
+}
+
 export interface CodeOverview {
   profile: string;
   token_missing: boolean;
@@ -77,6 +93,11 @@ export interface CodeOverview {
   pull_requests_error: string;
   issues_error: string;
   notifications_error: string;
+  /** Row key (provider:repo#number) -> that row's Jira links. */
+  issue_keys: Record<string, IssueLink[]>;
+  jira_issues: Record<string, JiraIssue>;
+  /** Non-fatal: a Jira outage costs the chips, never the git rows. */
+  jira_error: string;
 }
 
 export interface Branch {
@@ -290,6 +311,10 @@ class CodeStore {
   issues = $state<Issue[]>([]);
   notifications = $state<GitHubNotification[]>([]);
 
+  issueKeys = $state<Record<string, IssueLink[]>>({});
+  jiraIssues = $state<Record<string, JiraIssue>>({});
+  jiraError = $state('');
+
   reposError = $state('');
   pullRequestsError = $state('');
   issuesError = $state('');
@@ -469,6 +494,23 @@ class CodeStore {
     this.pullRequestsError = ov.pull_requests_error ?? '';
     this.issuesError = ov.issues_error ?? '';
     this.notificationsError = ov.notifications_error ?? '';
+    this.issueKeys = ov.issue_keys ?? {};
+    this.jiraIssues = ov.jira_issues ?? {};
+    this.jiraError = ov.jira_error ?? '';
+  }
+
+  /**
+   * Jira issues linked to one row. Mirrors rowKey() in app/app_code.go —
+   * keep the two in lockstep or every chip silently vanishes.
+   */
+  jiraFor(row: Issue): (JiraIssue & { manual: boolean })[] {
+    const key = `${row.provider}:${row.repo_full_name}#${row.number}`;
+    return (this.issueKeys[key] ?? [])
+      .map((l) => {
+        const issue = this.jiraIssues[l.key];
+        return issue ? { ...issue, manual: l.manual } : null;
+      })
+      .filter((i): i is JiraIssue & { manual: boolean } => Boolean(i));
   }
 
   reset(): void {
@@ -483,6 +525,9 @@ class CodeStore {
     this.pullRequestsError = '';
     this.issuesError = '';
     this.notificationsError = '';
+    this.issueKeys = {};
+    this.jiraIssues = {};
+    this.jiraError = '';
     this.tokenMissing = false;
     this.tokenInvalid = false;
     this.loadError = null;

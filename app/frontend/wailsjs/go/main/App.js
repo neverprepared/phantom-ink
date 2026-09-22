@@ -298,6 +298,10 @@ export function GetHubState() {
   return window['go']['main']['App']['GetHubState']();
 }
 
+export function GetJiraJQL(arg1) {
+  return window['go']['main']['App']['GetJiraJQL'](arg1);
+}
+
 export function GetLANIP() {
   return window['go']['main']['App']['GetLANIP']();
 }
@@ -474,12 +478,32 @@ export function InitBrainProfile(arg1) {
   return window['go']['main']['App']['InitBrainProfile'](arg1);
 }
 
+export function JiraGloballyEnabled() {
+  return window['go']['main']['App']['JiraGloballyEnabled']();
+}
+
+export function JiraOptedIn(arg1) {
+  return window['go']['main']['App']['JiraOptedIn'](arg1);
+}
+
+export function JiraStatus(arg1) {
+  return window['go']['main']['App']['JiraStatus'](arg1);
+}
+
+export function JiraTickets(arg1) {
+  return window['go']['main']['App']['JiraTickets'](arg1);
+}
+
 export function LaunchInteractiveSession(arg1) {
   return window['go']['main']['App']['LaunchInteractiveSession'](arg1);
 }
 
 export function LaunchTeam(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['LaunchTeam'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
+export function LinkJiraIssue(arg1, arg2, arg3) {
+  return window['go']['main']['App']['LinkJiraIssue'](arg1, arg2, arg3);
 }
 
 export function ListAgentEvents(arg1, arg2, arg3) {
@@ -842,6 +866,18 @@ export function SetHiddenProfiles(arg1) {
   return window['go']['main']['App']['SetHiddenProfiles'](arg1);
 }
 
+export function SetJiraEnabled(arg1) {
+  return window['go']['main']['App']['SetJiraEnabled'](arg1);
+}
+
+export function SetJiraEnabledForProfile(arg1, arg2) {
+  return window['go']['main']['App']['SetJiraEnabledForProfile'](arg1, arg2);
+}
+
+export function SetJiraJQL(arg1, arg2) {
+  return window['go']['main']['App']['SetJiraJQL'](arg1, arg2);
+}
+
 export function SetOTLPHost(arg1) {
   return window['go']['main']['App']['SetOTLPHost'](arg1);
 }
@@ -950,6 +986,10 @@ export function TestRulePattern(arg1, arg2) {
   return window['go']['main']['App']['TestRulePattern'](arg1, arg2);
 }
 
+export function UnlinkJiraIssue(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UnlinkJiraIssue'](arg1, arg2, arg3);
+}
+
 export function UnsubscribeConversation(arg1) {
   return window['go']['main']['App']['UnsubscribeConversation'](arg1);
 }
@@ -988,4 +1028,8 @@ export function ValidateLoopTemplate(arg1) {
 
 export function VaultAuthStatus() {
   return window['go']['main']['App']['VaultAuthStatus']();
+}
+
+export function VerifyJira(arg1) {
+  return window['go']['main']['App']['VerifyJira'](arg1);
 }

@@ -12,7 +12,7 @@
   import ConversationsPanel from '../panels/ConversationsPanel.svelte';
   import ServicesPanel from '../panels/ServicesPanel.svelte';
   import JobsHubPanel from '../panels/JobsHubPanel.svelte';
-  import CodePanel from '../panels/CodePanel.svelte';
+  import WorkHubPanel from '../panels/WorkHubPanel.svelte';
   import MeshPanel from '../panels/MeshPanel.svelte';
   import MemoryGraphPanel from '../panels/MemoryGraphPanel.svelte';
   import SettingsPanel from '../panels/SettingsPanel.svelte';
@@ -114,7 +114,7 @@
       {:else if currentPanel.value === 'jobs'}
         <JobsHubPanel />
       {:else if currentPanel.value === 'code'}
-        <CodePanel />
+        <WorkHubPanel />
       {:else if currentPanel.value === 'mesh'}
         <MeshPanel />
       {:else if currentPanel.value === 'memory-graph'}
