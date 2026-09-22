@@ -62,17 +62,24 @@ func (a *App) SetJiraEnabledForProfile(profile string, enabled bool) error {
 // The token is deliberately absent: same contract as GetRegistrySettings.
 func (a *App) GetJiraSettings() map[string]string {
 	if a.db == nil {
-		return map[string]string{"url": "", "username": "", "enabled": "false"}
+		return map[string]string{"url": "", "username": "", "enabled": "false", "token_set": "false"}
 	}
 	row, _ := a.db.GetIntegration(jiraIntegrationName)
 	enabled := "false"
 	if row.Enabled {
 		enabled = "true"
 	}
+	// token_set reports PRESENCE only — never the value — so the UI can say
+	// "stored, leave blank to keep" without the token crossing the boundary.
+	tokenSet := "false"
+	if strings.TrimSpace(a.db.GetSetting(settingJiraToken, "")) != "" {
+		tokenSet = "true"
+	}
 	return map[string]string{
-		"url":      strings.TrimSpace(row.RemoteURL),
-		"username": strings.TrimSpace(a.db.GetSetting(settingJiraUsername, "")),
-		"enabled":  enabled,
+		"url":       strings.TrimSpace(row.RemoteURL),
+		"username":  strings.TrimSpace(a.db.GetSetting(settingJiraUsername, "")),
+		"enabled":   enabled,
+		"token_set": tokenSet,
 	}
 }
 

@@ -97,6 +97,18 @@ func TestGetJiraSettingsNeverReturnsToken(t *testing.T) {
 	}
 }
 
+func TestGetJiraSettingsReportsTokenPresence(t *testing.T) {
+	a := newJiraTestApp(t)
+	a.SetJiraSettings("https://x.atlassian.net", "me@example.com", "", true)
+	if got := a.GetJiraSettings()["token_set"]; got != "false" {
+		t.Fatalf("token_set = %q with no token, want false", got)
+	}
+	a.SetJiraSettings("https://x.atlassian.net", "me@example.com", "supersecret", true)
+	if got := a.GetJiraSettings()["token_set"]; got != "true" {
+		t.Fatalf("token_set = %q with a token stored, want true", got)
+	}
+}
+
 func TestJiraClientNilWhenProfileDisabled(t *testing.T) {
 	a := newJiraTestApp(t)
 	a.SetJiraSettings("https://x.atlassian.net", "me@example.com", "tok", true)
