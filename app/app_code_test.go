@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"phantom-ink/brainbox"
 	"phantom-ink/provider"
@@ -27,7 +29,24 @@ type fakeProvider struct {
 	reposErr error
 	prsErr   error
 	workErr  error
+
+	// Merged PRs and recent commits are keyed BY REPO (full name), because the
+	// DORA sync fans out per repo and its central promise is that one repo's
+	// failure does not blank the others. A single shared slice could not
+	// express that.
+	mergedPRsByRepo    map[string][]provider.MergedPR
+	mergedPRsErrByRepo map[string]error
+	commitsByRepo      map[string][]provider.Commit
+	commitsErrByRepo   map[string]error
+
+	mu           sync.Mutex // guards the recordings below; the sync fans out
+	mergedSince  map[string]time.Time
+	commitLimits map[string]int
 }
+
+// fakeRepoKey names a repo the way the fake's maps are keyed. It matches the
+// full name the production sync derives from provider.Repo.
+func fakeRepoKey(ref provider.RepoRef) string { return ref.Owner + "/" + ref.Name }
 
 func (f *fakeProvider) Kind() provider.Kind { return f.kind }
 func (f *fakeProvider) ListRepos(context.Context) ([]provider.Repo, error) {
@@ -40,8 +59,45 @@ func (f *fakeProvider) ListAssignedWork(context.Context) ([]provider.Item, error
 func (f *fakeProvider) ListBranches(context.Context, provider.RepoRef) ([]provider.Branch, error) {
 	return nil, nil
 }
-func (f *fakeProvider) ListRecentCommits(context.Context, provider.RepoRef, int) ([]provider.Commit, error) {
-	return nil, nil
+func (f *fakeProvider) ListRecentCommits(_ context.Context, ref provider.RepoRef, limit int) ([]provider.Commit, error) {
+	key := fakeRepoKey(ref)
+	f.mu.Lock()
+	if f.commitLimits == nil {
+		f.commitLimits = map[string]int{}
+	}
+	f.commitLimits[key] = limit
+	f.mu.Unlock()
+	if err := f.commitsErrByRepo[key]; err != nil {
+		return nil, err
+	}
+	return f.commitsByRepo[key], nil
+}
+func (f *fakeProvider) ListMergedPRs(_ context.Context, ref provider.RepoRef, since time.Time) ([]provider.MergedPR, error) {
+	key := fakeRepoKey(ref)
+	f.mu.Lock()
+	if f.mergedSince == nil {
+		f.mergedSince = map[string]time.Time{}
+	}
+	f.mergedSince[key] = since
+	f.mu.Unlock()
+	if err := f.mergedPRsErrByRepo[key]; err != nil {
+		return nil, err
+	}
+	return f.mergedPRsByRepo[key], nil
+}
+
+// sinceFor / commitLimitFor read the recordings back under the lock, so a test
+// asserting on a watermark cannot race the fan-out that wrote it.
+func (f *fakeProvider) sinceFor(repo string) time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.mergedSince[repo]
+}
+
+func (f *fakeProvider) commitLimitFor(repo string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.commitLimits[repo]
 }
 func (f *fakeProvider) GetReadme(context.Context, provider.RepoRef) (string, string, error) {
 	return "", "", nil

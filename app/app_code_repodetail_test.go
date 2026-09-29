@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"phantom-ink/brainbox"
 	"phantom-ink/provider"
@@ -59,6 +60,12 @@ func (f *fakeDetailProvider) GetReadme(_ context.Context, ref provider.RepoRef) 
 	f.gotRef = ref
 	f.mu.Unlock()
 	return f.readme, f.readmeURL, f.readmeErr
+}
+
+// ListMergedPRs is unused by the repo-detail fan-out this fake serves; it is
+// present only because provider.Client requires it.
+func (f *fakeDetailProvider) ListMergedPRs(context.Context, provider.RepoRef, time.Time) ([]provider.MergedPR, error) {
+	return nil, nil
 }
 func (f *fakeDetailProvider) RepoPRs(_ context.Context, ref provider.RepoRef) ([]provider.Item, error) {
 	f.mu.Lock()
