@@ -90,6 +90,10 @@ export function CreateSession(arg1) {
   return window['go']['main']['App']['CreateSession'](arg1);
 }
 
+export function DORAOverview(arg1, arg2) {
+  return window['go']['main']['App']['DORAOverview'](arg1, arg2);
+}
+
 export function DeleteAgent(arg1) {
   return window['go']['main']['App']['DeleteAgent'](arg1);
 }
@@ -802,6 +806,10 @@ export function RunPreflightChecks() {
   return window['go']['main']['App']['RunPreflightChecks']();
 }
 
+export function RunnerMetrics(arg1) {
+  return window['go']['main']['App']['RunnerMetrics'](arg1);
+}
+
 export function SaveCollectJob(arg1) {
   return window['go']['main']['App']['SaveCollectJob'](arg1);
 }
@@ -964,6 +972,10 @@ export function SubmitTaskAndWait(arg1) {
 
 export function SubscribeConversation(arg1, arg2) {
   return window['go']['main']['App']['SubscribeConversation'](arg1, arg2);
+}
+
+export function SyncDORA(arg1) {
+  return window['go']['main']['App']['SyncDORA'](arg1);
 }
 
 export function SyncProfileBundleNow(arg1) {

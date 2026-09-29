@@ -2368,6 +2368,59 @@ export namespace brainbox {
 
 }
 
+export namespace dora {
+	
+	export class Metrics {
+	    deploys_per_day: number;
+	    change_failure_rate: number;
+	    lead_time_p50_seconds: number;
+	    lead_time_p85_seconds: number;
+	    restore_p50_seconds: number;
+	    deploy_count: number;
+	    failure_count: number;
+	    restore_samples: number;
+	    bands: Record<string, string>;
+	    per_repo: Record<string, Metrics>;
+	
+	    static createFrom(source: any = {}) {
+	        return new Metrics(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.deploys_per_day = source["deploys_per_day"];
+	        this.change_failure_rate = source["change_failure_rate"];
+	        this.lead_time_p50_seconds = source["lead_time_p50_seconds"];
+	        this.lead_time_p85_seconds = source["lead_time_p85_seconds"];
+	        this.restore_p50_seconds = source["restore_p50_seconds"];
+	        this.deploy_count = source["deploy_count"];
+	        this.failure_count = source["failure_count"];
+	        this.restore_samples = source["restore_samples"];
+	        this.bands = source["bands"];
+	        this.per_repo = this.convertValues(source["per_repo"], Metrics, true);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace jira {
 	
 	export class Issue {
@@ -2883,6 +2936,74 @@ export namespace main {
 	        this.net_io = source["net_io"];
 	        this.block_io = source["block_io"];
 	        this.pids = source["pids"];
+	    }
+	}
+	export class DORAOverview {
+	    profile: string;
+	    window_days: number;
+	    token_missing: boolean;
+	    token_invalid: boolean;
+	    metrics: dora.Metrics;
+	    last_synced_at: string;
+	    caveats: string[];
+	    sync_error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DORAOverview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.window_days = source["window_days"];
+	        this.token_missing = source["token_missing"];
+	        this.token_invalid = source["token_invalid"];
+	        this.metrics = this.convertValues(source["metrics"], dora.Metrics);
+	        this.last_synced_at = source["last_synced_at"];
+	        this.caveats = source["caveats"];
+	        this.sync_error = source["sync_error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class DORASyncResult {
+	    profile: string;
+	    repos_synced: number;
+	    deploy_events_added: number;
+	    failure_events_added: number;
+	    truncated: string[];
+	    repo_errors: Record<string, string>;
+	    token_invalid: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new DORASyncResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.repos_synced = source["repos_synced"];
+	        this.deploy_events_added = source["deploy_events_added"];
+	        this.failure_events_added = source["failure_events_added"];
+	        this.truncated = source["truncated"];
+	        this.repo_errors = source["repo_errors"];
+	        this.token_invalid = source["token_invalid"];
 	    }
 	}
 	export class DatabaseInfo {
@@ -3648,6 +3769,79 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class RunnerRow {
+	    name: string;
+	    host: string;
+	    version: string;
+	    tags: string[];
+	    online: boolean;
+	    queue_depth: number;
+	    in_flight: number;
+	    max_concurrent: number;
+	    completed: number;
+	    failed: number;
+	    stranded: number;
+	    mean_duration_seconds: number;
+	    backends: Record<string, number>;
+	
+	    static createFrom(source: any = {}) {
+	        return new RunnerRow(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.host = source["host"];
+	        this.version = source["version"];
+	        this.tags = source["tags"];
+	        this.online = source["online"];
+	        this.queue_depth = source["queue_depth"];
+	        this.in_flight = source["in_flight"];
+	        this.max_concurrent = source["max_concurrent"];
+	        this.completed = source["completed"];
+	        this.failed = source["failed"];
+	        this.stranded = source["stranded"];
+	        this.mean_duration_seconds = source["mean_duration_seconds"];
+	        this.backends = source["backends"];
+	    }
+	}
+	export class RunnerMetrics {
+	    profile: string;
+	    available: boolean;
+	    runners: RunnerRow[];
+	    unreachable: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RunnerMetrics(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.available = source["available"];
+	        this.runners = this.convertValues(source["runners"], RunnerRow);
+	        this.unreachable = source["unreachable"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class SecretKeyStatus {
 	    key: string;
 	    has_value: boolean;

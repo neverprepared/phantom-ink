@@ -2,22 +2,27 @@
   import { workState, profileState, type WorkTab } from '../stores.svelte';
   import CodePanel from './CodePanel.svelte';
   import JiraTab from '../components/JiraTab.svelte';
+  import DoraTab from '../components/DoraTab.svelte';
   import { getApi } from '../utils/api';
 
   // The "Work" hub — the things assigned to you. Tabs:
-  //   code — pull requests, issues and notifications across git providers
-  //   jira — tickets from this profile's JQL, with their code links
+  //   code     — pull requests, issues and notifications across git providers
+  //   jira     — tickets from this profile's JQL, with their code links
+  //   delivery — DORA delivery metrics and fleet runner health
   // The panel id stays 'code' internally (workState, deep links): this is a
   // label-only rename, the same shape JobsHubPanel uses for Automations.
   //
   // The Jira tab appears only when the ACTIVE profile has Jira on. A profile
   // without it sees no tab strip at all, so nothing changes for them.
+  // The Delivery tab appears whenever the profile has a git provider, since
+  // merges are the whole deploy signal — no provider, no metrics to show.
   let jiraAvailable = $state(false);
+  let doraAvailable = $state(false);
   let activeName = $derived(profileState.active?.name ?? '');
 
   $effect(() => {
     const profile = activeName;
-    if (!profile) { jiraAvailable = false; return; }
+    if (!profile) { jiraAvailable = false; doraAvailable = false; return; }
     void (async () => {
       const a = await getApi();
       if (!a) return;
@@ -32,14 +37,26 @@
         jiraAvailable = false;
         if (workState.tab === 'jira') workState.tab = 'code';
       }
+      try {
+        // DORAOverview reads local SQLite only, so asking it whether a
+        // provider is configured costs no network round-trip. The window
+        // passed here is irrelevant to that answer.
+        const ov = await a.DORAOverview(profile, 30);
+        const on = !ov?.token_missing;
+        doraAvailable = on;
+        if (!on && workState.tab === 'dora') workState.tab = 'code';
+      } catch {
+        doraAvailable = false;
+        if (workState.tab === 'dora') workState.tab = 'code';
+      }
     })();
   });
 
-  let tabs = $derived<{ id: WorkTab; label: string }[]>(
-    jiraAvailable
-      ? [{ id: 'code', label: 'code' }, { id: 'jira', label: 'jira' }]
-      : [{ id: 'code', label: 'code' }],
-  );
+  let tabs = $derived<{ id: WorkTab; label: string }[]>([
+    { id: 'code' as WorkTab, label: 'code' },
+    ...(jiraAvailable ? [{ id: 'jira' as WorkTab, label: 'jira' }] : []),
+    ...(doraAvailable ? [{ id: 'dora' as WorkTab, label: 'delivery' }] : []),
+  ]);
   let activeTab = $derived(workState.tab);
 </script>
 
@@ -61,6 +78,8 @@
   <div class="work-content">
     {#if activeTab === 'jira' && jiraAvailable}
       <JiraTab />
+    {:else if activeTab === 'dora' && doraAvailable}
+      <DoraTab />
     {:else}
       <CodePanel />
     {/if}

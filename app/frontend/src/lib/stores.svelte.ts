@@ -186,7 +186,7 @@ export const JOBS_TAB_PANELS: Record<string, JobsTab> = {
 };
 
 /** Tabs of the Work hub (panel id stays 'code' — label-only rename). */
-export type WorkTab = 'code' | 'jira';
+export type WorkTab = 'code' | 'jira' | 'dora';
 
 let _workTab = $state<WorkTab>('code');
 
