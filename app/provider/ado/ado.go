@@ -524,10 +524,106 @@ func sortItems(rows []provider.Item) {
 	}
 }
 
-// ListMergedPRs is not implemented yet.
-// TODO(Task 5): real implementation over completed pull requests.
+// --- Delivery metrics (DORA) ------------------------------------------------
+
+// mergedPRsTop caps how many completed PRs one call pulls back. ADO returns
+// completed PRs newest-first, and the dashboard's widest window is 90 days, so
+// a page this size covers a very busy repo without paging.
+const mergedPRsTop = 250
+
+// wireCompletedPR is the subset of a completed pull request the delivery
+// metrics need. It is separate from wirePR because that one models an ACTIVE
+// PR: it has no close date, no merge commit, and no target branch, and adding
+// them there would put empty fields on every open-PR row in the Code panel.
+type wireCompletedPR struct {
+	PullRequestID int    `json:"pullRequestId"`
+	Title         string `json:"title"`
+	Status        string `json:"status"`
+	CreationDate  string `json:"creationDate"`
+	ClosedDate    string `json:"closedDate"`
+	TargetRefName string `json:"targetRefName"`
+	CreatedBy     struct {
+		UniqueName  string `json:"uniqueName"`
+		DisplayName string `json:"displayName"`
+	} `json:"createdBy"`
+	LastMergeCommit struct {
+		CommitID string `json:"commitId"`
+	} `json:"lastMergeCommit"`
+	Repository struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"repository"`
+}
+
+// ListMergedPRs returns the repo's completed pull requests closed at or after
+// since — the ADO half of the DORA deploy signal.
+//
+// targetRefName is stripped to a bare branch name and reported as BaseRef but
+// NOT filtered on: the default branch lives on provider.Repo, so the caller
+// decides which merges were deployments. ListRepos strips refs/heads/ from
+// DefaultBranch the same way, so the two compare directly.
 func (c *Client) ListMergedPRs(ctx context.Context, ref provider.RepoRef, since time.Time) ([]provider.MergedPR, error) {
-	return nil, nil
+	q := url.Values{
+		"searchCriteria.status": {"completed"},
+		"$top":                  {fmt.Sprint(mergedPRsTop)},
+	}
+	path := c.repoBase(ref) + "/pullrequests?" + q.Encode()
+	var wire struct {
+		Value []wireCompletedPR `json:"value"`
+	}
+	if err := c.get(ctx, withVersion(path), &wire); err != nil {
+		return nil, err
+	}
+
+	fallbackFullName := ref.Owner + "/" + ref.Name
+	out := make([]provider.MergedPR, 0, len(wire.Value))
+	for _, w := range wire.Value {
+		// Three ways a row is not a deployment: it never completed, it has no
+		// close date to time the deploy by, or it completed with no merge
+		// commit (cherry-picked elsewhere). None of them is an error.
+		if w.Status != "completed" || w.ClosedDate == "" || w.LastMergeCommit.CommitID == "" {
+			continue
+		}
+		if !isAtOrAfter(w.ClosedDate, since) {
+			continue
+		}
+		full := fallbackFullName
+		if w.Repository.Name != "" {
+			full = c.project + "/" + w.Repository.Name
+		}
+		author := w.CreatedBy.UniqueName
+		if author == "" {
+			author = w.CreatedBy.DisplayName
+		}
+		out = append(out, provider.MergedPR{
+			Provider:     provider.KindADO,
+			RepoFullName: full,
+			Number:       w.PullRequestID,
+			Title:        w.Title,
+			Author:       author,
+			CreatedAt:    w.CreationDate,
+			MergedAt:     w.ClosedDate,
+			MergeSHA:     w.LastMergeCommit.CommitID,
+			BaseRef:      strings.TrimPrefix(w.TargetRefName, "refs/heads/"),
+			HTMLURL:      c.prURL(w.Repository.Name, w.PullRequestID),
+		})
+	}
+	return out, nil
+}
+
+// isAtOrAfter reports whether an RFC3339 timestamp is at or after cutoff. An
+// UNPARSEABLE timestamp reports true, keeping the row so a format surprise
+// surfaces as data to inspect rather than as a silently shorter history. A zero
+// cutoff (never synced) admits everything.
+func isAtOrAfter(ts string, cutoff time.Time) bool {
+	if cutoff.IsZero() {
+		return true
+	}
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return true
+	}
+	return !t.Before(cutoff)
 }
 
 var _ provider.Client = (*Client)(nil)
