@@ -216,3 +216,18 @@ func (db *DB) SetDORAWatermark(profile, prov, repo string, at time.Time) error {
 // rfc3339UTC renders a time the way every timestamp in this store is written,
 // so string comparison in SQL stays chronological.
 func rfc3339UTC(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+// DORALastSyncedAt returns the newest watermark across one profile's repos as
+// an RFC3339 string, or "" when the profile has never synced. It is what the UI
+// shows as "last synced": the freshest point the whole dashboard is known to
+// cover.
+func (db *DB) DORALastSyncedAt(profile string) (string, error) {
+	var raw string
+	err := db.conn.QueryRow(
+		`SELECT COALESCE(MAX(last_synced_at), '') FROM dora_sync_state WHERE profile = ?`,
+		strings.TrimSpace(profile)).Scan(&raw)
+	if err != nil {
+		return "", err
+	}
+	return raw, nil
+}
