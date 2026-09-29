@@ -430,6 +430,56 @@ var migrations = []migration{
 			PRIMARY KEY (profile, issue_key, row_key)
 		);
 	`},
+	// v28: DORA delivery-metric events. A merge into a repo's DEFAULT branch is
+	// the deploy signal and a `Revert "..."` commit on that branch is the
+	// failure signal, so the four DORA metrics reduce to a pure function over
+	// these two tables plus a time window — which is what makes the 30/90-day
+	// toggle free and lets the dashboard render offline.
+	//
+	// profile leads every primary key, so no query can cross profiles even by
+	// accident. The natural keys (a PR number, a revert SHA) are the identity:
+	// re-syncing an overlapping window is a DO NOTHING rather than a duplicate,
+	// because a double-counted merge would silently inflate deployment
+	// frequency. dora_sync_state is the per-repo watermark that makes the fetch
+	// incremental; a missing row means "never synced", not an error.
+	{version: 28, sql: `
+		CREATE TABLE IF NOT EXISTS dora_deploy_events (
+			profile        TEXT NOT NULL,
+			provider       TEXT NOT NULL,
+			repo_full_name TEXT NOT NULL,
+			pr_number      INTEGER NOT NULL,
+			title          TEXT NOT NULL DEFAULT '',
+			author         TEXT NOT NULL DEFAULT '',
+			created_at     TEXT NOT NULL,
+			merged_at      TEXT NOT NULL,
+			merge_sha      TEXT NOT NULL DEFAULT '',
+			html_url       TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (profile, provider, repo_full_name, pr_number)
+		);
+		CREATE INDEX IF NOT EXISTS idx_dora_deploy_merged
+			ON dora_deploy_events (profile, merged_at);
+
+		CREATE TABLE IF NOT EXISTS dora_failure_events (
+			profile           TEXT NOT NULL,
+			provider          TEXT NOT NULL,
+			repo_full_name    TEXT NOT NULL,
+			revert_sha        TEXT NOT NULL,
+			reverted_subject  TEXT NOT NULL DEFAULT '',
+			matched_pr_number INTEGER NOT NULL DEFAULT 0,
+			reverted_at       TEXT NOT NULL,
+			PRIMARY KEY (profile, provider, repo_full_name, revert_sha)
+		);
+		CREATE INDEX IF NOT EXISTS idx_dora_failure_at
+			ON dora_failure_events (profile, reverted_at);
+
+		CREATE TABLE IF NOT EXISTS dora_sync_state (
+			profile        TEXT NOT NULL,
+			provider       TEXT NOT NULL,
+			repo_full_name TEXT NOT NULL,
+			last_synced_at TEXT NOT NULL,
+			PRIMARY KEY (profile, provider, repo_full_name)
+		);
+	`},
 }
 
 func (db *DB) migrate() error {
