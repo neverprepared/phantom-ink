@@ -254,3 +254,34 @@ func TestStrandedAfterIsExportedForTheAppLayer(t *testing.T) {
 		t.Fatalf("StrandedAfter = %v want 6h", StrandedAfter)
 	}
 }
+
+// Wails cannot serialise time.Duration, so the durations cross to the frontend
+// as seconds. A mirror that drifts from its duration would render a number
+// that contradicts the band badge sitting next to it.
+func TestDurationMirrorsMatchTheirDurations(t *testing.T) {
+	w := Window{From: day(1), To: day(11)}
+	deploys := []DeployEvent{
+		{RepoFullName: "o/r", PRNumber: 1, CreatedAt: day(2).Add(-2 * time.Hour), MergedAt: day(2)},
+		{RepoFullName: "o/r", PRNumber: 2, CreatedAt: day(3).Add(-6 * time.Hour), MergedAt: day(3)},
+	}
+	failures := []FailureEvent{{RepoFullName: "o/r", RevertSHA: "z", MatchedPRNumber: 1, RevertedAt: day(2).Add(90 * time.Minute)}}
+	m := Compute(deploys, failures, w)
+
+	if m.LeadTimeP50Seconds != m.LeadTimeP50.Seconds() {
+		t.Errorf("lead p50 mirror %v != %v", m.LeadTimeP50Seconds, m.LeadTimeP50.Seconds())
+	}
+	if m.LeadTimeP85Seconds != m.LeadTimeP85.Seconds() {
+		t.Errorf("lead p85 mirror %v != %v", m.LeadTimeP85Seconds, m.LeadTimeP85.Seconds())
+	}
+	if m.RestoreP50Seconds != m.RestoreP50.Seconds() {
+		t.Errorf("restore p50 mirror %v != %v", m.RestoreP50Seconds, m.RestoreP50.Seconds())
+	}
+	if m.RestoreP50Seconds != 5400 {
+		t.Errorf("90 minutes is 5400s, got %v", m.RestoreP50Seconds)
+	}
+	// The per-repo rows go to the same table, so they need mirrors too.
+	r := m.PerRepo["o/r"]
+	if r.LeadTimeP50Seconds != r.LeadTimeP50.Seconds() || r.LeadTimeP50Seconds == 0 {
+		t.Errorf("per-repo mirror not populated: %+v", r)
+	}
+}

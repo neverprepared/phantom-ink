@@ -121,12 +121,23 @@ type Metrics struct {
 	// DeploysPerDay is merges into default branches ÷ window days.
 	DeploysPerDay float64 `json:"deploys_per_day"`
 	// LeadTimeP50/P85 are percentiles of merged_at − created_at.
-	LeadTimeP50 time.Duration `json:"lead_time_p50"`
-	LeadTimeP85 time.Duration `json:"lead_time_p85"`
+	//
+	// The durations are the Go-facing API and are NOT serialised: Wails cannot
+	// map time.Duration, and a silently-omitted field would leave two of the
+	// four metric cards permanently blank. The *Seconds mirrors below are what
+	// crosses to the frontend — one number, one unit, named for it.
+	LeadTimeP50 time.Duration `json:"-"`
+	LeadTimeP85 time.Duration `json:"-"`
 	// ChangeFailureRate is reverts ÷ deploys, 0 when there are no deploys.
 	ChangeFailureRate float64 `json:"change_failure_rate"`
 	// RestoreP50 is the median revert_at − merged_at over MATCHED reverts only.
-	RestoreP50 time.Duration `json:"restore_p50"`
+	RestoreP50 time.Duration `json:"-"`
+
+	// Serialisable mirrors of the three durations above, in seconds. Kept in
+	// step by computeOne — never set by hand.
+	LeadTimeP50Seconds float64 `json:"lead_time_p50_seconds"`
+	LeadTimeP85Seconds float64 `json:"lead_time_p85_seconds"`
+	RestoreP50Seconds  float64 `json:"restore_p50_seconds"`
 
 	DeployCount  int `json:"deploy_count"`
 	FailureCount int `json:"failure_count"`
@@ -225,6 +236,11 @@ func computeOne(deploys []DeployEvent, failures []FailureEvent, w Window) Metric
 	}
 	m.RestoreSamples = len(restores)
 	m.RestoreP50 = percentile(restores, 0.50)
+
+	// Keep the serialisable mirrors in step with the durations they shadow.
+	m.LeadTimeP50Seconds = m.LeadTimeP50.Seconds()
+	m.LeadTimeP85Seconds = m.LeadTimeP85.Seconds()
+	m.RestoreP50Seconds = m.RestoreP50.Seconds()
 
 	// Bands. Deployment frequency is always classifiable — zero deploys IS a
 	// real "below monthly". The rest need at least one sample to be honest.
