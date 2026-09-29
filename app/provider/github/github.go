@@ -554,3 +554,131 @@ func (c *Client) RepoIssues(ctx context.Context, ref provider.RepoRef) ([]provid
 	sortItems(items)
 	return items, nil
 }
+
+// --- Delivery metrics (DORA) ------------------------------------------------
+//
+// The first MERGED-PR path in this client: every other query here is `is:open`.
+// It exists for the delivery dashboard, where a merge into a repo's default
+// branch stands in for a deployment.
+//
+// The pulls API is used rather than the search API because search does not
+// expose merge_commit_sha or base.ref, and both are needed — the SHA to key a
+// deploy event and the base to let the CALLER decide whether the merge was a
+// deployment at all.
+
+const (
+	// mergedPRsPerPage is GitHub's per_page ceiling for the pulls endpoint.
+	mergedPRsPerPage = 100
+	// mergedPRsMaxPages caps the walk. A repo with tens of thousands of merged
+	// PRs and a zero watermark (first-ever sync) would otherwise page for
+	// minutes and burn the hourly rate limit on history the dashboard's
+	// 90-day window cannot display anyway.
+	mergedPRsMaxPages = 10
+)
+
+// wireMergedPR is the subset of GitHub's pull-request payload the delivery
+// metrics need. MergedAt is a POINTER because a closed-but-unmerged PR sends
+// null — the distinction between "abandoned" and "shipped" is the whole point
+// of this query, so it must not collapse into an empty string.
+type wireMergedPR struct {
+	Number         int     `json:"number"`
+	Title          string  `json:"title"`
+	CreatedAt      string  `json:"created_at"`
+	UpdatedAt      string  `json:"updated_at"`
+	MergedAt       *string `json:"merged_at"`
+	MergeCommitSHA string  `json:"merge_commit_sha"`
+	HTMLURL        string  `json:"html_url"`
+	User           struct {
+		Login string `json:"login"`
+	} `json:"user"`
+	Base struct {
+		Ref  string `json:"ref"`
+		Repo struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"`
+	} `json:"base"`
+}
+
+// ListMergedPRs returns the repo's PRs merged at or after since.
+//
+// Pages are walked newest-updated first and the walk stops as soon as a whole
+// page predates since, which is what makes the caller's incremental sync cheap.
+// Rows merged into a non-default branch are RETURNED with their BaseRef, not
+// dropped: the default branch lives on provider.Repo, and the caller holds it.
+func (c *Client) ListMergedPRs(ctx context.Context, ref provider.RepoRef, since time.Time) ([]provider.MergedPR, error) {
+	fallbackFullName := ref.Owner + "/" + ref.Name
+	var out []provider.MergedPR
+
+	for page := 1; page <= mergedPRsMaxPages; page++ {
+		q := url.Values{
+			"state":     {"closed"},
+			"sort":      {"updated"},
+			"direction": {"desc"},
+			"per_page":  {fmt.Sprint(mergedPRsPerPage)},
+			"page":      {fmt.Sprint(page)},
+		}
+		path := fmt.Sprintf("/repos/%s/%s/pulls?%s",
+			url.PathEscape(ref.Owner), url.PathEscape(ref.Name), q.Encode())
+		var wire []wireMergedPR
+		if err := c.get(ctx, path, &wire); err != nil {
+			return nil, err
+		}
+		if len(wire) == 0 {
+			break
+		}
+
+		anyFresh := false
+		for _, w := range wire {
+			// Sorting is by updated_at, so freshness is judged on the field
+			// the order actually follows; judging it on merged_at would stop
+			// the walk early on a page of recently-commented old PRs.
+			if isAtOrAfter(w.UpdatedAt, since) {
+				anyFresh = true
+			}
+			if w.MergedAt == nil || *w.MergedAt == "" {
+				continue // closed without merging: not a deployment
+			}
+			if !isAtOrAfter(*w.MergedAt, since) {
+				continue
+			}
+			full := w.Base.Repo.FullName
+			if full == "" {
+				full = fallbackFullName
+			}
+			out = append(out, provider.MergedPR{
+				Provider:     provider.KindGitHub,
+				RepoFullName: full,
+				Number:       w.Number,
+				Title:        w.Title,
+				Author:       w.User.Login,
+				CreatedAt:    w.CreatedAt,
+				MergedAt:     *w.MergedAt,
+				MergeSHA:     w.MergeCommitSHA,
+				BaseRef:      w.Base.Ref,
+				HTMLURL:      w.HTMLURL,
+			})
+		}
+
+		// A short page is the last page. A full page with nothing newer than
+		// the watermark means the rest is older still.
+		if len(wire) < mergedPRsPerPage || !anyFresh {
+			break
+		}
+	}
+	return out, nil
+}
+
+// isAtOrAfter reports whether an RFC3339 timestamp is at or after cutoff. An
+// UNPARSEABLE timestamp reports true: it keeps the row so a format surprise
+// shows up as data to inspect rather than as a silently shorter history. A zero
+// cutoff (never synced) admits everything.
+func isAtOrAfter(ts string, cutoff time.Time) bool {
+	if cutoff.IsZero() {
+		return true
+	}
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return true
+	}
+	return !t.Before(cutoff)
+}

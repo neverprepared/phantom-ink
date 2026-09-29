@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // Kind identifies which host a Client (and every row it returns) belongs to.
@@ -94,6 +95,27 @@ type Commit struct {
 	HTMLURL string `json:"html_url"`
 }
 
+// MergedPR is one PULL REQUEST THAT LANDED. It is deliberately NOT an Item:
+// Item feeds every open-PR view in the app, and growing it with merge fields
+// would put nil-ish merge data on thousands of rows that will never have any.
+//
+// BaseRef is populated but NOT filtered on. Whether a merge counts as a
+// deployment depends on the repo's default branch, which lives on Repo (not
+// RepoRef), so the caller — which already holds the repo list — makes that
+// call. This keeps the provider dumb and the policy in one place.
+type MergedPR struct {
+	Provider     Kind   `json:"provider"`
+	RepoFullName string `json:"repo_full_name"`
+	Number       int    `json:"number"`
+	Title        string `json:"title"`
+	Author       string `json:"author"`
+	CreatedAt    string `json:"created_at"`
+	MergedAt     string `json:"merged_at"`
+	MergeSHA     string `json:"merge_sha"`
+	BaseRef      string `json:"base_ref"`
+	HTMLURL      string `json:"html_url"`
+}
+
 // Notification is one GitHub inbox row. GitHub-only in v1.
 type Notification struct {
 	ID           string `json:"id"`
@@ -142,6 +164,18 @@ type Client interface {
 	GetReadme(ctx context.Context, ref RepoRef) (md string, htmlURL string, err error)
 	RepoPRs(ctx context.Context, ref RepoRef) ([]Item, error)
 	RepoIssues(ctx context.Context, ref RepoRef) ([]Item, error) // ADO: empty in v1
+
+	// Delivery metrics
+	//
+	// ListMergedPRs returns PRs merged into ref's repo with a merge timestamp
+	// AT OR AFTER since — the deploy signal behind the DORA dashboard. The
+	// caller passes its stored watermark as since; the boundary is inclusive,
+	// so the last already-recorded merge comes back once more, which the
+	// store's idempotent upsert absorbs. A zero since means "all available
+	// history".
+	//
+	// BaseRef is populated on every row and NOT filtered on — see MergedPR.
+	ListMergedPRs(ctx context.Context, ref RepoRef, since time.Time) ([]MergedPR, error)
 
 	NormalizeCloneURL(url string) string
 }

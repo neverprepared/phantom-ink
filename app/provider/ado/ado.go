@@ -524,4 +524,10 @@ func sortItems(rows []provider.Item) {
 	}
 }
 
+// ListMergedPRs is not implemented yet.
+// TODO(Task 5): real implementation over completed pull requests.
+func (c *Client) ListMergedPRs(ctx context.Context, ref provider.RepoRef, since time.Time) ([]provider.MergedPR, error) {
+	return nil, nil
+}
+
 var _ provider.Client = (*Client)(nil)
