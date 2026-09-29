@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"phantom-ink/brainbox"
 	"phantom-ink/dora"
 	"phantom-ink/provider"
 )
@@ -471,4 +472,206 @@ func toDoraFailures(rows []FailureEventRow) []dora.FailureEvent {
 		})
 	}
 	return out
+}
+
+// --- Runner metrics ---------------------------------------------------------
+//
+// Fleet health, derived rather than sampled: ListRunners gives the live state
+// (up/down, queue depth, in-flight vs. capacity) and ListTasks gives the real
+// history to reduce per runner. No sampler goroutine, no new tables — the hub
+// already holds both halves.
+
+// RunnerMetrics is the runner section of the Delivery tab.
+type RunnerMetrics struct {
+	Profile string `json:"profile"`
+	// Available is false when no runners are registered or the hub could not
+	// be reached. The tab hides the section entirely rather than rendering an
+	// empty table, which would read as "the fleet is idle".
+	Available bool        `json:"available"`
+	Runners   []RunnerRow `json:"runners"`
+	// Unreachable explains a hub that did not answer. DORA metrics still
+	// render from local state, so this is a note, not a failure.
+	Unreachable string `json:"unreachable"`
+}
+
+// RunnerRow is one runner's live state plus its derived throughput.
+type RunnerRow struct {
+	Name    string   `json:"name"`
+	Host    string   `json:"host"`
+	Version string   `json:"version"`
+	Tags    []string `json:"tags"`
+	Online  bool     `json:"online"`
+
+	QueueDepth    int `json:"queue_depth"`
+	InFlight      int `json:"in_flight"`
+	MaxConcurrent int `json:"max_concurrent"`
+
+	Completed int `json:"completed"`
+	Failed    int `json:"failed"`
+	// Stranded counts tasks left in "running" by a runner that died or went
+	// quiet. It is its OWN number, never folded into Failed: the platform has
+	// no liveness reconcile, so these are a known gap to be seen rather than a
+	// verdict on the runner's reliability. They are also excluded from
+	// MeanDurationSeconds, which they would otherwise inflate without bound.
+	Stranded int `json:"stranded"`
+
+	MeanDurationSeconds float64 `json:"mean_duration_seconds"`
+	// Backends counts tasks per execution backend (docker | utm | ssh).
+	Backends map[string]int `json:"backends"`
+}
+
+// RunnerMetrics returns the fleet's live health and derived throughput for one
+// profile. A hub that cannot be reached is reported, never returned as an
+// error: the DORA half of the page reads local state and must still render.
+func (a *App) RunnerMetrics(profile string) (RunnerMetrics, error) {
+	out := RunnerMetrics{Profile: profile}
+	if a.client == nil {
+		out.Unreachable = "no brainbox client configured"
+		return out, nil
+	}
+	runners, err := a.client.ListRunners()
+	if err != nil {
+		out.Unreachable = err.Error()
+		return out, nil
+	}
+	// Tasks are scoped to the profile, like everything else on this page.
+	tasks, err := a.client.ListTasks("", profile)
+	if err != nil {
+		// Live state without history is still worth showing; say so rather
+		// than dropping the section.
+		out.Unreachable = err.Error()
+	}
+	out.Runners = computeRunnerRows(runners, tasks, time.Now().UTC())
+	out.Available = len(out.Runners) > 0
+	return out, nil
+}
+
+// computeRunnerRows is the pure derivation: live runner state joined with task
+// history, grouped by runner name. Now is injected so the liveness and
+// stranded rules are testable without sleeping.
+//
+// A task attributed to a runner that is NOT registered still produces a row.
+// Hiding it would hide exactly the case worth seeing — work the fleet believes
+// is in flight on a machine that is gone.
+func computeRunnerRows(runners []brainbox.Runner, tasks []brainbox.Task, now time.Time) []RunnerRow {
+	now = now.UTC()
+
+	registered := make(map[string]brainbox.Runner, len(runners))
+	rows := make(map[string]*RunnerRow, len(runners))
+	for _, r := range runners {
+		registered[r.Name] = r
+		rows[r.Name] = &RunnerRow{
+			Name:          r.Name,
+			Host:          r.Host,
+			Version:       r.Version,
+			Tags:          r.Tags,
+			Online:        isRunnerOnline(r, now),
+			QueueDepth:    r.QueueDepth,
+			InFlight:      r.InFlight,
+			MaxConcurrent: r.MaxConcurrent,
+			Backends:      map[string]int{},
+		}
+	}
+
+	// Durations are summed per runner and averaged at the end, so the mean is
+	// over terminal, non-stranded tasks only.
+	var (
+		durSum   = map[string]float64{}
+		durCount = map[string]int{}
+	)
+
+	for _, t := range tasks {
+		name := strings.TrimSpace(t.RunnerName)
+		if name == "" {
+			// Dispatched in-process, not to a runner. Crediting it to anyone
+			// would be an invention.
+			continue
+		}
+		row, ok := rows[name]
+		if !ok {
+			// A ghost: tasks point at a runner the hub no longer lists.
+			row = &RunnerRow{Name: name, Backends: map[string]int{}}
+			rows[name] = row
+		}
+		if b := strings.TrimSpace(t.Backend); b != "" {
+			row.Backends[b]++
+		}
+
+		if isStrandedTask(t, registered, now) {
+			row.Stranded++
+			continue
+		}
+		switch t.Status {
+		case "completed", "succeeded", "success":
+			row.Completed++
+		case "failed", "error", "cancelled", "canceled":
+			row.Failed++
+		default:
+			// Still legitimately in flight: not finished, so no duration and
+			// no verdict.
+			continue
+		}
+		// A failure is still a measured run, so it counts toward the mean.
+		if d, ok := taskDuration(t); ok {
+			durSum[name] += d.Seconds()
+			durCount[name]++
+		}
+	}
+
+	out := make([]RunnerRow, 0, len(rows))
+	for name, row := range rows {
+		if n := durCount[name]; n > 0 {
+			row.MeanDurationSeconds = durSum[name] / float64(n)
+		}
+		out = append(out, *row)
+	}
+	// Stable order so the table does not reshuffle between polls.
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// isRunnerOnline reports whether a runner's heartbeat is recent enough to
+// believe. LastSeen is epoch seconds; a zero value means it never checked in.
+func isRunnerOnline(r brainbox.Runner, now time.Time) bool {
+	if r.LastSeen <= 0 {
+		return false
+	}
+	return now.Sub(time.Unix(r.LastSeen, 0).UTC()) < runnerOfflineAfter
+}
+
+// isStrandedTask implements the spec's rule: a task in "running" whose
+// UpdatedAt is older than dora.StrandedAfter, OR whose runner is not in the
+// current ListRunners result (including one that is listed but has gone
+// quiet — a runner nobody has heard from cannot be making progress).
+//
+// These are counted separately and kept out of the duration mean because the
+// platform has no liveness reconcile: their UpdatedAt stops advancing while
+// wall-clock does not, so averaging them in would drag the mean up without
+// bound and hide the real throughput.
+func isStrandedTask(t brainbox.Task, registered map[string]brainbox.Runner, now time.Time) bool {
+	if t.Status != "running" {
+		return false
+	}
+	r, ok := registered[strings.TrimSpace(t.RunnerName)]
+	if !ok || !isRunnerOnline(r, now) {
+		return true
+	}
+	updated := coerceMillis(t.UpdatedAt)
+	if updated <= 0 {
+		// No usable heartbeat on a task claiming to run: treat it as stranded
+		// rather than as an infinitely fast one.
+		return true
+	}
+	return now.Sub(time.UnixMilli(updated).UTC()) > dora.StrandedAfter
+}
+
+// taskDuration is CreatedAt -> UpdatedAt for a terminal task. ok is false when
+// either timestamp is unusable or the pair is not ordered, so a bad row is
+// dropped from the mean rather than contributing a negative or zero duration.
+func taskDuration(t brainbox.Task) (time.Duration, bool) {
+	start, end := coerceMillis(t.CreatedAt), coerceMillis(t.UpdatedAt)
+	if start <= 0 || end <= 0 || end < start {
+		return 0, false
+	}
+	return time.Duration(end-start) * time.Millisecond, true
 }

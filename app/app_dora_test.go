@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"phantom-ink/brainbox"
 	"phantom-ink/dora"
 	"phantom-ink/provider"
 )
@@ -415,5 +416,176 @@ func TestDORAOverviewCarriesBandKeys(t *testing.T) {
 	}
 	if _, ok := ov.Metrics.PerRepo["o/r"]; !ok {
 		t.Fatalf("per-repo breakdown missing: %+v", ov.Metrics.PerRepo)
+	}
+}
+
+// --- Runner metrics ---------------------------------------------------------
+//
+// computeRunnerRows is the pure derivation, so these need no App, no DB and no
+// hub. The property that matters most: a task the platform ABANDONED must not
+// be averaged in as a very slow one.
+
+func TestRunnerMetricsExcludesStrandedTasksFromMeanDuration(t *testing.T) {
+	now := time.Now().UTC()
+	rf := func(t time.Time) string { return t.Format(time.RFC3339) }
+
+	runners := []brainbox.Runner{{Name: "m3-64", Host: "m3", LastSeen: now.Unix(), MaxConcurrent: 4}}
+	tasks := []brainbox.Task{
+		{ID: "a", RunnerName: "m3-64", Status: "completed", Backend: "docker",
+			CreatedAt: rf(now.Add(-70 * time.Minute)), UpdatedAt: rf(now.Add(-60 * time.Minute))}, // 10m
+		{ID: "b", RunnerName: "m3-64", Status: "running", Backend: "docker",
+			CreatedAt: rf(now.Add(-13 * time.Hour)), UpdatedAt: rf(now.Add(-12 * time.Hour))}, // stranded
+	}
+	got := computeRunnerRows(runners, tasks, now)
+
+	if len(got) != 1 {
+		t.Fatalf("want one row: %+v", got)
+	}
+	row := got[0]
+	if row.Stranded != 1 {
+		t.Fatalf("a task running with a 12h-old UpdatedAt is stranded: got %d", row.Stranded)
+	}
+	if row.MeanDurationSeconds != 600 {
+		t.Fatalf("mean must come from the completed task ALONE (600s), got %v", row.MeanDurationSeconds)
+	}
+	if row.Completed != 1 {
+		t.Fatalf("completed = %d want 1", row.Completed)
+	}
+	if !row.Online {
+		t.Fatal("a runner seen just now is online")
+	}
+	if row.Backends["docker"] != 2 {
+		t.Fatalf("backend split counts every task: %+v", row.Backends)
+	}
+}
+
+func TestRunnerMetricsTreatsUnregisteredRunnersTaskAsStranded(t *testing.T) {
+	now := time.Now().UTC()
+	runners := []brainbox.Runner{{Name: "m3-64", LastSeen: now.Unix(), MaxConcurrent: 4}}
+	tasks := []brainbox.Task{
+		// Recent UpdatedAt, but "ghost" is not a registered runner.
+		{ID: "c", RunnerName: "ghost", Status: "running",
+			CreatedAt: now.Add(-5 * time.Minute).Format(time.RFC3339),
+			UpdatedAt: now.Add(-1 * time.Minute).Format(time.RFC3339)},
+	}
+	got := computeRunnerRows(runners, tasks, now)
+	var ghost *RunnerRow
+	for i := range got {
+		if got[i].Name == "ghost" {
+			ghost = &got[i]
+		}
+	}
+	if ghost == nil {
+		t.Fatal("a task attributed to an unregistered runner must still surface as a row")
+	}
+	if ghost.Stranded != 1 || ghost.Online {
+		t.Fatalf("unregistered runner's running task is stranded and offline: %+v", *ghost)
+	}
+	if ghost.MeanDurationSeconds != 0 {
+		t.Fatalf("a stranded task contributes no duration: %+v", *ghost)
+	}
+}
+
+func TestRunnerMetricsUnavailableWhenNoRunners(t *testing.T) {
+	// No runners registered and no tasks: the UI hides the whole section
+	// rather than rendering an empty table.
+	rows := computeRunnerRows(nil, nil, time.Now().UTC())
+	if len(rows) != 0 {
+		t.Fatalf("nothing registered yields no rows: %+v", rows)
+	}
+}
+
+// A task still legitimately in flight — recent heartbeat, registered runner —
+// is neither stranded nor finished, so it contributes to InFlight only.
+func TestRunnerMetricsKeepsHealthyRunningTasksOutOfEveryTotal(t *testing.T) {
+	now := time.Now().UTC()
+	runners := []brainbox.Runner{{Name: "m3-64", LastSeen: now.Unix(), MaxConcurrent: 4, InFlight: 1, QueueDepth: 3}}
+	tasks := []brainbox.Task{
+		{ID: "live", RunnerName: "m3-64", Status: "running",
+			CreatedAt: now.Add(-3 * time.Minute).Format(time.RFC3339),
+			UpdatedAt: now.Add(-1 * time.Minute).Format(time.RFC3339)},
+	}
+	row := computeRunnerRows(runners, tasks, now)[0]
+	if row.Stranded != 0 {
+		t.Fatalf("a fresh running task is not stranded: %+v", row)
+	}
+	if row.Completed != 0 || row.Failed != 0 {
+		t.Fatalf("a running task is neither completed nor failed: %+v", row)
+	}
+	if row.MeanDurationSeconds != 0 {
+		t.Fatalf("an unfinished task has no duration to average: %+v", row)
+	}
+	// Live counters come from the runner's own report, not derived from tasks.
+	if row.InFlight != 1 || row.QueueDepth != 3 || row.MaxConcurrent != 4 {
+		t.Fatalf("live counters must pass through: %+v", row)
+	}
+}
+
+func TestRunnerMetricsCountsFailuresAndAveragesTerminalTasksOnly(t *testing.T) {
+	now := time.Now().UTC()
+	rf := func(d time.Duration) string { return now.Add(d).Format(time.RFC3339) }
+	runners := []brainbox.Runner{{Name: "m3-64", LastSeen: now.Unix()}}
+	tasks := []brainbox.Task{
+		{ID: "1", RunnerName: "m3-64", Status: "completed", CreatedAt: rf(-40 * time.Minute), UpdatedAt: rf(-30 * time.Minute)}, // 10m
+		{ID: "2", RunnerName: "m3-64", Status: "failed", CreatedAt: rf(-40 * time.Minute), UpdatedAt: rf(-20 * time.Minute)},    // 20m
+	}
+	row := computeRunnerRows(runners, tasks, now)[0]
+	if row.Completed != 1 || row.Failed != 1 {
+		t.Fatalf("one of each: %+v", row)
+	}
+	// A failure is still a measured run, so it belongs in the mean.
+	if row.MeanDurationSeconds != 900 {
+		t.Fatalf("mean of 10m and 20m is 900s, got %v", row.MeanDurationSeconds)
+	}
+}
+
+// A runner whose heartbeat has gone quiet reads as down, and every task it was
+// running is stranded by definition — that is the platform gap this exists to
+// make visible.
+func TestRunnerMetricsMarksAStaleRunnerOfflineAndItsTasksStranded(t *testing.T) {
+	now := time.Now().UTC()
+	runners := []brainbox.Runner{{Name: "dead", LastSeen: now.Add(-1 * time.Hour).Unix()}}
+	tasks := []brainbox.Task{
+		{ID: "x", RunnerName: "dead", Status: "running",
+			CreatedAt: now.Add(-10 * time.Minute).Format(time.RFC3339),
+			UpdatedAt: now.Add(-2 * time.Minute).Format(time.RFC3339)},
+	}
+	row := computeRunnerRows(runners, tasks, now)[0]
+	if row.Online {
+		t.Fatalf("an hour-old heartbeat is not online: %+v", row)
+	}
+	if row.Stranded != 1 {
+		t.Fatalf("a dead runner's running task is stranded: %+v", row)
+	}
+}
+
+// Tasks dispatched in-process carry no runner name. They must not be folded
+// into a real runner's numbers, nor invent a blank-named row.
+func TestRunnerMetricsIgnoresTasksWithNoRunner(t *testing.T) {
+	now := time.Now().UTC()
+	runners := []brainbox.Runner{{Name: "m3-64", LastSeen: now.Unix()}}
+	tasks := []brainbox.Task{
+		{ID: "inproc", RunnerName: "", Status: "completed",
+			CreatedAt: now.Add(-20 * time.Minute).Format(time.RFC3339),
+			UpdatedAt: now.Add(-10 * time.Minute).Format(time.RFC3339)},
+	}
+	rows := computeRunnerRows(runners, tasks, now)
+	if len(rows) != 1 || rows[0].Name != "m3-64" {
+		t.Fatalf("an unattributed task must not create a row: %+v", rows)
+	}
+	if rows[0].Completed != 0 {
+		t.Fatalf("an unattributed task must not be credited to a runner: %+v", rows[0])
+	}
+}
+
+func TestRunnerMetricsRowsAreSortedByName(t *testing.T) {
+	now := time.Now().UTC()
+	runners := []brainbox.Runner{
+		{Name: "zeta", LastSeen: now.Unix()},
+		{Name: "alpha", LastSeen: now.Unix()},
+	}
+	rows := computeRunnerRows(runners, nil, now)
+	if len(rows) != 2 || rows[0].Name != "alpha" || rows[1].Name != "zeta" {
+		t.Fatalf("rows must be stably ordered for the UI: %+v", rows)
 	}
 }
