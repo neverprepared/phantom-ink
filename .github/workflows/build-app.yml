@@ -88,4 +88,4 @@ jobs:
         with:
           name: phantom-ink-dmg
           path: ${{ steps.dmg.outputs.DMG_PATH }}
-          retention-days: 14
+          retention-days: 7
