@@ -49,6 +49,8 @@ export function CreateProfile(arg1:string):Promise<main.Profile>;
 
 export function CreateSession(arg1:brainbox.CreateSessionRequest):Promise<brainbox.SessionActionResponse>;
 
+export function DORAOverview(arg1:string,arg2:number):Promise<main.DORAOverview>;
+
 export function DeleteAgent(arg1:string):Promise<void>;
 
 export function DeleteArtifactObject(arg1:string,arg2:string):Promise<void>;
@@ -405,6 +407,8 @@ export function RunMetricScript(arg1:string,arg2:string):Promise<string>;
 
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
 
+export function RunnerMetrics(arg1:string):Promise<main.RunnerMetrics>;
+
 export function SaveCollectJob(arg1:main.CollectJob):Promise<main.CollectJob>;
 
 export function SaveCustomBundleSource(arg1:string,arg2:string,arg3:string):Promise<void>;
@@ -486,6 +490,8 @@ export function SubmitTask(arg1:brainbox.SubmitTaskRequest):Promise<main.HubTask
 export function SubmitTaskAndWait(arg1:brainbox.WaitForTaskRequest):Promise<brainbox.WaitForTaskResponse>;
 
 export function SubscribeConversation(arg1:string,arg2:string):Promise<void>;
+
+export function SyncDORA(arg1:string):Promise<main.DORASyncResult>;
 
 export function SyncProfileBundleNow(arg1:string):Promise<brainbox.BundlePutResult>;
 
