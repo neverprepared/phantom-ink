@@ -101,6 +101,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
+          retention-days: 7
           name: shell-profiler-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
             shell-profiler-*.tar.gz
