@@ -1,13 +1,151 @@
 # Agent Relay — Design Spec
 
 **Date:** 2026-10-07
-**Status:** Draft (design shape) — pending approval. Implementation phased across 5 sequential increments with explicit gates.
+**Status:** **NOT APPROVED — DO NOT BUILD AS SPECCED.** Retained as the record of a 5-lens adversarial review that falsified four of its load-bearing mechanisms. The approved replacement is the four-item probe in §0. Everything from §1 onward is the original draft, preserved unedited except where a §0 finding is cross-referenced.
 **Revised:** 2026-10-07 — merged the under-posting and volume risks into one trade-off and
 locked the dial (§9.1); demoted volume, dedup and staleness to **open problems** rather
 than mitigated rows (§9.2); recorded briefing as an accepted context-injection channel
 (§9.3); replaced the weak "readability at 20 entries" gate with a top-5 retrieval-precision
 test; made repo-config provisioning a Phase 1 requirement.
 **Supersedes:** nothing. Deliberately does *not* replace the conversation engine (see §10).
+
+## 0. Review outcome (2026-10-07) — read this first
+
+A five-lens adversarial review (YAGNI, failure modes, security, operability, retrieval),
+each lens verifying claims against code rather than against this document, returned:
+
+| Lens | Verdict |
+|---|---|
+| YAGNI | **RESPEC** — "the findings don't trim the spec, they falsify its locked goals" |
+| Failure modes | **DESIGN DEFECT** — rewrite §4, Phase 1, Phase 2 before build |
+| Security | **MITIGATE BEFORE BUILD** — Phase 2 blocked on five findings |
+| Retrieval | **VIABLE WITH CHANGES** |
+| Operability | **OPERABLE WITH CHANGES** — scorecard + `session_id` are binding conditions |
+
+### 0.1 Why this is not an amendment
+
+**The null hypothesis holds: the pipeline this spec proposes already exists.**
+
+- `task update --finding` already captures per-finding during work, with importance and
+  memory-type.
+- `task complete` already promotes to a **recallable** store — `internal/mcp/task.go`
+  ingests to `curated` with `KindOverride: "task_summary"`,
+  `MemoryTypeOverride: "episodic"`, `SourceOverride: ["task:<id>"]`.
+- `session_summary.py` already emits narrative + machine-extracted facts + an evidence
+  handle.
+- The p2p mesh already replicates it.
+
+The **only** genuine gap is that `recall` prefers the synthesised body
+(`internal/pgrecall/recall.go` `bodyExpr`). So the real delta is a read-path option plus a
+vault binding — not a five-phase programme.
+
+Worse, this spec's §2.2 "verbatim, never distilled" **introduced** a defect the existing
+path does not have: `reliability` and `topic` are omitted from p2p `syncCols` because they
+are recomputed locally, which holds for **synth** kinds. `task_summary` is a synth kind.
+Choosing verbatim is precisely what breaks cross-node ranking.
+
+### 0.2 Confirmed substrate traps (verified against code — reusable beyond this spec)
+
+1. **`supersede` hides the original from `recall`.** The integration test's own header:
+   "supersede writes a link, recall + list hide the superseded record." `head=false` and
+   `history` still reach it. So §2.4's "amend, never delete" is true of storage and false
+   of the read path — and Phase 4 would have removed exactly the refuted dead ends it
+   existed to preserve. A briefing would then silently reduce to unreviewed claims only,
+   presented as vetted. If an annotation is ever needed, widen
+   `record_links_rel_chk` (today `CHECK (rel IN ('supersedes'))`) — the hiding keys
+   explicitly on `rel='supersedes'`, so a new rel annotates without hiding.
+2. **The router skips `configure()` for runner-dispatched sessions.** `lifecycle.py`:
+   `if ctx.runner_name and ctx.runner_name != "local": return ctx`. A briefing injected
+   there reaches local sessions only — never the fleet, which was the entire motivation.
+   `configure()` is also not fail-open, so a hung dependency inside it fails session create.
+3. **Vault tokens are injected into the container, not kept server-side.**
+   `_brain_cred_keys()` enumerates `CL_<VAULT>_API_TOKEN` per entry in `CL_BRAIN__VAULTS`.
+   Adding a vault hands every session a full-vault bearer with no scope and no ceiling,
+   **bypassing the MCP gateway entirely** — so ADR-002 residency filtering and ADR-005
+   capability scoping have no reach over brain vaults. This spec's claim that the token
+   "stays server-side" was simply wrong.
+4. **`reliability` is author-settable** (`applyMemoryFields` copies it verbatim; validation
+   only checks enum membership) **and was this spec's top ranking key** — so a poisoned
+   entry self-promotes. As a ranking input it also ratchets upward until every entry is
+   `high` and the feature carries zero bits.
+5. **`supersededSHAs` full-scans every supersedes link on every recall**, with `fetchSize`
+   clamped to `recallMaxLimit=50`; past ~40 superseded entries pages silently under-fill.
+6. **"Scoped by repo + role" is not implementable today.** `RecordsMapping` has no
+   `repo`/`role` field and `buildFilters` has no `tags` clause despite `tags` being mapped
+   as a keyword. Separately, `topic` is an **unanalyzed keyword term filter**, which
+   directly contradicts §4's "no taxonomy imposed" — free-text topics never match.
+7. **No `author`/`node` field exists.** §4 asserted a provenance property the substrate
+   lacks, while citing prior art that depended on exactly that property.
+
+### 0.3 Where the security acceptance in §9.3 was wrong
+
+§9.3 accepted briefing as a context-injection channel because "every writer is our own
+agent." **Authorship is not the trust boundary.** Our agents read issues, changelogs,
+vendored READMEs and web pages, then write findings — authentically ours, content
+attacker-chosen. §9.3's own revisit trigger was therefore met on day one. It is also worse
+than ordinary prompt injection because it **persists**: one bad entry gets a ranked,
+auto-injected delivery channel into every future session. Additionally, briefing must never
+ride `appendSystemPromptFiles`, which would make web-derived text literally system prompt.
+
+### 0.4 The approved replacement — a four-item probe
+
+Reuse what exists; prove the content is worth something before automating delivery.
+
+1. Add `sessions` to `CL_BRAIN__VAULTS` **through `phantom-platform` repo config** — never
+   by hand; hand-provisioning is how the `agents` vault came to exist on the live daemon
+   but not in config.
+2. POST the existing `session_summary.py` envelope to that vault.
+3. Add a **raw read** option to `recall`, so the exact body is retrievable.
+4. **Read the corpus for a week**, then decide whether any delivery machinery is justified.
+
+No migration, no new kind, no injection, no new token — and because nothing is injected,
+the entire §9.3 risk class is out of scope for the probe.
+
+**Two independent fixes, not relay work:**
+
+- `reap.go` publish-before-unlink. A real bug, but only for **local** Claude Code sessions,
+  whose `wm-<PID>.sqlite` actually gets reaped. Containers use a CLI task store at pid 0
+  that `reap.go` is documented never to match, so this spec's "crash-safe publish"
+  component addressed a bug that does not exist on the session path — and is ill-defined
+  for `SIGKILL` regardless.
+- `session_summary.py` sets `description = narrative[:4000]` **unredacted**, while evidence
+  upload is opt-in *because* transcripts carry secrets. Needs a redaction pass, and a
+  delete escape hatch that **overrides** §2.4 — a secret spill must not be permanent and
+  mesh-replicated.
+
+### 0.5 Decisions worth keeping if this is ever revisited
+
+- **Staleness:** admission-time TTL in the briefing composer (not briefable past ~30 days,
+  still recallable), with an optional `repo`+`commit` anchor. Zero brain change. Decay
+  cannot work — it is only *relative* demotion, so in a thin scope a six-month-old wrong
+  entry still ranks first.
+- **Outcome:** a denormalized keyword **on the record**, never a read-time link join. Under
+  p2p a link references two SHAs, so merge can deliver link-before-record either way;
+  verdicts arrive orphaned or records silently rank `unknown`, through an invisible window.
+- **Ranking:** relevance is the sort key; reliability and recency are bounded (±15%)
+  nudges. **Filter** on reliability; **rank** on outcome, because a different actor writes
+  it.
+- **Provenance as a tripwire, not a trust claim:** router-stamped from observed tool use
+  (did this session call web/browser/issue-tracker tools?), never agent-declared.
+  Externally-tainted entries brief as quoted evidence only and are barred from
+  `reliability=high`.
+- **Any agent-initiated read:** a gateway tool, scope-gated and ceiling-filtered,
+  read-only — never a vault bearer.
+- **The gate, made executable:** freeze the corpus; have a *different* agent write each
+  query from the originating problem statement only (never the entry text); plant
+  distractors that must not be admitted (past-TTL, refuted, superseded-correct); run
+  through the real composer; pass on top-10 hit rate **and zero distractors admitted**.
+  Then inflate to ~2,000 plausible neighbours and re-run — that answers the volume
+  question in an afternoon rather than waiting for a later phase.
+- **Dedup:** query-time suppression on the slice only (over-fetch, drop near-duplicates,
+  report the suppressed count — which *is* the frequency signal). Write-time dedup is
+  actively wrong: five agents hitting one wall is signal. Byte-identical entries already
+  collapse via `records_uniq` and content-addressing, so only *fuzzy* dedup was ever open.
+- **Operability:** any phase gate whose metric is hand-counted is fiction. A
+  `relay report` scorecard pushed over the notify spine is the binding condition, and
+  `session_id` on the entry is required before two named mechanisms can even be computed.
+
+---
 
 ## 1. Motivation
 
