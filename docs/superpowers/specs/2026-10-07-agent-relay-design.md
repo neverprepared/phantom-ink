@@ -2,6 +2,11 @@
 
 **Date:** 2026-10-07
 **Status:** Draft (design shape) — pending approval. Implementation phased across 5 sequential increments with explicit gates.
+**Revised:** 2026-10-07 — merged the under-posting and volume risks into one trade-off and
+locked the dial (§9.1); demoted volume, dedup and staleness to **open problems** rather
+than mitigated rows (§9.2); recorded briefing as an accepted context-injection channel
+(§9.3); replaced the weak "readability at 20 entries" gate with a top-5 retrieval-precision
+test; made repo-config provisioning a Phase 1 requirement.
 **Supersedes:** nothing. Deliberately does *not* replace the conversation engine (see §10).
 
 ## 1. Motivation
@@ -54,6 +59,9 @@ Better to provide a good one.
 8. **Assemble, don't build.** A verbatim vault already provides exact storage, hybrid
    retrieval, reliability filtering, supersede versioning, profile scoping, and p2p mesh
    sync. No new service.
+9. **No write mandate; ruthless read selection.** See §9.1 — this is the single most
+   consequential decision in the spec. Posting is never gated or enforced. The relay is
+   allowed to be noisy, and *admission to the briefing* is where quality is enforced.
 
 ### Tunable defaults (config, easy to change)
 - Briefing slice injected at session start: **top 10 entries**, scoped to repo + role.
@@ -125,8 +133,10 @@ start, as the primary read.**
   fits there. `phantom-agents` / `phantom-skills` already demonstrate on-demand vault
   loading, so the pattern is established.
 - Requires **nothing** from the agent — no discipline, no prompt compliance, no tool call.
-- Scoped by repo + role; ordered by reliability then recency; `superseded-correct` excluded.
+- Scoped by repo + role. **Admission criteria are the quality control for the whole
+  system — see §9.1**, because there is deliberately no write-side gate.
 - Hard cap on slice size. A briefing that blows the context budget is a regression.
+- Briefed content is **agent-authored text entering another agent's context**. See §9.3.
 
 Agent-initiated pull (`recall` over the vault) is added in Phase 3 as a *supplement*, never
 the primary.
@@ -186,15 +196,29 @@ Publish-then-reap.
 - **End-to-end in a real container** — not mocked, not REST-only. The existing board MCP
   tools were never verified in a live container; do not repeat that.
 
+**Provisioning requirement — not optional.** The vault must be created **through
+`phantom-platform` repo config**, not by hand on the daemon. Precedent: the `agents` vault
+is live and populated on m3 but absent from
+`phantom-platform/config/phantom-brain/profiles/*/vaults/`, so a fresh bootstrap would not
+recreate it. Doing this by hand reproduces that drift exactly. The router half is
+declarative (add `findings` to `CL_BRAIN__VAULTS`; `lifecycle.py` derives
+`CL_FINDINGS_API_TOKEN` and keeps it server-side) — it is the brain-side binding that
+drifts.
+
 **Gate to Phase 2 (≥2 week soak):**
 - [ ] ≥20 entries accumulated organically.
 - [ ] Crash-publish verified on a real killed container.
-- [ ] **The readability test:** answer a real question from the relay that you could not
-      have answered before, using only `recall`. If the relay is already unreadable at
-      20 entries, retrieval is the problem and Phase 2 will not fix it.
+- [ ] Vault present after a **clean bootstrap from repo config** on a scratch target —
+      not just working on the live daemon.
+- [ ] **The retrieval test** (replaces an earlier, weaker "can you read it" check):
+      construct 5 realistic queries a *future* agent would ask, run them through `recall`,
+      and score whether the top-5 hits are the entries you would have hand-picked.
+      Precision in the top 5 is the metric; total corpus readability is not, because 20
+      entries is readable no matter how bad ranking is.
 
 **Kill criterion:** if the entries are uniformly low-value — epitaphs with no reusable
-reasoning — stop and reconsider the grain before building the read path.
+reasoning — stop and reconsider the grain before building the read path. If ranking is
+already poor at 20 entries it will not survive 2,000; fix retrieval before Phase 2.
 
 ### Phase 2 — Briefing injection
 **Build: ~2–3 days.** Recall slice in the `configure` phase, scoped and capped.
@@ -205,10 +229,16 @@ reasoning — stop and reconsider the grain before building the read path.
   leakage is a bug, not a degradation.
 - Assert `superseded-correct` entries are excluded.
 
+**Blocking prerequisite:** the **staleness** decision in §9.2 must be made before this
+phase ships. Briefing is the mechanism that turns a stale entry into a confidently wrong
+instruction, so shipping injection without an aging story is shipping the hazard.
+
 **Gate to Phase 3 (≥2 week soak):**
 - [ ] **≥1 demonstrated case of an agent not repeating a documented dead end** — the
       single most important piece of evidence in this spec. Everything else is plumbing.
 - [ ] Briefing adds no measurable session-start latency regression.
+- [ ] **Zero cases of an agent misled by a stale entry.** One such case is a stop, not a
+      papercut — it is strictly worse than having no relay.
 - [ ] Subjective but required: briefed sessions feel like they start further along.
 
 **Kill criterion:** if no avoided-dead-end case appears in two weeks, the relay's content
@@ -262,14 +292,90 @@ elapsed real use exposes those.
 
 ## 9. Risks
 
+### 9.1 The signal/noise dial (the dominant risk — one trade-off, not two)
+
+Under-posting and volume are **not independent risks**. They are opposite ends of one dial,
+and an earlier draft of this spec wrongly listed them as separate table rows with separate
+mitigations. Getting this wrong in either direction kills the relay.
+
+**Why agents under-post — it is structural, not motivational.** An agent's completion signal
+is *its own task*. Posting costs tokens, context and time, and the beneficiary is a
+different agent that does not exist yet. That is a free-rider structure. No amount of
+prompt insistence fixes an incentive, and instructions that do not serve the immediate goal
+are the first thing dropped under context pressure.
+
+**Why the obvious fix is worse.** Mandating posts — gating `task complete` on having
+findings, for which there is precedent in the existing Stop-hook enforcement — produces
+**compliance slop**: entries written to satisfy a gate rather than to inform anyone. That
+converts a signal problem into a noise problem, which is the other end of the same dial.
+
+**Decision (locked, §2.9): no write mandate; ruthless read selection.** Let the relay be
+noisy. Enforce quality at *admission to the briefing*, not at write time:
+
+- Rank by `reliability`, then `outcome`, then recency.
+- Prefer entries a later agent actually referenced (citation as a quality signal) once
+  Phase 3 makes referencing observable.
+- Exclude `superseded-correct`; brief `refuted` only as an explicit warning.
+- Hard cap the slice.
+
+Read-side selection costs nothing in agent compliance and **cannot be gamed by an agent
+trying to pass a gate**, which is precisely why it is preferred to enforcement.
+
+### 9.2 Open problems (unsolved — do not pretend otherwise)
+
+These have no mitigation in this spec. They are recorded as open so Phase 2+ does not
+proceed believing them handled.
+
+**Volume is substantially unmitigated.** Capping the briefing bounds what an agent *reads*;
+it does nothing about corpus growth or ranking degradation. The prior art broke down at
+hundreds of thousands of entries. The Phase 1 retrieval test measures top-5 precision at
+small N, which is necessary but nowhere near sufficient.
+
+**Deduplication.** When five agents hit the same wall, the relay gets five near-identical
+entries. `supersede` is for *amendment*, not dedup — nothing collapses them. A healthy
+relay should **shrink** under repetition (five reports of one failure → one entry with a
+count), but consolidation is exactly what the synth gate does, and §2.2 rejects that for
+verbatim. The tension is real: **verbatim buys exactness and forfeits consolidation.** The
+likely resolution is a derived digest layer for briefing with drill-through to verbatim —
+a new component, and more complexity than this spec currently accounts for.
+
+**Staleness — the most dangerous open problem.** A finding about a dependency since
+upgraded is not merely useless, it is **confidently wrong**. `superseded-correct` covers the
+case somebody noticed; stale-but-unmarked is the hazard. Nothing here ages entries.
+**Briefing a stale entry is worse than briefing nothing**, because believing it costs the
+new agent nothing. Candidate directions (none chosen): recency decay in ranking; a
+revalidation requirement past some age; binding an entry to a commit/dependency version so
+it can be invalidated mechanically. Needs a decision before Phase 2 ships.
+
+### 9.3 Briefing is a context-injection channel (accepted with eyes open)
+
+Briefing injection means **agent-authored content enters another agent's instruction context
+at session start.** This is not hypothetical: it is the literal mechanism by which the
+agents in the prior art propagated capability between runs. One wrong or poisoned entry is
+then believed by every subsequent agent, and `reliability` offers no protection because the
+entry's author sets its own confidence.
+
+**Accepted** for a single-operator, single-tenant fleet where every writer is our own agent.
+Recorded explicitly rather than left unnoticed, because the platform is otherwise
+fail-closed about trust (ADR-000 P2, trust-zone ceilings) and this is a deliberate
+exception. Revisit immediately if any of these become true:
+
+- a relay entry can be authored by anything outside our own fleet;
+- the relay is read across profiles (today it is profile-scoped and must stay so);
+- briefed content starts driving tool calls or automation without a human in the loop.
+
+Cheap partial measures, deferred but noted: brief entries as *quoted evidence* rather than
+as instructions, and mark the briefing block as untrusted data in the prompt.
+
+### 9.4 Remaining risks
+
 | Risk | Mitigation |
 |---|---|
-| **Agents under-post; relay degenerates into session-end epitaphs while looking healthy** (dominant risk) | Phase 2 before Phase 3 — prove reading pays before asking for more writing. Explicit kill criterion. |
-| **Volume kills retrieval** (the prior-art failure mode) | Verbatim + no distillation makes this worse, not better. Gate on readability at 20 entries; cap the briefing; revisit grain if ranking degrades. |
-| Briefing eats the context budget | Hard cap; measure session-start latency. |
-| Premature taxonomy | Impose none. The prior art shows conventions emerge from use; harvest them later if they do. |
-| Relay drifts into duplicating brain `memory` | Vault boundary + verbatim-vs-synth is the line. The relay is in-flight working knowledge; promotion to `memory` stays explicit. |
-| Outcome verdicts become rubber stamps | Gate requires evidence of an actual downgrade/upgrade, not just coverage. |
+| Briefing eats the context budget | Hard cap; measure session-start latency as a Phase 2 gate. |
+| Premature taxonomy | Impose none. The prior art shows conventions emerge from use; harvest later if they do. |
+| Relay drifts into duplicating brain `memory` | The vault boundary plus verbatim-vs-synth is the line. The relay is in-flight working knowledge; promotion to `memory` stays explicit. |
+| Outcome verdicts become rubber stamps | The Phase 4 gate requires evidence of an actual downgrade or upgrade, not mere coverage. |
+| New vault exists on the live daemon but not after a clean bootstrap | Phase 1 provisioning requirement; `agents`-vault drift is the precedent. |
 
 ## 10. Explicitly not doing
 
