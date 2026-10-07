@@ -918,6 +918,10 @@ export function SetServiceConfig(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['SetServiceConfig'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function SetServiceEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetServiceEnabled'](arg1, arg2);
+}
+
 export function SetTheme(arg1) {
   return window['go']['main']['App']['SetTheme'](arg1);
 }

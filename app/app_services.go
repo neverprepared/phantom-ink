@@ -123,3 +123,72 @@ func (a *App) SetServiceConfig(name string, enabled bool, localURL string, remot
 	}
 	return errNoDB
 }
+
+// ---------------------------------------------------------------------------
+// Enabled toggle
+// ---------------------------------------------------------------------------
+
+// toggleAction is what flipping a service's Enabled switch should do beyond
+// persisting the flag.
+type toggleAction int
+
+const (
+	toggleConfigOnly toggleAction = iota // persist only — nothing to compose
+	toggleStart
+	toggleStop
+)
+
+func (t toggleAction) String() string {
+	switch t {
+	case toggleStart:
+		return "start"
+	case toggleStop:
+		return "stop"
+	default:
+		return "config-only"
+	}
+}
+
+// serviceToggleAction decides what the Enabled toggle does for a service. Only
+// local docker integrations are started/stopped: native services are managed
+// outside docker, remote ones live on another host, and platform services belong
+// to the Platform Services card.
+func serviceToggleAction(def ServiceDef, cfg ServiceConfig, enabled bool) toggleAction {
+	if def.Native || def.Platform || cfg.Remote {
+		return toggleConfigOnly
+	}
+	if enabled {
+		return toggleStart
+	}
+	return toggleStop
+}
+
+// SetServiceEnabled persists a service's Enabled flag and, for local docker
+// integrations, brings the container up or down to match — the toggle is a power
+// switch, not just a label. The flag is persisted first so the card reflects the
+// user's intent even when the container fails to start; the start/stop error is
+// returned so the UI can surface it.
+func (a *App) SetServiceEnabled(name string, enabled bool) error {
+	for _, def := range knownServices {
+		if def.Name != name {
+			continue
+		}
+		cfg := a.getIntegrationConfig(name)
+		if a.db != nil {
+			if err := a.db.UpsertIntegration(IntegrationRow{
+				Name: name, Enabled: enabled, Remote: cfg.Remote,
+				LocalURL: cfg.LocalURL, RemoteURL: cfg.RemoteURL,
+			}); err != nil {
+				return fmt.Errorf("persist %s: %w", def.Label, err)
+			}
+		}
+		switch serviceToggleAction(def, cfg, enabled) {
+		case toggleStart:
+			return a.StartService(name)
+		case toggleStop:
+			return a.StopService(name)
+		}
+		return nil
+	}
+	return fmt.Errorf("unknown service: %s", name)
+}
