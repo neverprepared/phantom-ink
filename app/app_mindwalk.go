@@ -97,6 +97,18 @@ func containerBrainURL(hostAPI string) string {
 	).Replace(hostAPI)
 }
 
+// mindwalkInjectedVars are the variables mindwalkComposeEnv sets at `compose up`.
+// Every one of them MUST also be declared in the service's compose
+// `environment:` block — docker compose passes through only what it declares, so
+// an undeclared var is dropped silently and the container starts without it.
+// app_mindwalk_compose_test.go enforces that.
+var mindwalkInjectedVars = []string{
+	"BRAIN_URL",
+	"CL_BRAIN_API_TOKEN",
+	"CL_BRAIN_VAULT",
+	"CL_BRAIN_VAULT_TOKENS",
+}
+
 // vaultEnvKeys maps a profile .env variable to the brain vault it authenticates.
 // These are the unified per-(profile, vault) tokens, identical across the node's
 // auth.toml, peers' CL_SYNC__PEERS entries and the client .env — so the value in
