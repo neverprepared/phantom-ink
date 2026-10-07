@@ -375,6 +375,8 @@ export function ReadProfileHostEnv(arg1:string):Promise<string>;
 
 export function RebuildBaseImage(arg1:main.BaseImageBuildRequest):Promise<void>;
 
+export function ReconcileIntegrations():Promise<Array<string>>;
+
 export function RemoveConversationParticipant(arg1:string,arg2:string,arg3:string):Promise<brainbox.Conversation>;
 
 export function RenameArtifactObject(arg1:string,arg2:string,arg3:string):Promise<void>;

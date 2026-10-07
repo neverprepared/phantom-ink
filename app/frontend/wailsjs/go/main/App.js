@@ -742,6 +742,10 @@ export function RebuildBaseImage(arg1) {
   return window['go']['main']['App']['RebuildBaseImage'](arg1);
 }
 
+export function ReconcileIntegrations() {
+  return window['go']['main']['App']['ReconcileIntegrations']();
+}
+
 export function RemoveConversationParticipant(arg1, arg2, arg3) {
   return window['go']['main']['App']['RemoveConversationParticipant'](arg1, arg2, arg3);
 }

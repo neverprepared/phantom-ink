@@ -91,6 +91,18 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 
+	// Converge enabled integrations: a `docker compose down` (or anything else
+	// that removed a container behind our back) leaves a stack the user had
+	// running permanently down, since `restart: unless-stopped` cannot revive a
+	// container that no longer exists. Off the startup path — compose up can
+	// take seconds and must not delay the window.
+	go func() {
+		if started := a.ReconcileIntegrations(); len(started) > 0 {
+			logErr("reconciled integrations: %v", started)
+			runtime.EventsEmit(ctx, "services:reconciled", started)
+		}
+	}()
+
 	// Load config from DB
 	a.config = loadConfigFromDB(a.db)
 

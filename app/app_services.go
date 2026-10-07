@@ -70,6 +70,11 @@ func (a *App) StartService(name string) error {
 				}); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: failed to update integration %q: %v\n", name, err)
 				}
+				// Record run intent so ReconcileIntegrations restarts this
+				// stack at launch if its container is torn down meanwhile.
+				if err := a.db.SetDesiredRunning(name, true); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to set desired_running for %q: %v\n", name, err)
+				}
 			}
 			return nil
 		}
@@ -89,7 +94,17 @@ func (a *App) StopService(name string) error {
 				return fmt.Errorf("%s is configured as remote — cannot stop locally", def.Label)
 			}
 			extra, _ := a.serviceComposeEnv(name) // best-effort: down doesn't build
-			return composeDown(name, extra...)
+			if err := composeDown(name, extra...); err != nil {
+				return err
+			}
+			// Clear run intent before returning so a deliberate stop is not
+			// undone by ReconcileIntegrations on the next launch.
+			if a.db != nil {
+				if err := a.db.SetDesiredRunning(name, false); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to clear desired_running for %q: %v\n", name, err)
+				}
+			}
+			return nil
 		}
 	}
 	return fmt.Errorf("unknown service: %s", name)
