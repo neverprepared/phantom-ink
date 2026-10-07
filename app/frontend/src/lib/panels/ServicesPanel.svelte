@@ -120,13 +120,23 @@
     expandedServices = next;
   }
 
+  // The toggle is a power switch: for local docker integrations the backend also
+  // brings the container up or down. Native/remote services only record config.
   async function handleToggle(svc: Service) {
+    const next = !svc.enabled;
+    setBusy(svc.name);
     try {
-      await saveSvc(svc, { enabled: !svc.enabled });
-      toggleExpanded(svc.name);
+      const a = await getApi();
+      await a?.SetServiceEnabled(svc.name, next);
+      if (!svc.enabled) toggleExpanded(svc.name);
       await refresh();
-      notifications.success(`${svc.label} ${!svc.enabled ? 'enabled' : 'disabled'}`);
-    } catch (err: any) { notifications.error(`Failed to toggle ${svc.label}: ${err}`); }
+      notifications.success(`${svc.label} ${next ? 'enabled' : 'disabled'}`);
+    } catch (err: any) {
+      // The flag is persisted before the container is touched, so re-read to
+      // show the real state rather than leaving the switch mid-flight.
+      await refresh();
+      notifications.error(`Failed to ${next ? 'start' : 'stop'} ${svc.label}: ${err}`);
+    } finally { clearBusy(svc.name); }
   }
 
   async function handleRemoteToggle(svc: Service) {
@@ -388,7 +398,7 @@
               </span>
             </button>
             <label class="toggle-switch" title={svc.enabled ? 'Disable' : 'Enable'}>
-              <input type="checkbox" checked={svc.enabled} onchange={() => handleToggle(svc)} />
+              <input type="checkbox" checked={svc.enabled} disabled={busy} onchange={() => handleToggle(svc)} />
               <span class="toggle-track"></span>
             </label>
           </div>

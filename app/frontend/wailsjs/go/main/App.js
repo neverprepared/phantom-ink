@@ -742,6 +742,10 @@ export function RebuildBaseImage(arg1) {
   return window['go']['main']['App']['RebuildBaseImage'](arg1);
 }
 
+export function ReconcileIntegrations() {
+  return window['go']['main']['App']['ReconcileIntegrations']();
+}
+
 export function RemoveConversationParticipant(arg1, arg2, arg3) {
   return window['go']['main']['App']['RemoveConversationParticipant'](arg1, arg2, arg3);
 }
@@ -912,6 +916,10 @@ export function SetRuleEnabled(arg1, arg2) {
 
 export function SetServiceConfig(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['SetServiceConfig'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function SetServiceEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetServiceEnabled'](arg1, arg2);
 }
 
 export function SetTheme(arg1) {

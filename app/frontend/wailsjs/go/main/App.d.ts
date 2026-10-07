@@ -375,6 +375,8 @@ export function ReadProfileHostEnv(arg1:string):Promise<string>;
 
 export function RebuildBaseImage(arg1:main.BaseImageBuildRequest):Promise<void>;
 
+export function ReconcileIntegrations():Promise<Array<string>>;
+
 export function RemoveConversationParticipant(arg1:string,arg2:string,arg3:string):Promise<brainbox.Conversation>;
 
 export function RenameArtifactObject(arg1:string,arg2:string,arg3:string):Promise<void>;
@@ -460,6 +462,8 @@ export function SetRegistrySettings(arg1:string,arg2:string,arg3:string):Promise
 export function SetRuleEnabled(arg1:string,arg2:boolean):Promise<brainbox.RuleEnabledState>;
 
 export function SetServiceConfig(arg1:string,arg2:boolean,arg3:string,arg4:string,arg5:boolean):Promise<void>;
+
+export function SetServiceEnabled(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetTheme(arg1:string):Promise<void>;
 

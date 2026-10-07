@@ -23,7 +23,8 @@ func newJiraTestApp(t *testing.T) *App {
 			enabled    INTEGER NOT NULL DEFAULT 0,
 			remote     INTEGER NOT NULL DEFAULT 0,
 			local_url  TEXT NOT NULL DEFAULT '',
-			remote_url TEXT NOT NULL DEFAULT ''
+			remote_url TEXT NOT NULL DEFAULT '',
+			desired_running INTEGER NOT NULL DEFAULT 0
 		);
 		CREATE TABLE jira_links (
 			profile    TEXT NOT NULL,

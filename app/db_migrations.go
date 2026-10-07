@@ -480,6 +480,15 @@ var migrations = []migration{
 			PRIMARY KEY (profile, provider, repo_full_name)
 		);
 	`},
+	// v29: desired_running separates "the user wants this container up" from
+	// `enabled` (config intent, which the Integrations toggle sets without ever
+	// starting anything). StartService sets it, StopService clears it, and
+	// ReconcileIntegrations converges on it at launch so a container torn down
+	// behind the app's back comes back. Defaults to 0: existing rows opt in the
+	// first time they are started, so the migration starts nothing by surprise.
+	{version: 29, fn: func(conn *sql.DB) error {
+		return addColumnIfMissing(conn, "integrations", "desired_running", "INTEGER NOT NULL DEFAULT 0")
+	}},
 }
 
 func (db *DB) migrate() error {

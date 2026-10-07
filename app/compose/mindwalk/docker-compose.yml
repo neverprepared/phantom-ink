@@ -4,8 +4,15 @@
 # published to the fleet registry, so this works on any node that can pull it
 # (nodes need `docker login registry.neverprepared.com` — ansible-managed).
 # phantom-ink injects at `compose up` (see app_mindwalk.go):
-#   BRAIN_URL           brain daemon reachable from inside the container
-#   CL_BRAIN_API_TOKEN  the ACTIVE profile's memory-vault bearer token
+#   BRAIN_URL              brain daemon reachable from inside the container
+#   CL_BRAIN_API_TOKEN     the ACTIVE profile's memory-vault bearer token
+#   CL_BRAIN_VAULT         the default vault the graph opens on
+#   CL_BRAIN_VAULT_TOKENS  JSON vault -> token, so the in-app vault picker can
+#                          switch between memory / skills / todo / agents
+#
+# Every injected variable must be declared below: docker compose passes through
+# only what it declares, so an omitted one is dropped silently and the container
+# starts without it. app_mindwalk_compose_test.go enforces this.
 services:
   mindwalk:
     image: registry.neverprepared.com/phantom-mindwalk:0.7.0
@@ -18,6 +25,8 @@ services:
       BIND: 0.0.0.0
       BRAIN_URL: ${BRAIN_URL:-http://host.docker.internal:9998}
       CL_BRAIN_API_TOKEN: ${CL_BRAIN_API_TOKEN:-}
+      CL_BRAIN_VAULT: ${CL_BRAIN_VAULT:-memory}
+      CL_BRAIN_VAULT_TOKENS: ${CL_BRAIN_VAULT_TOKENS:-}
     extra_hosts:
       # host.docker.internal resolves natively on macOS/OrbStack; explicit for Linux.
       - "host.docker.internal:host-gateway"
