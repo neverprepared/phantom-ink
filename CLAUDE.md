@@ -34,7 +34,7 @@ phantom-ink (Wails desktop app)
   │    ├─ db*.go                   local SQLite state (~/.phantom-ink.db) + migrations
   │    ├─ brainbox/                HTTP client + SSE listener for the Brainbox API
   │    └─ internal/contract        codegen'd timeline-entry bindings (pinned tag)
-  └─ Svelte 5 frontend (app/frontend/src/lib/panels/*.svelte — 19 panels)
+  └─ Svelte 5 frontend (app/frontend/src/lib/panels/*.svelte — 24 panels, 11 sidebar-routed)
 
 Brainbox (brainbox/src/brainbox)
   ├─ api.py            FastAPI app, ~142 routes (/api/sessions, /api/hub/*, /api/rules,
