@@ -269,9 +269,18 @@ versioning is `supersede` via `record_links`; there is no git-based backup path.
 
 > **Known config drift.** `phantom-platform/config/phantom-brain/profiles/` still
 > provisions `artifacts` and `sessions` for all three profiles, though neither is part of
-> the model above. Conversely the `agents` vault is live on the daemon and populated, but
-> is **absent from that config** — so a fresh bootstrap from the repo would not recreate
-> it. `phantom-router`'s `config.py` has the same omission. Both should be reconciled.
+> the model above, and the `agents` vault is **absent from that config** even though it is
+> live on the daemon and populated — so a fresh bootstrap from the repo would not recreate
+> it. The drift is confined to that config: `phantom-router`'s `config.py` is already
+> correct, listing `["memory", "skills", "todo", "agents"]` and documenting `artifacts`
+> and `sessions` as retired.
+
+**How vault tokens reach a session** (relevant whenever a vault is added): the router
+derives one env var per vault from `CL_BRAIN__VAULTS` — the default vault as
+`CL_BRAIN_API_TOKEN`, each other as `CL_<VAULT>_API_TOKEN` — in `lifecycle.py`. Tokens stay
+**server-side**; the profile image injects them. So the router half of adding a vault is
+declarative. The brain half (creating the binding, `auth.toml`, and DB provisioning) is
+separate, and is where the drift above comes from.
 
 ---
 
