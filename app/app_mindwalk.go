@@ -39,19 +39,35 @@ func (a *App) mindwalkComposeEnv() ([]string, error) {
 	if profile == "" {
 		return nil, fmt.Errorf("no active profile selected")
 	}
-	res, err := a.client.GetBrainProfileTokens(profile)
-	if err != nil {
-		return nil, fmt.Errorf("resolve brain tokens for profile %q: %w", profile, err)
-	}
-	tokens := map[string]string{}
-	for _, t := range res.Tokens {
-		if t.Token != "" && t.Vault != "" {
-			tokens[t.Vault] = t.Token
+
+	// Local first: BRAIN_URL below points at the LOCAL mesh daemon, so the token
+	// should come from the same source of truth — the profile's own .env — rather
+	// than the remote router's brain facade. The facade also provisions on read,
+	// so it fails outright when a vault binding is missing from its (read-only)
+	// config, which has nothing to do with whether the local daemon would accept
+	// the token we already hold.
+	local, localErr := a.profileVaultTokens(profile)
+
+	// The router can still fill vaults the .env does not carry.
+	var router map[string]string
+	var routerErr error
+	if res, err := a.client.GetBrainProfileTokens(profile); err != nil {
+		routerErr = err
+	} else {
+		router = map[string]string{}
+		for _, t := range res.Tokens {
+			if t.Token != "" && t.Vault != "" {
+				router[t.Vault] = t.Token
+			}
 		}
 	}
+
+	tokens := mergeVaultTokens(local, router)
 	memoryToken := tokens["memory"]
 	if memoryToken == "" {
-		return nil, fmt.Errorf("no memory-vault token for profile %q", profile)
+		return nil, fmt.Errorf(
+			"no memory-vault token for profile %q (profile env: %v; router: %v)",
+			profile, orNone(localErr), orNone(routerErr))
 	}
 	tokensJSON, err := json.Marshal(tokens)
 	if err != nil {
@@ -79,4 +95,59 @@ func containerBrainURL(hostAPI string) string {
 		"127.0.0.1", "host.docker.internal",
 		"localhost", "host.docker.internal",
 	).Replace(hostAPI)
+}
+
+// vaultEnvKeys maps a profile .env variable to the brain vault it authenticates.
+// These are the unified per-(profile, vault) tokens, identical across the node's
+// auth.toml, peers' CL_SYNC__PEERS entries and the client .env — so the value in
+// the profile's .env is the same one the local daemon expects.
+var vaultEnvKeys = map[string]string{
+	"CL_BRAIN_API_TOKEN":  "memory",
+	"CL_SKILLS_API_TOKEN": "skills",
+	"CL_TODO_API_TOKEN":   "todo",
+	"CL_AGENTS_API_TOKEN": "agents",
+}
+
+// vaultTokensFromEnvText extracts vault -> token from a profile's .env text.
+func vaultTokensFromEnvText(text string) map[string]string {
+	env := parseDotenvText(text)
+	out := map[string]string{}
+	for key, vault := range vaultEnvKeys {
+		if tok := env[key]; tok != "" {
+			out[vault] = tok
+		}
+	}
+	return out
+}
+
+// profileVaultTokens reads vault tokens from the given profile's own .env, so the
+// lookup is correct for any profile the app manages, not just the workspace the
+// app itself was launched from.
+func (a *App) profileVaultTokens(profile string) (map[string]string, error) {
+	text, err := a.ReadProfileHostEnv(profile)
+	if err != nil {
+		return nil, err
+	}
+	return vaultTokensFromEnvText(text), nil
+}
+
+// mergeVaultTokens combines token sources, preferring local per vault while still
+// taking vaults only the router knows about.
+func mergeVaultTokens(local, router map[string]string) map[string]string {
+	out := make(map[string]string, len(local)+len(router))
+	for vault, tok := range router {
+		out[vault] = tok
+	}
+	for vault, tok := range local {
+		out[vault] = tok
+	}
+	return out
+}
+
+// orNone renders an error for a diagnostic message, or "ok" when there was none.
+func orNone(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	return err.Error()
 }
