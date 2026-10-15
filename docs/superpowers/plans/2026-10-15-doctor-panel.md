@@ -534,9 +534,20 @@ an executor that cannot answer yields unknown, not a false failure."
 - Consumes: Task 2's pattern and `fakeExec`.
 - Produces: `AppDBCheck{Path string}` id `app-db`; `DirenvApprovalCheck{ProfileDirs []string}` id `direnv-approval`.
 
-`direnv status` output was verified against direnv 2.37.1: the authoritative line is `Found RC allowed <n>`, where `0` means allowed and non-zero means not allowed. Parse that line, not the `Loaded RC allowed` line — `Loaded` describes direnv's own cwd, `Found` describes the directory asked about.
+Both facts below were verified empirically against direnv 2.37.1 during the
+pre-flight scan. Use them as given; do not re-derive.
 
-> Note for the implementer: on the machine this plan was written on, `Found RC allowed 1` corresponded to an **allowed** directory. Confirm the polarity with `direnv status` in a known-allowed directory and a known-unallowed one before trusting the mapping, and encode whichever you observe. If the two cannot be distinguished, return `StateUnknown` rather than guessing — that is exactly the case the unknown state exists for.
+1. **`direnv status` takes no `--profile` flag.** An unrecognised flag is
+   silently ignored and status is reported for the *current* directory, so
+   `direnv status --profile <dir>` would check the app's own cwd for every
+   profile and report confident nonsense. Scope by cwd instead:
+   `sh -lc "cd <dir> && direnv status"`. This keeps `Executor.Shell` free of a
+   cwd parameter.
+2. **Polarity: `Found RC allowed 0` means allowed; non-zero means not allowed.**
+   Confirmed by allowing a scratch directory and watching the value flip 1 → 0.
+   Parse the `Found RC` line, never `Loaded RC` — `Loaded` describes direnv's own
+   cwd, `Found` the directory asked about. `Found RC allowPath` is printed in
+   both states, so it is **not** a discriminator.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -579,7 +590,7 @@ func TestAppDBUnparsableSizeIsUnknown(t *testing.T) {
 
 func TestDirenvAllAllowedIsPass(t *testing.T) {
 	ex := &fakeExec{shellOut: map[string]fakeShell{
-		"direnv status --profile /p/one": {out: "Found RC allowed 0\n", code: 0},
+		"sh -lc cd /p/one && direnv status": {out: "Found RC allowed 0\n", code: 0},
 	}}
 	got := DirenvApprovalCheck{ProfileDirs: []string{"/p/one"}}.Run(context.Background(), ex)
 	if got.State != StatePass {
@@ -589,8 +600,8 @@ func TestDirenvAllAllowedIsPass(t *testing.T) {
 
 func TestDirenvUnapprovedIsWarnNamingTheProfile(t *testing.T) {
 	ex := &fakeExec{shellOut: map[string]fakeShell{
-		"direnv status --profile /p/one": {out: "Found RC allowed 0\n", code: 0},
-		"direnv status --profile /p/two": {out: "Found RC allowed 2\n", code: 0},
+		"sh -lc cd /p/one && direnv status": {out: "Found RC allowed 0\n", code: 0},
+		"sh -lc cd /p/two && direnv status": {out: "Found RC allowed 2\n", code: 0},
 	}}
 	got := DirenvApprovalCheck{ProfileDirs: []string{"/p/one", "/p/two"}}.Run(context.Background(), ex)
 	if got.State != StateWarn {
@@ -606,7 +617,7 @@ func TestDirenvUnapprovedIsWarnNamingTheProfile(t *testing.T) {
 
 func TestDirenvMissingAllowedLineIsUnknown(t *testing.T) {
 	ex := &fakeExec{shellOut: map[string]fakeShell{
-		"direnv status --profile /p/one": {out: "some other output\n", code: 0},
+		"sh -lc cd /p/one && direnv status": {out: "some other output\n", code: 0},
 	}}
 	got := DirenvApprovalCheck{ProfileDirs: []string{"/p/one"}}.Run(context.Background(), ex)
 	if got.State != StateUnknown {
@@ -679,7 +690,8 @@ func (c DirenvApprovalCheck) Run(ctx context.Context, ex Executor) Result {
 	res := Result{ID: c.ID(), Title: "direnv approvals per profile", Scope: ScopeLocal}
 	var unapproved, unreadable []string
 	for _, dir := range c.ProfileDirs {
-		out, _, err := ex.Shell(ctx, []string{"direnv", "status", "--profile", dir})
+		// direnv has no --profile flag and silently ignores one, so scope by cwd.
+		out, _, err := ex.Shell(ctx, []string{"sh", "-lc", "cd " + dir + " && direnv status"})
 		if err != nil {
 			unreadable = append(unreadable, dir)
 			continue
