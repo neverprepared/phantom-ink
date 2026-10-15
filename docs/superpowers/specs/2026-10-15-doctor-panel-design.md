@@ -67,9 +67,10 @@ app/frontend/src/lib/panels/DoctorPanel.svelte
 type State string // "pass" | "warn" | "fail" | "unknown"
 
 type Remedy struct {
-    Command  string // always shown, always copyable
-    AutoSafe bool   // idempotent AND non-destructive AND needs no secret
-    Confirm  string // one-line "this will…", shown before an auto-run
+    Command  string   // display text, always shown, always copyable; may be prose
+    Exec     []string // the actual argv Doctor runs; REQUIRED when AutoSafe
+    AutoSafe bool     // idempotent AND non-destructive AND needs no secret
+    Confirm  string   // one-line "this will…", shown before an auto-run
 }
 
 type Result struct {
@@ -122,7 +123,7 @@ rather than flipping optimistically green.
 | `docker-symlink` | `/usr/local/bin/docker` resolves (GUI/launchd PATH) | recreate symlink | yes |
 | `github-token-shadow` | `GITHUB_TOKEN`/`GH_TOKEN` set while `gh auth status` shows an idle keyring account | unset the env var | no (shell-scoped) |
 | `direnv-approval` | each profile's `.envrc` is approved | `direnv allow` | yes |
-| `app-db` | `~/.phantom-ink.db` exists, non-zero, migrations at head | run migrations | yes |
+| `app-db` | `~/.phantom-ink.db` exists, non-zero, migrations at head | restart the app so migrations run | no (app action) |
 | `port-shadow-9910` | a host launchd router holds `:9910` ahead of the platform | unload launchd job | no (destructive) |
 | `gateway-mcp-pin` | gateway venv still pins `mcp<2` | re-pin | no (needs rebuild) |
 
@@ -134,13 +135,20 @@ table.
 | Check | Observes | Remedy | Auto |
 |---|---|---|---|
 | `traefik-bound` | Traefik running **and** its `Addr` answers; running-but-unreachable is the orphan-nginx signature | identify orphan | no |
-| `service-health` | any service `Health == "unhealthy"`, honoring `OneShot` | restart service | yes |
+| `service-health` | any service `Health == "unhealthy"`, honoring `OneShot` | restart from the Services panel | no (app action) |
 | `registry-auth` | registry probe distinguishes **401** from **404** | set `REGISTRY_PASSWORD` | no (secret) |
 | `vault-reachability` | all five brain vaults answer with their bearer | — | no |
 | `sor-migrations` | each profile's SoR is at head; the daemon does not auto-apply | `pbrainctl server db migrate <profile>` | no (ordering) |
 | `profile-api-key` | `gsa`/`lakeview` `CL_API_KEY` is still a placeholder | set a real key | no (secret) |
 
-Four of twelve are auto-safe. That ratio falls out of the rule, not taste.
+Only two are auto-safe — `docker-symlink` and `direnv-approval`. That ratio is
+the rule doing its job rather than taste: a remedy qualifies only if it is a
+real argv Doctor can run, which excludes both app actions (restart the app,
+restart a compose service — already one click away in Services) and prose.
+
+`Command` is display text and may be prose; `Exec` is the argv. Keeping them
+separate matters because splitting prose on whitespace and executing it is
+precisely how a "fix" button comes to run nonsense.
 
 ## UI
 
