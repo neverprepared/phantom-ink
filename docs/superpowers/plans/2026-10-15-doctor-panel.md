@@ -1986,6 +1986,15 @@ the post-fix observation: a fix that did not take shows as still failing."
 - Modify: `app/frontend/src/lib/panels.ts`
 - Modify: `app/frontend/src/lib/layout/AppShell.svelte`
 
+**Prerequisite:** `RunDoctor` and `ApplyRemedy` must already appear in
+`app/frontend/wailsjs/go/main/App.js` and `App.d.ts`. `getApi()` dynamically
+imports that generated module, so a method missing there is `undefined` at the
+call site no matter how correct the Go side is. Verify with
+`grep -rn "RunDoctor\|ApplyRemedy" app/frontend/wailsjs/go/` before starting; if
+either is absent, regenerate with
+`cd app && /Users/cdowning/go/bin/wails generate module` (the `wails` binary is
+not on `PATH`) and stage only `app/frontend/wailsjs/go/`.
+
 **Interfaces:**
 - Consumes: `RunDoctor(scope)` and `ApplyRemedy(id)` from `wailsjs/go/main/App`; `Badge.svelte` (`{ text, variant }`); `CardExpander.svelte`; `EmptyState.svelte`; `Spinner.svelte`.
 - Produces: the `doctor` panel id.
@@ -2060,11 +2069,21 @@ Create `app/frontend/src/lib/panels/DoctorPanel.svelte`:
       .join(' · ');
   }
 
+  // getApi() is ASYNC — it dynamically imports the generated Wails module and
+  // resolves to null when that import fails. Await it and null-check it, the
+  // same shape every other panel uses; calling getApi().RunDoctor() directly
+  // reads a property off a Promise and is always undefined.
   async function run() {
     running = true;
     error = '';
+    const a = await getApi();
+    if (!a) {
+      error = 'Wails bindings unavailable';
+      running = false;
+      return;
+    }
     try {
-      results = ((await (getApi() as any).RunDoctor('')) as Result[]) ?? [];
+      results = ((await (a as any).RunDoctor('')) as Result[]) ?? [];
       ran = true;
     } catch (e) {
       error = String(e);
@@ -2076,8 +2095,14 @@ Create `app/frontend/src/lib/panels/DoctorPanel.svelte`:
   async function applyFix(r: Result) {
     pendingFix = null;
     fixing = r.id;
+    const a = await getApi();
+    if (!a) {
+      error = 'Wails bindings unavailable';
+      fixing = '';
+      return;
+    }
     try {
-      const out = (await (getApi() as any).ApplyRemedy(r.id)) as {
+      const out = (await (a as any).ApplyRemedy(r.id)) as {
         result: Result; error?: string;
       };
       if (out.error) error = out.error;
