@@ -1306,7 +1306,24 @@ is the orphan-nginx failure that leaves the whole stack looking healthy."
 
 ---
 
-### Task 6: Platform probe checks
+### Task 6: Platform probe checks — CANCELLED, DO NOT IMPLEMENT
+
+> **Cancelled during execution.** Both checks below were specced against
+> `Executor.Probe`, which sends no credentials, while each exists to answer "do
+> our credentials work" — `registry-auth` must tell 401 from 404, and
+> `vault-reachability` must tell a rejected bearer from an unmigrated SoR's 5xx.
+> Implemented on an unauthenticated probe they would be guaranteed wrong in
+> production while their tests passed, because the tests stub the probe's status:
+> a real probe of a private registry returns 401 unconditionally, so the check
+> would cry wolf on every run. That trains the operator to ignore Doctor, which
+> defeats the panel. Prerequisite follow-up: a fourth `Executor` capability (an
+> authenticated probe, or a registry-status read delegating to the existing
+> `client.GetProfileImageStatus`, which already performs an authed check
+> server-side and returns an `Error` string). Doctor ships 8 checks without them.
+>
+> The original task text is kept below as the spec for that follow-up.
+
+#### (original, deferred) Task 6: Platform probe checks
 
 **Files:**
 - Modify: `app/doctor/checks_platform.go`
@@ -1758,7 +1775,18 @@ func (a *App) RunDoctor(scope string) []doctor.Result {
 }
 ```
 
-> Implementer note: `registry-auth` and `vault-reachability` are **not** registered here. They need a registry probe URL and the per-vault URLs, which must come from existing config rather than being hardcoded. Find the accessors the Mesh and Profiles panels already use for the vault base URL and registry host, then register both checks with those values. If an accessor does not exist for one of them, register the check with an empty config — both already return `StateUnknown` with an explanatory detail in that case, which is the honest outcome and is covered by `TestVaultsAllReachableIsPass`'s sibling test for empty config. Do not hardcode `api.neverprepared.com` or a registry hostname.
+> Implementer note: `registry-auth` and `vault-reachability` do **not** exist in
+> the `doctor` package and must **not** be referenced here — Task 6 was
+> cancelled. They were specced against `Executor.Probe`, which sends no
+> credentials, while both checks exist to answer "do our credentials work". An
+> unauthenticated probe of a private registry returns 401 unconditionally, so
+> `registry-auth` would have reported "the registry rejected our credentials" on
+> every run while its stubbed tests passed — permanently false output from a
+> check written to prevent false output. Building them needs a fourth `Executor`
+> capability (an authenticated probe, or a registry-status read delegating to the
+> existing `client.GetProfileImageStatus`, which already performs an authed check
+> server-side and returns an `Error` string). That is a follow-up, not this task.
+> Register exactly the eight checks listed above and nothing else.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -2261,6 +2289,10 @@ Expected: `test-app` passes. Fix failures before merging.
 
 ## Deferred, with reasons
 
-- **`registry-auth` and `vault-reachability` registration** — written and tested in Task 6, but registered only once Task 7's implementer finds the existing config accessors for the registry and vault URLs. Hardcoding `api.neverprepared.com` would make the check lie on any other install.
+- **`registry-auth` and `vault-reachability`** — Task 6 cancelled during
+  execution; neither is implemented. The config accessors exist
+  (`a.resolveRegistryURL(profile)`, `a.meshURL()`), but the blocker is the
+  `Executor` interface: `Probe` sends no credentials and both checks are about
+  whether our credentials work. Needs a fourth capability first.
 - **`sor-migrations` and `profile-api-key` checks** — specced but not planned. `sor-migrations` is partly covered by `vault-reachability`'s 5xx branch pointing at pending migrations; `profile-api-key` needs a placeholder-detection rule that should be decided against real config rather than guessed here.
 - **Tri-state retrofit of the Services and Gateway badges** — follow-up. Doctor establishes the state model first.
