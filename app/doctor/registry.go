@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -43,4 +44,33 @@ func (r *Registry) Run(ctx context.Context, ex Executor, scope Scope) []Result {
 	}
 	SortResults(out)
 	return out
+}
+
+// ErrNotAutoSafe is returned when a caller asks Doctor to run a remedy that was
+// not marked safe. The frontend's "allow fixes" switch only decides whether a
+// button is drawn; this is the boundary that actually holds.
+var ErrNotAutoSafe = errors.New("remedy is not auto-safe")
+
+// ApplyRemedy runs one check's remedy, then re-runs the check and returns its
+// fresh result. The returned Result is always the post-fix observation, so a
+// remedy that did not work shows as still failing rather than flipping green.
+func (r *Registry) ApplyRemedy(ctx context.Context, ex Executor, id string) (Result, error) {
+	c, ok := r.ByID(id)
+	if !ok {
+		return Result{}, fmt.Errorf("unknown check %q", id)
+	}
+	pre := c.Run(ctx, ex)
+	if pre.Remedy == nil {
+		return pre, fmt.Errorf("check %q offers no remedy", id)
+	}
+	if !pre.Remedy.AutoSafe {
+		return pre, ErrNotAutoSafe
+	}
+	if err := pre.Remedy.Validate(); err != nil {
+		return pre, err
+	}
+	if _, _, err := ex.Shell(ctx, pre.Remedy.Exec); err != nil {
+		return pre, fmt.Errorf("remedy failed: %w", err)
+	}
+	return c.Run(ctx, ex), nil
 }

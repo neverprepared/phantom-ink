@@ -10,6 +10,10 @@ export function AddConversationParticipant(arg1, arg2, arg3) {
   return window['go']['main']['App']['AddConversationParticipant'](arg1, arg2, arg3);
 }
 
+export function ApplyRemedy(arg1) {
+  return window['go']['main']['App']['ApplyRemedy'](arg1);
+}
+
 export function ArchiveConversation(arg1, arg2) {
   return window['go']['main']['App']['ArchiveConversation'](arg1, arg2);
 }

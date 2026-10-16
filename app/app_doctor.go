@@ -139,3 +139,23 @@ func (a *App) RunDoctor(scope string) []doctor.Result {
 	defer cancel()
 	return a.buildDoctorRegistry().Run(ctx, appExecutor{a: a}, doctor.Scope(scope))
 }
+
+// DoctorRemedyResult carries the re-run result plus any error, so the frontend
+// can show "the fix ran and here is what is true now" in one round trip.
+type DoctorRemedyResult struct {
+	Result doctor.Result `json:"result"`
+	Error  string        `json:"error,omitempty"`
+}
+
+// ApplyRemedy runs one check's auto-safe remedy. Non-auto-safe remedies are
+// refused here, not in the UI.
+func (a *App) ApplyRemedy(id string) DoctorRemedyResult {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	res, err := a.buildDoctorRegistry().ApplyRemedy(ctx, appExecutor{a: a}, id)
+	out := DoctorRemedyResult{Result: res}
+	if err != nil {
+		out.Error = err.Error()
+	}
+	return out
+}

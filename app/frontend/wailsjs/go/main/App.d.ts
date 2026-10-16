@@ -10,6 +10,8 @@ export function AddBrainMCP(arg1:string,arg2:string):Promise<string>;
 
 export function AddConversationParticipant(arg1:string,arg2:string,arg3:brainbox.AddConversationParticipantRequest):Promise<brainbox.Conversation>;
 
+export function ApplyRemedy(arg1:string):Promise<main.DoctorRemedyResult>;
+
 export function ArchiveConversation(arg1:string,arg2:string):Promise<brainbox.Conversation>;
 
 export function AssistLoopTemplate(arg1:brainbox.LoopAssistRequest):Promise<brainbox.LoopAssistResult>;

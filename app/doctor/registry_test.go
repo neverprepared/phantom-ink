@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -138,5 +139,69 @@ func TestRegistryRunNeverInvokesARemedy(t *testing.T) {
 		if match {
 			t.Fatalf("remedy exec %v was invoked during Run; diagnosis must never remediate", remedyExec)
 		}
+	}
+}
+
+type remedyCheck struct {
+	id    string
+	state State
+	rem   *Remedy
+	runs  *int
+}
+
+func (c remedyCheck) ID() string   { return c.id }
+func (c remedyCheck) Scope() Scope { return ScopeLocal }
+func (c remedyCheck) Run(context.Context, Executor) Result {
+	*c.runs++
+	return Result{ID: c.id, State: c.state, Remedy: c.rem}
+}
+
+func TestApplyRemedyRefusesNonAutoSafe(t *testing.T) {
+	runs := 0
+	r := NewRegistry()
+	_ = r.Register(remedyCheck{
+		id: "x", state: StateFail, runs: &runs,
+		rem: &Remedy{Command: "rm -rf /", AutoSafe: false},
+	})
+	_, err := r.ApplyRemedy(context.Background(), &fakeExec{}, "x")
+	if !errors.Is(err, ErrNotAutoSafe) {
+		t.Fatalf("err = %v, want ErrNotAutoSafe", err)
+	}
+}
+
+func TestApplyRemedyUnknownIDErrors(t *testing.T) {
+	r := NewRegistry()
+	if _, err := r.ApplyRemedy(context.Background(), &fakeExec{}, "nope"); err == nil {
+		t.Fatal("want an error for an unknown check id")
+	}
+}
+
+func TestApplyRemedyNoRemedyErrors(t *testing.T) {
+	runs := 0
+	r := NewRegistry()
+	_ = r.Register(remedyCheck{id: "x", state: StatePass, runs: &runs, rem: nil})
+	if _, err := r.ApplyRemedy(context.Background(), &fakeExec{}, "x"); err == nil {
+		t.Fatal("want an error when the check offers no remedy")
+	}
+}
+
+// After a fix, the caller must see a re-run result, not an optimistic green.
+func TestApplyRemedyReRunsTheCheck(t *testing.T) {
+	runs := 0
+	r := NewRegistry()
+	_ = r.Register(remedyCheck{
+		id: "x", state: StateFail, runs: &runs,
+		rem: &Remedy{Command: "true", Exec: []string{"true"}, AutoSafe: true, Confirm: "Run true."},
+	})
+	ex := &fakeExec{shellOut: map[string]fakeShell{"true": {code: 0}}}
+	got, err := r.ApplyRemedy(context.Background(), ex, "x")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if runs < 2 {
+		t.Fatalf("check ran %d times, want the pre-check plus a re-run", runs)
+	}
+	if got.State != StateFail {
+		t.Fatalf("state = %q — the result must be the re-run's truth, not an assumed pass", got.State)
 	}
 }
