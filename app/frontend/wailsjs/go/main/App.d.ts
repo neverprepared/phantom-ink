@@ -4,6 +4,7 @@ import {brainbox} from '../models';
 import {main} from '../models';
 import {opensearch} from '../models';
 import {provider} from '../models';
+import {doctor} from '../models';
 
 export function AddBrainMCP(arg1:string,arg2:string):Promise<string>;
 
@@ -404,6 +405,8 @@ export function RetryRuleExecution(arg1:number):Promise<brainbox.RuleExecution>;
 export function RevokeProfileToken(arg1:string):Promise<void>;
 
 export function RunCollectJobNow(arg1:string):Promise<void>;
+
+export function RunDoctor(arg1:string):Promise<Array<doctor.Result>>;
 
 export function RunMetricScript(arg1:string,arg2:string):Promise<string>;
 

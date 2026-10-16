@@ -802,6 +802,10 @@ export function RunCollectJobNow(arg1) {
   return window['go']['main']['App']['RunCollectJobNow'](arg1);
 }
 
+export function RunDoctor(arg1) {
+  return window['go']['main']['App']['RunDoctor'](arg1);
+}
+
 export function RunMetricScript(arg1, arg2) {
   return window['go']['main']['App']['RunMetricScript'](arg1, arg2);
 }
