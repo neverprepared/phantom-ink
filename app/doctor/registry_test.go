@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -240,5 +241,43 @@ func TestApplyRemedyReRunsTheCheck(t *testing.T) {
 	}
 	if got.State != StatePass {
 		t.Fatalf("state = %q, want StatePass — the result must be the re-run's truth (StatePass), not the discarded pre-check result (StateFail)", got.State)
+	}
+}
+
+// Pin: a remedy that ran and was REJECTED must not read as one that worked.
+// Executor.Shell reports a non-zero exit as (out, code, nil), so the obvious
+// `if _, _, err := ex.Shell(...)` discards the only evidence that the fix was
+// refused — `ln: Permission denied` then looks exactly like success, and the
+// operator is told only that the check is "still failing".
+//
+// This test pins both halves at once. The stub exits 1 with a real rejection
+// message, so discarding `code` loses the error entirely; and the check reports
+// StateFail first and StateWarn after, so returning the stale pre-fix result
+// instead of the re-run is distinguishable from returning the re-run.
+func TestApplyRemedyNonZeroExitIsAnError(t *testing.T) {
+	runs := 0
+	r := NewRegistry()
+	_ = r.Register(remedyCheck{
+		id: "x", state: StateFail, after: StateWarn, runs: &runs,
+		rem: &Remedy{
+			Command: "ln -sf a b", Exec: []string{"ln", "-sf", "a", "b"},
+			AutoSafe: true, Confirm: "Link a to b.",
+		},
+	})
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"ln -sf a b": {out: "ln: b: Permission denied\n", code: 1},
+	}}
+	got, err := r.ApplyRemedy(context.Background(), ex, "x")
+	if err == nil {
+		t.Fatal("want an error: the remedy exited non-zero, which must not read as success")
+	}
+	if !strings.Contains(err.Error(), "1") {
+		t.Fatalf("err = %q, want it to name the exit code", err)
+	}
+	if !strings.Contains(err.Error(), "Permission denied") {
+		t.Fatalf("err = %q, want it to carry the remedy's own output", err)
+	}
+	if got.State != StateWarn {
+		t.Fatalf("state = %q, want StateWarn — the caller must still get the re-run observation, not the stale pre-fix result (StateFail)", got.State)
 	}
 }

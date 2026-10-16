@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 type Registry struct {
@@ -69,8 +70,24 @@ func (r *Registry) ApplyRemedy(ctx context.Context, ex Executor, id string) (Res
 	if err := pre.Remedy.Validate(); err != nil {
 		return pre, err
 	}
-	if _, _, err := ex.Shell(ctx, pre.Remedy.Exec); err != nil {
+	out, code, err := ex.Shell(ctx, pre.Remedy.Exec)
+	if err != nil {
+		// The remedy could not be run at all (no such binary, context
+		// cancelled). There is nothing new to observe, so hand back the
+		// pre-fix result unchanged.
 		return pre, fmt.Errorf("remedy failed: %w", err)
+	}
+	if code != 0 {
+		// Executor.Shell reports a non-zero exit as (out, code, nil) by
+		// deliberate contract — a non-zero exit is an observation, not a
+		// failure to observe. Everywhere else downstream that is exactly
+		// right; here it is not. A remedy that RAN AND WAS REJECTED
+		// ("Permission denied", "command not found") must not be
+		// indistinguishable from one that succeeded, or the operator sees
+		// only "still failing" and never learns the fix itself was refused.
+		// The re-run result is still returned alongside the error, so the
+		// panel shows what is true now as well as why the fix did not take.
+		return c.Run(ctx, ex), fmt.Errorf("remedy exited %d: %s", code, strings.TrimSpace(out))
 	}
 	return c.Run(ctx, ex), nil
 }
