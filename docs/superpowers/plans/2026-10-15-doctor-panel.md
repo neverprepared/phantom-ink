@@ -1996,7 +1996,12 @@ either is absent, regenerate with
 not on `PATH`) and stage only `app/frontend/wailsjs/go/`.
 
 **Interfaces:**
-- Consumes: `RunDoctor(scope)` and `ApplyRemedy(id)` from `wailsjs/go/main/App`; `Badge.svelte` (`{ text, variant }`); `CardExpander.svelte`; `EmptyState.svelte`; `Spinner.svelte`.
+- Consumes: `RunDoctor(scope)` and `ApplyRemedy(id)` from `wailsjs/go/main/App`;
+  `Badge.svelte` (`{ text, variant }`); `CardExpander.svelte` — props are
+  `label` (required), `count`, `hint`, `description`, `open` (bindable),
+  `onOpen`, `children`; there is **no** `title` prop, and labels are lowercase
+  by convention (see `CodePanel.svelte` for established usage);
+  `EmptyState.svelte` (`{ message }`); `Spinner.svelte`.
 - Produces: the `doctor` panel id.
 
 - [ ] **Step 1: Add the panel to the registry**
@@ -2149,7 +2154,9 @@ Create `app/frontend/src/lib/panels/DoctorPanel.svelte`:
     <EmptyState message="Run the checks to see this install's health." />
   {:else}
     {#each [{ label: 'Local', rows: local }, { label: 'Platform', rows: platform }] as group (group.label)}
-      <CardExpander title={`${group.label} · ${summarize(group.rows)}`}>
+      <!-- CardExpander takes `label` (required, lowercase by convention) plus a
+           separate `count`; it has no `title` prop. -->
+      <CardExpander label={group.label.toLowerCase()} count={summarize(group.rows)}>
         {#if !group.rows.length}
           <p class="sub">No checks in this scope.</p>
         {:else}
