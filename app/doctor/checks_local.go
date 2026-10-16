@@ -269,7 +269,16 @@ func (c GitHubTokenShadowCheck) Run(ctx context.Context, ex Executor) Result {
 // correctly-working local install. What distinguishes the two cases is the
 // COMMAND column: a docker-owned listener is the platform publishing its own
 // port; anything else is a genuine shadow.
-type PortShadowCheck struct{ Port string }
+type PortShadowCheck struct {
+	Port string
+	// RemoteNode is the configured platform node, or "" when the stack runs
+	// on this host. With the platform on a remote node there is no local
+	// platform service for a local listener to shadow, so reporting "a host
+	// process is shadowing the platform service" would be a false alarm on a
+	// perfectly healthy machine — the same cry-wolf failure that got two
+	// other checks cancelled. The question only has an answer locally.
+	RemoteNode string
+}
 
 func (c PortShadowCheck) ID() string { return "port-shadow" }
 func (PortShadowCheck) Scope() Scope { return ScopeLocal }
@@ -279,6 +288,12 @@ func (c PortShadowCheck) Run(ctx context.Context, ex Executor) Result {
 		ID:    c.ID(),
 		Title: "port " + c.Port + " is free for the platform",
 		Scope: ScopeLocal,
+	}
+	if c.RemoteNode != "" {
+		res.State = StateUnknown
+		res.Detail = "the platform runs on node " + c.RemoteNode +
+			"; a listener on this host shadows nothing, so this check applies only to a locally-run platform"
+		return res
 	}
 	out, code, err := ex.Shell(ctx, []string{"lsof", "-nP", "-iTCP:" + c.Port, "-sTCP:LISTEN"})
 	if err != nil {
@@ -345,6 +360,16 @@ var dockerListenerPrefixes = []string{
 	"vpnkit",
 }
 
+// isDockerListener is a prefix allowlist, and that is a known, bounded
+// compromise rather than an oversight. It can err in both directions: a
+// genuine shadowing process whose name happens to start with "orb" or "docker"
+// reads as the platform's own publisher (a false pass), and a container
+// runtime not on the list reads as a shadow (a false fail). The robust
+// observation — `lsof -Fcn` plus a PID-to-container correlation — needs an
+// Executor capability that does not exist, and inventing one is a design
+// change, not a fix. The mitigation is that both the pass and the fail detail
+// NAME the COMMAND that was observed, so the operator can see what Doctor saw
+// and overrule it. Do not widen this list without that reasoning.
 func isDockerListener(command string) bool {
 	c := strings.ToLower(strings.TrimSpace(command))
 	for _, p := range dockerListenerPrefixes {

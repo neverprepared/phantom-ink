@@ -132,3 +132,81 @@ func TestDoctorRegistryLeavesTraefikLocalWhenNoNodeSet(t *testing.T) {
 		t.Fatalf("RemoteNode = %q, want empty for a local platform", got)
 	}
 }
+
+func registeredPortShadowCheck(t *testing.T, a *App) doctor.PortShadowCheck {
+	t.Helper()
+	c, ok := a.buildDoctorRegistry().ByID("port-shadow")
+	if !ok {
+		t.Fatal("port-shadow is not registered")
+	}
+	pc, ok := c.(doctor.PortShadowCheck)
+	if !ok {
+		t.Fatalf("port-shadow is %T, want doctor.PortShadowCheck", c)
+	}
+	return pc
+}
+
+// The same wiring pin as the traefik one, from the other side: port-shadow can
+// only decline to answer about a remote platform if the registry tells it there
+// is one. Dropping `RemoteNode: a.platformNode()` compiles and leaves every
+// doctor-package test green.
+func TestDoctorRegistryPassesThePlatformNodeToPortShadow(t *testing.T) {
+	a := &App{db: doctorTestDB(t, "m3-64")}
+	if got := registeredPortShadowCheck(t, a).RemoteNode; got != "m3-64" {
+		t.Fatalf("RemoteNode = %q, want %q — a local listener shadows nothing when the platform is remote", got, "m3-64")
+	}
+}
+
+func TestDoctorRegistryLeavesPortShadowLocalWhenNoNodeSet(t *testing.T) {
+	a := &App{db: doctorTestDB(t, "")}
+	if got := registeredPortShadowCheck(t, a).RemoteNode; got != "" {
+		t.Fatalf("RemoteNode = %q, want empty for a local platform", got)
+	}
+}
+
+// doctorShippedCheckIDs is the registered set, exactly. Four checks the spec
+// designed — registry-auth, vault-reachability, sor-migrations and
+// profile-api-key — are deliberately absent; see the spec's "Deferred checks".
+var doctorShippedCheckIDs = []string{
+	"app-db",
+	"direnv-approval",
+	"docker-symlink",
+	"gateway-mcp-pin",
+	"github-token-shadow",
+	"port-shadow",
+	"service-health",
+	"traefik-bound",
+}
+
+// Pin the exact registered SET, not just its invariants. This is not
+// belt-and-braces: the drift it guards against actually happened on this
+// branch. The spec advertised a twelve-check catalog while eight were
+// registered, and nothing in CI noticed — the gap surfaced in human review,
+// which is the expensive place to find it. An exact-set assertion fails on a
+// drop, an addition, or a swap, so the next person who cancels or adds a check
+// has to come here and say so, and the spec's inventory stops being able to
+// silently diverge from the code.
+//
+// Adding a check? Add its id here and to the spec's catalog in the same commit.
+func TestRegisteredCheckSetIsExactlyTheShippedEight(t *testing.T) {
+	a := &App{}
+	got := map[string]bool{}
+	for _, c := range a.buildDoctorRegistry().All() {
+		got[c.ID()] = true
+	}
+	if len(got) != len(doctorShippedCheckIDs) {
+		t.Errorf("registered %d checks, want exactly %d", len(got), len(doctorShippedCheckIDs))
+	}
+	want := map[string]bool{}
+	for _, id := range doctorShippedCheckIDs {
+		want[id] = true
+		if !got[id] {
+			t.Errorf("check %q is expected but not registered", id)
+		}
+	}
+	for id := range got {
+		if !want[id] {
+			t.Errorf("check %q is registered but not in the expected set — add it here and to the spec's catalog", id)
+		}
+	}
+}

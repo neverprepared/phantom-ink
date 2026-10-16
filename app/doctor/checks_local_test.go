@@ -456,3 +456,64 @@ func TestGitHubTokenLoginShellUnrunnableIsUnknown(t *testing.T) {
 		t.Fatalf("detail %q must say it could not read the login shell's environment", got.Detail)
 	}
 }
+
+// Regression: with the platform on a remote node, no local listener can be
+// shadowing it — there is no local platform service to shadow. The fixture is
+// deliberately the dangerous one: a non-docker listener on the port, exactly
+// what would otherwise produce a hard fail with a destructive launchctl remedy.
+// On a healthy machine running a remote platform that is a false alarm, which
+// is the cry-wolf standard that got two other checks cancelled.
+func TestPortShadowOnRemoteNodeIsUnknownNotFail(t *testing.T) {
+	out := `COMMAND  PID     USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+node    7781 cdowning   20u  IPv4 0x1b4c8d2a6f0e3759      0t0  TCP *:9910 (LISTEN)
+`
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"lsof -nP -iTCP:9910 -sTCP:LISTEN": {out: out, code: 0},
+	}}
+	got := PortShadowCheck{Port: "9910", RemoteNode: "m3-64"}.Run(context.Background(), ex)
+	if got.State != StateUnknown {
+		t.Fatalf("state = %q, want unknown — a local listener shadows nothing when the platform is remote (detail %q)", got.State, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "m3-64") {
+		t.Fatalf("detail %q must name the node the platform runs on", got.Detail)
+	}
+	if got.Remedy != nil {
+		t.Fatalf("must not offer the destructive launchctl remedy for a non-fault, got %+v", got.Remedy)
+	}
+}
+
+// Companion: the guard must not make the local check inert. With no node
+// configured the lsof probe still runs and a non-docker listener is still a
+// fail naming the command it saw.
+func TestPortShadowLocalStillProbesWhenNoNodeConfigured(t *testing.T) {
+	out := `COMMAND  PID     USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+node    7781 cdowning   20u  IPv4 0x1b4c8d2a6f0e3759      0t0  TCP *:9910 (LISTEN)
+`
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"lsof -nP -iTCP:9910 -sTCP:LISTEN": {out: out, code: 0},
+	}}
+	got := PortShadowCheck{Port: "9910", RemoteNode: ""}.Run(context.Background(), ex)
+	if got.State != StateFail {
+		t.Fatalf("state = %q, want fail (detail %q)", got.State, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "node") {
+		t.Fatalf("detail %q must name the command it observed, so the operator can overrule the allowlist", got.Detail)
+	}
+}
+
+// Both verdicts must name the COMMAND they saw. That is the whole mitigation
+// for isDockerListener being a prefix allowlist that can err either way: the
+// operator can see what Doctor observed and judge the call themselves. A
+// detail that only states a verdict takes that away.
+func TestPortShadowBothVerdictsNameTheObservedCommand(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"lsof -nP -iTCP:9910 -sTCP:LISTEN": {out: lsofDockerPublisher, code: 0},
+	}}
+	got := PortShadowCheck{Port: "9910"}.Run(context.Background(), ex)
+	if got.State != StatePass {
+		t.Fatalf("state = %q, want pass", got.State)
+	}
+	if !strings.Contains(got.Detail, "com.docke") {
+		t.Fatalf("pass detail %q must name the docker command it credited the port to", got.Detail)
+	}
+}

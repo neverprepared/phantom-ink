@@ -130,7 +130,7 @@ cancelled by the state model this spec establishes, not by running out of time.
 | `github-token-shadow` | `GITHUB_TOKEN`/`GH_TOKEN` exported in the operator's **login shell** while `gh auth status` shows an idle keyring account | unset the env var | no (shell-scoped) | shipped |
 | `direnv-approval` | each profile's `.envrc` is approved | `direnv allow` | yes | shipped |
 | `app-db` | `~/.phantom-ink.db` exists and is non-zero | restart the app so migrations run | no (app action) | shipped |
-| `port-shadow` | a **non-docker** host process holds `:9910` ahead of the platform (docker publishing the platform's own port is not a shadow) | unload launchd job | no (destructive) | shipped |
+| `port-shadow` | a **non-docker** host process holds `:9910` ahead of the platform (docker publishing the platform's own port is not a shadow). Reports `unknown` when a remote platform node is configured — a local listener has no local platform service to shadow | unload launchd job | no (destructive) | shipped |
 | `gateway-mcp-pin` | the gateway container still pins `mcp<2` | re-pin | no (needs rebuild) | shipped |
 
 `app-db` fails on the current machine: the file is 0 bytes and has no `tasks`
@@ -243,6 +243,11 @@ conformance test are unaffected.
   reports `unknown` rather than probing a remote node: the app has no reliable
   reachable address for the node, and guessing one would reintroduce exactly
   the observe-the-wrong-subject bug the state model exists to prevent.
+  `port-shadow` declines the same configuration from the other side — with the
+  platform on a node, a local listener shadows nothing, so a `fail` would be a
+  false alarm on a healthy machine. Both consult `platformNode()`: which
+  deployment you are in decides whether `localhost` means anything at all, and
+  a check that does not know cannot honestly report either way.
 - The four platform checks marked *not shipped* in the catalog above — see
   "Deferred checks" for why each is out, and what unblocks it.
 - Tri-state health for the existing Services/Gateway badges. Doctor

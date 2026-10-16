@@ -120,7 +120,11 @@ func (a *App) buildDoctorRegistry() *doctor.Registry {
 		doctor.AppDBCheck{Path: dbPath},
 		doctor.DirenvApprovalCheck{ProfileDirs: a.doctorProfileDirs()},
 		doctor.GitHubTokenShadowCheck{},
-		doctor.PortShadowCheck{Port: "9910"},
+		// RemoteNode for the same reason TraefikBoundCheck needs it, from the
+		// other side: with the platform on a node, a local listener on 9910
+		// has no local platform service to shadow, so the question has no
+		// local answer.
+		doctor.PortShadowCheck{Port: "9910", RemoteNode: a.platformNode()},
 		doctor.GatewayMCPPinCheck{Container: "phantom-gateway-1"},
 		doctor.ServiceHealthCheck{},
 		// platformNode() is "" when the stack runs on local docker, and the
