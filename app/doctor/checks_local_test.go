@@ -218,9 +218,9 @@ func TestDirenvApprovalDirWithSpaceIsQueriedCorrectly(t *testing.T) {
 
 func TestGitHubTokenShadowDetected(t *testing.T) {
 	ex := &fakeExec{shellOut: map[string]fakeShell{
-		"printenv GH_TOKEN":     {out: "", code: 1},
-		"printenv GITHUB_TOKEN": {out: "ghp_xxx\n", code: 0},
-		"gh auth status":        {out: "Active account: false\n", code: 0},
+		"zsh -lc printenv GH_TOKEN":     {out: "", code: 1},
+		"zsh -lc printenv GITHUB_TOKEN": {out: "ghp_xxx\n", code: 0},
+		"gh auth status":                {out: "Active account: false\n", code: 0},
 	}}
 	got := GitHubTokenShadowCheck{}.Run(context.Background(), ex)
 	if got.State != StateWarn {
@@ -236,9 +236,9 @@ func TestGitHubTokenShadowDetected(t *testing.T) {
 
 func TestGitHubTokenAbsentIsPass(t *testing.T) {
 	ex := &fakeExec{shellOut: map[string]fakeShell{
-		"printenv GH_TOKEN":     {out: "", code: 1},
-		"printenv GITHUB_TOKEN": {out: "", code: 1},
-		"gh auth status":        {out: "Active account: true\n", code: 0},
+		"zsh -lc printenv GH_TOKEN":     {out: "", code: 1},
+		"zsh -lc printenv GITHUB_TOKEN": {out: "", code: 1},
+		"gh auth status":                {out: "Active account: true\n", code: 0},
 	}}
 	got := GitHubTokenShadowCheck{}.Run(context.Background(), ex)
 	if got.State != StatePass {
@@ -253,8 +253,8 @@ func TestGitHubTokenAbsentIsPass(t *testing.T) {
 // check confidently pass while the thing it exists to catch is happening.
 func TestGitHubTokenShadowDetectedViaGHTokenAlone(t *testing.T) {
 	ex := &fakeExec{shellOut: map[string]fakeShell{
-		"printenv GH_TOKEN": {out: "gho_yyy\n", code: 0},
-		"gh auth status":    {out: "Active account: false\n", code: 0},
+		"zsh -lc printenv GH_TOKEN": {out: "gho_yyy\n", code: 0},
+		"gh auth status":            {out: "Active account: false\n", code: 0},
 	}}
 	got := GitHubTokenShadowCheck{}.Run(context.Background(), ex)
 	if got.State != StateWarn {
@@ -400,5 +400,65 @@ func TestPortShadowUnparseableOutputIsUnknown(t *testing.T) {
 	got := PortShadowCheck{Port: "9910"}.Run(context.Background(), ex)
 	if got.State != StateUnknown {
 		t.Fatalf("state = %q, want unknown for output with no data row (detail %q)", got.State, got.Detail)
+	}
+}
+
+// Regression: the detail must say WHOSE environment was observed. The old
+// wording — "no GH_TOKEN or GITHUB_TOKEN in the environment" — described the
+// app process's own environment, which a packaged .app inherits empty from
+// Finder or launchd, and read to the operator as "my shell is clean". That is
+// what made it a false pass rather than a stated limitation.
+func TestGitHubTokenAbsentPassNamesTheLoginShell(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"zsh -lc printenv GH_TOKEN":     {out: "", code: 1},
+		"zsh -lc printenv GITHUB_TOKEN": {out: "", code: 1},
+	}}
+	got := GitHubTokenShadowCheck{}.Run(context.Background(), ex)
+	if got.State != StatePass {
+		t.Fatalf("state = %q, want pass (detail %q)", got.State, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "login shell") {
+		t.Fatalf("detail %q must name whose environment it observed, not just \"the environment\"", got.Detail)
+	}
+}
+
+// Regression: the probe must go through the operator's login shell. A bare
+// printenv reads the app process's own environment — nothing at all in a
+// packaged .app — so the check would pass while the operator's shell carried
+// the stale token. This asserts on the argv that ran, because a check reading
+// the wrong subject still returns a plausible-looking state.
+func TestGitHubTokenProbeGoesThroughTheLoginShell(t *testing.T) {
+	ex := &recordingExec{fakeExec: fakeExec{shellOut: map[string]fakeShell{
+		"zsh -lc printenv GH_TOKEN":     {out: "", code: 1},
+		"zsh -lc printenv GITHUB_TOKEN": {out: "", code: 1},
+	}}}
+	if got := (GitHubTokenShadowCheck{}).Run(context.Background(), ex); got.State != StatePass {
+		t.Fatalf("state = %q, want pass (detail %q)", got.State, got.Detail)
+	}
+	var sawLoginShell bool
+	for _, call := range ex.shellCalls {
+		joined := strings.Join(call, " ")
+		if call[0] != "zsh" {
+			t.Fatalf("probed %v — that reads the app's own environment, not the operator's shell", call)
+		}
+		if strings.HasPrefix(joined, "zsh -lc printenv ") {
+			sawLoginShell = true
+		}
+	}
+	if !sawLoginShell {
+		t.Fatalf("no login-shell probe among %v", ex.shellCalls)
+	}
+}
+
+// If the login shell cannot be run, the operator's environment was not
+// observed. Unknown, naming that — never a pass.
+func TestGitHubTokenLoginShellUnrunnableIsUnknown(t *testing.T) {
+	ex := &fakeExec{} // no stub => error
+	got := GitHubTokenShadowCheck{}.Run(context.Background(), ex)
+	if got.State != StateUnknown {
+		t.Fatalf("state = %q, want unknown when the login shell could not be run (detail %q)", got.State, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "login shell") {
+		t.Fatalf("detail %q must say it could not read the login shell's environment", got.Detail)
 	}
 }

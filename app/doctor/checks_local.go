@@ -185,9 +185,24 @@ func (c DirenvApprovalCheck) Run(ctx context.Context, ex Executor) Result {
 // fail while a good credential sits idle — and the symptoms mislead in
 // sequence, first as a 403 that reads like a missing scope, then as a 401.
 //
+// The subject is the OPERATOR'S shell, not this process. Executor.Shell runs a
+// command with the app's own environment, and a packaged .app launched from
+// Finder or launchd inherits none of the operator's exports — so reading
+// printenv directly found nothing and passed, while the shell that spawns every
+// agent session carried exactly the stale token this check exists to catch. It
+// was meaningful under `wails dev`, which does inherit the terminal env, and
+// meaningless in the shipped binary. So probe through a login shell, and say in
+// the detail WHOSE environment was observed: "the environment" is the wording
+// that turns a limitation into a false pass.
+//
 // This check never puts a token value in Detail. Reporting health must not
 // become a way to leak a credential into a log or a screenshot.
-type GitHubTokenShadowCheck struct{}
+type GitHubTokenShadowCheck struct {
+	// LoginShell is the operator's login shell, defaulting to zsh (the macOS
+	// default and this workspace's shell). A field so a test can name it
+	// without depending on the host.
+	LoginShell string
+}
 
 func (GitHubTokenShadowCheck) ID() string   { return "github-token-shadow" }
 func (GitHubTokenShadowCheck) Scope() Scope { return ScopeLocal }
@@ -199,33 +214,49 @@ func (c GitHubTokenShadowCheck) Run(ctx context.Context, ex Executor) Result {
 	// named below. GITHUB_TOKEN is still checked when GH_TOKEN is absent —
 	// dropping either probe would let that variable's shadowing go
 	// undetected.
+	shell := c.LoginShell
+	if shell == "" {
+		shell = "zsh"
+	}
 	name := ""
 	for _, n := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
-		out, code, err := ex.Shell(ctx, []string{"printenv", n})
+		// -l so the operator's rc files run and their exports are in scope;
+		// this is the environment gh and every spawned agent session will
+		// see, which is the thing being asked about.
+		_, code, err := ex.Shell(ctx, []string{shell, "-lc", "printenv " + n})
 		if err != nil {
+			// The login shell could not be run at all, so the operator's
+			// environment was not observed. Unknown, naming that — never a
+			// pass over an environment nobody looked at.
 			res.State = StateUnknown
-			res.Detail = "could not read the environment: " + err.Error()
+			res.Detail = "could not run " + shell + " -lc to read your login shell's environment: " + err.Error()
 			return res
 		}
-		if code == 0 && strings.TrimSpace(out) != "" {
+		// The exit code is the whole signal, deliberately: printenv exits 0
+		// only when the variable exists. The output is not inspected because
+		// a login shell's rc files can print to stdout/stderr and Shell
+		// merges both, so a non-empty body proves nothing — and the value
+		// itself must never be read into a field regardless.
+		if code == 0 {
 			name = n
 			break
 		}
 	}
 	if name == "" {
 		res.State = StatePass
-		res.Detail = "no GH_TOKEN or GITHUB_TOKEN in the environment"
+		res.Detail = "no GH_TOKEN or GITHUB_TOKEN exported in your login shell (" + shell + " -l)"
 		return res
 	}
 	status, _, err := ex.Shell(ctx, []string{"gh", "auth", "status"})
 	if err != nil {
 		res.State = StateUnknown
-		res.Detail = name + " is set, but gh auth status could not be read"
+		res.Detail = name + " is exported in your login shell, but gh auth status could not be read"
 		return res
 	}
 	if strings.Contains(status, "Active account: false") {
 		res.State = StateWarn
-		res.Detail = name + " is set and gh reports an idle keyring account — the env token wins and may be dead"
+		res.Detail = name + " is exported in your login shell and gh reports an idle keyring account" +
+			" — the env token wins and may be dead"
 		res.Remedy = &Remedy{
 			Command:  "unset " + name + "   # or: env -u " + name + " gh ...",
 			AutoSafe: false,
@@ -234,7 +265,7 @@ func (c GitHubTokenShadowCheck) Run(ctx context.Context, ex Executor) Result {
 		return res
 	}
 	res.State = StatePass
-	res.Detail = name + " is set and gh reports an active account"
+	res.Detail = name + " is exported in your login shell and gh reports an active account"
 	return res
 }
 
