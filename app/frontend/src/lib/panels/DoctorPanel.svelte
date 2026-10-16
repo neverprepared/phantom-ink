@@ -134,17 +134,17 @@
 </script>
 
 <div class="doctor">
-  <header>
+  <header class="panel-header">
     <div>
-      <h2>Doctor</h2>
+      <h1>Doctor</h1>
       <p class="sub">Checks run only when you ask. Nothing here changes until you say so.</p>
     </div>
-    <div class="actions">
+    <div class="head-actions">
       <label class="switch">
         <input type="checkbox" bind:checked={allowFixes} />
         Allow fixes
       </label>
-      <button onclick={run} disabled={busy}>
+      <button class="btn sm primary" onclick={run} disabled={busy}>
         {running ? 'Running…' : 'Run checks'}
       </button>
     </div>
@@ -166,9 +166,9 @@
         {#if !group.rows.length}
           <p class="sub">No checks in this scope.</p>
         {:else}
-          <ul>
+          <ul class="rows">
             {#each group.rows as r (r.id)}
-              <li>
+              <li class="row">
                 <Badge text={r.state} variant={variantFor(r.state)} />
                 <div class="body">
                   <div class="title">{r.title}</div>
@@ -182,9 +182,9 @@
                          one of these at a time. -->
                     <span class="fixing">Fixing…</span>
                   {:else if r.remedy.auto_safe && allowFixes && !busy}
-                    <button class="fix" onclick={() => (pendingFix = r)}>Fix</button>
+                    <button class="btn sm soft" onclick={() => (pendingFix = r)}>Fix</button>
                   {:else}
-                    <button class="copy" onclick={() => copy(r.remedy!.command)}>Copy fix</button>
+                    <button class="btn ghost sm" onclick={() => copy(r.remedy!.command)}>Copy fix</button>
                   {/if}
                 {/if}
               </li>
@@ -196,32 +196,67 @@
   {/if}
 
   {#if pendingFix?.remedy}
-    <div class="confirm">
+    <div class="confirm card">
       <p>{pendingFix.remedy.confirm}</p>
       <code>{pendingFix.remedy.command}</code>
       <div class="confirm-actions">
-        <button onclick={() => (pendingFix = null)}>Cancel</button>
-        <button class="fix" onclick={() => applyFix(pendingFix!)}>Run it</button>
+        <button class="btn ghost sm" onclick={() => (pendingFix = null)}>Cancel</button>
+        <button class="btn sm primary" onclick={() => applyFix(pendingFix!)}>Run it</button>
       </div>
     </div>
   {/if}
 </div>
 
 <style>
-  .doctor { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-  header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
-  h2 { margin: 0; font-size: 15px; }
-  .sub { margin: 2px 0 0; font-size: 11px; color: var(--color-text-tertiary); }
-  .actions { display: flex; align-items: center; gap: 10px; }
-  .switch { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--color-text-secondary); }
-  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-  li { display: flex; align-items: flex-start; gap: 8px; }
+  /* Only what is genuinely Doctor-specific lives here. The panel header, the
+     result rows, the buttons and the confirm surface all come from the shared
+     system (styles/tokens.css, buttons.css, components.css) so this panel reads
+     like every other one: `.panel-header` + `h1`, `.rows`/`.row`, `.btn` with
+     space-separated modifiers, `.card`. Spacing uses the --spacing-* scale
+     rather than hand-picked pixels. */
+  .doctor { padding: var(--spacing-lg); display: flex; flex-direction: column; gap: var(--spacing-md); }
+  .head-actions { display: flex; align-items: center; gap: var(--spacing-md); }
+
+  /* The fixes switch is a label wrapping a checkbox; no shared class covers it. */
+  .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  /* `.rows` is a panel-local idiom in this codebase, not a shared class: every
+     panel that uses it declares its own list reset. Matching that rule exactly
+     rather than relying on a class that styles/ does not define. */
+  .rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--spacing-xs); }
+
+  /* .row centres its children; a result's badge should sit with the title line
+     rather than float in the middle of a two-line body. */
+  .row { align-items: flex-start; }
   .body { flex: 1; min-width: 0; }
   .title { font-size: 12px; font-weight: 600; }
   .detail { font-size: 11px; color: var(--color-text-tertiary); word-break: break-word; }
+
   .error { font-size: 11px; color: var(--color-status-error-text); }
   .fixing { font-size: 11px; color: var(--color-text-tertiary); flex-shrink: 0; }
-  .confirm { border: 1px solid var(--color-warning-border); background: var(--color-warning-bg); padding: 10px; border-radius: 6px; font-size: 11px; }
-  .confirm code { display: block; margin: 6px 0; font-size: 10px; word-break: break-all; }
-  .confirm-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
+  /* Warning accent over the shared .card surface: this box is the last thing
+     between a click and a command running, so it should not look like chrome. */
+  .confirm {
+    border-color: var(--color-warning-border);
+    background: var(--color-warning-bg);
+    padding: var(--spacing-md);
+    font-size: 12px;
+  }
+  .confirm p { margin: 0; }
+  .confirm code {
+    display: block;
+    margin: var(--spacing-sm) 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    word-break: break-all;
+  }
+  .confirm-actions { display: flex; gap: var(--spacing-sm); justify-content: flex-end; }
 </style>
