@@ -116,6 +116,43 @@ func TestAppDBUnparsableSizeIsUnknown(t *testing.T) {
 	}
 }
 
+// Regression: an empty Path must never reach the stat call. The fixture below
+// stubs "stat -f %z " (the exact command an empty Path would produce) to
+// return a healthy non-zero size — simulating the real danger: some unrelated
+// file happening to sit at the resolved (wrong) location. If the Path=="" guard
+// in AppDBCheck.Run is removed, this test starts reporting StatePass off that
+// fixture instead of StateUnknown, which is exactly the false pass this guard
+// exists to prevent. Without the fixture, removing the guard would still
+// surface as fakeExec's "no stub" error path — a weaker pin, since that hides
+// the guard behind an unrelated plumbing failure instead of proving the
+// dangerous case.
+func TestAppDBEmptyPathIsUnknown(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"stat -f %z ": {out: "40960\n", code: 0},
+	}}
+	got := AppDBCheck{Path: ""}.Run(context.Background(), ex)
+	if got.State != StateUnknown {
+		t.Fatalf("state = %q, want unknown (detail %q)", got.State, got.Detail)
+	}
+}
+
+// Regression: a relative Path (e.g. produced by a caller falling back to
+// filepath.Join("", ...) after os.UserHomeDir fails) must also be refused as
+// unknown rather than stated against the process's cwd. The fixture stubs the
+// exact relative stat command with a healthy non-zero size, so if the
+// !filepath.IsAbs(c.Path) half of the guard in AppDBCheck.Run is removed, this
+// test starts reporting StatePass — a plausible-looking "app database
+// initialised" having never looked at the real ~/.phantom-ink.db.
+func TestAppDBRelativePathIsUnknown(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"stat -f %z .phantom-ink.db": {out: "40960\n", code: 0},
+	}}
+	got := AppDBCheck{Path: ".phantom-ink.db"}.Run(context.Background(), ex)
+	if got.State != StateUnknown {
+		t.Fatalf("state = %q, want unknown (detail %q)", got.State, got.Detail)
+	}
+}
+
 // Regression: zero profile directories must never read as a pass. A caller
 // that failed to enumerate profiles (a bad workspaces root, a permissions
 // error) and so passes an empty ProfileDirs must get StateUnknown, not a

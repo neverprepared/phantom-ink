@@ -75,3 +75,68 @@ func TestAutoSafeRemedyMustHaveExecArgv(t *testing.T) {
 		t.Fatal("want error: auto-safe remedy with no exec argv")
 	}
 }
+
+// recordingExec wraps fakeExec and additionally records every argv passed to
+// Shell, so a test can assert on what ran rather than just on what Shell was
+// stubbed to return.
+type recordingExec struct {
+	fakeExec
+	shellCalls [][]string
+}
+
+func (r *recordingExec) Shell(ctx context.Context, cmd []string) (string, int, error) {
+	r.shellCalls = append(r.shellCalls, cmd)
+	return r.fakeExec.Shell(ctx, cmd)
+}
+
+// Pin: RunDoctor's read-only promise — diagnosis never remediates. This
+// registers a check whose Result carries an AutoSafe remedy with a real Exec
+// argv, runs Registry.Run against a recordingExec that logs every Shell
+// invocation, and asserts the remedy's own argv was never among them. This
+// pins the actual promise Run makes (it only observes) rather than the
+// incidental fact that RunDoctor itself performs no disk writes; if Run (or
+// some future Check.Run) were changed to apply a matching remedy
+// automatically, the remedy's exact argv would show up in shellCalls and this
+// test would fail.
+func TestRegistryRunNeverInvokesARemedy(t *testing.T) {
+	remedyExec := []string{"touch", "/tmp/doctor-remedy-pin-marker"}
+	check := stubCheck{
+		id:    "remedy-check",
+		scope: ScopeLocal,
+		res: Result{
+			ID:    "remedy-check",
+			Scope: ScopeLocal,
+			State: StateFail,
+			Remedy: &Remedy{
+				Command:  "touch /tmp/doctor-remedy-pin-marker",
+				Exec:     remedyExec,
+				AutoSafe: true,
+				Confirm:  "This would create a marker file.",
+			},
+		},
+	}
+	r := NewRegistry()
+	if err := r.Register(check); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	ex := &recordingExec{}
+	results := r.Run(context.Background(), ex, "")
+	if len(results) != 1 || results[0].Remedy == nil {
+		t.Fatalf("expected one result carrying a remedy, got %+v", results)
+	}
+	for _, call := range ex.shellCalls {
+		if len(call) != len(remedyExec) {
+			continue
+		}
+		match := true
+		for i := range call {
+			if call[i] != remedyExec[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			t.Fatalf("remedy exec %v was invoked during Run; diagnosis must never remediate", remedyExec)
+		}
+	}
+}

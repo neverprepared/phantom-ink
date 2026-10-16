@@ -104,11 +104,20 @@ func (a *App) doctorProfileDirs() []string {
 }
 
 func (a *App) buildDoctorRegistry() *doctor.Registry {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	var dbPath string
+	if err == nil {
+		dbPath = filepath.Join(home, ".phantom-ink.db")
+	}
+	// On error, dbPath stays "" rather than falling back to a relative
+	// ".phantom-ink.db" — a relative path would stat whatever happens to be
+	// in the process's cwd and could produce a plausible-looking StatePass
+	// having never looked at the real app database. AppDBCheck reports
+	// StateUnknown for an empty Path.
 	reg := doctor.NewRegistry()
 	for _, c := range []doctor.Check{
 		doctor.DockerSymlinkCheck{},
-		doctor.AppDBCheck{Path: filepath.Join(home, ".phantom-ink.db")},
+		doctor.AppDBCheck{Path: dbPath},
 		doctor.DirenvApprovalCheck{ProfileDirs: a.doctorProfileDirs()},
 		doctor.GitHubTokenShadowCheck{},
 		doctor.PortShadowCheck{Port: "9910"},

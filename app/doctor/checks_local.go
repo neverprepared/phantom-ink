@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -75,6 +76,16 @@ func (AppDBCheck) Scope() Scope { return ScopeLocal }
 
 func (c AppDBCheck) Run(ctx context.Context, ex Executor) Result {
 	res := Result{ID: c.ID(), Title: "app database initialised", Scope: ScopeLocal}
+	if c.Path == "" || !filepath.IsAbs(c.Path) {
+		// An empty or relative Path means we do not know where the real app
+		// database lives — a relative path would stat whatever happens to sit
+		// in the process's cwd, which can produce a plausible-looking
+		// StatePass having never looked at the actual file. "Do not know" is
+		// unknown, not pass.
+		res.State = StateUnknown
+		res.Detail = "no absolute database path to inspect"
+		return res
+	}
 	out, _, err := ex.Shell(ctx, []string{"stat", "-f", "%z", c.Path})
 	if err != nil {
 		res.State = StateUnknown
