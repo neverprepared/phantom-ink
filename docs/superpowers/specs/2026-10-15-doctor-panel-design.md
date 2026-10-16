@@ -116,35 +116,65 @@ rather than flipping optimistically green.
 
 ## Check catalog
 
+The **Status** column records what actually shipped. Eight of the twelve checks
+designed here exist; the four marked *not shipped* were cancelled or deferred
+during implementation, for the reasons under "Deferred checks" below. They are
+listed rather than deleted because the reasoning is the point: each was
+cancelled by the state model this spec establishes, not by running out of time.
+
 ### Local (`Shell`)
 
-| Check | Observes | Remedy | Auto |
-|---|---|---|---|
-| `docker-symlink` | `/usr/local/bin/docker` resolves (GUI/launchd PATH) | recreate symlink | yes |
-| `github-token-shadow` | `GITHUB_TOKEN`/`GH_TOKEN` set while `gh auth status` shows an idle keyring account | unset the env var | no (shell-scoped) |
-| `direnv-approval` | each profile's `.envrc` is approved | `direnv allow` | yes |
-| `app-db` | `~/.phantom-ink.db` exists, non-zero, migrations at head | restart the app so migrations run | no (app action) |
-| `port-shadow-9910` | a host launchd router holds `:9910` ahead of the platform | unload launchd job | no (destructive) |
-| `gateway-mcp-pin` | gateway venv still pins `mcp<2` | re-pin | no (needs rebuild) |
+| Check | Observes | Remedy | Auto | Status |
+|---|---|---|---|---|
+| `docker-symlink` | `/usr/local/bin/docker` resolves (GUI/launchd PATH) | `sudo ln -sf …` | no (needs sudo) | shipped |
+| `github-token-shadow` | `GITHUB_TOKEN`/`GH_TOKEN` exported in the operator's **login shell** while `gh auth status` shows an idle keyring account | unset the env var | no (shell-scoped) | shipped |
+| `direnv-approval` | each profile's `.envrc` is approved | `direnv allow` | yes | shipped |
+| `app-db` | `~/.phantom-ink.db` exists and is non-zero | restart the app so migrations run | no (app action) | shipped |
+| `port-shadow` | a **non-docker** host process holds `:9910` ahead of the platform (docker publishing the platform's own port is not a shadow) | unload launchd job | no (destructive) | shipped |
+| `gateway-mcp-pin` | the gateway container still pins `mcp<2` | re-pin | no (needs rebuild) | shipped |
 
 `app-db` fails on the current machine: the file is 0 bytes and has no `tasks`
 table.
 
 ### Platform (`PlatformServices` + `Probe`)
 
-| Check | Observes | Remedy | Auto |
-|---|---|---|---|
-| `traefik-bound` | Traefik running **and** its `Addr` answers; running-but-unreachable is the orphan-nginx signature | identify orphan | no |
-| `service-health` | any service `Health == "unhealthy"`, honoring `OneShot` | restart from the Services panel | no (app action) |
-| `registry-auth` | registry probe distinguishes **401** from **404** | set `REGISTRY_PASSWORD` | no (secret) |
-| `vault-reachability` | all five brain vaults answer with their bearer | — | no |
-| `sor-migrations` | each profile's SoR is at head; the daemon does not auto-apply | `pbrainctl server db migrate <profile>` | no (ordering) |
-| `profile-api-key` | `gsa`/`lakeview` `CL_API_KEY` is still a placeholder | set a real key | no (secret) |
+| Check | Observes | Remedy | Auto | Status |
+|---|---|---|---|---|
+| `traefik-bound` | Traefik running **and** its `Addr` answers; running-but-unreachable is the orphan-nginx signature. Reports `unknown` when a remote platform node is configured — `Addr` is always `localhost:<port>` *relative to the node*, so it is not probeable from the operator's host | identify orphan | no | shipped |
+| `service-health` | every non-`OneShot` service is `running`, and none reports `Health == "unhealthy"` | restart from the Services panel | no (app action) | shipped |
+| `registry-auth` | registry probe distinguishes **401** from **404** | set `REGISTRY_PASSWORD` | no (secret) | **not shipped** |
+| `vault-reachability` | all five brain vaults answer with their bearer | — | no | **not shipped** |
+| `sor-migrations` | each profile's SoR is at head; the daemon does not auto-apply | `pbrainctl server db migrate <profile>` | no (ordering) | **not shipped** |
+| `profile-api-key` | `gsa`/`lakeview` `CL_API_KEY` is still a placeholder | set a real key | no (secret) | **not shipped** |
 
-Only two are auto-safe — `docker-symlink` and `direnv-approval`. That ratio is
-the rule doing its job rather than taste: a remedy qualifies only if it is a
-real argv Doctor can run, which excludes both app actions (restart the app,
-restart a compose service — already one click away in Services) and prose.
+Exactly one shipped remedy is auto-safe — `direnv-approval`. That ratio is the
+rule doing its job rather than taste: a remedy qualifies only if it is a real
+argv Doctor can run *and can expect to succeed*, which excludes prose, app
+actions (restart the app, restart a compose service — already one click away in
+Services), and anything needing privilege Doctor will not acquire.
+`docker-symlink` was designed as auto-safe and shipped manual for that last
+reason: `/usr/local` is root-owned on a default Apple Silicon macOS, so the
+one-click form could not have worked on a majority of hosts.
+
+### Deferred checks
+
+- **`registry-auth` and `vault-reachability` — cancelled during
+  implementation.** Both need a credential-carrying probe, and the `Executor`
+  interface specified here has only three capabilities, none of which can send
+  a bearer or a registry login. An *unauthenticated* probe cannot distinguish
+  the states they exist to separate: a private registry returns 401 to anyone,
+  so the check would have reported "our credentials were rejected" on a
+  perfectly healthy install, every run. Shipping that is worse than shipping
+  nothing — it costs the panel its credibility, which is the one thing this
+  spec is trying to buy. They wait on a fourth `Executor` capability that can
+  carry credentials.
+- **`sor-migrations` and `profile-api-key` — specced but never planned.** Both
+  read phantom-brain / profile state the app does not currently hold, and
+  neither was decomposed into tasks. No design objection; simply not built.
+
+See the plan's Task 6 cancellation record and follow-up list
+(`docs/superpowers/plans/2026-10-15-doctor-panel.md`) for the full reasoning
+and the follow-up tickets.
 
 `Command` is display text and may be prose; `Exec` is the argv. Keeping them
 separate matters because splitting prose on whitespace and executing it is
@@ -209,6 +239,11 @@ conformance test are unaffected.
   value. Real fan-out grouping is `job_id` — a flat sibling set, one level
   deep. Emitting true task parentage is a router-side prerequisite and its
   own piece of work.
-- Generic remote exec (rejected above).
+- Generic remote exec (rejected above). This is also why `traefik-bound`
+  reports `unknown` rather than probing a remote node: the app has no reliable
+  reachable address for the node, and guessing one would reintroduce exactly
+  the observe-the-wrong-subject bug the state model exists to prevent.
+- The four platform checks marked *not shipped* in the catalog above — see
+  "Deferred checks" for why each is out, and what unblocks it.
 - Tri-state health for the existing Services/Gateway badges. Doctor
   establishes the state model; retrofitting those badges is a follow-up.
