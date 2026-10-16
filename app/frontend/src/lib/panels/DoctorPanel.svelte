@@ -28,8 +28,27 @@
   let pendingFix = $state<Result | null>(null);
   let fixing = $state('');
 
+  // Monotonic counter bumped at the start of every run(). applyFix captures it
+  // before awaiting and refuses to write a result splice once it has moved on
+  // — a fresh Run checks must win over a fix that was already in flight when
+  // it was clicked, never the other way around.
+  let epoch = $state(0);
+
+  // One "busy" notion covers both races at once: while true, Run checks is
+  // disabled and no row offers a Fix button (the copy-command fallback stays
+  // available), so a second fix or a check-run can never start while one is
+  // outstanding. Concurrent remediation isn't a feature worth having here.
+  const busy = $derived(running || fixing !== '');
+
   const local = $derived(results.filter((r) => r.scope === 'local'));
   const platform = $derived(results.filter((r) => r.scope === 'platform'));
+
+  // Kill-switch guard: turning the switch off must also drop any confirm
+  // that's already open, so a stale "Run it" click can't execute a remedy
+  // the operator just withdrew consent for.
+  $effect(() => {
+    if (!allowFixes) pendingFix = null;
+  });
 
   // Badge variants are limited to those Badge.svelte defines. 'unknown' maps to
   // no variant on purpose: the muted default is the point.
@@ -55,6 +74,7 @@
   // same shape every other panel uses; calling getApi().RunDoctor() directly
   // reads a property off a Promise and is always undefined.
   async function run() {
+    epoch += 1;
     running = true;
     error = '';
     const a = await getApi();
@@ -75,7 +95,14 @@
 
   async function applyFix(r: Result) {
     pendingFix = null;
+    // Kill-switch guard, belt-and-braces: the $effect above already clears
+    // pendingFix (and so the confirm) the instant the switch flips off, but
+    // re-check here too in case this call was already queued by a click.
+    if (!allowFixes) return;
     fixing = r.id;
+    // Capture the epoch before awaiting so a Run checks that lands while
+    // this fix is in flight can be detected when it comes back.
+    const myEpoch = epoch;
     const a = await getApi();
     if (!a) {
       error = 'Wails bindings unavailable';
@@ -87,8 +114,11 @@
         result: Result; error?: string;
       };
       if (out.error) error = out.error;
-      // Replace the row with the re-run result, never an assumed pass.
-      if (out.result?.id) {
+      // Replace the row with the re-run result, never an assumed pass — but
+      // only if no fresh Run checks has superseded this result in the
+      // meantime. A superseded write would clobber live data with a stale
+      // read; the error above still surfaces either way.
+      if (epoch === myEpoch && out.result?.id) {
         results = results.map((x) => (x.id === out.result.id ? out.result : x));
       }
     } catch (e) {
@@ -114,7 +144,7 @@
         <input type="checkbox" bind:checked={allowFixes} />
         Allow fixes
       </label>
-      <button onclick={run} disabled={running}>
+      <button onclick={run} disabled={busy}>
         {running ? 'Running…' : 'Run checks'}
       </button>
     </div>
@@ -145,12 +175,14 @@
                   <div class="detail">{r.detail}</div>
                 </div>
                 {#if r.remedy}
-                  {#if r.remedy.auto_safe && allowFixes}
-                    <button
-                      class="fix"
-                      disabled={fixing === r.id}
-                      onclick={() => (pendingFix = r)}
-                    >{fixing === r.id ? 'Fixing…' : 'Fix'}</button>
+                  {#if fixing === r.id}
+                    <!-- The row actually in flight gets its own indicator,
+                         not a button — busy below already withholds Fix from
+                         every row, this one included, so there is only ever
+                         one of these at a time. -->
+                    <span class="fixing">Fixing…</span>
+                  {:else if r.remedy.auto_safe && allowFixes && !busy}
+                    <button class="fix" onclick={() => (pendingFix = r)}>Fix</button>
                   {:else}
                     <button class="copy" onclick={() => copy(r.remedy!.command)}>Copy fix</button>
                   {/if}
@@ -188,6 +220,7 @@
   .title { font-size: 12px; font-weight: 600; }
   .detail { font-size: 11px; color: var(--color-text-tertiary); word-break: break-word; }
   .error { font-size: 11px; color: var(--color-status-error-text); }
+  .fixing { font-size: 11px; color: var(--color-text-tertiary); flex-shrink: 0; }
   .confirm { border: 1px solid var(--color-warning-border); background: var(--color-warning-bg); padding: 10px; border-radius: 6px; font-size: 11px; }
   .confirm code { display: block; margin: 6px 0; font-size: 10px; word-break: break-all; }
   .confirm-actions { display: flex; gap: 6px; justify-content: flex-end; }
