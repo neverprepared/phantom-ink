@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -78,5 +79,76 @@ func TestDockerSymlinkUnobservableIsUnknown(t *testing.T) {
 	}
 	if got.Detail == "" {
 		t.Fatal("unknown must explain why it could not tell")
+	}
+}
+
+func TestAppDBMissingOrEmptyIsFail(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"stat -f %z /tmp/none.db": {out: "0\n", code: 0},
+	}}
+	got := AppDBCheck{Path: "/tmp/none.db"}.Run(context.Background(), ex)
+	if got.State != StateFail {
+		t.Fatalf("state = %q, want fail for a zero-byte db", got.State)
+	}
+	// The fix is an app restart, which Doctor cannot shell out to on itself.
+	if got.Remedy == nil || got.Remedy.AutoSafe {
+		t.Fatal("want a non-auto-safe remedy")
+	}
+}
+
+func TestAppDBPopulatedIsPass(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"stat -f %z /tmp/db": {out: "40960\n", code: 0},
+	}}
+	got := AppDBCheck{Path: "/tmp/db"}.Run(context.Background(), ex)
+	if got.State != StatePass {
+		t.Fatalf("state = %q, want pass", got.State)
+	}
+}
+
+func TestAppDBUnparsableSizeIsUnknown(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"stat -f %z /tmp/db": {out: "not-a-number\n", code: 0},
+	}}
+	got := AppDBCheck{Path: "/tmp/db"}.Run(context.Background(), ex)
+	if got.State != StateUnknown {
+		t.Fatalf("state = %q, want unknown", got.State)
+	}
+}
+
+func TestDirenvAllAllowedIsPass(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"sh -lc cd /p/one && direnv status": {out: "Found RC allowed 0\n", code: 0},
+	}}
+	got := DirenvApprovalCheck{ProfileDirs: []string{"/p/one"}}.Run(context.Background(), ex)
+	if got.State != StatePass {
+		t.Fatalf("state = %q, want pass (detail %q)", got.State, got.Detail)
+	}
+}
+
+func TestDirenvUnapprovedIsWarnNamingTheProfile(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"sh -lc cd /p/one && direnv status": {out: "Found RC allowed 0\n", code: 0},
+		"sh -lc cd /p/two && direnv status": {out: "Found RC allowed 2\n", code: 0},
+	}}
+	got := DirenvApprovalCheck{ProfileDirs: []string{"/p/one", "/p/two"}}.Run(context.Background(), ex)
+	if got.State != StateWarn {
+		t.Fatalf("state = %q, want warn", got.State)
+	}
+	if !strings.Contains(got.Detail, "/p/two") {
+		t.Fatalf("detail %q must name the unapproved profile", got.Detail)
+	}
+	if strings.Contains(got.Detail, "/p/one") {
+		t.Fatalf("detail %q must not list approved profiles", got.Detail)
+	}
+}
+
+func TestDirenvMissingAllowedLineIsUnknown(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"sh -lc cd /p/one && direnv status": {out: "some other output\n", code: 0},
+	}}
+	got := DirenvApprovalCheck{ProfileDirs: []string{"/p/one"}}.Run(context.Background(), ex)
+	if got.State != StateUnknown {
+		t.Fatalf("state = %q, want unknown", got.State)
 	}
 }
