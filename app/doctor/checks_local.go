@@ -241,6 +241,15 @@ func (c GitHubTokenShadowCheck) Run(ctx context.Context, ex Executor) Result {
 // PortShadowCheck catches a host process holding a port the platform needs. A
 // launchd router on :9910 shadows the containerised one, and the app then talks
 // to the wrong thing while everything appears to be up.
+//
+// Non-emptiness of lsof's output is NOT the signal. In the local-platform
+// configuration the platform's own router publishes 9910 to the host
+// ("0.0.0.0:9910->9910/tcp"), and a published container port appears in lsof
+// like any other listener — so testing emptiness reports a hard fail, with a
+// destructive launchctl remedy for a job that does not exist, on every
+// correctly-working local install. What distinguishes the two cases is the
+// COMMAND column: a docker-owned listener is the platform publishing its own
+// port; anything else is a genuine shadow.
 type PortShadowCheck struct{ Port string }
 
 func (c PortShadowCheck) ID() string { return "port-shadow" }
@@ -269,14 +278,91 @@ func (c PortShadowCheck) Run(ctx context.Context, ex Executor) Result {
 		res.Detail = "lsof returned no output and no error for :" + c.Port
 		return res
 	}
+	listeners := parseLsofCommands(out)
+	if len(listeners) == 0 {
+		// Output arrived but no data line could be read out of it. That is
+		// "I could not tell", not "the port is clear" and not "something is
+		// shadowing it" — do not guess which.
+		res.State = StateUnknown
+		res.Detail = "could not read the COMMAND column of lsof's output for :" + c.Port
+		return res
+	}
+	var foreign, dockerOwned []string
+	for _, cmd := range listeners {
+		if isDockerListener(cmd) {
+			dockerOwned = append(dockerOwned, cmd)
+			continue
+		}
+		foreign = append(foreign, cmd)
+	}
+	if len(foreign) == 0 {
+		res.State = StatePass
+		res.Detail = "docker publishes :" + c.Port + " (" + strings.Join(dedupe(dockerOwned), ", ") +
+			") — the platform owns the port, nothing is shadowing it"
+		return res
+	}
 	res.State = StateFail
-	res.Detail = "a host process is listening on :" + c.Port + ", shadowing the platform service"
+	res.Detail = "a host process is listening on :" + c.Port +
+		" (" + strings.Join(dedupe(foreign), ", ") + "), shadowing the platform service"
 	res.Remedy = &Remedy{
 		Command:  "launchctl unload <the job holding :" + c.Port + ">",
 		AutoSafe: false,
 		Confirm:  "",
 	}
 	return res
+}
+
+// dockerListenerPrefixes are the COMMAND values a container runtime's port
+// publisher appears under. lsof truncates COMMAND to nine characters by
+// default, which is why these are prefixes and why "com.docke" is listed as
+// well as "com.docker": the real process is com.docker.backend.
+var dockerListenerPrefixes = []string{
+	"docker",
+	"com.docke",
+	"com.docker",
+	"orbstack",
+	"orbstk",
+	"orb",
+	"vpnkit",
+}
+
+func isDockerListener(command string) bool {
+	c := strings.ToLower(strings.TrimSpace(command))
+	for _, p := range dockerListenerPrefixes {
+		if strings.HasPrefix(c, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseLsofCommands returns the COMMAND column of every data row in lsof's
+// output, skipping the header. A row with a single field is not a data row —
+// lsof prints nine columns — so it is ignored rather than read as a command,
+// which keeps unparseable output distinguishable from a real listener.
+func parseLsofCommands(out string) []string {
+	var cmds []string
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] == "COMMAND" {
+			continue
+		}
+		cmds = append(cmds, fields[0])
+	}
+	return cmds
+}
+
+func dedupe(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 // GatewayMCPPinCheck guards a pin that silently breaks the gateway: mcp 2.0

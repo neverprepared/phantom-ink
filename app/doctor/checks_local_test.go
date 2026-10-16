@@ -320,3 +320,85 @@ func TestGatewayMCPPinUnreadableIsUnknown(t *testing.T) {
 		t.Fatalf("state = %q, want unknown", got.State)
 	}
 }
+
+// lsof's real output, header and all. The nine-character COMMAND truncation is
+// not incidental: com.docker.backend appears as "com.docke", so the docker
+// predicate has to match on a prefix.
+const lsofDockerPublisher = `COMMAND     PID     USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+com.docke 50216 cdowning   36u  IPv6 0x9f3a1c7e5b2d4068      0t0  TCP *:9910 (LISTEN)
+`
+
+// Regression, and the whole correctness of this check: in the local-platform
+// configuration the platform's OWN router publishes 9910 to the host, and a
+// published container port appears in lsof exactly like a shadowing process.
+// Inferring a shadow from output non-emptiness therefore reported a hard fail —
+// with a destructive `launchctl unload` remedy for a job that does not exist —
+// on every correctly-working local install. The COMMAND column is what tells
+// the two apart.
+func TestPortShadowDockerPublishedPortIsPass(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"lsof -nP -iTCP:9910 -sTCP:LISTEN": {out: lsofDockerPublisher, code: 0},
+	}}
+	got := PortShadowCheck{Port: "9910"}.Run(context.Background(), ex)
+	if got.State != StatePass {
+		t.Fatalf("state = %q, want pass — docker publishing the platform's own port is not a shadow (detail %q)", got.State, got.Detail)
+	}
+	if got.Remedy != nil {
+		t.Fatalf("a passing check must not offer the launchctl remedy, got %+v", got.Remedy)
+	}
+}
+
+// The converse must keep working: a non-docker listener is still a hard fail,
+// and the detail must name it so the operator can find the job.
+func TestPortShadowNonDockerListenerIsFailNamingIt(t *testing.T) {
+	out := `COMMAND  PID     USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+prouter 7781 cdowning   20u  IPv4 0x1b4c8d2a6f0e3759      0t0  TCP *:9910 (LISTEN)
+`
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"lsof -nP -iTCP:9910 -sTCP:LISTEN": {out: out, code: 0},
+	}}
+	got := PortShadowCheck{Port: "9910"}.Run(context.Background(), ex)
+	if got.State != StateFail {
+		t.Fatalf("state = %q, want fail for a host process on the port (detail %q)", got.State, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "prouter") {
+		t.Fatalf("detail %q must name the shadowing command", got.Detail)
+	}
+	if got.Remedy == nil || got.Remedy.AutoSafe {
+		t.Fatal("killing a listener is destructive; remedy must not be auto-safe")
+	}
+}
+
+// A docker listener alongside a foreign one is still a shadow — the foreign
+// process is the one answering for some connections, which is the whole fault.
+func TestPortShadowDockerPlusForeignIsFail(t *testing.T) {
+	out := `COMMAND     PID     USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+com.docke 50216 cdowning   36u  IPv6 0x9f3a1c7e5b2d4068      0t0  TCP *:9910 (LISTEN)
+node      7781 cdowning   20u  IPv4 0x1b4c8d2a6f0e3759      0t0  TCP *:9910 (LISTEN)
+`
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"lsof -nP -iTCP:9910 -sTCP:LISTEN": {out: out, code: 0},
+	}}
+	got := PortShadowCheck{Port: "9910"}.Run(context.Background(), ex)
+	if got.State != StateFail {
+		t.Fatalf("state = %q, want fail when a foreign listener shares the port (detail %q)", got.State, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "node") {
+		t.Fatalf("detail %q must name the foreign listener", got.Detail)
+	}
+}
+
+// Output arrived but carries no data row. That is "I could not tell", and
+// guessing either way would be a verdict over an unread observation.
+func TestPortShadowUnparseableOutputIsUnknown(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"lsof -nP -iTCP:9910 -sTCP:LISTEN": {
+			out:  "COMMAND     PID     USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\n",
+			code: 0,
+		},
+	}}
+	got := PortShadowCheck{Port: "9910"}.Run(context.Background(), ex)
+	if got.State != StateUnknown {
+		t.Fatalf("state = %q, want unknown for output with no data row (detail %q)", got.State, got.Detail)
+	}
+}
