@@ -4,10 +4,13 @@ import {brainbox} from '../models';
 import {main} from '../models';
 import {opensearch} from '../models';
 import {provider} from '../models';
+import {doctor} from '../models';
 
 export function AddBrainMCP(arg1:string,arg2:string):Promise<string>;
 
 export function AddConversationParticipant(arg1:string,arg2:string,arg3:brainbox.AddConversationParticipantRequest):Promise<brainbox.Conversation>;
+
+export function ApplyRemedy(arg1:string):Promise<main.DoctorRemedyResult>;
 
 export function ArchiveConversation(arg1:string,arg2:string):Promise<brainbox.Conversation>;
 
@@ -404,6 +407,8 @@ export function RetryRuleExecution(arg1:number):Promise<brainbox.RuleExecution>;
 export function RevokeProfileToken(arg1:string):Promise<void>;
 
 export function RunCollectJobNow(arg1:string):Promise<void>;
+
+export function RunDoctor(arg1:string):Promise<Array<doctor.Result>>;
 
 export function RunMetricScript(arg1:string,arg2:string):Promise<string>;
 
