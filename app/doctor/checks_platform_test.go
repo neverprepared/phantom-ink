@@ -18,14 +18,18 @@ func TestServiceHealthAllHealthyIsPass(t *testing.T) {
 	}
 }
 
-// A one-shot init sidecar at "exited (0)" is success, not a fault.
-func TestServiceHealthOneShotExitedIsPass(t *testing.T) {
+// A one-shot init sidecar is exempt from the health scan even when its
+// healthcheck reports unhealthy — the exemption is the point of the field, and
+// the service would otherwise land in "bad" like any other unhealthy service.
+// Contrast: TestServiceHealthUnhealthyIsWarnPointingAtServices flags the same
+// Health value on a non-one-shot service.
+func TestServiceHealthOneShotUnhealthyIsExempt(t *testing.T) {
 	ex := &fakeExec{services: []Service{
-		{Name: "brain-init", State: "exited", Health: "", OneShot: true},
+		{Name: "brain-init", State: "exited", Health: "unhealthy", OneShot: true},
 	}}
 	got := ServiceHealthCheck{}.Run(context.Background(), ex)
 	if got.State != StatePass {
-		t.Fatalf("state = %q, want pass for a completed one-shot", got.State)
+		t.Fatalf("state = %q, want pass for an exempted one-shot", got.State)
 	}
 }
 
