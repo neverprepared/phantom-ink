@@ -6,8 +6,18 @@ import (
 	"strings"
 )
 
-// ServiceHealthCheck reports compose services whose healthcheck is failing.
-// OneShot services are exempt: an init sidecar at "exited (0)" has succeeded,
+// ServiceHealthCheck reports compose services that are not running, and those
+// whose healthcheck is failing.
+//
+// The not-running half is not redundant with the healthcheck. parseHealth
+// returns "" for any service without a docker healthcheck — which is most of
+// them — and ListPlatformServices uses `docker ps -a`, so exited containers are
+// in the listing. Scanning only for Health == "unhealthy" therefore reported
+// pass over a platform whose router had crashed to "exited (1)": "8 services,
+// none unhealthy", under a title claiming health. The absence of a negative
+// healthcheck signal is not an observation of health.
+//
+// OneShot services stay exempt: an init sidecar at "exited (0)" has succeeded,
 // and flagging it would train the operator to ignore this check.
 type ServiceHealthCheck struct{}
 
@@ -15,7 +25,7 @@ func (ServiceHealthCheck) ID() string   { return "service-health" }
 func (ServiceHealthCheck) Scope() Scope { return ScopePlatform }
 
 func (c ServiceHealthCheck) Run(ctx context.Context, ex Executor) Result {
-	res := Result{ID: c.ID(), Title: "platform services healthy", Scope: ScopePlatform}
+	res := Result{ID: c.ID(), Title: "platform services running", Scope: ScopePlatform}
 	svcs, err := ex.PlatformServices(ctx)
 	if err != nil {
 		res.State = StateUnknown
@@ -27,28 +37,48 @@ func (c ServiceHealthCheck) Run(ctx context.Context, ex Executor) Result {
 		res.Detail = "the platform stack reported no services"
 		return res
 	}
-	var bad []string
+	var stopped, unhealthy []string
 	for _, s := range svcs {
 		if s.OneShot {
 			continue
 		}
+		if s.State != "running" {
+			stopped = append(stopped, s.Name+" ("+s.State+")")
+			continue
+		}
 		if s.Health == "unhealthy" {
-			bad = append(bad, s.Name)
+			unhealthy = append(unhealthy, s.Name)
 		}
 	}
-	if len(bad) == 0 {
+	// Not auto-safe in either branch: restarting a compose service is an app
+	// action (RestartPlatformService), not a shell command, and it is already
+	// one click away in the Services panel. Doctor points at it rather than
+	// duplicating it.
+	switch {
+	case len(stopped) > 0:
+		res.State = StateFail
+		res.Detail = "not running: " + strings.Join(stopped, ", ")
+		if len(unhealthy) > 0 {
+			res.Detail += "; unhealthy: " + strings.Join(unhealthy, ", ")
+		}
+		res.Remedy = &Remedy{
+			Command: "start these services from the Services panel: " +
+				strings.Join(append(append([]string{}, stopped...), unhealthy...), ", "),
+			AutoSafe: false,
+		}
+	case len(unhealthy) > 0:
+		res.State = StateWarn
+		res.Detail = "unhealthy: " + strings.Join(unhealthy, ", ")
+		res.Remedy = &Remedy{
+			Command:  "restart these services from the Services panel: " + strings.Join(unhealthy, ", "),
+			AutoSafe: false,
+		}
+	default:
 		res.State = StatePass
-		res.Detail = fmt.Sprintf("%d services, none unhealthy", len(svcs))
-		return res
-	}
-	res.State = StateWarn
-	res.Detail = "unhealthy: " + strings.Join(bad, ", ")
-	// Not auto-safe: restarting a compose service is an app action
-	// (RestartPlatformService), not a shell command, and it is already one click
-	// away in the Services panel. Doctor points at it rather than duplicating it.
-	res.Remedy = &Remedy{
-		Command:  "restart these services from the Services panel: " + strings.Join(bad, ", "),
-		AutoSafe: false,
+		// Claim only what was observed: every non-one-shot service was seen
+		// running, and none of those with a healthcheck reported unhealthy.
+		// Services without a healthcheck report nothing either way.
+		res.Detail = fmt.Sprintf("%d services, all running; none reports unhealthy", len(svcs))
 	}
 	return res
 }

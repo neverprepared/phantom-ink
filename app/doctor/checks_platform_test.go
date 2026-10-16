@@ -146,3 +146,78 @@ func TestTraefikLocalStillProbesWhenNoNodeConfigured(t *testing.T) {
 		t.Fatalf("state = %q, want fail (detail %q)", got.State, got.Detail)
 	}
 }
+
+// Regression: the exact shape that reported pass over a dead platform. The
+// router has crashed to "exited (1)" and defines no healthcheck, so parseHealth
+// returns "" and a scan for Health == "unhealthy" finds nothing — "8 services,
+// none unhealthy" under a title claiming health. ListPlatformServices uses
+// `docker ps -a`, so the exited container really is in the listing; the other
+// two services here are healthy precisely so that nothing but the stopped one
+// can produce the fail.
+func TestServiceHealthStoppedServiceIsFail(t *testing.T) {
+	ex := &fakeExec{services: []Service{
+		{Name: "gateway", State: "running", Health: "healthy"},
+		{Name: "router", State: "exited", Health: ""},
+		{Name: "events", State: "running", Health: "healthy"},
+	}}
+	got := ServiceHealthCheck{}.Run(context.Background(), ex)
+	if got.State != StateFail {
+		t.Fatalf("state = %q, want fail — a crashed service with no healthcheck must not read as healthy (detail %q)", got.State, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "router") {
+		t.Fatalf("detail %q must name the stopped service", got.Detail)
+	}
+	if !strings.Contains(got.Detail, "exited") {
+		t.Fatalf("detail %q must name the state it observed", got.Detail)
+	}
+	if got.Remedy == nil || got.Remedy.AutoSafe {
+		t.Fatal("want a non-auto-safe remedy pointing at the Services panel")
+	}
+}
+
+// A stopped service outranks an unhealthy one, and both must still be named:
+// reporting only the warn would hide the harder fault.
+func TestServiceHealthStoppedOutranksUnhealthy(t *testing.T) {
+	ex := &fakeExec{services: []Service{
+		{Name: "router", State: "exited", Health: ""},
+		{Name: "gateway", State: "running", Health: "unhealthy"},
+	}}
+	got := ServiceHealthCheck{}.Run(context.Background(), ex)
+	if got.State != StateFail {
+		t.Fatalf("state = %q, want fail", got.State)
+	}
+	if !strings.Contains(got.Detail, "router") || !strings.Contains(got.Detail, "gateway") {
+		t.Fatalf("detail %q must name both the stopped and the unhealthy service", got.Detail)
+	}
+}
+
+// The pass detail must not claim more than was observed. A service without a
+// healthcheck reports nothing either way, so "healthy" is not available —
+// "all running; none reports unhealthy" is.
+func TestServiceHealthPassClaimsOnlyWhatWasObserved(t *testing.T) {
+	ex := &fakeExec{services: []Service{
+		{Name: "router", State: "running", Health: ""},
+	}}
+	got := ServiceHealthCheck{}.Run(context.Background(), ex)
+	if got.State != StatePass {
+		t.Fatalf("state = %q, want pass", got.State)
+	}
+	if !strings.Contains(got.Detail, "running") {
+		t.Fatalf("detail %q must say what it observed (that they are running)", got.Detail)
+	}
+}
+
+// The OneShot exemption must survive the not-running branch: an init sidecar at
+// "exited (0)" has succeeded, and is the single most common non-running service
+// in the stack. Flagging it would make this check fire on every healthy
+// platform.
+func TestServiceHealthOneShotExitedIsNotAFail(t *testing.T) {
+	ex := &fakeExec{services: []Service{
+		{Name: "brain-init", State: "exited", Health: "", OneShot: true},
+		{Name: "router", State: "running", Health: "healthy"},
+	}}
+	got := ServiceHealthCheck{}.Run(context.Background(), ex)
+	if got.State != StatePass {
+		t.Fatalf("state = %q, want pass — an exited one-shot sidecar has succeeded (detail %q)", got.State, got.Detail)
+	}
+}
