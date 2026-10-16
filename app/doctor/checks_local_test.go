@@ -166,3 +166,81 @@ func TestDirenvApprovalDirWithSpaceIsQueriedCorrectly(t *testing.T) {
 		t.Fatalf("state = %q, want pass (detail %q)", got.State, got.Detail)
 	}
 }
+
+func TestGitHubTokenShadowDetected(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"printenv GITHUB_TOKEN": {out: "ghp_xxx\n", code: 0},
+		"gh auth status":        {out: "Active account: false\n", code: 0},
+	}}
+	got := GitHubTokenShadowCheck{}.Run(context.Background(), ex)
+	if got.State != StateWarn {
+		t.Fatalf("state = %q, want warn", got.State)
+	}
+	if strings.Contains(got.Detail, "ghp_") {
+		t.Fatalf("detail must never echo the token value: %q", got.Detail)
+	}
+}
+
+func TestGitHubTokenAbsentIsPass(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"printenv GITHUB_TOKEN": {out: "", code: 1},
+		"gh auth status":        {out: "Active account: true\n", code: 0},
+	}}
+	got := GitHubTokenShadowCheck{}.Run(context.Background(), ex)
+	if got.State != StatePass {
+		t.Fatalf("state = %q, want pass", got.State)
+	}
+}
+
+func TestPortShadowOccupiedIsFail(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"lsof -nP -iTCP:9910 -sTCP:LISTEN": {out: "node 123 cdowning 20u IPv4 TCP *:9910 (LISTEN)\n", code: 0},
+	}}
+	got := PortShadowCheck{Port: "9910"}.Run(context.Background(), ex)
+	if got.State != StateFail {
+		t.Fatalf("state = %q, want fail", got.State)
+	}
+	if got.Remedy == nil || got.Remedy.AutoSafe {
+		t.Fatal("killing a listener is destructive; remedy must not be auto-safe")
+	}
+}
+
+func TestPortShadowFreeIsPass(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"lsof -nP -iTCP:9910 -sTCP:LISTEN": {out: "", code: 1},
+	}}
+	got := PortShadowCheck{Port: "9910"}.Run(context.Background(), ex)
+	if got.State != StatePass {
+		t.Fatalf("state = %q, want pass", got.State)
+	}
+}
+
+func TestGatewayMCPPinIntactIsPass(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"docker exec gw pip show mcp": {out: "Name: mcp\nVersion: 1.9.4\n", code: 0},
+	}}
+	got := GatewayMCPPinCheck{Container: "gw"}.Run(context.Background(), ex)
+	if got.State != StatePass {
+		t.Fatalf("state = %q, want pass", got.State)
+	}
+}
+
+func TestGatewayMCPPinBrokenIsFail(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"docker exec gw pip show mcp": {out: "Name: mcp\nVersion: 2.0.1\n", code: 0},
+	}}
+	got := GatewayMCPPinCheck{Container: "gw"}.Run(context.Background(), ex)
+	if got.State != StateFail {
+		t.Fatalf("state = %q, want fail for mcp 2.x", got.State)
+	}
+}
+
+func TestGatewayMCPPinUnreadableIsUnknown(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"docker exec gw pip show mcp": {out: "no version line here\n", code: 0},
+	}}
+	got := GatewayMCPPinCheck{Container: "gw"}.Run(context.Background(), ex)
+	if got.State != StateUnknown {
+		t.Fatalf("state = %q, want unknown", got.State)
+	}
+}
