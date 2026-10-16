@@ -169,6 +169,7 @@ func TestDirenvApprovalDirWithSpaceIsQueriedCorrectly(t *testing.T) {
 
 func TestGitHubTokenShadowDetected(t *testing.T) {
 	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"printenv GH_TOKEN":     {out: "", code: 1},
 		"printenv GITHUB_TOKEN": {out: "ghp_xxx\n", code: 0},
 		"gh auth status":        {out: "Active account: false\n", code: 0},
 	}}
@@ -179,16 +180,42 @@ func TestGitHubTokenShadowDetected(t *testing.T) {
 	if strings.Contains(got.Detail, "ghp_") {
 		t.Fatalf("detail must never echo the token value: %q", got.Detail)
 	}
+	if !strings.Contains(got.Detail, "GITHUB_TOKEN") {
+		t.Fatalf("detail %q must name GITHUB_TOKEN as the shadowing variable", got.Detail)
+	}
 }
 
 func TestGitHubTokenAbsentIsPass(t *testing.T) {
 	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"printenv GH_TOKEN":     {out: "", code: 1},
 		"printenv GITHUB_TOKEN": {out: "", code: 1},
 		"gh auth status":        {out: "Active account: true\n", code: 0},
 	}}
 	got := GitHubTokenShadowCheck{}.Run(context.Background(), ex)
 	if got.State != StatePass {
 		t.Fatalf("state = %q, want pass", got.State)
+	}
+}
+
+// Regression: GH_TOKEN alone (GITHUB_TOKEN absent) must still be caught. gh
+// honors GH_TOKEN with precedence over GITHUB_TOKEN, and this project's own
+// documented failure mode is exactly a stale GH_TOKEN/GITHUB_TOKEN shadowing
+// a working keyring login — dropping GH_TOKEN from the probe would make this
+// check confidently pass while the thing it exists to catch is happening.
+func TestGitHubTokenShadowDetectedViaGHTokenAlone(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		"printenv GH_TOKEN": {out: "gho_yyy\n", code: 0},
+		"gh auth status":    {out: "Active account: false\n", code: 0},
+	}}
+	got := GitHubTokenShadowCheck{}.Run(context.Background(), ex)
+	if got.State != StateWarn {
+		t.Fatalf("state = %q, want warn", got.State)
+	}
+	if strings.Contains(got.Detail, "gho_") {
+		t.Fatalf("detail must never echo the token value: %q", got.Detail)
+	}
+	if !strings.Contains(got.Detail, "GH_TOKEN") {
+		t.Fatalf("detail %q must name GH_TOKEN as the shadowing variable", got.Detail)
 	}
 }
 

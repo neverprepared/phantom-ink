@@ -158,8 +158,9 @@ func (c DirenvApprovalCheck) Run(ctx context.Context, ex Executor) Result {
 	return res
 }
 
-// GitHubTokenShadowCheck catches an exported GITHUB_TOKEN shadowing a working
-// keyring login. gh prefers the env var, so a dead token makes every call
+// GitHubTokenShadowCheck catches an exported GH_TOKEN or GITHUB_TOKEN
+// shadowing a working keyring login. gh honors both, with GH_TOKEN taking
+// precedence when both are set, so a dead token in either makes every call
 // fail while a good credential sits idle — and the symptoms mislead in
 // sequence, first as a 403 that reads like a missing scope, then as a 401.
 //
@@ -172,40 +173,47 @@ func (GitHubTokenShadowCheck) Scope() Scope { return ScopeLocal }
 
 func (c GitHubTokenShadowCheck) Run(ctx context.Context, ex Executor) Result {
 	res := Result{ID: c.ID(), Title: "no GitHub token shadowing the keyring", Scope: ScopeLocal}
-	// Only GITHUB_TOKEN is probed: gh treats GH_TOKEN the same way, but
-	// checking it too would mean a second shell call whenever GITHUB_TOKEN
-	// alone already settles the answer (absent -> pass, no need to probe
-	// gh auth status at all) and this keeps the check to exactly the
-	// commands it needs.
-	out, code, err := ex.Shell(ctx, []string{"printenv", "GITHUB_TOKEN"})
-	if err != nil {
-		res.State = StateUnknown
-		res.Detail = "could not read the environment: " + err.Error()
-		return res
+	// GH_TOKEN is probed first because gh prefers it over GITHUB_TOKEN when
+	// both are set, so it is the variable actually in effect and the one
+	// named below. GITHUB_TOKEN is still checked when GH_TOKEN is absent —
+	// dropping either probe would let that variable's shadowing go
+	// undetected.
+	name := ""
+	for _, n := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
+		out, code, err := ex.Shell(ctx, []string{"printenv", n})
+		if err != nil {
+			res.State = StateUnknown
+			res.Detail = "could not read the environment: " + err.Error()
+			return res
+		}
+		if code == 0 && strings.TrimSpace(out) != "" {
+			name = n
+			break
+		}
 	}
-	if code != 0 || strings.TrimSpace(out) == "" {
+	if name == "" {
 		res.State = StatePass
-		res.Detail = "no GITHUB_TOKEN in the environment"
+		res.Detail = "no GH_TOKEN or GITHUB_TOKEN in the environment"
 		return res
 	}
 	status, _, err := ex.Shell(ctx, []string{"gh", "auth", "status"})
 	if err != nil {
 		res.State = StateUnknown
-		res.Detail = "GITHUB_TOKEN is set, but gh auth status could not be read"
+		res.Detail = name + " is set, but gh auth status could not be read"
 		return res
 	}
 	if strings.Contains(status, "Active account: false") {
 		res.State = StateWarn
-		res.Detail = "GITHUB_TOKEN is set and gh reports an idle keyring account — the env token wins and may be dead"
+		res.Detail = name + " is set and gh reports an idle keyring account — the env token wins and may be dead"
 		res.Remedy = &Remedy{
-			Command:  "unset GITHUB_TOKEN   # or: env -u GITHUB_TOKEN gh ...",
+			Command:  "unset " + name + "   # or: env -u " + name + " gh ...",
 			AutoSafe: false,
 			Confirm:  "",
 		}
 		return res
 	}
 	res.State = StatePass
-	res.Detail = "GITHUB_TOKEN is set and gh reports an active account"
+	res.Detail = name + " is set and gh reports an active account"
 	return res
 }
 
