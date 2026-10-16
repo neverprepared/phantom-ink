@@ -118,7 +118,7 @@ func TestAppDBUnparsableSizeIsUnknown(t *testing.T) {
 
 func TestDirenvAllAllowedIsPass(t *testing.T) {
 	ex := &fakeExec{shellOut: map[string]fakeShell{
-		"sh -lc cd /p/one && direnv status": {out: "Found RC allowed 0\n", code: 0},
+		`sh -c cd "$1" && direnv status sh /p/one`: {out: "Found RC allowed 0\n", code: 0},
 	}}
 	got := DirenvApprovalCheck{ProfileDirs: []string{"/p/one"}}.Run(context.Background(), ex)
 	if got.State != StatePass {
@@ -128,8 +128,8 @@ func TestDirenvAllAllowedIsPass(t *testing.T) {
 
 func TestDirenvUnapprovedIsWarnNamingTheProfile(t *testing.T) {
 	ex := &fakeExec{shellOut: map[string]fakeShell{
-		"sh -lc cd /p/one && direnv status": {out: "Found RC allowed 0\n", code: 0},
-		"sh -lc cd /p/two && direnv status": {out: "Found RC allowed 2\n", code: 0},
+		`sh -c cd "$1" && direnv status sh /p/one`: {out: "Found RC allowed 0\n", code: 0},
+		`sh -c cd "$1" && direnv status sh /p/two`: {out: "Found RC allowed 2\n", code: 0},
 	}}
 	got := DirenvApprovalCheck{ProfileDirs: []string{"/p/one", "/p/two"}}.Run(context.Background(), ex)
 	if got.State != StateWarn {
@@ -145,10 +145,24 @@ func TestDirenvUnapprovedIsWarnNamingTheProfile(t *testing.T) {
 
 func TestDirenvMissingAllowedLineIsUnknown(t *testing.T) {
 	ex := &fakeExec{shellOut: map[string]fakeShell{
-		"sh -lc cd /p/one && direnv status": {out: "some other output\n", code: 0},
+		`sh -c cd "$1" && direnv status sh /p/one`: {out: "some other output\n", code: 0},
 	}}
 	got := DirenvApprovalCheck{ProfileDirs: []string{"/p/one"}}.Run(context.Background(), ex)
 	if got.State != StateUnknown {
 		t.Fatalf("state = %q, want unknown", got.State)
+	}
+}
+
+// Regression: the profile directory must be passed as a shell argument ($1),
+// never interpolated into the script text — a space in the path used to break
+// the command entirely. This pins that a space-containing directory is still
+// queried correctly end to end.
+func TestDirenvApprovalDirWithSpaceIsQueriedCorrectly(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{
+		`sh -c cd "$1" && direnv status sh /p/with space`: {out: "Found RC allowed 0\n", code: 0},
+	}}
+	got := DirenvApprovalCheck{ProfileDirs: []string{"/p/with space"}}.Run(context.Background(), ex)
+	if got.State != StatePass {
+		t.Fatalf("state = %q, want pass (detail %q)", got.State, got.Detail)
 	}
 }

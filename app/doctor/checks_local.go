@@ -117,7 +117,11 @@ func (c DirenvApprovalCheck) Run(ctx context.Context, ex Executor) Result {
 	var unapproved, unreadable []string
 	for _, dir := range c.ProfileDirs {
 		// direnv has no --profile flag and silently ignores one, so scope by cwd.
-		out, _, err := ex.Shell(ctx, []string{"sh", "-lc", "cd " + dir + " && direnv status"})
+		// dir is passed as a shell argument ($1), never interpolated into the
+		// script text, so a space or shell metacharacter in a profile path
+		// can't break or hijack the command. "sh" before dir fills $0, which
+		// sh -c requires before positional args begin.
+		out, _, err := ex.Shell(ctx, []string{"sh", "-c", `cd "$1" && direnv status`, "sh", dir})
 		if err != nil {
 			unreadable = append(unreadable, dir)
 			continue
