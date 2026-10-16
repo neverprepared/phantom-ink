@@ -775,7 +775,7 @@ needs a check at all."
 
 **Interfaces:**
 - Consumes: Task 3's helpers.
-- Produces: `GitHubTokenShadowCheck{}` id `github-token-shadow`; `PortShadowCheck{Port string}` id `port-shadow`; `GatewayMCPPinCheck{VenvPip string}` id `gateway-mcp-pin`.
+- Produces: `GitHubTokenShadowCheck{}` id `github-token-shadow`; `PortShadowCheck{Port string}` id `port-shadow`; `GatewayMCPPinCheck{Container string}` id `gateway-mcp-pin`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -832,9 +832,9 @@ func TestPortShadowFreeIsPass(t *testing.T) {
 
 func TestGatewayMCPPinIntactIsPass(t *testing.T) {
 	ex := &fakeExec{shellOut: map[string]fakeShell{
-		"/venv/pip show mcp": {out: "Name: mcp\nVersion: 1.9.4\n", code: 0},
+		"docker exec gw pip show mcp": {out: "Name: mcp\nVersion: 1.9.4\n", code: 0},
 	}}
-	got := GatewayMCPPinCheck{VenvPip: "/venv/pip"}.Run(context.Background(), ex)
+	got := GatewayMCPPinCheck{Container: "gw"}.Run(context.Background(), ex)
 	if got.State != StatePass {
 		t.Fatalf("state = %q, want pass", got.State)
 	}
@@ -842,9 +842,9 @@ func TestGatewayMCPPinIntactIsPass(t *testing.T) {
 
 func TestGatewayMCPPinBrokenIsFail(t *testing.T) {
 	ex := &fakeExec{shellOut: map[string]fakeShell{
-		"/venv/pip show mcp": {out: "Name: mcp\nVersion: 2.0.1\n", code: 0},
+		"docker exec gw pip show mcp": {out: "Name: mcp\nVersion: 2.0.1\n", code: 0},
 	}}
-	got := GatewayMCPPinCheck{VenvPip: "/venv/pip"}.Run(context.Background(), ex)
+	got := GatewayMCPPinCheck{Container: "gw"}.Run(context.Background(), ex)
 	if got.State != StateFail {
 		t.Fatalf("state = %q, want fail for mcp 2.x", got.State)
 	}
@@ -852,9 +852,9 @@ func TestGatewayMCPPinBrokenIsFail(t *testing.T) {
 
 func TestGatewayMCPPinUnreadableIsUnknown(t *testing.T) {
 	ex := &fakeExec{shellOut: map[string]fakeShell{
-		"/venv/pip show mcp": {out: "no version line here\n", code: 0},
+		"docker exec gw pip show mcp": {out: "no version line here\n", code: 0},
 	}}
-	got := GatewayMCPPinCheck{VenvPip: "/venv/pip"}.Run(context.Background(), ex)
+	got := GatewayMCPPinCheck{Container: "gw"}.Run(context.Background(), ex)
 	if got.State != StateUnknown {
 		t.Fatalf("state = %q, want unknown", got.State)
 	}
@@ -968,14 +968,20 @@ func (c PortShadowCheck) Run(ctx context.Context, ex Executor) Result {
 // GatewayMCPPinCheck guards a pin that silently breaks the gateway: mcp 2.0
 // dropped Server.list_tools, so an unpinned rebuild crashes the gateway on any
 // tool listing.
-type GatewayMCPPinCheck struct{ VenvPip string }
+//
+// The pin lives inside the gateway CONTAINER image, not in a host venv, so this
+// reads it with `docker exec <container> pip show mcp`. Verified on this host:
+// the container is phantom-gateway-1 and reports mcp 1.29.1. A stopped or
+// missing container makes docker exec fail, which correctly yields Unknown —
+// "I could not tell", not "the pin is broken".
+type GatewayMCPPinCheck struct{ Container string }
 
 func (GatewayMCPPinCheck) ID() string   { return "gateway-mcp-pin" }
 func (GatewayMCPPinCheck) Scope() Scope { return ScopeLocal }
 
 func (c GatewayMCPPinCheck) Run(ctx context.Context, ex Executor) Result {
 	res := Result{ID: c.ID(), Title: "gateway mcp pinned below 2.0", Scope: ScopeLocal}
-	out, _, err := ex.Shell(ctx, []string{c.VenvPip, "show", "mcp"})
+	out, _, err := ex.Shell(ctx, []string{"docker", "exec", c.Container, "pip", "show", "mcp"})
 	if err != nil {
 		res.State = StateUnknown
 		res.Detail = "could not read the gateway venv's mcp version: " + err.Error()
@@ -1004,7 +1010,7 @@ func (c GatewayMCPPinCheck) Run(ctx context.Context, ex Executor) Result {
 		res.State = StateFail
 		res.Detail = "mcp " + version + " is installed; 2.0 dropped Server.list_tools and crashes the gateway"
 		res.Remedy = &Remedy{
-			Command:  c.VenvPip + " install 'mcp<2'",
+			Command:  "docker exec " + c.Container + " pip install 'mcp<2'  # then rebuild the image",
 			AutoSafe: false,
 			Confirm:  "",
 		}
@@ -1732,7 +1738,7 @@ func (a *App) buildDoctorRegistry() *doctor.Registry {
 		doctor.DirenvApprovalCheck{ProfileDirs: a.doctorProfileDirs()},
 		doctor.GitHubTokenShadowCheck{},
 		doctor.PortShadowCheck{Port: "9910"},
-		doctor.GatewayMCPPinCheck{VenvPip: filepath.Join(home, ".phantom-gateway/venv/bin/pip")},
+		doctor.GatewayMCPPinCheck{Container: "phantom-gateway-1"},
 		doctor.ServiceHealthCheck{},
 		doctor.TraefikBoundCheck{ServiceName: "traefik"},
 	} {
