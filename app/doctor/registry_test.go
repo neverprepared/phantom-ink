@@ -142,9 +142,14 @@ func TestRegistryRunNeverInvokesARemedy(t *testing.T) {
 	}
 }
 
+// remedyCheck's Run returns `state` on the first call and `after` (when set)
+// on every subsequent call, so a test can tell "the caller got the fresh
+// re-run result" apart from "the caller got the stale pre-check result" —
+// something a check that reports the same State on every call cannot do.
 type remedyCheck struct {
 	id    string
 	state State
+	after State
 	rem   *Remedy
 	runs  *int
 }
@@ -153,9 +158,19 @@ func (c remedyCheck) ID() string   { return c.id }
 func (c remedyCheck) Scope() Scope { return ScopeLocal }
 func (c remedyCheck) Run(context.Context, Executor) Result {
 	*c.runs++
-	return Result{ID: c.id, State: c.state, Remedy: c.rem}
+	st := c.state
+	if *c.runs > 1 && c.after != "" {
+		st = c.after
+	}
+	return Result{ID: c.id, State: st, Remedy: c.rem}
 }
 
+// TestApplyRemedyRefusesNonAutoSafe proves both that a non-auto-safe remedy
+// is refused AND that it was never executed. Asserting the error alone is not
+// enough: a mutant that runs the remedy and only then checks AutoSafe (a
+// "leaked execution" reordering, not a removal) would still return
+// ErrNotAutoSafe and pass. recordingExec lets this test see what actually
+// reached a shell, not just what the function returned.
 func TestApplyRemedyRefusesNonAutoSafe(t *testing.T) {
 	runs := 0
 	r := NewRegistry()
@@ -163,34 +178,56 @@ func TestApplyRemedyRefusesNonAutoSafe(t *testing.T) {
 		id: "x", state: StateFail, runs: &runs,
 		rem: &Remedy{Command: "rm -rf /", AutoSafe: false},
 	})
-	_, err := r.ApplyRemedy(context.Background(), &fakeExec{}, "x")
+	ex := &recordingExec{}
+	_, err := r.ApplyRemedy(context.Background(), ex, "x")
 	if !errors.Is(err, ErrNotAutoSafe) {
 		t.Fatalf("err = %v, want ErrNotAutoSafe", err)
 	}
-}
-
-func TestApplyRemedyUnknownIDErrors(t *testing.T) {
-	r := NewRegistry()
-	if _, err := r.ApplyRemedy(context.Background(), &fakeExec{}, "nope"); err == nil {
-		t.Fatal("want an error for an unknown check id")
+	if len(ex.shellCalls) != 0 {
+		t.Fatalf("shell was invoked %v for a non-auto-safe remedy; it must never run", ex.shellCalls)
 	}
 }
 
+// TestApplyRemedyUnknownIDErrors additionally proves an unknown id never
+// reaches a shell — not just that it returns an error.
+func TestApplyRemedyUnknownIDErrors(t *testing.T) {
+	r := NewRegistry()
+	ex := &recordingExec{}
+	if _, err := r.ApplyRemedy(context.Background(), ex, "nope"); err == nil {
+		t.Fatal("want an error for an unknown check id")
+	}
+	if len(ex.shellCalls) != 0 {
+		t.Fatalf("shell was invoked %v for an unknown check id; it must never run", ex.shellCalls)
+	}
+}
+
+// TestApplyRemedyNoRemedyErrors additionally proves a check with no remedy
+// never reaches a shell — not just that it returns an error.
 func TestApplyRemedyNoRemedyErrors(t *testing.T) {
 	runs := 0
 	r := NewRegistry()
 	_ = r.Register(remedyCheck{id: "x", state: StatePass, runs: &runs, rem: nil})
-	if _, err := r.ApplyRemedy(context.Background(), &fakeExec{}, "x"); err == nil {
+	ex := &recordingExec{}
+	if _, err := r.ApplyRemedy(context.Background(), ex, "x"); err == nil {
 		t.Fatal("want an error when the check offers no remedy")
+	}
+	if len(ex.shellCalls) != 0 {
+		t.Fatalf("shell was invoked %v for a check with no remedy; it must never run", ex.shellCalls)
 	}
 }
 
-// After a fix, the caller must see a re-run result, not an optimistic green.
+// After a fix, the caller must see a re-run result, not an optimistic green,
+// and not the stale pre-check result either. The check reports StateFail on
+// its first Run and StatePass on every call after, so returning the
+// pre-check result (a "discard the re-run" mutation that keeps the function
+// shape intact — c.Run(ctx, ex); return pre, nil) is distinguishable from
+// returning the actual re-run: the former yields StateFail here, the latter
+// StatePass.
 func TestApplyRemedyReRunsTheCheck(t *testing.T) {
 	runs := 0
 	r := NewRegistry()
 	_ = r.Register(remedyCheck{
-		id: "x", state: StateFail, runs: &runs,
+		id: "x", state: StateFail, after: StatePass, runs: &runs,
 		rem: &Remedy{Command: "true", Exec: []string{"true"}, AutoSafe: true, Confirm: "Run true."},
 	})
 	ex := &fakeExec{shellOut: map[string]fakeShell{"true": {code: 0}}}
@@ -201,7 +238,7 @@ func TestApplyRemedyReRunsTheCheck(t *testing.T) {
 	if runs < 2 {
 		t.Fatalf("check ran %d times, want the pre-check plus a re-run", runs)
 	}
-	if got.State != StateFail {
-		t.Fatalf("state = %q — the result must be the re-run's truth, not an assumed pass", got.State)
+	if got.State != StatePass {
+		t.Fatalf("state = %q, want StatePass — the result must be the re-run's truth (StatePass), not the discarded pre-check result (StateFail)", got.State)
 	}
 }
