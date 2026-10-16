@@ -114,6 +114,16 @@ func (DirenvApprovalCheck) Scope() Scope { return ScopeLocal }
 
 func (c DirenvApprovalCheck) Run(ctx context.Context, ex Executor) Result {
 	res := Result{ID: c.ID(), Title: "direnv approvals per profile", Scope: ScopeLocal}
+	if len(c.ProfileDirs) == 0 {
+		// Zero profile directories means nothing was observed, not that zero
+		// profiles are unapproved. Reporting StatePass here — as "all 0
+		// profiles approved" — would be a confident green over an empty
+		// observation, which is exactly the false-pass class this package
+		// exists to prevent (a profile-scan failure must not read as success).
+		res.State = StateUnknown
+		res.Detail = "no profile directories to check"
+		return res
+	}
 	var unapproved, unreadable []string
 	for _, dir := range c.ProfileDirs {
 		// direnv has no --profile flag and silently ignores one, so scope by cwd.

@@ -116,6 +116,18 @@ func TestAppDBUnparsableSizeIsUnknown(t *testing.T) {
 	}
 }
 
+// Regression: zero profile directories must never read as a pass. A caller
+// that failed to enumerate profiles (a bad workspaces root, a permissions
+// error) and so passes an empty ProfileDirs must get StateUnknown, not a
+// confident "all 0 profiles approved" green over an observation of nothing.
+func TestDirenvNoProfileDirsIsUnknownNotPass(t *testing.T) {
+	ex := &fakeExec{shellOut: map[string]fakeShell{}}
+	got := DirenvApprovalCheck{ProfileDirs: nil}.Run(context.Background(), ex)
+	if got.State != StateUnknown {
+		t.Fatalf("state = %q, want unknown (detail %q)", got.State, got.Detail)
+	}
+}
+
 func TestDirenvAllAllowedIsPass(t *testing.T) {
 	ex := &fakeExec{shellOut: map[string]fakeShell{
 		`sh -c cd "$1" && direnv status sh /p/one`: {out: "Found RC allowed 0\n", code: 0},
