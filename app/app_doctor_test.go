@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"phantom-ink/doctor"
@@ -72,5 +73,62 @@ func TestAppExecutorShellCannotRunIsError(t *testing.T) {
 	_, _, err := appExecutor{}.Shell(context.Background(), []string{"phantom-ink-no-such-binary-xyz"})
 	if err == nil {
 		t.Fatal("want a non-nil error when the binary cannot be executed at all")
+	}
+}
+
+// doctorTestDB is the minimum DB a doctor wiring test needs: platformNode()
+// reads one row out of the settings table.
+func doctorTestDB(t *testing.T, node string) *DB {
+	t.Helper()
+	conn, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	conn.SetMaxOpenConns(1)
+	if _, err := conn.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`); err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	db := &DB{conn: conn}
+	if node != "" {
+		if err := db.SetSetting(settingPlatformNode, node); err != nil {
+			t.Fatalf("set %s: %v", settingPlatformNode, err)
+		}
+	}
+	return db
+}
+
+func registeredTraefikCheck(t *testing.T, a *App) doctor.TraefikBoundCheck {
+	t.Helper()
+	c, ok := a.buildDoctorRegistry().ByID("traefik-bound")
+	if !ok {
+		t.Fatal("traefik-bound is not registered")
+	}
+	tc, ok := c.(doctor.TraefikBoundCheck)
+	if !ok {
+		t.Fatalf("traefik-bound is %T, want doctor.TraefikBoundCheck", c)
+	}
+	return tc
+}
+
+// Pin the wiring, not just the check. TraefikBoundCheck can only refuse to
+// probe a remote node's port if the registry actually tells it there is one;
+// buildDoctorRegistry originally never consulted platformNode(), which is the
+// root cause behind the false pass. Dropping `RemoteNode: a.platformNode()`
+// from the construction compiles and leaves every doctor-package test green,
+// so the wiring needs its own pin.
+func TestDoctorRegistryPassesThePlatformNodeToTraefik(t *testing.T) {
+	a := &App{db: doctorTestDB(t, "m3-64")}
+	if got := registeredTraefikCheck(t, a).RemoteNode; got != "m3-64" {
+		t.Fatalf("RemoteNode = %q, want %q — the check cannot refuse an unprobeable remote port it was never told about", got, "m3-64")
+	}
+}
+
+// Companion: with no node configured the field must stay empty, or the local
+// probe (the whole point of the check) would never run.
+func TestDoctorRegistryLeavesTraefikLocalWhenNoNodeSet(t *testing.T) {
+	a := &App{db: doctorTestDB(t, "")}
+	if got := registeredTraefikCheck(t, a).RemoteNode; got != "" {
+		t.Fatalf("RemoteNode = %q, want empty for a local platform", got)
 	}
 }

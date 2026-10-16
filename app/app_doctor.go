@@ -81,11 +81,11 @@ func adaptServices(in []PlatformService) []doctor.Service {
 }
 
 // doctorProfileDirs lists the profile directories whose .envrc approval matters.
-// A failure to enumerate yields an empty list, which the direnv check reports as
-// a pass over zero profiles rather than inventing a fault. a.config is nil on a
-// zero-value App (as in tests that construct &App{} directly without NewApp's
-// startup wiring); ScanProfiles dereferences it unconditionally, so guard here
-// rather than let it panic.
+// A failure to enumerate yields an empty list, which DirenvApprovalCheck reports
+// as StateUnknown — "I observed nothing", not "all zero profiles are approved".
+// a.config is nil on a zero-value App (as in tests that construct &App{}
+// directly without NewApp's startup wiring); ScanProfiles dereferences it
+// unconditionally, so guard here rather than let it panic.
 func (a *App) doctorProfileDirs() []string {
 	if a.config == nil {
 		return nil
@@ -123,7 +123,13 @@ func (a *App) buildDoctorRegistry() *doctor.Registry {
 		doctor.PortShadowCheck{Port: "9910"},
 		doctor.GatewayMCPPinCheck{Container: "phantom-gateway-1"},
 		doctor.ServiceHealthCheck{},
-		doctor.TraefikBoundCheck{ServiceName: "traefik"},
+		// platformNode() is "" when the stack runs on local docker, and the
+		// node name when it does not. TraefikBoundCheck needs it because
+		// PlatformService.Addr is always the literal "localhost:<port>" —
+		// hostAddrFromPorts builds it that way on both paths, and on the
+		// remote path the runner builds it on the NODE. Probing it from here
+		// would therefore answer about this Mac instead of the subject.
+		doctor.TraefikBoundCheck{ServiceName: "traefik", RemoteNode: a.platformNode()},
 	} {
 		// Register only fails on a duplicate id, which the registry test catches.
 		_ = reg.Register(c)

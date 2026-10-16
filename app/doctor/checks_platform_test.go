@@ -109,3 +109,40 @@ func TestTraefikNoPublishedPortIsUnknown(t *testing.T) {
 		t.Fatalf("state = %q, want unknown with no published port to probe", got.State)
 	}
 }
+
+// Regression: with a remote platform node configured, Service.Addr is the
+// literal "localhost:<port>" the RUNNER derived on the node, so probing it from
+// here observes the operator's own Mac. The fixture makes that danger concrete —
+// a healthy HTTP 200 is stubbed at exactly the URL the check would build, which
+// is what a dev Traefik or the documented orphan nginx on the operator's laptop
+// would produce. If the RemoteNode guard is removed, this test reports StatePass
+// off that fixture: a confident "traefik answers" having never touched the
+// subject, which is the false-pass class this package exists to prevent.
+func TestTraefikOnRemoteNodeIsUnknownNotPass(t *testing.T) {
+	ex := &fakeExec{
+		services: []Service{{Name: "traefik", State: "running", Addr: "localhost:8080"}},
+		probes:   map[string]fakeProbe{"http://localhost:8080": {status: 200}},
+	}
+	got := TraefikBoundCheck{ServiceName: "traefik", RemoteNode: "m3-64"}.Run(context.Background(), ex)
+	if got.State != StateUnknown {
+		t.Fatalf("state = %q, want unknown — a remote node's published port is not probeable from this host (detail %q)", got.State, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "m3-64") {
+		t.Fatalf("detail %q must name the node it could not reach", got.Detail)
+	}
+}
+
+// Companion: the remote guard must not swallow the local case. With no node
+// configured the probe still runs and a refused connection is still the
+// orphan-nginx fail — a guard that short-circuits unconditionally would make
+// the whole check inert.
+func TestTraefikLocalStillProbesWhenNoNodeConfigured(t *testing.T) {
+	ex := &fakeExec{
+		services: []Service{{Name: "traefik", State: "running", Addr: "localhost:8080"}},
+		probes:   map[string]fakeProbe{"http://localhost:8080": {err: errors.New("connection refused")}},
+	}
+	got := TraefikBoundCheck{ServiceName: "traefik", RemoteNode: ""}.Run(context.Background(), ex)
+	if got.State != StateFail {
+		t.Fatalf("state = %q, want fail (detail %q)", got.State, got.Detail)
+	}
+}
