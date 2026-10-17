@@ -29,6 +29,13 @@ Langfuse therefore cannot be the source of truth. That decision is already taken
 
 ### P2 — Claude Code does not emit OTLP spans, and this is not a configuration problem
 
+> **SUPERSEDED BY §10.** This heading is wrong: it *is* a configuration problem.
+> Span emission is independently gated on `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`,
+> which the binary's own admin help text documents alongside
+> `OTEL_TRACES_EXPORTER=otlp`. The flag has been set; it takes effect next
+> session. Everything below correctly describes the state as MEASURED, and the
+> designs built on it remain sound, but do not read the premise as permanent.
+
 **r1 was wrong about this.** The claim "traces are available via env var, currently unset"
 `[CONTEXT]` does not survive measurement.
 
@@ -969,3 +976,113 @@ end in `_tokens`, rather than by widening the gate.
 - Retention and access control are unchanged from §1's "Explicitly NOT solved":
   both stores retain indefinitely, and OpenSearch runs with the security plugin
   disabled.
+
+---
+
+## 10. P2 is wrong — Claude Code traces ARE reachable
+
+Added after §9, and it overturns this spec's central premise. P2 states that
+Claude Code does not emit OTLP spans and that "this is not a configuration
+problem". It is a configuration problem. There are **two** gates, and every
+version of this spec found only one.
+
+### 10.1 The second gate
+
+```
+OTEL_TRACES_EXPORTER=otlp                  # already set  [VERIFIED]
+CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1      # was NOT set  <- the missing gate
+```
+
+Verified two independent ways in the 2.1.267 binary:
+
+1. `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA` appears **6 times**, alongside
+   `ENABLE_ENHANCED_TELEMETRY_BETA` (4), `BETA_TRACING_ENDPOINT` (7) and
+   `ENABLE_BETA_TRACING_DETAILED` (6) `[VERIFIED]`.
+2. The binary's own admin settings help text says it outright `[VERIFIED]`:
+
+   > "Enables Claude Code's session tracing
+   > (`CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1` + `OTEL_TRACES_EXPORTER=otlp`)
+   > … Each user interaction exports a trace whose spans and events carry
+   > `trace_id`/`span_id` … metrics do not carry trace context; correlate
+   > those via `session.id`."
+
+That is product documentation, not inference from strings — and it is the
+sentence that explains every measurement in this spec: traces configured, the
+pipeline provably working, and zero `claude-code` spans ever.
+
+This is **not** the Anthropic-internal path. `BETA_TRACING_ENDPOINT` is
+internal and was deliberately not pursued (§8.1). This flag points at the
+endpoint already configured in the workspace env — the operator's own Data
+Prepper behind their own Traefik — so enabling it is a configuration change,
+not a data-egress decision.
+
+**Applied:** `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1` appended to the workspace
+env file. It takes effect on the next session, because the environment is read
+at startup — so it is unverified by construction until then. §6.0 is the test.
+
+### 10.2 What this changes
+
+P2 is the load-bearing premise under §2.1's "not usable" verdicts, §3.1's
+derived tree, the two-level span convention, N4, N5, §4.3's closures, and the
+decision to move audit into the app panel. **None of those are retracted
+here** — a derived tree and an honest liveness indicator are worth having
+regardless, and the spec's own §6.0 exists precisely so this premise can be
+re-checked rather than assumed. But the sequencing changes: once spans arrive,
+Trace Analytics and the service map become usable for Claude Code, and the
+`agentBreakdown`/`query_source` workaround stops being "the only subagent view
+that will ever exist".
+
+Re-run §6.0 after the next session starts. If `serviceName: claude-code`
+appears in `otel-v1-apm-span-*`, revisit §2.1, §3.1 and N4 against real spans
+rather than against this spec's assumption.
+
+### 10.3 Reported but NOT verified by me
+
+The refinement pass reported, from decompiling the `claude_code.tracing`
+module, that under the flag five spans emit (`claude_code.interaction`,
+`llm_request`, `tool`, `tool.execution`, `tool.blocked_on_user`); that
+`subagent.spawn`, `bash.subprocess`, `mcp.rpc` and `compaction` are hard-
+disabled behind a function that returns constant false; and that `llm_request`
+and `tool` spans carry `agent_id` and `parent_agent_id`, which would make
+subagent attribution an attribute join rather than the `parentSpanId` walk the
+earlier draft proposed — and would therefore partly reopen P3/N4.
+
+I did not verify any of that, and it should not be built against until
+observed in landed spans. The flag itself is verified; this span inventory is
+not. Treat §10.2's re-check as the way to establish it.
+
+### 10.4 Correction to §9.2
+
+§9.2 reported Data Prepper's trace source as gRPC-only and resolved it with
+`unframed_requests: true`. The first half is right; the conclusion was wrong,
+and it came from a wrong choice of mine — I used the OTLP/HTTP exporter because
+it was the one already installed, then changed the server to accept it.
+
+The fleet is already configured for gRPC: `OTEL_EXPORTER_OTLP_PROTOCOL=grpc`
+against `https://otel-traces.<domain>`, a Traefik route terminating TLS and
+forwarding h2c `[VERIFIED]`. That path works. **The server needed no change;
+`unframed_requests` is reverted**, and the router now selects its transport
+from the standard protocol variables, defaulting to gRPC.
+
+An HTTP exporter here would have failed **silently** — a span exporter's errors
+never reach the caller, so the sink would have been empty with nothing in the
+logs to explain it. That is the more useful lesson than the port detail.
+
+### 10.5 §9.5's blocker is resolved
+
+The m3 ssh problem is no longer load-bearing: nothing needs restarting, because
+the gRPC path was already live. Verified end to end against the live pipeline,
+with the real provider, `BatchSpanProcessor`, `ContentStrippingExporter` and
+gRPC exporter — one span carrying a unique canary in seven content-shaped
+attributes:
+
+- Both spans landed in `otel-v1-apm-span-*`, `serviceName: phantom-router`,
+  with parent/child nesting and `resource.attributes.workspace: personal`
+  `[VERIFIED]`
+- All five metadata attributes survived, both token counts included
+  `[VERIFIED]`
+- The canary appears in **zero** documents across `otel-v1-apm-span-*`,
+  `logs-otel-*` and `metrics-otel-*` `[VERIFIED]`
+
+The content-stripping invariant therefore holds through the real encoder and
+the real transport, which is the part no unit test could establish.
