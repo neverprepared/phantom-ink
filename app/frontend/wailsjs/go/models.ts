@@ -4107,6 +4107,9 @@ export namespace opensearch {
 	    top_tools: string[];
 	    models: string[];
 	    last_beat?: string;
+	    liveness: string;
+	    last_activity_ms: number;
+	    last_heartbeat_ms?: number;
 	    cost_usd: number;
 	    tokens_in: number;
 	    tokens_out: number;
@@ -4130,6 +4133,9 @@ export namespace opensearch {
 	        this.top_tools = source["top_tools"];
 	        this.models = source["models"];
 	        this.last_beat = source["last_beat"];
+	        this.liveness = source["liveness"];
+	        this.last_activity_ms = source["last_activity_ms"];
+	        this.last_heartbeat_ms = source["last_heartbeat_ms"];
 	        this.cost_usd = source["cost_usd"];
 	        this.tokens_in = source["tokens_in"];
 	        this.tokens_out = source["tokens_out"];
