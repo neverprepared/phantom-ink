@@ -17,12 +17,17 @@ import (
 type Client struct {
 	baseURL string
 	http    *http.Client
+	// now is the clock liveness ages are measured against. Injectable so the
+	// thresholds can be tested at their exact boundaries instead of with
+	// sleeps. Nil is safe — see clock().
+	now func() time.Time
 }
 
 func NewClient(baseURL string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		http:    &http.Client{Timeout: 5 * time.Second},
+		now:     time.Now,
 	}
 }
 
@@ -72,11 +77,11 @@ func (c *Client) Health(ctx context.Context) error {
 
 // Overview is the snapshot rendered in the Observability panel.
 type Overview struct {
-	CostTodayUSD     float64 `json:"cost_today_usd"`
-	TokensToday      int64   `json:"tokens_today"`
-	APIRequests1h    int64   `json:"api_requests_1h"`
-	AvgLatencyMs1h   float64 `json:"avg_latency_ms_1h"`
-	AsOf             string  `json:"as_of"`
+	CostTodayUSD   float64 `json:"cost_today_usd"`
+	TokensToday    int64   `json:"tokens_today"`
+	APIRequests1h  int64   `json:"api_requests_1h"`
+	AvgLatencyMs1h float64 `json:"avg_latency_ms_1h"`
+	AsOf           string  `json:"as_of"`
 	// Workspace is the workspace filter applied to this query, "" for unfiltered.
 	Workspace string `json:"workspace"`
 	// MatchedWorkspace is true when the workspace filter matched ≥1 doc in the
@@ -216,7 +221,7 @@ func (c *Client) hasWorkspaceData(ctx context.Context, workspace string) (bool, 
 // LogEntry is a single row rendered in the Stream panel's Live tab.
 type LogEntry struct {
 	Time       string `json:"time"`
-	Body       string `json:"body"`                  // event name (e.g. claude_code.api_request)
+	Body       string `json:"body"` // event name (e.g. claude_code.api_request)
 	Session    string `json:"session,omitempty"`
 	Workspace  string `json:"workspace,omitempty"`
 	Model      string `json:"model,omitempty"`
@@ -235,8 +240,8 @@ func (c *Client) TailLogs(ctx context.Context, workspace string, limit int) ([]L
 	}
 	must = append(must, workspaceFilter(workspace)...)
 	body := map[string]any{
-		"size": limit,
-		"sort": []any{map[string]any{"time": map[string]any{"order": "desc"}}},
+		"size":  limit,
+		"sort":  []any{map[string]any{"time": map[string]any{"order": "desc"}}},
 		"query": map[string]any{"bool": map[string]any{"must": must}},
 		"_source": []string{
 			"time", "body",

@@ -83,15 +83,37 @@ type AgentSession struct {
 	TopTools []string `json:"top_tools"`
 	Models   []string `json:"models"`
 	// LastBeat is the newest claude_code.active_time.total heartbeat for this
-	// session, from metrics-otel-*. That metric is a delta sum on a strict 60s
-	// cadence and STOPS when the session stops, which makes it the only real
-	// liveness signal here — log recency cannot do the job, because an active
-	// session's own event gaps reach 80s while it is thinking.
+	// session, from metrics-otel-*.
 	//
-	// Empty means no heartbeat in the window: either the session ended, or it
-	// is open but idle. The metric beats only on ACTIVITY, so an idle session
-	// emits nothing and is indistinguishable from a finished one.
+	// It is REPORTED, never thresholded — an earlier version of this comment
+	// claimed the opposite ("the only real liveness signal here — log recency
+	// cannot do the job") and that claim was wrong on both halves. The metric
+	// is not a strict 60s cadence: measured over 3 days / 21 sessions / 1,538
+	// gaps it is median 60s but p90 180s, and 10.0% of gaps exceed 150s. It
+	// also carries NO query_source on any of 26,566 docs, so it is main-thread
+	// only and stops during subagent fan-out — measured in that state, log
+	// recency lagged 40s while this beat lagged 264s.
+	//
+	// What it IS good for: being the only main-thread-specific signal
+	// available. Fresh activity plus a stale beat is a readable and useful
+	// statement — subagents are working, the main thread is waiting.
+	//
+	// Empty means no heartbeat in the window.
 	LastBeat string `json:"last_beat,omitempty"`
+	// Liveness is one of LivenessActive/Idle/Dormant/Unknown, derived from
+	// LastSeen — which is already max(time) over activityEvents, so the
+	// hook_execution_* plumbing that dominates the index is excluded from it.
+	// Computed here rather than in the Svelte component because a threshold in
+	// a component is a threshold with no tests.
+	//
+	// It describes SILENCE, not completion. No session-end event exists.
+	Liveness string `json:"liveness"`
+	// LastActivityMS and LastHeartbeatMS are ages in milliseconds at query
+	// time, not timestamps: the frontend polls every 15s and would otherwise
+	// re-derive "how long ago" against its own clock on every render.
+	// LastHeartbeatMS is absent when there is no heartbeat.
+	LastActivityMS  int64  `json:"last_activity_ms"`
+	LastHeartbeatMS *int64 `json:"last_heartbeat_ms,omitempty"`
 
 	CostUSD float64 `json:"cost_usd"`
 	// TokensIn counts input_tokens only, which EXCLUDES cache reads and cache
@@ -237,12 +259,22 @@ func (c *Client) ListAgentSessions(ctx context.Context, workspace, since string,
 		out = append(out, s)
 	}
 
-	// Liveness is a best-effort overlay: it lives in a different index, and a
-	// list that works is worth more than one that fails because the heartbeat
-	// query did. On error every row simply reports no heartbeat.
+	// The heartbeat is a best-effort overlay: it lives in a different index,
+	// and a list that works is worth more than one that fails because the
+	// heartbeat query did. On error every row simply reports no heartbeat --
+	// which no longer costs the row its liveness state, because that is
+	// derived from log recency in THIS index.
 	if beats, err := c.sessionHeartbeats(ctx, workspace, since); err == nil {
 		for i := range out {
 			out[i].LastBeat = beats[out[i].SessionID]
+		}
+	}
+
+	now := c.clock()
+	for i := range out {
+		out[i].Liveness, out[i].LastActivityMS = classifyLiveness(out[i].LastSeen, now)
+		if age, ok := ageMillis(out[i].LastBeat, now); ok {
+			out[i].LastHeartbeatMS = &age
 		}
 	}
 	return out, nil
