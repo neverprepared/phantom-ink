@@ -234,8 +234,8 @@ export function GetAgentRole(arg1) {
   return window['go']['main']['App']['GetAgentRole'](arg1);
 }
 
-export function GetAgentSessionTimeline(arg1, arg2) {
-  return window['go']['main']['App']['GetAgentSessionTimeline'](arg1, arg2);
+export function GetAgentSessionTimeline(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetAgentSessionTimeline'](arg1, arg2, arg3);
 }
 
 export function GetAgentState(arg1) {

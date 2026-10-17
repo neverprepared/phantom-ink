@@ -48,6 +48,13 @@
     duration_ms?: number;
     input_size?: number;
     result_size?: number;
+    agent?: string;
+    agent_type?: string;
+    agent_source?: string;
+    tool_uses?: number;
+    total_tokens?: number;
+    tool_input?: string;
+    tool_params?: Record<string, string>;
     model?: string;
     tokens_in?: number;
     tokens_out?: number;
@@ -61,8 +68,20 @@
     session_id: string;
     workspace: string;
     events: SessionEvent[];
+    totals: {
+      turns: number;
+      tool_calls: number;
+      failures: number;
+      cost_usd: number;
+      tokens_out: number;
+      first_seen: string;
+      last_seen: string;
+    };
     truncated: boolean;
+    total_events: number;
+    warning?: string;
     content_available: boolean;
+    tool_details_available: boolean;
   }
 
   const RANGES = [
@@ -164,7 +183,7 @@
         timelineError = 'Wails bindings unavailable.';
         return;
       }
-      const tl = await api.GetAgentSessionTimeline(s.session_id, 1000);
+      const tl = await api.GetAgentSessionTimeline(s.session_id, s.workspace, 1000);
       if (mine !== timelineEpoch) return;
       timeline = tl as unknown as SessionTimeline;
     } catch (e) {
@@ -246,12 +265,25 @@
     assistant_response: 'response',
     tool_result: 'tool',
     api_request: 'model call',
+    subagent_completed: 'subagent done',
   };
+
+  // query_source values. "repl_main_thread" is the session's own thread;
+  // "agent:custom" / "agent:builtin:<Type>" are subagents; the rest is harness
+  // overhead that still costs money and should not masquerade as agent work.
+  function agentLabel(a?: string): string {
+    if (!a || a === 'repl_main_thread') return '';
+    if (a === 'agent:custom') return 'subagent';
+    if (a.startsWith('agent:builtin:')) return a.slice('agent:builtin:'.length);
+    return a.replace(/_/g, ' ');
+  }
+  const isSubagent = (a?: string) => !!a && a.startsWith('agent:');
 
   // Badge variants are limited to those Badge.svelte defines; a failed tool
   // call is the only thing that earns a loud one.
   function kindVariant(e: SessionEvent): string {
     if (e.kind === 'tool_result') return e.success === false ? 'failed' : 'completed';
+    if (e.kind === 'subagent_completed') return 'worker';
     if (e.kind === 'api_request') return 'running';
     return '';
   }
@@ -273,11 +305,28 @@
     return out;
   });
 
-  // Events present but no text anywhere means content logging is off — an
-  // actionable state, and distinct from an empty session.
-  const captureOff = $derived(
-    !!timeline && timeline.events.length > 0 && !timeline.content_available,
-  );
+  // The two capture flags are independent and reported separately: an operator
+  // may well want to know what a task touched without exporting prompt text.
+  // The authoritative rollups: computed over the session's whole life, so they
+  // do not move when the list's range changes. Null until the timeline lands,
+  // when the range-scoped row is the only thing available.
+  const tot = $derived(timeline?.totals ?? null);
+
+  const hasEvents = $derived(!!timeline && timeline.events.length > 0);
+  const promptCaptureOff = $derived(hasEvents && !timeline!.content_available);
+  const toolCaptureOff = $derived(hasEvents && !timeline!.tool_details_available);
+
+  // How much of this session's work was done by subagents rather than the main
+  // thread. Only model calls carry attribution, so this is a share of those,
+  // not of all events — the label says so.
+  const agentBreakdown = $derived.by(() => {
+    const counts = new Map<string, number>();
+    for (const e of timeline?.events ?? []) {
+      if (!e.agent) continue;
+      counts.set(e.agent, (counts.get(e.agent) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  });
 </script>
 
 <div class="agentwork">
@@ -312,6 +361,8 @@
     {:else}
       All profiles. No profile is currently active.
     {/if}
+    Counts and cost below cover the selected range only — a session that started
+    earlier shows just the part inside it. Open one for its real totals.
   </p>
 
   {#if error}
@@ -378,18 +429,20 @@
           <p class="sub">
             {selected.workspace || 'no profile'} ·
             {(selected.models ?? []).join(', ') || 'unknown model'} ·
-            {clock(selected.first_seen)} → {clock(selected.last_seen)}
+            {clock(tot?.first_seen ?? selected.first_seen)} →
+            {clock(tot?.last_seen ?? selected.last_seen)}
+            {#if tot}<span class="muted">· whole session, not just the selected range</span>{/if}
           </p>
         </div>
         <button class="btn" onclick={close}>Close</button>
       </header>
 
       <dl class="facts">
-        <div><dt>Turns</dt><dd>{selected.turns}</dd></div>
-        <div><dt>Tool calls</dt><dd>{selected.tool_calls}</dd></div>
-        <div><dt>Failures</dt><dd>{selected.failures}</dd></div>
-        <div><dt>Cost</dt><dd>{usd(selected.cost_usd)}</dd></div>
-        <div><dt>Output tokens</dt><dd>{compact(selected.tokens_out)}</dd></div>
+        <div><dt>Turns</dt><dd>{tot?.turns ?? selected.turns}</dd></div>
+        <div><dt>Tool calls</dt><dd>{tot?.tool_calls ?? selected.tool_calls}</dd></div>
+        <div><dt>Failures</dt><dd>{tot?.failures ?? selected.failures}</dd></div>
+        <div><dt>Cost</dt><dd>{usd(tot?.cost_usd ?? selected.cost_usd)}</dd></div>
+        <div><dt>Output tokens</dt><dd>{compact(tot?.tokens_out ?? selected.tokens_out)}</dd></div>
         <!-- input_tokens EXCLUDES cache reads, which dominate by orders of
              magnitude on a long session. Showing it alone next to cost reads
              as a contradiction, so the cached figure is shown beside it. -->
@@ -398,32 +451,67 @@
         <div><dt>Tools used</dt><dd>{(selected.top_tools ?? []).join(', ') || '—'}</dd></div>
       </dl>
 
+      {#if agentBreakdown.length > 1}
+        <!-- Only api_request and assistant_response carry query_source, so this
+             is a share of MODEL CALLS, not of every event. Said plainly rather
+             than presented as a whole-session breakdown. -->
+        <div class="agents">
+          <span class="agents-label">model calls by agent</span>
+          {#each agentBreakdown as [a, n] (a)}
+            <span class="agent-chip" class:sub={isSubagent(a)}>
+              {agentLabel(a) || 'main thread'} <span class="muted">{n}</span>
+            </span>
+          {/each}
+        </div>
+      {/if}
+
       {#if timelineLoading}
         <p class="muted"><Spinner /> Loading timeline…</p>
       {:else if timelineError}
         <p class="error">{timelineError}</p>
       {:else if timeline}
-        {#if captureOff}
-          <div class="notice">
-            <strong>Prompt and completion text is not being captured.</strong>
-            <p>
-              Claude Code's exporter writes these attributes as
-              <code>&lt;REDACTED&gt;</code> unless content logging is enabled. Message
-              sizes, tools, durations, models and cost are shown below regardless.
-            </p>
+        {#if timeline.warning}
+          <div class="notice notice-bad">
+            <strong>This timeline may be incomplete.</strong>
+            <p>{timeline.warning}</p>
             <p class="notice-sub">
-              Enabling it is a privacy decision, so it is deliberately not a
-              control in this panel. The flags the shipped CLI reads are
-              <code>OTEL_LOG_USER_PROMPTS</code>,
-              <code>OTEL_LOG_ASSISTANT_RESPONSES</code> and
-              <code>OTEL_LOG_TOOL_CONTENT</code>; captured text lands in the same
-              records and appears here automatically.
+              The search succeeded only partially, so events may be missing from
+              what is shown below.
+            </p>
+          </div>
+        {/if}
+        {#if toolCaptureOff || promptCaptureOff}
+          <div class="notice">
+            <strong>Some capture is off for these sessions.</strong>
+            {#if toolCaptureOff}
+              <p>
+                <strong>What a task touched</strong> — file paths, commands, MCP
+                tool names — needs <code>OTEL_LOG_TOOL_DETAILS</code>. It carries
+                no prompt or completion text, so it answers "what did this do"
+                without exporting conversations.
+              </p>
+            {/if}
+            {#if promptCaptureOff}
+              <p>
+                <strong>Prompt and completion text</strong> needs
+                <code>OTEL_LOG_USER_PROMPTS</code> and
+                <code>OTEL_LOG_ASSISTANT_RESPONSES</code>. The exporter writes
+                those attributes as <code>&lt;REDACTED&gt;</code> until then.
+              </p>
+            {/if}
+            <p class="notice-sub">
+              Both are privacy decisions, so neither is a control in this panel.
+              This view reads every one of those fields already, so whatever you
+              enable shows up here on the next session — but note the cluster
+              currently has no retention policy and no index-level access
+              control, which is the reason the design marked this blocking.
             </p>
           </div>
         {/if}
         {#if timeline.truncated}
           <p class="muted">
-            Showing the first {timeline.events.length} events — this session has more.
+            Showing the {timeline.events.length} most recent of {timeline.total_events}
+            events — earlier activity is not listed.
           </p>
         {/if}
 
@@ -433,16 +521,40 @@
               <div class="turn-head">Turn {i + 1}</div>
               <ul class="events">
                 {#each t.events as e (e.sequence)}
-                  <li class="ev">
+                  <li class="ev" class:sub={isSubagent(e.agent) || e.kind === 'subagent_completed'}>
                     <span class="seq">{e.sequence}</span>
                     <Badge text={KIND_LABEL[e.kind] ?? e.kind} variant={kindVariant(e)} />
                     <span class="ev-main">
-                      {#if e.tool_name}<strong>{e.tool_name}</strong>{/if}
-                      {#if e.model}<span class="muted">{e.model}</span>{/if}
-                      {#if e.content}
-                        <span class="content">{e.content}</span>
-                      {:else if e.redacted}
-                        <span class="muted">redacted · {e.content_length} chars</span>
+                      {#if e.kind === 'subagent_completed'}
+                        <!-- The child's own summary row: the only record that
+                             names a subagent and totals its work. -->
+                        <strong>{e.agent_type || 'subagent'}</strong>
+                        <span class="muted">
+                          {e.agent_source ?? ''} · {e.tool_uses ?? 0} tool calls ·
+                          {compact(e.total_tokens ?? 0)} tokens
+                        </span>
+                      {:else}
+                        {#if agentLabel(e.agent)}
+                          <span class="agent">{agentLabel(e.agent)}</span>
+                        {/if}
+                        {#if e.tool_name}<strong>{e.tool_name}</strong>{/if}
+                        {#if e.model}<span class="muted">{e.model}</span>{/if}
+                        {#if e.tool_params?.full_command || e.tool_params?.bash_command}
+                          <code class="touched"
+                            >{e.tool_params.full_command ?? e.tool_params.bash_command}</code>
+                        {:else if e.tool_params?.mcp_tool_name}
+                          <code class="touched"
+                            >{e.tool_params.mcp_server_name
+                              ? e.tool_params.mcp_server_name + '__'
+                              : ''}{e.tool_params.mcp_tool_name}</code>
+                        {:else if e.tool_input}
+                          <code class="touched">{e.tool_input}</code>
+                        {/if}
+                        {#if e.content}
+                          <span class="content">{e.content}</span>
+                        {:else if e.redacted}
+                          <span class="muted">redacted · {e.content_length} chars</span>
+                        {/if}
                       {/if}
                     </span>
                     <span class="ev-meta">
@@ -634,6 +746,54 @@
   }
   .notice-sub {
     color: var(--color-text-tertiary);
+  }
+
+  .agents {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--spacing-xs);
+    font-size: 11px;
+  }
+  .agents-label {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-tertiary);
+  }
+  .agent-chip {
+    border: 1px solid var(--color-border-secondary);
+    border-radius: 9999px;
+    padding: 1px 8px;
+    color: var(--color-text-secondary);
+  }
+  .agent-chip.sub,
+  .agent {
+    color: var(--color-text-primary);
+  }
+  /* Subagent rows are indented so the fan-out inside a turn is visible at a
+     glance; attribution exists only on model calls, so this is a hint about
+     who issued the call, not a strict tree. */
+  .ev.sub {
+    padding-left: var(--spacing-md);
+    border-left: 2px solid var(--color-border-secondary);
+  }
+  .agent {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+  }
+  .touched {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .notice-bad {
+    border-color: var(--color-status-error-text);
   }
 
   .turns {

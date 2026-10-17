@@ -122,7 +122,7 @@ export function GetAgentJob(arg1:string):Promise<main.AgentJobDetail>;
 
 export function GetAgentRole(arg1:string):Promise<brainbox.AgentDefinition>;
 
-export function GetAgentSessionTimeline(arg1:string,arg2:number):Promise<opensearch.SessionTimeline>;
+export function GetAgentSessionTimeline(arg1:string,arg2:string,arg3:number):Promise<opensearch.SessionTimeline>;
 
 export function GetAgentState(arg1:string):Promise<brainbox.AgentStateItem>;
 

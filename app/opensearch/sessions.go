@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // redactedSentinel is the literal value Claude Code's OTEL exporter writes into
@@ -23,7 +24,45 @@ const redactedSentinel = "<REDACTED>"
 //
 // Also excludes hook_execution_* (the local hook plumbing, not agent work) —
 // those are the single highest-volume event pair in the index.
-var activityEvents = []string{"tool_result", "user_prompt", "assistant_response", "api_request"}
+//
+// subagent_completed is included: it is the one event that NAMES a child agent
+// (agent_type, agent@source) and carries its duration, token total and tool
+// count, attached to the parent turn via prompt@id. The design doc concluded no
+// such record existed.
+var activityEvents = []string{
+	"tool_result", "user_prompt", "assistant_response", "api_request", "subagent_completed",
+}
+
+// shardReport is the _shards block every search returns. The client checks only
+// the HTTP status, so a query that failed on some shards comes back 200 with a
+// short result — for a session timeline that means silently missing events
+// presented as a complete history. Two August indices have no event@sequence
+// mapping and fail the timeline sort on every call today.
+type shardReport struct {
+	Total      int `json:"total"`
+	Successful int `json:"successful"`
+	Failed     int `json:"failed"`
+	Failures   []struct {
+		Index  string `json:"index"`
+		Reason struct {
+			Type   string `json:"type"`
+			Reason string `json:"reason"`
+		} `json:"reason"`
+	} `json:"failures"`
+}
+
+// describe renders a one-line operator-facing summary, or "" when nothing failed.
+func (s shardReport) describe() string {
+	if s.Failed == 0 {
+		return ""
+	}
+	msg := fmt.Sprintf("%d of %d shards failed", s.Failed, s.Total)
+	if len(s.Failures) > 0 {
+		f := s.Failures[0]
+		msg += fmt.Sprintf(" (%s: %s)", f.Index, f.Reason.Reason)
+	}
+	return msg
+}
 
 // AgentSession is one row of the session list: enough to answer "what is
 // running, what is it doing, and should I look at it" without opening it.
@@ -206,10 +245,37 @@ type SessionEvent struct {
 	InputSize  int64  `json:"input_size,omitempty"`
 	ResultSize int64  `json:"result_size,omitempty"`
 
+	// Agent is the query_source: "repl_main_thread" for the session's own
+	// thread, "agent:custom" or "agent:builtin:<Type>" for a subagent, and
+	// values like "away_summary"/"prompt_suggestion"/"compact" for harness
+	// overhead that still costs money. Present ONLY on api_request and
+	// assistant_response — tool_result carries no query_source at all, so a
+	// tool call cannot be attributed to a subagent from this index.
+	Agent string `json:"agent,omitempty"`
+	// AgentType/AgentSource/ToolUses/TotalTokens come from subagent_completed,
+	// the child's own summary row.
+	AgentType   string `json:"agent_type,omitempty"`
+	AgentSource string `json:"agent_source,omitempty"`
+	ToolUses    int64  `json:"tool_uses,omitempty"`
+	TotalTokens int64  `json:"total_tokens,omitempty"`
+
 	Model     string  `json:"model,omitempty"`
 	TokensIn  int64   `json:"tokens_in,omitempty"`
 	TokensOut int64   `json:"tokens_out,omitempty"`
 	CostUSD   float64 `json:"cost_usd,omitempty"`
+
+	// ToolInput is the serialized tool input, and ToolParams the structured
+	// detail the exporter breaks out of it (bash_command, full_command,
+	// mcp_tool_name, mcp_server_name, description, timeout). Both are emitted
+	// only under OTEL_LOG_TOOL_DETAILS, which carries NO prompt or completion
+	// text — so it answers "what did this task touch" at a materially lower
+	// privacy cost than the prompt flags.
+	//
+	// No document in the index carries these yet (the flag is off), so their
+	// exact nesting is unverified; they are collected by key prefix rather
+	// than by a guessed path.
+	ToolInput  string            `json:"tool_input,omitempty"`
+	ToolParams map[string]string `json:"tool_params,omitempty"`
 
 	// Content holds the prompt or response text when content capture is
 	// enabled. Redacted reports that the exporter suppressed it — the
@@ -226,13 +292,44 @@ type SessionTimeline struct {
 	SessionID string         `json:"session_id"`
 	Workspace string         `json:"workspace"`
 	Events    []SessionEvent `json:"events"`
-	// Truncated reports that the session has more events than were returned,
-	// so the UI says so instead of implying the session ended.
+	// Truncated reports that the session has more events than were returned.
+	// The query takes the NEWEST events and this type presents them oldest-
+	// first, so what a truncated timeline omits is the EARLIEST part of the
+	// session — the opposite of what an ascending query would drop. For a
+	// running session the recent end is the useful end.
 	Truncated bool `json:"truncated"`
-	// ContentAvailable is true when at least one event carried real text.
-	// False with events present means capture is off — an actionable state,
-	// distinct from "nothing happened".
+	// TotalEvents is the session's full event count, so the UI can say how
+	// much it is not showing.
+	TotalEvents int64 `json:"total_events"`
+	// Warning is non-empty when the search succeeded only partially (shard
+	// failures). Events may be missing, and a drill-down that silently drops
+	// events is worse than one that admits it.
+	Warning string `json:"warning,omitempty"`
+	// ContentAvailable is true when at least one event carried real prompt or
+	// completion text. False with events present means the prompt flags are
+	// off — an actionable state, distinct from "nothing happened".
 	ContentAvailable bool `json:"content_available"`
+	// Totals are the session's TRUE rollups, unclipped by any time window.
+	// The list's figures are scoped to the selected range, so the same session
+	// reports different costs at 6h, 24h and 30d (measured: $144 / $151 /
+	// $273). The drill-down is the audit surface and must not inherit that.
+	Totals SessionTotals `json:"totals"`
+	// ToolDetailsAvailable is the same signal for tool inputs, which are
+	// governed by a SEPARATE flag carrying no prompt text. The two are
+	// reported independently because an operator may well want one and not
+	// the other.
+	ToolDetailsAvailable bool `json:"tool_details_available"`
+}
+
+// SessionTotals are a session's whole-life rollups, independent of any range.
+type SessionTotals struct {
+	Turns     int64   `json:"turns"`
+	ToolCalls int64   `json:"tool_calls"`
+	Failures  int64   `json:"failures"`
+	CostUSD   float64 `json:"cost_usd"`
+	TokensOut int64   `json:"tokens_out"`
+	FirstSeen string  `json:"first_seen"`
+	LastSeen  string  `json:"last_seen"`
 }
 
 // GetSessionTimeline returns one session's events in execution order.
@@ -241,21 +338,46 @@ type SessionTimeline struct {
 // under equal timestamps — two events in the same millisecond are common
 // (a tool_decision and its tool_result), and sorting by time alone interleaves
 // them unpredictably.
-func (c *Client) GetSessionTimeline(ctx context.Context, sessionID string, limit int) (*SessionTimeline, error) {
+// workspace, when non-empty, additionally constrains the query to that profile.
+// A session id is already unique, so this is defence in depth rather than the
+// primary scoping — but it means a caller cannot read another profile's session
+// by id alone.
+func (c *Client) GetSessionTimeline(ctx context.Context, sessionID, workspace string, limit int) (*SessionTimeline, error) {
 	if sessionID == "" {
 		return nil, fmt.Errorf("session id is required")
 	}
 	if limit <= 0 || limit > 2000 {
 		limit = 500
 	}
+	must := []any{
+		map[string]any{"term": map[string]any{"log.attributes.session@id.keyword": sessionID}},
+		map[string]any{"terms": map[string]any{"log.attributes.event@name.keyword": activityEvents}},
+	}
+	must = append(must, workspaceFilter(workspace)...)
 	body := map[string]any{
 		"size":             limit,
 		"track_total_hits": true,
-		"sort":             []any{map[string]any{"log.attributes.event@sequence": map[string]any{"order": "asc"}}},
-		"query": map[string]any{"bool": map[string]any{"must": []any{
-			map[string]any{"term": map[string]any{"log.attributes.session@id.keyword": sessionID}},
-			map[string]any{"terms": map[string]any{"log.attributes.event@name.keyword": activityEvents}},
+		// DESC so a capped query keeps the most recent events; reversed below
+		// for display. unmapped_type is required, not optional: two August
+		// indices have no event@sequence mapping and fail this sort on every
+		// call, and OpenSearch reports that as a 200 with failed shards.
+		"sort": []any{map[string]any{"log.attributes.event@sequence": map[string]any{
+			"order": "desc", "unmapped_type": "long",
 		}}},
+		"query": map[string]any{"bool": map[string]any{"must": must}},
+		// Computed over the whole matched set, not the `size`-capped page, so
+		// these stay correct for a truncated timeline.
+		"aggs": map[string]any{
+			"turns":      map[string]any{"cardinality": map[string]any{"field": "log.attributes.prompt@id.keyword"}},
+			"cost":       map[string]any{"sum": map[string]any{"field": "log.attributes.cost_usd"}},
+			"tokens_out": map[string]any{"sum": map[string]any{"field": "log.attributes.output_tokens"}},
+			"first":      map[string]any{"min": map[string]any{"field": "time"}},
+			"last":       map[string]any{"max": map[string]any{"field": "time"}},
+			"calls": map[string]any{"filter": map[string]any{
+				"term": map[string]any{"log.attributes.event@name.keyword": "tool_result"}}},
+			"fails": map[string]any{"filter": map[string]any{
+				"term": map[string]any{"log.attributes.success": "false"}}},
+		},
 		"_source": []string{
 			"time",
 			"log.attributes.event@name", "log.attributes.event@sequence",
@@ -267,9 +389,29 @@ func (c *Client) GetSessionTimeline(ctx context.Context, sessionID string, limit
 			"log.attributes.output_tokens", "log.attributes.cost_usd",
 			"log.attributes.prompt", "log.attributes.prompt_length",
 			"log.attributes.response", "log.attributes.response_length",
+			"log.attributes.tool_input", "log.attributes.tool_parameters*",
+			"log.attributes.query_source",
+			"log.attributes.agent_type", "log.attributes.agent@source",
+			"log.attributes.total_tool_uses", "log.attributes.total_tokens",
 		},
 	}
 	var resp struct {
+		Shards       shardReport `json:"_shards"`
+		Aggregations struct {
+			Turns struct {
+				Value int64 `json:"value"`
+			} `json:"turns"`
+			Cost      sumAgg `json:"cost"`
+			TokensOut sumAgg `json:"tokens_out"`
+			First     valAgg `json:"first"`
+			Last      valAgg `json:"last"`
+			Calls     struct {
+				DocCount int64 `json:"doc_count"`
+			} `json:"calls"`
+			Fails struct {
+				DocCount int64 `json:"doc_count"`
+			} `json:"fails"`
+		} `json:"aggregations"`
 		Hits struct {
 			Total struct {
 				Value int64 `json:"value"`
@@ -284,9 +426,21 @@ func (c *Client) GetSessionTimeline(ctx context.Context, sessionID string, limit
 	}
 
 	tl := &SessionTimeline{
-		SessionID: sessionID,
-		Events:    make([]SessionEvent, 0, len(resp.Hits.Hits)),
-		Truncated: resp.Hits.Total.Value > int64(len(resp.Hits.Hits)),
+		SessionID:   sessionID,
+		Workspace:   workspace,
+		Events:      make([]SessionEvent, 0, len(resp.Hits.Hits)),
+		TotalEvents: resp.Hits.Total.Value,
+		Truncated:   resp.Hits.Total.Value > int64(len(resp.Hits.Hits)),
+		Warning:     resp.Shards.describe(),
+		Totals: SessionTotals{
+			Turns:     resp.Aggregations.Turns.Value,
+			ToolCalls: resp.Aggregations.Calls.DocCount,
+			Failures:  resp.Aggregations.Fails.DocCount,
+			CostUSD:   resp.Aggregations.Cost.Value,
+			TokensOut: int64(resp.Aggregations.TokensOut.Value),
+			FirstSeen: resp.Aggregations.First.String,
+			LastSeen:  resp.Aggregations.Last.String,
+		},
 	}
 	for _, h := range resp.Hits.Hits {
 		s := h.Source
@@ -294,22 +448,47 @@ func (c *Client) GetSessionTimeline(ctx context.Context, sessionID string, limit
 			tl.Workspace = strOf(s["resource.attributes.workspace"])
 		}
 		ev := SessionEvent{
-			Sequence:   numOf(s["log.attributes.event@sequence"]),
-			Time:       strOf(s["time"]),
-			Kind:       strOf(s["log.attributes.event@name"]),
-			TurnID:     strOf(s["log.attributes.prompt@id"]),
-			ToolName:   strOf(s["log.attributes.tool_name"]),
-			ToolUseID:  strOf(s["log.attributes.tool_use_id"]),
-			DurationMs: numOf(s["log.attributes.duration_ms"]),
-			InputSize:  numOf(s["log.attributes.tool_input_size_bytes"]),
-			ResultSize: numOf(s["log.attributes.tool_result_size_bytes"]),
-			Model:      strOf(s["log.attributes.model"]),
-			TokensIn:   numOf(s["log.attributes.input_tokens"]),
-			TokensOut:  numOf(s["log.attributes.output_tokens"]),
-			CostUSD:    floatOf(s["log.attributes.cost_usd"]),
+			Sequence:    numOf(s["log.attributes.event@sequence"]),
+			Time:        strOf(s["time"]),
+			Kind:        strOf(s["log.attributes.event@name"]),
+			TurnID:      strOf(s["log.attributes.prompt@id"]),
+			ToolName:    strOf(s["log.attributes.tool_name"]),
+			ToolUseID:   strOf(s["log.attributes.tool_use_id"]),
+			DurationMs:  numOf(s["log.attributes.duration_ms"]),
+			InputSize:   numOf(s["log.attributes.tool_input_size_bytes"]),
+			ResultSize:  numOf(s["log.attributes.tool_result_size_bytes"]),
+			Model:       strOf(s["log.attributes.model"]),
+			TokensIn:    numOf(s["log.attributes.input_tokens"]),
+			TokensOut:   numOf(s["log.attributes.output_tokens"]),
+			CostUSD:     floatOf(s["log.attributes.cost_usd"]),
+			Agent:       strOf(s["log.attributes.query_source"]),
+			AgentType:   strOf(s["log.attributes.agent_type"]),
+			AgentSource: strOf(s["log.attributes.agent@source"]),
+			ToolUses:    numOf(s["log.attributes.total_tool_uses"]),
+			TotalTokens: numOf(s["log.attributes.total_tokens"]),
 		}
 		if b, ok := boolOf(s["log.attributes.success"]); ok {
 			ev.Success = &b
+		}
+		ev.ToolInput = strOf(s["log.attributes.tool_input"])
+		// Collected by prefix: the exporter may deliver these flattened
+		// (log.attributes.tool_parameters.bash_command) or nested, and with no
+		// documents to read we do not guess which.
+		const paramPrefix = "log.attributes.tool_parameters"
+		for k, v := range s {
+			if !strings.HasPrefix(k, paramPrefix) {
+				continue
+			}
+			name := strings.TrimPrefix(strings.TrimPrefix(k, paramPrefix), ".")
+			if name == "" {
+				name = "input"
+			}
+			if text := strOf(v); text != "" {
+				if ev.ToolParams == nil {
+					ev.ToolParams = map[string]string{}
+				}
+				ev.ToolParams[name] = text
+			}
 		}
 		// A turn carries its text in prompt (user) or response (assistant);
 		// only one is ever set on a given document.
@@ -330,7 +509,15 @@ func (c *Client) GetSessionTimeline(ctx context.Context, sessionID string, limit
 				tl.ContentAvailable = true
 			}
 		}
+		if ev.ToolInput != "" || len(ev.ToolParams) > 0 {
+			tl.ToolDetailsAvailable = true
+		}
 		tl.Events = append(tl.Events, ev)
+	}
+	// The query returned newest-first so that capping keeps the recent end;
+	// present oldest-first, which is how a session is read.
+	for i, j := 0, len(tl.Events)-1; i < j; i, j = i+1, j-1 {
+		tl.Events[i], tl.Events[j] = tl.Events[j], tl.Events[i]
 	}
 	return tl, nil
 }

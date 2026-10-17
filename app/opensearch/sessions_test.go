@@ -183,7 +183,7 @@ func TestGetSessionTimelineReadsTextMappedNumbers(t *testing.T) {
 	    "log.attributes.tool_result_size_bytes":"194"
 	  }}]}}`)
 
-	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", 100)
+	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 100)
 	if err != nil {
 		t.Fatalf("GetSessionTimeline: %v", err)
 	}
@@ -217,14 +217,15 @@ func TestGetSessionTimelineReadsTextMappedNumbers(t *testing.T) {
 // A suppressed prompt is present-but-sentinel, not absent. Showing
 // "<REDACTED>" as a message body would read as captured content.
 func TestGetSessionTimelineDistinguishesRedactedFromCaptured(t *testing.T) {
+	// Newest-first, as the real query returns; the timeline reverses it.
 	c, _ := serveJSON(t, `{"hits":{"total":{"value":2},"hits":[
-	  {"_source":{"log.attributes.event@name":"user_prompt","log.attributes.event@sequence":1,
-	    "log.attributes.prompt":"<REDACTED>","log.attributes.prompt_length":"24"}},
 	  {"_source":{"log.attributes.event@name":"assistant_response","log.attributes.event@sequence":2,
-	    "log.attributes.response":"the real answer","log.attributes.response_length":"15"}}
+	    "log.attributes.response":"the real answer","log.attributes.response_length":"15"}},
+	  {"_source":{"log.attributes.event@name":"user_prompt","log.attributes.event@sequence":1,
+	    "log.attributes.prompt":"<REDACTED>","log.attributes.prompt_length":"24"}}
 	]}}`)
 
-	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", 100)
+	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 100)
 	if err != nil {
 		t.Fatalf("GetSessionTimeline: %v", err)
 	}
@@ -253,7 +254,7 @@ func TestGetSessionTimelineContentUnavailableWhenAllRedacted(t *testing.T) {
 	  {"_source":{"log.attributes.event@name":"user_prompt","log.attributes.event@sequence":1,
 	    "log.attributes.prompt":"<REDACTED>","log.attributes.prompt_length":"24"}}
 	]}}`)
-	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", 100)
+	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 100)
 	if err != nil {
 		t.Fatalf("GetSessionTimeline: %v", err)
 	}
@@ -270,16 +271,22 @@ func TestGetSessionTimelineContentUnavailableWhenAllRedacted(t *testing.T) {
 // success is absent on events that have no outcome. A zero-value bool would
 // report those as failures.
 func TestGetSessionTimelineSuccessIsTriState(t *testing.T) {
+	// Hits arrive newest-first, as the real query asks for; the timeline must
+	// present them oldest-first.
 	c, _ := serveJSON(t, `{"hits":{"total":{"value":3},"hits":[
-	  {"_source":{"log.attributes.event@name":"tool_result","log.attributes.event@sequence":1,
-	    "log.attributes.success":"true"}},
+	  {"_source":{"log.attributes.event@name":"api_request","log.attributes.event@sequence":3}},
 	  {"_source":{"log.attributes.event@name":"tool_result","log.attributes.event@sequence":2,
 	    "log.attributes.success":"false"}},
-	  {"_source":{"log.attributes.event@name":"api_request","log.attributes.event@sequence":3}}
+	  {"_source":{"log.attributes.event@name":"tool_result","log.attributes.event@sequence":1,
+	    "log.attributes.success":"true"}}
 	]}}`)
-	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", 100)
+	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 100)
 	if err != nil {
 		t.Fatalf("GetSessionTimeline: %v", err)
+	}
+	if tl.Events[0].Sequence != 1 || tl.Events[2].Sequence != 3 {
+		t.Fatalf("events not presented oldest-first: %d,%d,%d",
+			tl.Events[0].Sequence, tl.Events[1].Sequence, tl.Events[2].Sequence)
 	}
 	if tl.Events[0].Success == nil || !*tl.Events[0].Success {
 		t.Error(`"true" must decode to a set, true Success`)
@@ -296,7 +303,7 @@ func TestGetSessionTimelineReportsTruncation(t *testing.T) {
 	c, _ := serveJSON(t, `{"hits":{"total":{"value":900},"hits":[
 	  {"_source":{"log.attributes.event@name":"tool_result","log.attributes.event@sequence":1}}
 	]}}`)
-	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", 1)
+	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 1)
 	if err != nil {
 		t.Fatalf("GetSessionTimeline: %v", err)
 	}
@@ -307,7 +314,7 @@ func TestGetSessionTimelineReportsTruncation(t *testing.T) {
 
 func TestGetSessionTimelineRequiresSessionID(t *testing.T) {
 	c, req := serveJSON(t, `{"hits":{"total":{"value":0},"hits":[]}}`)
-	if _, err := c.GetSessionTimeline(context.Background(), "", 100); err == nil {
+	if _, err := c.GetSessionTimeline(context.Background(), "", "", 100); err == nil {
 		t.Fatal("an empty session id must error, not query every session")
 	}
 	if *req != "" {
@@ -317,22 +324,131 @@ func TestGetSessionTimelineRequiresSessionID(t *testing.T) {
 
 func TestGetSessionTimelineOrdersBySequence(t *testing.T) {
 	c, req := serveJSON(t, `{"hits":{"total":{"value":0},"hits":[]}}`)
-	if _, err := c.GetSessionTimeline(context.Background(), "sess-a", 100); err != nil {
+	if _, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 100); err != nil {
 		t.Fatalf("GetSessionTimeline: %v", err)
 	}
 	// Timestamps collide within a millisecond; event@sequence is the only
 	// stable order.
-	if !strings.Contains(*req, "log.attributes.event@sequence") {
-		t.Error("timeline must sort by event@sequence")
-	}
 	var q map[string]any
 	if err := json.Unmarshal([]byte(*req), &q); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	sortSpec := q["sort"].([]any)[0].(map[string]any)
-	ord := sortSpec["log.attributes.event@sequence"].(map[string]any)["order"]
-	if ord != "asc" {
-		t.Errorf("sort order = %v, want asc (read a session forwards)", ord)
+	spec, ok := q["sort"].([]any)[0].(map[string]any)["log.attributes.event@sequence"].(map[string]any)
+	if !ok {
+		t.Fatal("timeline must sort by event@sequence")
+	}
+	// DESC so that capping at `limit` keeps the most RECENT events — an
+	// ascending query on a running session returns its first hour forever.
+	// The reversal back to chronological order is asserted elsewhere.
+	if spec["order"] != "desc" {
+		t.Errorf("sort order = %v, want desc so truncation drops the oldest", spec["order"])
+	}
+	// Without unmapped_type the sort fails on indices lacking the field, and
+	// OpenSearch reports that as HTTP 200 with failed shards.
+	if spec["unmapped_type"] != "long" {
+		t.Errorf("unmapped_type = %v, want long", spec["unmapped_type"])
+	}
+}
+
+// A search that failed on some shards returns 200 with fewer hits. Presenting
+// that as a complete session history is the exact failure this guards.
+func TestGetSessionTimelineSurfacesShardFailures(t *testing.T) {
+	c, _ := serveJSON(t, `{"_shards":{"total":65,"successful":63,"failed":2,
+	  "failures":[{"shard":0,"index":"logs-otel-2026.08.04",
+	    "reason":{"type":"query_shard_exception","reason":"No mapping found for [log.attributes.event@sequence] in order to sort on"}}]},
+	  "hits":{"total":{"value":1},"hits":[
+	   {"_source":{"log.attributes.event@name":"tool_result","log.attributes.event@sequence":1}}]}}`)
+	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 100)
+	if err != nil {
+		t.Fatalf("GetSessionTimeline: %v", err)
+	}
+	if tl.Warning == "" {
+		t.Fatal("a partial search must be reported, not presented as complete")
+	}
+	for _, want := range []string{"2 of 65", "logs-otel-2026.08.04"} {
+		if !strings.Contains(tl.Warning, want) {
+			t.Errorf("warning %q omits %q", tl.Warning, want)
+		}
+	}
+}
+
+func TestGetSessionTimelineNoWarningWhenAllShardsSucceed(t *testing.T) {
+	c, _ := serveJSON(t, `{"_shards":{"total":65,"successful":65,"failed":0},
+	  "hits":{"total":{"value":1},"hits":[
+	   {"_source":{"log.attributes.event@name":"tool_result","log.attributes.event@sequence":1}}]}}`)
+	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 100)
+	if err != nil {
+		t.Fatalf("GetSessionTimeline: %v", err)
+	}
+	if tl.Warning != "" {
+		t.Errorf("healthy search must not warn, got %q", tl.Warning)
+	}
+}
+
+// subagent_completed is the only record that names a child agent. Excluding it
+// is what made the session tree look unavailable.
+func TestGetSessionTimelineAdmitsAndReadsSubagentCompleted(t *testing.T) {
+	c, req := serveJSON(t, `{"hits":{"total":{"value":1},"hits":[
+	  {"_source":{"log.attributes.event@name":"subagent_completed",
+	    "log.attributes.event@sequence":2867,
+	    "log.attributes.prompt@id":"turn-9",
+	    "log.attributes.agent_type":"Explore",
+	    "log.attributes.agent@source":"built-in",
+	    "log.attributes.duration_ms":217534,
+	    "log.attributes.total_tool_uses":42,
+	    "log.attributes.total_tokens":103628}}]}}`)
+	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 100)
+	if err != nil {
+		t.Fatalf("GetSessionTimeline: %v", err)
+	}
+	if !strings.Contains(*req, "subagent_completed") {
+		t.Error("the timeline query must admit subagent_completed")
+	}
+	e := tl.Events[0]
+	if e.AgentType != "Explore" || e.AgentSource != "built-in" {
+		t.Errorf("child identity = %q/%q", e.AgentType, e.AgentSource)
+	}
+	if e.ToolUses != 42 || e.TotalTokens != 103628 || e.DurationMs != 217534 {
+		t.Errorf("child rollups = tools:%d tokens:%d dur:%d", e.ToolUses, e.TotalTokens, e.DurationMs)
+	}
+	if e.TurnID != "turn-9" {
+		t.Errorf("child must attach to its parent turn, got %q", e.TurnID)
+	}
+}
+
+// query_source distinguishes the session's own thread from subagent work and
+// from harness overhead that still costs money.
+func TestGetSessionTimelineReadsAgentAttribution(t *testing.T) {
+	c, _ := serveJSON(t, `{"hits":{"total":{"value":2},"hits":[
+	  {"_source":{"log.attributes.event@name":"api_request","log.attributes.event@sequence":2,
+	    "log.attributes.query_source":"agent:builtin:Explore"}},
+	  {"_source":{"log.attributes.event@name":"api_request","log.attributes.event@sequence":1,
+	    "log.attributes.query_source":"repl_main_thread"}}]}}`)
+	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 100)
+	if err != nil {
+		t.Fatalf("GetSessionTimeline: %v", err)
+	}
+	if tl.Events[0].Agent != "repl_main_thread" {
+		t.Errorf("main-thread attribution = %q", tl.Events[0].Agent)
+	}
+	if tl.Events[1].Agent != "agent:builtin:Explore" {
+		t.Errorf("subagent attribution = %q", tl.Events[1].Agent)
+	}
+}
+
+func TestGetSessionTimelineWorkspaceFilterIsConditional(t *testing.T) {
+	c, req := serveJSON(t, `{"hits":{"total":{"value":0},"hits":[]}}`)
+	if _, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 100); err != nil {
+		t.Fatalf("unscoped: %v", err)
+	}
+	if strings.Contains(*req, "resource.attributes.workspace.keyword") {
+		t.Error("an empty workspace must not constrain the timeline")
+	}
+	if _, err := c.GetSessionTimeline(context.Background(), "sess-a", "lakeview", 100); err != nil {
+		t.Fatalf("scoped: %v", err)
+	}
+	if !strings.Contains(*req, `"lakeview"`) {
+		t.Error("a named workspace must constrain the timeline, so an id alone cannot cross profiles")
 	}
 }
 
@@ -342,7 +458,7 @@ func TestGetSessionTimelinePropagatesSearchError(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":"no such index"}`)
 	}))
 	t.Cleanup(srv.Close)
-	if _, err := NewClient(srv.URL).GetSessionTimeline(context.Background(), "sess-a", 10); err == nil {
+	if _, err := NewClient(srv.URL).GetSessionTimeline(context.Background(), "sess-a", "", 10); err == nil {
 		t.Fatal("a 400 from OpenSearch must surface as an error, not an empty timeline")
 	}
 }
@@ -381,5 +497,99 @@ func TestListAgentSessionsNeverReturnsNilSlices(t *testing.T) {
 	}
 	if strings.Contains(string(b), "null") {
 		t.Errorf("row marshals a null: %s", b)
+	}
+}
+
+// tool_input and tool_parameters are governed by OTEL_LOG_TOOL_DETAILS, a
+// SEPARATE flag from the prompt ones that carries no prompt or completion text.
+// No document in the index has these yet, so the reader must not depend on a
+// guessed nesting.
+func TestGetSessionTimelineReadsToolDetailsByPrefix(t *testing.T) {
+	c, req := serveJSON(t, `{"hits":{"total":{"value":1},"hits":[
+	  {"_source":{"log.attributes.event@name":"tool_result","log.attributes.event@sequence":1,
+	    "log.attributes.tool_name":"Bash",
+	    "log.attributes.tool_input":"{\"command\":\"ls -la\"}",
+	    "log.attributes.tool_parameters.bash_command":"ls",
+	    "log.attributes.tool_parameters.full_command":"ls -la /etc",
+	    "log.attributes.tool_parameters.description":""}}]}}`)
+	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 100)
+	if err != nil {
+		t.Fatalf("GetSessionTimeline: %v", err)
+	}
+	// The query must ask for them, or enabling the flag changes nothing here.
+	if !strings.Contains(*req, "log.attributes.tool_parameters*") {
+		t.Error("the query must request tool_parameters (wildcard, shape unverified)")
+	}
+	if !strings.Contains(*req, "log.attributes.tool_input") {
+		t.Error("the query must request tool_input")
+	}
+	e := tl.Events[0]
+	if e.ToolInput == "" {
+		t.Error("tool_input not read")
+	}
+	if e.ToolParams["full_command"] != "ls -la /etc" {
+		t.Errorf("full_command = %q — this is the field that answers 'what did it touch'", e.ToolParams["full_command"])
+	}
+	if _, present := e.ToolParams["description"]; present {
+		t.Error("an empty parameter must be omitted, not rendered as a blank row")
+	}
+	if !tl.ToolDetailsAvailable {
+		t.Error("ToolDetailsAvailable must be set when any event carried tool detail")
+	}
+	// The prompt flags are independent and are NOT implied by tool details.
+	if tl.ContentAvailable {
+		t.Error("tool detail must not be reported as prompt/completion content")
+	}
+}
+
+func TestGetSessionTimelineToolDetailsUnavailableWhenFlagOff(t *testing.T) {
+	c, _ := serveJSON(t, `{"hits":{"total":{"value":1},"hits":[
+	  {"_source":{"log.attributes.event@name":"tool_result","log.attributes.event@sequence":1,
+	    "log.attributes.tool_name":"Bash","log.attributes.tool_input_size_bytes":"120"}}]}}`)
+	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 100)
+	if err != nil {
+		t.Fatalf("GetSessionTimeline: %v", err)
+	}
+	if tl.ToolDetailsAvailable {
+		t.Error("a size-only tool_result must not claim tool details are available")
+	}
+	if tl.Events[0].ToolParams != nil {
+		t.Error("no params must mean a nil map, not an empty one that renders a header")
+	}
+}
+
+// The list's rollups are clipped to the selected range — the same session
+// measures $144 at 6h and $273 at 30d. The drill-down must report the
+// session's real totals, computed over the whole matched set rather than the
+// size-capped page.
+func TestGetSessionTimelineReturnsUnclippedTotals(t *testing.T) {
+	c, req := serveJSON(t, `{"_shards":{"total":1,"successful":1,"failed":0},
+	 "aggregations":{"turns":{"value":57},"cost":{"value":272.96},
+	   "tokens_out":{"value":396639},
+	   "first":{"value":0,"value_as_string":"2026-10-16T14:37:29.212Z"},
+	   "last":{"value":1,"value_as_string":"2026-10-17T07:00:34.182Z"},
+	   "calls":{"doc_count":737},"fails":{"doc_count":3}},
+	 "hits":{"total":{"value":3541},"hits":[
+	  {"_source":{"log.attributes.event@name":"tool_result","log.attributes.event@sequence":1}}]}}`)
+	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 1)
+	if err != nil {
+		t.Fatalf("GetSessionTimeline: %v", err)
+	}
+	// No range clause may appear, or the totals inherit the clipping.
+	if strings.Contains(*req, `"range"`) {
+		t.Error("the timeline query must not filter by time; totals would be clipped")
+	}
+	if tl.Totals.Turns != 57 || tl.Totals.ToolCalls != 737 || tl.Totals.Failures != 3 {
+		t.Errorf("totals = %+v", tl.Totals)
+	}
+	if tl.Totals.CostUSD != 272.96 {
+		t.Errorf("CostUSD = %v, want the whole-life 272.96", tl.Totals.CostUSD)
+	}
+	if tl.Totals.FirstSeen == "" || tl.Totals.LastSeen == "" {
+		t.Errorf("session window = %q..%q", tl.Totals.FirstSeen, tl.Totals.LastSeen)
+	}
+	// Totals must survive truncation: only 1 of 3541 events was returned.
+	if !tl.Truncated {
+		t.Error("expected a truncated timeline in this fixture")
 	}
 }

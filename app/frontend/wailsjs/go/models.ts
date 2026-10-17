@@ -4192,10 +4192,17 @@ export namespace opensearch {
 	    duration_ms?: number;
 	    input_size?: number;
 	    result_size?: number;
+	    agent?: string;
+	    agent_type?: string;
+	    agent_source?: string;
+	    tool_uses?: number;
+	    total_tokens?: number;
 	    model?: string;
 	    tokens_in?: number;
 	    tokens_out?: number;
 	    cost_usd?: number;
+	    tool_input?: string;
+	    tool_params?: Record<string, string>;
 	    content?: string;
 	    redacted?: boolean;
 	    content_length?: number;
@@ -4216,13 +4223,44 @@ export namespace opensearch {
 	        this.duration_ms = source["duration_ms"];
 	        this.input_size = source["input_size"];
 	        this.result_size = source["result_size"];
+	        this.agent = source["agent"];
+	        this.agent_type = source["agent_type"];
+	        this.agent_source = source["agent_source"];
+	        this.tool_uses = source["tool_uses"];
+	        this.total_tokens = source["total_tokens"];
 	        this.model = source["model"];
 	        this.tokens_in = source["tokens_in"];
 	        this.tokens_out = source["tokens_out"];
 	        this.cost_usd = source["cost_usd"];
+	        this.tool_input = source["tool_input"];
+	        this.tool_params = source["tool_params"];
 	        this.content = source["content"];
 	        this.redacted = source["redacted"];
 	        this.content_length = source["content_length"];
+	    }
+	}
+	export class SessionTotals {
+	    turns: number;
+	    tool_calls: number;
+	    failures: number;
+	    cost_usd: number;
+	    tokens_out: number;
+	    first_seen: string;
+	    last_seen: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionTotals(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.turns = source["turns"];
+	        this.tool_calls = source["tool_calls"];
+	        this.failures = source["failures"];
+	        this.cost_usd = source["cost_usd"];
+	        this.tokens_out = source["tokens_out"];
+	        this.first_seen = source["first_seen"];
+	        this.last_seen = source["last_seen"];
 	    }
 	}
 	export class SessionTimeline {
@@ -4230,7 +4268,11 @@ export namespace opensearch {
 	    workspace: string;
 	    events: SessionEvent[];
 	    truncated: boolean;
+	    total_events: number;
+	    warning?: string;
 	    content_available: boolean;
+	    totals: SessionTotals;
+	    tool_details_available: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionTimeline(source);
@@ -4242,7 +4284,11 @@ export namespace opensearch {
 	        this.workspace = source["workspace"];
 	        this.events = this.convertValues(source["events"], SessionEvent);
 	        this.truncated = source["truncated"];
+	        this.total_events = source["total_events"];
+	        this.warning = source["warning"];
 	        this.content_available = source["content_available"];
+	        this.totals = this.convertValues(source["totals"], SessionTotals);
+	        this.tool_details_available = source["tool_details_available"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
