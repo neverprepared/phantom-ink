@@ -19,6 +19,7 @@
   import StreamPanel from '../panels/StreamPanel.svelte';
   import EventLogPanel from '../panels/EventLogPanel.svelte';
   import FilesPanel from '../panels/FilesPanel.svelte';
+  import AgentWorkPanel from '../panels/AgentWorkPanel.svelte';
   import DoctorPanel from '../panels/DoctorPanel.svelte';
 
   // Refresh integration flags so the sidebar can hide panels that
@@ -123,6 +124,8 @@
         <EventLogPanel />
       {:else if currentPanel.value === 'files'}
         <FilesPanel />
+      {:else if currentPanel.value === 'agent-work'}
+        <AgentWorkPanel />
       {:else if currentPanel.value === 'doctor'}
         <DoctorPanel />
       {/if}

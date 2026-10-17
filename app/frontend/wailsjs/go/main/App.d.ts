@@ -122,6 +122,8 @@ export function GetAgentJob(arg1:string):Promise<main.AgentJobDetail>;
 
 export function GetAgentRole(arg1:string):Promise<brainbox.AgentDefinition>;
 
+export function GetAgentSessionTimeline(arg1:string,arg2:number):Promise<opensearch.SessionTimeline>;
+
 export function GetAgentState(arg1:string):Promise<brainbox.AgentStateItem>;
 
 export function GetAppLogs():Promise<Array<string>>;
@@ -267,6 +269,8 @@ export function ListAgentEvents(arg1:string,arg2:string,arg3:number):Promise<Arr
 export function ListAgentJobs():Promise<Array<main.AgentJobSummary>>;
 
 export function ListAgentRoles():Promise<Array<brainbox.AgentDefinition>>;
+
+export function ListAgentSessions(arg1:string,arg2:string,arg3:number):Promise<Array<opensearch.AgentSession>>;
 
 export function ListAgentState(arg1:main.AgentStateFilter):Promise<Array<brainbox.AgentStateItem>>;
 

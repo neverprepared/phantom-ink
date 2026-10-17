@@ -4095,6 +4095,46 @@ export namespace main {
 
 export namespace opensearch {
 	
+	export class AgentSession {
+	    session_id: string;
+	    workspace: string;
+	    first_seen: string;
+	    last_seen: string;
+	    turns: number;
+	    tool_calls: number;
+	    failures: number;
+	    last_tool: string;
+	    top_tools: string[];
+	    models: string[];
+	    cost_usd: number;
+	    tokens_in: number;
+	    tokens_out: number;
+	    tokens_cache_in: number;
+	    tokens_cache_new: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentSession(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.session_id = source["session_id"];
+	        this.workspace = source["workspace"];
+	        this.first_seen = source["first_seen"];
+	        this.last_seen = source["last_seen"];
+	        this.turns = source["turns"];
+	        this.tool_calls = source["tool_calls"];
+	        this.failures = source["failures"];
+	        this.last_tool = source["last_tool"];
+	        this.top_tools = source["top_tools"];
+	        this.models = source["models"];
+	        this.cost_usd = source["cost_usd"];
+	        this.tokens_in = source["tokens_in"];
+	        this.tokens_out = source["tokens_out"];
+	        this.tokens_cache_in = source["tokens_cache_in"];
+	        this.tokens_cache_new = source["tokens_cache_new"];
+	    }
+	}
 	export class LogEntry {
 	    time: string;
 	    body: string;
@@ -4140,6 +4180,88 @@ export namespace opensearch {
 	        this.workspace = source["workspace"];
 	        this.matched_workspace = source["matched_workspace"];
 	    }
+	}
+	export class SessionEvent {
+	    sequence: number;
+	    time: string;
+	    kind: string;
+	    turn_id: string;
+	    tool_name?: string;
+	    tool_use_id?: string;
+	    success?: boolean;
+	    duration_ms?: number;
+	    input_size?: number;
+	    result_size?: number;
+	    model?: string;
+	    tokens_in?: number;
+	    tokens_out?: number;
+	    cost_usd?: number;
+	    content?: string;
+	    redacted?: boolean;
+	    content_length?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionEvent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sequence = source["sequence"];
+	        this.time = source["time"];
+	        this.kind = source["kind"];
+	        this.turn_id = source["turn_id"];
+	        this.tool_name = source["tool_name"];
+	        this.tool_use_id = source["tool_use_id"];
+	        this.success = source["success"];
+	        this.duration_ms = source["duration_ms"];
+	        this.input_size = source["input_size"];
+	        this.result_size = source["result_size"];
+	        this.model = source["model"];
+	        this.tokens_in = source["tokens_in"];
+	        this.tokens_out = source["tokens_out"];
+	        this.cost_usd = source["cost_usd"];
+	        this.content = source["content"];
+	        this.redacted = source["redacted"];
+	        this.content_length = source["content_length"];
+	    }
+	}
+	export class SessionTimeline {
+	    session_id: string;
+	    workspace: string;
+	    events: SessionEvent[];
+	    truncated: boolean;
+	    content_available: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionTimeline(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.session_id = source["session_id"];
+	        this.workspace = source["workspace"];
+	        this.events = this.convertValues(source["events"], SessionEvent);
+	        this.truncated = source["truncated"];
+	        this.content_available = source["content_available"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }
