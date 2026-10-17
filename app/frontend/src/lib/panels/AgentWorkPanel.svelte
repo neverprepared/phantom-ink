@@ -85,6 +85,20 @@
     tool_details_available: boolean;
   }
 
+  // There is NO session-start or session-end event anywhere in this telemetry
+  // (confirmed across all 23 distinct event names the index has ever held), so
+  // "running" versus "finished" is not derivable. The only honest signal is
+  // recency of the last event, and a session idle at a prompt is
+  // indistinguishable from one that exited. Hence "active", never "running".
+  //
+  // The threshold is set against a measured export lag of 5-15s for a session
+  // that really is live; two minutes leaves room for a slow turn without
+  // calling a dead session active.
+  const ACTIVE_WITHIN_MS = 120_000;
+
+  // Matched to the same export lag: a faster poll cannot surface fresher data.
+  const POLL_MS = 20_000;
+
   const RANGES = [
     { label: '24h', value: 'now-24h' },
     { label: '7d', value: 'now-7d' },
@@ -103,6 +117,10 @@
   // moment it was opened. `selectedSnapshot` is the fallback for when the row
   // legitimately leaves the list (aged out of the window, or scope narrowed),
   // so the pane shows last-known values instead of blanking.
+  // Ticks so `ago()` and the active indicator re-evaluate between fetches
+  // rather than freezing at whatever the last load computed.
+  let now = $state(Date.now());
+
   let selectedId = $state<string | null>(null);
   let selectedSnapshot = $state<AgentSession | null>(null);
   let timeline = $state<SessionTimeline | null>(null);
@@ -159,6 +177,25 @@
     void scope;
     void load();
   });
+
+  // Keeps the panel usable as a live view: without this it only updated on a
+  // range change or a manual Refresh, which is not "an up front view of what
+  // is running". Paused while the tab is hidden so a backgrounded window does
+  // not poll the platform indefinitely.
+  $effect(() => {
+    const tick = setInterval(() => {
+      now = Date.now();
+      if (!document.hidden && !loading) void load();
+    }, POLL_MS);
+    return () => clearInterval(tick);
+  });
+
+  function isActive(s: AgentSession): boolean {
+    const t = new Date(s.last_seen).getTime();
+    return !Number.isNaN(t) && now - t < ACTIVE_WITHIN_MS;
+  }
+
+  const activeCount = $derived(sessions.filter(isActive).length);
 
   // A selected session from another profile must not survive a scope change —
   // otherwise the detail pane shows work the new scope excludes. Reads the
@@ -229,11 +266,11 @@
     return Number.isNaN(d.getTime()) ? '—' : d.toLocaleTimeString();
   }
 
-  function ago(iso: string): string {
+  function ago(iso: string, ref: number): string {
     if (!iso) return '—';
     const t = new Date(iso).getTime();
     if (Number.isNaN(t)) return '—';
-    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    const s = Math.max(0, Math.round((ref - t) / 1000));
     if (s < 60) return `${s}s ago`;
     if (s < 3600) return `${Math.round(s / 60)}m ago`;
     if (s < 86400) return `${Math.round(s / 3600)}h ago`;
@@ -379,6 +416,15 @@
     earlier shows just the part inside it. Open one for its real totals.
   </p>
 
+  <p class="scope-note">
+    {#if activeCount}
+      <span class="dot"></span>{activeCount} active in the last 2 minutes.
+    {/if}
+    This telemetry carries no session-end event, so a session idle at a prompt
+    looks the same as one that exited — "active" means recent activity, not a
+    live process.
+  </p>
+
   {#if error}
     <p class="error">{error}</p>
   {/if}
@@ -403,7 +449,7 @@
             <th class="num">Out</th>
             <th class="num">Cost</th>
             <th class="num">Ran</th>
-            <th>Last</th>
+            <th>Last active</th>
           </tr>
         </thead>
         <tbody>
@@ -429,7 +475,12 @@
               <td class="num">{compact(s.tokens_out)}</td>
               <td class="num">{usd(s.cost_usd)}</td>
               <td class="num">{duration(s.first_seen, s.last_seen)}</td>
-              <td class="muted">{ago(s.last_seen)}</td>
+              <td class="muted">
+                {#if isActive(s)}
+                  <span class="dot" title="Activity in the last 2 minutes"></span>
+                {/if}
+                {ago(s.last_seen, now)}
+              </td>
             </tr>
           {/each}
         </tbody>
@@ -647,6 +698,15 @@
     gap: var(--spacing-xs);
     font-size: 11px;
     color: var(--color-text-secondary);
+  }
+  .dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-status-success-text, var(--color-text-primary));
+    margin-right: 4px;
+    vertical-align: middle;
   }
   .scope-note {
     margin: 0;
