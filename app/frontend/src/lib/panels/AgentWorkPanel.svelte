@@ -18,6 +18,7 @@
   import Badge from '../components/Badge.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import { SvelteSet } from 'svelte/reactivity';
 
   interface AgentSession {
     session_id: string;
@@ -91,7 +92,7 @@
   ];
 
   let sessions = $state<AgentSession[]>([]);
-  let loading = $state(false);
+  let loading = $state(true);
   let error = $state('');
   let range = $state('now-24h');
   let allProfiles = $state(false);
@@ -176,6 +177,7 @@
     timeline = null;
     timelineError = '';
     timelineLoading = true;
+    expanded = new SvelteSet();
     const mine = ++timelineEpoch;
     try {
       const api = await getApi();
@@ -192,6 +194,18 @@
     } finally {
       if (mine === timelineEpoch) timelineLoading = false;
     }
+  }
+
+  // Which events have had their captured text expanded. Keyed by sequence and
+  // reset whenever a different session is opened.
+  let expanded = $state(new SvelteSet<number>());
+
+  function toggleExpanded(seq: number) {
+    // Reassigned, not mutated in place, so the template reliably re-renders.
+    const next = new SvelteSet(expanded);
+    if (next.has(seq)) next.delete(seq);
+    else next.add(seq);
+    expanded = next;
   }
 
   function close() {
@@ -369,7 +383,9 @@
     <p class="error">{error}</p>
   {/if}
 
-  {#if !loading && !error && sessions.length === 0}
+  {#if loading && sessions.length === 0}
+    <p class="muted"><Spinner /> Loading sessions…</p>
+  {:else if !loading && !error && sessions.length === 0}
     <EmptyState
       title="No agent sessions in this window"
       message="Nothing has run in the selected range for this scope. Widen the range, or switch to all profiles." />
@@ -395,9 +411,9 @@
             <tr
               class="trow"
               class:selected={selected?.session_id === s.session_id}
+              aria-selected={selected?.session_id === s.session_id}
               onclick={() => open(s)}
               tabindex="0"
-              role="button"
               onkeydown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
@@ -520,7 +536,7 @@
             <li class="turn">
               <div class="turn-head">Turn {i + 1}</div>
               <ul class="events">
-                {#each t.events as e (e.sequence)}
+                {#each t.events as e, j (e.sequence + '-' + j)}
                   <li class="ev" class:sub={isSubagent(e.agent) || e.kind === 'subagent_completed'}>
                     <span class="seq">{e.sequence}</span>
                     <Badge text={KIND_LABEL[e.kind] ?? e.kind} variant={kindVariant(e)} />
@@ -551,7 +567,18 @@
                           <code class="touched">{e.tool_input}</code>
                         {/if}
                         {#if e.content}
-                          <span class="content">{e.content}</span>
+                          <!-- Clamped: with the content flags on, a session's
+                               full prompts and responses would otherwise render
+                               in their entirety across up to 1000 events. -->
+                          <button
+                            type="button"
+                            class="content"
+                            class:expanded={expanded.has(e.sequence)}
+                            title="Click to expand or collapse"
+                            onclick={(ev) => {
+                              ev.stopPropagation();
+                              toggleExpanded(e.sequence);
+                            }}>{e.content}</button>
                         {:else if e.redacted}
                           <span class="muted">redacted · {e.content_length} chars</span>
                         {/if}
@@ -845,10 +872,29 @@
   }
   /* Captured text can be long; it wraps inside its own cell rather than
      widening the row. */
+  /* A button so it is focusable and operable from the keyboard, but styled as
+     the text it contains. Clamped to three lines until expanded. */
   .content {
     white-space: pre-wrap;
     word-break: break-word;
     color: var(--color-text-primary);
+    background: none;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+  }
+  .content.expanded {
+    display: block;
+    max-height: 40vh;
+    overflow-y: auto;
   }
   .ev-meta {
     font-size: 9px;
