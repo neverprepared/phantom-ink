@@ -671,10 +671,11 @@ func floatOf(v any) float64 {
 }
 
 // numOf reads an integer attribute that may arrive as a JSON number or as a
-// string. This index maps duration_ms, event@sequence and the token counts as
-// `long` but tool_input_size_bytes, tool_result_size_bytes, prompt_length and
-// response_length as `text` — so a number-only reader silently returns 0 for
-// every size we display.
+// string. The mappings in this index are genuinely mixed and not guessable:
+// duration_ms, event@sequence, the token counts and response_length are `long`,
+// while tool_input_size_bytes, tool_result_size_bytes and prompt_length are
+// `text`. A number-only reader silently returns 0 for the text-mapped ones, and
+// a string-only reader returns 0 for the rest.
 func numOf(v any) int64 {
 	switch x := v.(type) {
 	case float64:
