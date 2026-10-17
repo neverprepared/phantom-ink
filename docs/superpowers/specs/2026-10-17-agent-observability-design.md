@@ -56,10 +56,14 @@ chain). Implemented backends: `OllamaBackend`, `ClaudeApiBackend`, `ClaudeOAuthB
 
 ### What does not exist
 
-- **No content anywhere.** Claude Code's OTEL export emits byte *sizes* by design, never
-  prompt or completion text. The router records token counts, not text.
-- **No local transcripts to fall back on.** `~/.claude/projects` holds exactly one
-  `.jsonl` (32K) and not the current session's. Task `.output` files are plain stdout.
+- **Content is suppressed, not absent.** *(Corrected 2026-10-17 — see Corrections.)*
+  Claude Code's exporter emits `log.attributes.prompt` and
+  `log.attributes.response` on every turn, carrying the literal `<REDACTED>`
+  unless content logging is opted into. The router records token counts, not text.
+- **Local transcripts DO exist.** *(Corrected 2026-10-17 — see Corrections.)*
+  `$CLAUDE_CONFIG_DIR/projects` holds 528 transcripts (463 MB), including the
+  current session's, with full `message.content`. The original claim came from
+  looking in `~/.claude/projects` while `CLAUDE_CONFIG_DIR` pointed elsewhere.
 - **Codex emits nothing** — `llm/strategy.py:18`: `codex → [codex] # not implemented yet
   → empty registry → LlmError`.
 - **opencode (tier0) emits nothing** — no telemetry configuration at all.
@@ -133,14 +137,43 @@ assistant response; carry token counts for everything else.
 
 One chokepoint covers ollama, Claude API, Claude OAuth and OmniRoute.
 
-### 2. Claude Code sessions — needs a hook
+### 2. Claude Code sessions — a flag, not a hook
 
-OTEL will not provide content, and transcripts are not retained. The viable mechanism is a
-**Claude Code hook**, which this environment already uses (a `PreToolUse` secret-guard and
-a `Stop` hook are both live). A hook captures the turn and ships it to the OTLP collector.
+**This section's original premise was wrong and the work it specified is not needed.**
+The exporter already emits the content attributes; they are suppressed, and the
+suppression is configurable. Verified by reading the shipped binary
+(`/opt/homebrew/Caskroom/claude-code/2.1.267/claude`), which references:
 
-This is the emitter that matters most: Claude Code is where the sessions and subagents
-actually are.
+| Flag | Covers |
+|---|---|
+| `OTEL_LOG_USER_PROMPTS` | the user turn |
+| `OTEL_LOG_ASSISTANT_RESPONSES` | the assistant turn |
+| `OTEL_LOG_TOOL_CONTENT` | tool inputs/outputs |
+| `OTEL_LOG_TOOL_DETAILS` | tool metadata |
+| `OTEL_LOG_RAW_API_BODIES` | whole request/response bodies |
+| `OTEL_LOGRECORD_ATTRIBUTE_VALUE_LENGTH_LIMIT` | per-attribute truncation |
+
+Three consequences:
+
+1. **No hook is required**, so the "unresolved: which hook event carries the
+   assistant response" question is moot. The join keys the capture contract
+   specifies (`session@id`, `prompt@id`, `event@sequence`, `workspace`) are
+   already on these records.
+2. **The delta rule is already satisfied.** `user_prompt` carries that turn's
+   message and `assistant_response` that turn's reply — neither re-sends the
+   conversation, so the quadratic-growth hazard does not arise.
+   `OTEL_LOGRECORD_ATTRIBUTE_VALUE_LENGTH_LIMIT` bounds the rest.
+3. **Enabling it is the operator's decision, not an implementation step.** It
+   exports prompt and completion text to a cluster that currently runs with
+   `DISABLE_SECURITY_PLUGIN=true` behind a stripprefix-only Traefik route, and
+   has no ISM retention policy in any repo. Those two gaps are precisely why
+   the spec marked retention and access control **blocking** — and they remain
+   unresolved. The flags are deliberately NOT set by this work, and the panel
+   offers no control to set them.
+
+`OTEL_LOG_RAW_API_BODIES` in particular should stay off: it captures whole
+request bodies, which re-send the conversation and reintroduce the quadratic
+problem the delta rule exists to avoid.
 
 ### Not in scope
 
@@ -222,3 +255,49 @@ Recorded so they are not re-derived. Full reasoning in the review record.
 - Fix the cross-profile leak in `streamLive.svelte.ts:213`.
 - Nothing reads `otel-v1-apm-span-*`. Either consume it or stop writing 172k spans of
   `cli/ps` polling.
+
+## Corrections — round 2 (2026-10-17, during the build)
+
+Found by querying the live index instead of reasoning about it. Each invalidated
+something the spec asserted.
+
+- **Content capture is a flag, not a hook.** `log.attributes.prompt` and
+  `log.attributes.response` are already emitted per turn, carrying `<REDACTED>`.
+  The spec's "emits byte sizes by design, never text" was wrong, and **T4 (the
+  hook emitter) was deleted rather than built.** See *The two emitters*.
+- **Local transcripts exist** — 528 of them, 463 MB, with full message content.
+  The original "exactly one 32K .jsonl" came from reading `~/.claude/projects`
+  while `CLAUDE_CONFIG_DIR` pointed somewhere else.
+- **Every tool call emits TWO documents**, a `tool_decision` and a
+  `tool_result`, and both carry `tool_name`. The tool-mix figures quoted in
+  *Evidence* (Bash 80,827 etc.) are therefore roughly double the real call
+  counts. Anything counting documents with a `tool_name` doubles every figure.
+- **`hook_execution_start`/`_complete` is the highest-volume event pair in the
+  index** — local hook plumbing, not agent work, and must be excluded from any
+  "what did this agent do" view.
+- **Field mappings are mixed and counter-intuitive.** `success`,
+  `prompt_length`, `response_length`, `tool_input_size_bytes` and
+  `tool_result_size_bytes` are mapped **`text`**; `duration_ms`,
+  `event@sequence`, `input_tokens`, `output_tokens` and `cost_usd` are numeric.
+  A reader that accepts only JSON numbers silently returns 0 for every size.
+  Consistent across all 40 daily indices.
+- **`input_tokens` excludes cache reads, which dominate.** One session measured
+  186M cache-read tokens against 7.8k fresh input. Reporting `input_tokens`
+  alone beside a cost figure reads as a contradiction.
+- **`success` is absent on events with no outcome**, so it is tri-state. A
+  zero-value bool reports those as failures.
+
+### What this means for the remaining work
+
+- **T4 — deleted.** Superseded by the flags above.
+- **T3 (router content capture) — still blocked and still wanted**, for the
+  non-Claude backends (ollama, OmniRoute, Claude API via the router). The
+  blocker is unchanged: `phantom-router/src/phantom_router/api.py:472` passes
+  `metadata=data` where `data = rec.model_dump()`, so adding content to the
+  record fans prompt text to `agent_state`, OpenSearch and SSE with no further
+  code. A content field must bypass that fanout, not ride it.
+- **Retention and access control — still blocking, and now the only thing
+  standing between the operator and content capture.** No ISM policy exists in
+  any repo, so a 14-day content retention would not exist; and with
+  `DISABLE_SECURITY_PLUGIN=true` there is no index-level auth and no read
+  audit. These are infrastructure decisions, not code.
