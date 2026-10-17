@@ -9,13 +9,6 @@ otel-traces-entry:
     otel_trace_source:
       port: 21890
       ssl: false
-      # Accept OTLP/HTTP protobuf as well as gRPC on this port. Without it the
-      # source is gRPC-only: probed against the live instance, a POST to
-      # /opentelemetry.proto.collector.trace.v1.TraceService/Export returned
-      # 415 and /v1/traces returned 404. Harnesses that export over HTTP --
-      # phantom-router uses the otlp-proto-http exporter it already has from
-      # Langfuse, rather than adding grpcio -- need this to reach the pipeline.
-      unframed_requests: true
   sink:
     - pipeline:
         name: otel-traces-raw
