@@ -82,7 +82,18 @@ type AgentSession struct {
 	LastTool string   `json:"last_tool"`
 	TopTools []string `json:"top_tools"`
 	Models   []string `json:"models"`
-	CostUSD  float64  `json:"cost_usd"`
+	// LastBeat is the newest claude_code.active_time.total heartbeat for this
+	// session, from metrics-otel-*. That metric is a delta sum on a strict 60s
+	// cadence and STOPS when the session stops, which makes it the only real
+	// liveness signal here — log recency cannot do the job, because an active
+	// session's own event gaps reach 80s while it is thinking.
+	//
+	// Empty means no heartbeat in the window: either the session ended, or it
+	// is open but idle. The metric beats only on ACTIVITY, so an idle session
+	// emits nothing and is indistinguishable from a finished one.
+	LastBeat string `json:"last_beat,omitempty"`
+
+	CostUSD float64 `json:"cost_usd"`
 	// TokensIn counts input_tokens only, which EXCLUDES cache reads and cache
 	// writes — on a long session the cached portion dominates by orders of
 	// magnitude (118k cache-read against 2 input on a single observed request).
@@ -225,6 +236,71 @@ func (c *Client) ListAgentSessions(ctx context.Context, workspace, since string,
 		}
 		out = append(out, s)
 	}
+
+	// Liveness is a best-effort overlay: it lives in a different index, and a
+	// list that works is worth more than one that fails because the heartbeat
+	// query did. On error every row simply reports no heartbeat.
+	if beats, err := c.sessionHeartbeats(ctx, workspace, since); err == nil {
+		for i := range out {
+			out[i].LastBeat = beats[out[i].SessionID]
+		}
+	}
+	return out, nil
+}
+
+// sessionHeartbeats maps session id to its newest claude_code.active_time.total
+// timestamp.
+//
+// Note the .keyword subfields: in metrics-otel-* these attributes are mapped
+// `text` with a keyword subfield, and some older daily indices carry the text
+// mapping WITHOUT the subfield — aggregating the bare field fails 7 shards.
+func (c *Client) sessionHeartbeats(ctx context.Context, workspace, since string) (map[string]string, error) {
+	if since == "" {
+		since = "now-24h"
+	}
+	must := []any{
+		map[string]any{"term": map[string]any{"name": "claude_code.active_time.total"}},
+		map[string]any{"range": map[string]any{"time": map[string]any{"gte": since}}},
+	}
+	if workspace != "" {
+		must = append(must, map[string]any{"term": map[string]any{
+			"metric.attributes.workspace.keyword": workspace,
+		}})
+	}
+	body := map[string]any{
+		"size":             0,
+		"track_total_hits": false,
+		"query":            map[string]any{"bool": map[string]any{"must": must}},
+		"aggs": map[string]any{
+			"s": map[string]any{
+				"terms": map[string]any{
+					"field": "metric.attributes.session@id.keyword",
+					"size":  200,
+					"order": map[string]any{"last": "desc"},
+				},
+				"aggs": map[string]any{
+					"last": map[string]any{"max": map[string]any{"field": "time"}},
+				},
+			},
+		},
+	}
+	var resp struct {
+		Aggregations struct {
+			S struct {
+				Buckets []struct {
+					Key  string `json:"key"`
+					Last valAgg `json:"last"`
+				} `json:"buckets"`
+			} `json:"s"`
+		} `json:"aggregations"`
+	}
+	if err := c.search(ctx, "metrics-otel-*", body, &resp); err != nil {
+		return nil, fmt.Errorf("session heartbeats: %w", err)
+	}
+	out := make(map[string]string, len(resp.Aggregations.S.Buckets))
+	for _, b := range resp.Aggregations.S.Buckets {
+		out[b.Key] = b.Last.String
+	}
 	return out, nil
 }
 
@@ -323,6 +399,15 @@ type SessionTimeline struct {
 
 // SessionTotals are a session's whole-life rollups, independent of any range.
 type SessionTotals struct {
+	// AgentSpawns counts Agent tool calls; SubagentReports counts
+	// subagent_completed events. They SHOULD match and frequently do not:
+	// coverage is bimodal across real sessions (measured: 64 spawns/70
+	// reports, but also 38/0 and 45/0). A shortfall means the child detail is
+	// missing for those spawns, which the UI must say rather than implying no
+	// subagents ran.
+	AgentSpawns     int64 `json:"agent_spawns"`
+	SubagentReports int64 `json:"subagent_reports"`
+
 	Turns     int64   `json:"turns"`
 	ToolCalls int64   `json:"tool_calls"`
 	Failures  int64   `json:"failures"`
@@ -377,6 +462,12 @@ func (c *Client) GetSessionTimeline(ctx context.Context, sessionID, workspace st
 				"term": map[string]any{"log.attributes.event@name.keyword": "tool_result"}}},
 			"fails": map[string]any{"filter": map[string]any{
 				"term": map[string]any{"log.attributes.success": "false"}}},
+			"spawns": map[string]any{"filter": map[string]any{"bool": map[string]any{"must": []any{
+				map[string]any{"term": map[string]any{"log.attributes.event@name.keyword": "tool_result"}},
+				map[string]any{"term": map[string]any{"log.attributes.tool_name.keyword": "Agent"}},
+			}}}},
+			"reports": map[string]any{"filter": map[string]any{
+				"term": map[string]any{"log.attributes.event@name.keyword": "subagent_completed"}}},
 		},
 		"_source": []string{
 			"time",
@@ -411,6 +502,12 @@ func (c *Client) GetSessionTimeline(ctx context.Context, sessionID, workspace st
 			Fails struct {
 				DocCount int64 `json:"doc_count"`
 			} `json:"fails"`
+			Spawns struct {
+				DocCount int64 `json:"doc_count"`
+			} `json:"spawns"`
+			Reports struct {
+				DocCount int64 `json:"doc_count"`
+			} `json:"reports"`
 		} `json:"aggregations"`
 		Hits struct {
 			Total struct {
@@ -433,13 +530,15 @@ func (c *Client) GetSessionTimeline(ctx context.Context, sessionID, workspace st
 		Truncated:   resp.Hits.Total.Value > int64(len(resp.Hits.Hits)),
 		Warning:     resp.Shards.describe(),
 		Totals: SessionTotals{
-			Turns:     resp.Aggregations.Turns.Value,
-			ToolCalls: resp.Aggregations.Calls.DocCount,
-			Failures:  resp.Aggregations.Fails.DocCount,
-			CostUSD:   resp.Aggregations.Cost.Value,
-			TokensOut: int64(resp.Aggregations.TokensOut.Value),
-			FirstSeen: resp.Aggregations.First.String,
-			LastSeen:  resp.Aggregations.Last.String,
+			AgentSpawns:     resp.Aggregations.Spawns.DocCount,
+			SubagentReports: resp.Aggregations.Reports.DocCount,
+			Turns:           resp.Aggregations.Turns.Value,
+			ToolCalls:       resp.Aggregations.Calls.DocCount,
+			Failures:        resp.Aggregations.Fails.DocCount,
+			CostUSD:         resp.Aggregations.Cost.Value,
+			TokensOut:       int64(resp.Aggregations.TokensOut.Value),
+			FirstSeen:       resp.Aggregations.First.String,
+			LastSeen:        resp.Aggregations.Last.String,
 		},
 	}
 	for _, h := range resp.Hits.Hits {

@@ -7,23 +7,54 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
-// serveJSON stands up a fake OpenSearch that returns body for any _search and
-// records the request body it was sent, so tests can assert on the query we
-// build as well as on the parsing of the response.
-func serveJSON(t *testing.T, body string) (*Client, *string) {
+// serveJSON stands up a fake OpenSearch that returns body for any _search.
+//
+// Requests are captured PER INDEX PATTERN, because ListAgentSessions issues two
+// searches — the session aggregation against logs-otel-* and the liveness
+// heartbeat against metrics-otel-*. A single captured string would silently
+// hold whichever landed last, so an assertion about the session query would
+// really be inspecting the heartbeat query.
+func serveJSON(t *testing.T, body string) (*Client, *capturedReqs) {
 	t.Helper()
-	var captured string
+	caps := &capturedReqs{byIndex: map[string]string{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		captured = string(b)
+		caps.record(r.URL.Path, string(b))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, body)
 	}))
 	t.Cleanup(srv.Close)
-	return NewClient(srv.URL), &captured
+	return NewClient(srv.URL), caps
+}
+
+type capturedReqs struct {
+	mu      sync.Mutex
+	byIndex map[string]string
+}
+
+func (c *capturedReqs) record(path, body string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// path is "/<index pattern>/_search"
+	idx := strings.TrimPrefix(strings.TrimSuffix(path, "/_search"), "/")
+	c.byIndex[idx] = body
+}
+
+// logs returns the body of the request sent to logs-otel-*, the session and
+// timeline index.
+func (c *capturedReqs) logs() string { return c.get("logs-otel-*") }
+
+// metrics returns the body of the liveness heartbeat request.
+func (c *capturedReqs) metrics() string { return c.get("metrics-otel-*") }
+
+func (c *capturedReqs) get(idx string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.byIndex[idx]
 }
 
 func TestListAgentSessionsParsesAggregation(t *testing.T) {
@@ -91,17 +122,17 @@ func TestListAgentSessionsNeverAdmitsToolDecision(t *testing.T) {
 	if _, err := c.ListAgentSessions(context.Background(), "", "now-7d", 10); err != nil {
 		t.Fatalf("ListAgentSessions: %v", err)
 	}
-	if strings.Contains(*req, "tool_decision") {
+	if strings.Contains(req.logs(), "tool_decision") {
 		t.Error("query admits tool_decision; every tool count would double")
 	}
 	for _, want := range []string{"tool_result", "user_prompt", "assistant_response", "api_request"} {
-		if !strings.Contains(*req, want) {
+		if !strings.Contains(req.logs(), want) {
 			t.Errorf("query omits activity event %q", want)
 		}
 	}
 	// hook_execution_* is the highest-volume pair in the index and is local
 	// plumbing, not agent work.
-	if strings.Contains(*req, "hook_execution") {
+	if strings.Contains(req.logs(), "hook_execution") {
 		t.Error("query admits hook_execution events")
 	}
 }
@@ -132,16 +163,16 @@ func TestListAgentSessionsWorkspaceFilterIsConditional(t *testing.T) {
 	if _, err := c.ListAgentSessions(context.Background(), "", "", 10); err != nil {
 		t.Fatalf("unfiltered: %v", err)
 	}
-	if mustHasWorkspaceTerm(t, *req) {
+	if mustHasWorkspaceTerm(t, req.logs()) {
 		t.Error("empty workspace must not add a workspace term (strict equality would exclude workspace-less rows)")
 	}
 	if _, err := c.ListAgentSessions(context.Background(), "lakeview", "", 10); err != nil {
 		t.Fatalf("filtered: %v", err)
 	}
-	if !mustHasWorkspaceTerm(t, *req) {
+	if !mustHasWorkspaceTerm(t, req.logs()) {
 		t.Error("a named workspace must constrain the query with a term filter")
 	}
-	if !strings.Contains(*req, `"lakeview"`) {
+	if !strings.Contains(req.logs(), `"lakeview"`) {
 		t.Error("the workspace term must carry the requested value")
 	}
 }
@@ -153,7 +184,7 @@ func TestListAgentSessionsClampsLimit(t *testing.T) {
 			t.Fatalf("limit %d: %v", tc.in, err)
 		}
 		var q map[string]any
-		if err := json.Unmarshal([]byte(*req), &q); err != nil {
+		if err := json.Unmarshal([]byte(req.logs()), &q); err != nil {
 			t.Fatalf("unmarshal query: %v", err)
 		}
 		aggs := q["aggs"].(map[string]any)["sessions"].(map[string]any)
@@ -317,7 +348,7 @@ func TestGetSessionTimelineRequiresSessionID(t *testing.T) {
 	if _, err := c.GetSessionTimeline(context.Background(), "", "", 100); err == nil {
 		t.Fatal("an empty session id must error, not query every session")
 	}
-	if *req != "" {
+	if req.logs() != "" {
 		t.Error("an empty session id must not reach OpenSearch")
 	}
 }
@@ -330,7 +361,7 @@ func TestGetSessionTimelineOrdersBySequence(t *testing.T) {
 	// Timestamps collide within a millisecond; event@sequence is the only
 	// stable order.
 	var q map[string]any
-	if err := json.Unmarshal([]byte(*req), &q); err != nil {
+	if err := json.Unmarshal([]byte(req.logs()), &q); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	spec, ok := q["sort"].([]any)[0].(map[string]any)["log.attributes.event@sequence"].(map[string]any)
@@ -401,7 +432,7 @@ func TestGetSessionTimelineAdmitsAndReadsSubagentCompleted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSessionTimeline: %v", err)
 	}
-	if !strings.Contains(*req, "subagent_completed") {
+	if !strings.Contains(req.logs(), "subagent_completed") {
 		t.Error("the timeline query must admit subagent_completed")
 	}
 	e := tl.Events[0]
@@ -441,13 +472,13 @@ func TestGetSessionTimelineWorkspaceFilterIsConditional(t *testing.T) {
 	if _, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 100); err != nil {
 		t.Fatalf("unscoped: %v", err)
 	}
-	if strings.Contains(*req, "resource.attributes.workspace.keyword") {
+	if strings.Contains(req.logs(), "resource.attributes.workspace.keyword") {
 		t.Error("an empty workspace must not constrain the timeline")
 	}
 	if _, err := c.GetSessionTimeline(context.Background(), "sess-a", "lakeview", 100); err != nil {
 		t.Fatalf("scoped: %v", err)
 	}
-	if !strings.Contains(*req, `"lakeview"`) {
+	if !strings.Contains(req.logs(), `"lakeview"`) {
 		t.Error("a named workspace must constrain the timeline, so an id alone cannot cross profiles")
 	}
 }
@@ -517,10 +548,10 @@ func TestGetSessionTimelineReadsToolDetailsByPrefix(t *testing.T) {
 		t.Fatalf("GetSessionTimeline: %v", err)
 	}
 	// The query must ask for them, or enabling the flag changes nothing here.
-	if !strings.Contains(*req, "log.attributes.tool_parameters*") {
+	if !strings.Contains(req.logs(), "log.attributes.tool_parameters*") {
 		t.Error("the query must request tool_parameters (wildcard, shape unverified)")
 	}
-	if !strings.Contains(*req, "log.attributes.tool_input") {
+	if !strings.Contains(req.logs(), "log.attributes.tool_input") {
 		t.Error("the query must request tool_input")
 	}
 	e := tl.Events[0]
@@ -576,7 +607,7 @@ func TestGetSessionTimelineReturnsUnclippedTotals(t *testing.T) {
 		t.Fatalf("GetSessionTimeline: %v", err)
 	}
 	// No range clause may appear, or the totals inherit the clipping.
-	if strings.Contains(*req, `"range"`) {
+	if strings.Contains(req.logs(), `"range"`) {
 		t.Error("the timeline query must not filter by time; totals would be clipped")
 	}
 	if tl.Totals.Turns != 57 || tl.Totals.ToolCalls != 737 || tl.Totals.Failures != 3 {
@@ -591,5 +622,136 @@ func TestGetSessionTimelineReturnsUnclippedTotals(t *testing.T) {
 	// Totals must survive truncation: only 1 of 3541 events was returned.
 	if !tl.Truncated {
 		t.Error("expected a truncated timeline in this fixture")
+	}
+}
+
+// Liveness comes from metrics-otel-*, where claude_code.active_time.total beats
+// on a strict 60s cadence and stops when the session stops. Log recency cannot
+// substitute: an actively working session's own event gaps reach 80s.
+func TestListAgentSessionsStampsHeartbeat(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/metrics-otel-") {
+			_, _ = io.WriteString(w, `{"aggregations":{"s":{"buckets":[
+			  {"key":"live-one","last":{"value":1,"value_as_string":"2026-10-17T07:26:49.000Z"}}
+			]}}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"aggregations":{"sessions":{"buckets":[
+		  {"key":"live-one","doc_count":2,"last":{"value":1,"value_as_string":"2026-10-17T07:26:00.000Z"},
+		   "first":{"value":0,"value_as_string":"2026-10-17T07:00:00.000Z"},"turns":{"value":1},
+		   "ws":{"buckets":[{"key":"personal"}]},"models":{"buckets":[]},
+		   "cost":{"value":0},"tokens_in":{"value":0},"tokens_out":{"value":0},
+		   "cache_in":{"value":0},"cache_new":{"value":0},
+		   "calls":{"doc_count":0,"tools":{"buckets":[]},"latest":{"hits":{"hits":[]}}},
+		   "fails":{"doc_count":0}},
+		  {"key":"finished-one","doc_count":2,"last":{"value":1,"value_as_string":"2026-10-17T03:09:00.000Z"},
+		   "first":{"value":0,"value_as_string":"2026-10-17T02:00:00.000Z"},"turns":{"value":1},
+		   "ws":{"buckets":[{"key":"personal"}]},"models":{"buckets":[]},
+		   "cost":{"value":0},"tokens_in":{"value":0},"tokens_out":{"value":0},
+		   "cache_in":{"value":0},"cache_new":{"value":0},
+		   "calls":{"doc_count":0,"tools":{"buckets":[]},"latest":{"hits":{"hits":[]}}},
+		   "fails":{"doc_count":0}}
+		]}}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	got, err := NewClient(srv.URL).ListAgentSessions(context.Background(), "", "now-24h", 10)
+	if err != nil {
+		t.Fatalf("ListAgentSessions: %v", err)
+	}
+	if hits != 2 {
+		t.Errorf("expected a session query and a heartbeat query, got %d requests", hits)
+	}
+	if got[0].LastBeat != "2026-10-17T07:26:49.000Z" {
+		t.Errorf("heartbeat not stamped: %q", got[0].LastBeat)
+	}
+	// A session with no heartbeat must report none rather than inheriting
+	// another session's — that would mark a finished session live.
+	if got[1].LastBeat != "" {
+		t.Errorf("session without a heartbeat got %q", got[1].LastBeat)
+	}
+}
+
+// The heartbeat lives in a different index. A list that works is worth more
+// than one that fails because the liveness overlay did.
+func TestListAgentSessionsSurvivesHeartbeatFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/metrics-otel-") {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":"no such index"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"aggregations":{"sessions":{"buckets":[
+		  {"key":"s1","doc_count":1,"last":{"value":1,"value_as_string":"2026-10-17T07:00:00.000Z"},
+		   "first":{"value":0,"value_as_string":"2026-10-17T07:00:00.000Z"},"turns":{"value":1},
+		   "ws":{"buckets":[{"key":"personal"}]},"models":{"buckets":[]},
+		   "cost":{"value":0},"tokens_in":{"value":0},"tokens_out":{"value":0},
+		   "cache_in":{"value":0},"cache_new":{"value":0},
+		   "calls":{"doc_count":0,"tools":{"buckets":[]},"latest":{"hits":{"hits":[]}}},
+		   "fails":{"doc_count":0}}]}}}`)
+	}))
+	t.Cleanup(srv.Close)
+	got, err := NewClient(srv.URL).ListAgentSessions(context.Background(), "", "", 10)
+	if err != nil {
+		t.Fatalf("a failing heartbeat query must not fail the list: %v", err)
+	}
+	if len(got) != 1 || got[0].LastBeat != "" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+// Those metric attributes are mapped `text` with a keyword subfield, and some
+// older daily indices lack the subfield entirely — aggregating the bare field
+// fails shards, which is how this was found.
+func TestHeartbeatQueryUsesKeywordSubfields(t *testing.T) {
+	c, req := serveJSON(t, `{"aggregations":{"s":{"buckets":[]}}}`)
+	if _, err := c.ListAgentSessions(context.Background(), "lakeview", "now-7d", 10); err != nil {
+		t.Fatalf("ListAgentSessions: %v", err)
+	}
+	m := req.metrics()
+	if m == "" {
+		t.Fatal("no heartbeat query was issued")
+	}
+	for _, want := range []string{
+		"metric.attributes.session@id.keyword",
+		"metric.attributes.workspace.keyword",
+		"claude_code.active_time.total",
+	} {
+		if !strings.Contains(m, want) {
+			t.Errorf("heartbeat query omits %q", want)
+		}
+	}
+	if strings.Contains(m, `"metric.attributes.session@id"`) {
+		t.Error("heartbeat aggregates the bare text field; that fails shards on older indices")
+	}
+}
+
+// subagent_completed coverage is bimodal in practice: some sessions report
+// every spawn, others report none. Surfacing both counts is what lets the UI
+// say "the child detail is missing" instead of "no subagents ran".
+func TestGetSessionTimelineReportsSubagentCoverageShortfall(t *testing.T) {
+	c, _ := serveJSON(t, `{"_shards":{"total":1,"successful":1,"failed":0},
+	 "aggregations":{"turns":{"value":28},"cost":{"value":1},"tokens_out":{"value":1},
+	   "first":{"value":0,"value_as_string":"2026-10-17T05:00:00.000Z"},
+	   "last":{"value":1,"value_as_string":"2026-10-17T07:00:00.000Z"},
+	   "calls":{"doc_count":300},"fails":{"doc_count":0},
+	   "spawns":{"doc_count":38},"reports":{"doc_count":0}},
+	 "hits":{"total":{"value":1},"hits":[
+	  {"_source":{"log.attributes.event@name":"tool_result","log.attributes.event@sequence":1}}]}}`)
+	tl, err := c.GetSessionTimeline(context.Background(), "sess-a", "", 100)
+	if err != nil {
+		t.Fatalf("GetSessionTimeline: %v", err)
+	}
+	if tl.Totals.AgentSpawns != 38 {
+		t.Errorf("AgentSpawns = %d, want 38", tl.Totals.AgentSpawns)
+	}
+	// Zero reports against 38 spawns is the real, measured case — the tree is
+	// incomplete and must be reported as such.
+	if tl.Totals.SubagentReports != 0 {
+		t.Errorf("SubagentReports = %d, want 0", tl.Totals.SubagentReports)
 	}
 }

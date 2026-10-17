@@ -31,6 +31,7 @@
     last_tool: string;
     top_tools: string[];
     models: string[];
+    last_beat?: string;
     cost_usd: number;
     tokens_in: number;
     tokens_out: number;
@@ -70,6 +71,8 @@
     workspace: string;
     events: SessionEvent[];
     totals: {
+      agent_spawns: number;
+      subagent_reports: number;
       turns: number;
       tool_calls: number;
       failures: number;
@@ -85,19 +88,20 @@
     tool_details_available: boolean;
   }
 
-  // There is NO session-start or session-end event anywhere in this telemetry
-  // (confirmed across all 23 distinct event names the index has ever held), so
-  // "running" versus "finished" is not derivable. The only honest signal is
-  // recency of the last event, and a session idle at a prompt is
-  // indistinguishable from one that exited. Hence "active", never "running".
+  // Liveness comes from the claude_code.active_time.total heartbeat, NOT from
+  // log recency. There is no session-end event anywhere in this telemetry, and
+  // an actively working session's own log gaps reach 80s — so any threshold on
+  // log recency tight enough to be useful marks a thinking session dead. The
+  // heartbeat is a strict 60s cadence that simply stops when the session does
+  // (measured: a live session's last beat 46s old, a finished one 4.3h).
   //
-  // The threshold is set against a measured export lag of 5-15s for a session
-  // that really is live; two minutes leaves room for a slow turn without
-  // calling a dead session active.
-  const ACTIVE_WITHIN_MS = 120_000;
+  // 150s rather than 60s because a beat covers the minute just ended and lands
+  // ~75s behind the wall clock.
+  const ACTIVE_WITHIN_MS = 150_000;
 
-  // Matched to the same export lag: a faster poll cannot surface fresher data.
-  const POLL_MS = 20_000;
+  // The logs export batches every 10s; polling faster cannot surface fresher
+  // data.
+  const POLL_MS = 15_000;
 
   const RANGES = [
     { label: '24h', value: 'now-24h' },
@@ -159,7 +163,11 @@
       }
       const rows = await api.ListAgentSessions(scope, range, 50);
       if (mine !== listEpoch) return;
-      sessions = (rows ?? []) as AgentSession[];
+      // Server order is by last activity; lift the working ones to the top,
+      // since "what is running" is the question this panel exists to answer.
+      sessions = ((rows ?? []) as AgentSession[])
+        .slice()
+        .sort((a, b) => Number(isActive(b)) - Number(isActive(a)));
     } catch (e) {
       if (mine !== listEpoch) return;
       error = String(e);
@@ -191,7 +199,8 @@
   });
 
   function isActive(s: AgentSession): boolean {
-    const t = new Date(s.last_seen).getTime();
+    if (!s.last_beat) return false;
+    const t = new Date(s.last_beat).getTime();
     return !Number.isNaN(t) && now - t < ACTIVE_WITHIN_MS;
   }
 
@@ -418,11 +427,12 @@
 
   <p class="scope-note">
     {#if activeCount}
-      <span class="dot"></span>{activeCount} active in the last 2 minutes.
+      <span class="dot"></span>{activeCount} working right now.
     {/if}
-    This telemetry carries no session-end event, so a session idle at a prompt
-    looks the same as one that exited — "active" means recent activity, not a
-    live process.
+    Liveness is the agent's own activity heartbeat, which stops when the session
+    does. It beats only while a session is <em>working</em>, so one sitting idle
+    at a prompt reads the same as one that exited — and it pauses across laptop
+    sleep.
   </p>
 
   {#if error}
@@ -445,7 +455,9 @@
             <th>Doing</th>
             <th class="num">Turns</th>
             <th class="num">Tools</th>
-            <th class="num">Failed</th>
+            <th class="num" title="Failed tool calls. API errors and exhausted retries are separate events and are not counted here.">
+              Failed
+            </th>
             <th class="num">Out</th>
             <th class="num">Cost</th>
             <th class="num">Ran</th>
@@ -477,7 +489,7 @@
               <td class="num">{duration(s.first_seen, s.last_seen)}</td>
               <td class="muted">
                 {#if isActive(s)}
-                  <span class="dot" title="Activity in the last 2 minutes"></span>
+                  <span class="dot" title="Heartbeat within the last 150s — working now"></span>
                 {/if}
                 {ago(s.last_seen, now)}
               </td>
@@ -508,7 +520,12 @@
         <div><dt>Turns</dt><dd>{tot?.turns ?? selected.turns}</dd></div>
         <div><dt>Tool calls</dt><dd>{tot?.tool_calls ?? selected.tool_calls}</dd></div>
         <div><dt>Failures</dt><dd>{tot?.failures ?? selected.failures}</dd></div>
-        <div><dt>Cost</dt><dd>{usd(tot?.cost_usd ?? selected.cost_usd)}</dd></div>
+        <div>
+          <dt title="Includes background calls the harness makes on your behalf — summaries, prompt suggestions, compaction.">
+            Cost
+          </dt>
+          <dd>{usd(tot?.cost_usd ?? selected.cost_usd)}</dd>
+        </div>
         <div><dt>Output tokens</dt><dd>{compact(tot?.tokens_out ?? selected.tokens_out)}</dd></div>
         <!-- input_tokens EXCLUDES cache reads, which dominate by orders of
              magnitude on a long session. Showing it alone next to cost reads
@@ -517,6 +534,20 @@
         <div><dt>Input (cached)</dt><dd>{compact(selected.tokens_cache_in)}</dd></div>
         <div><dt>Tools used</dt><dd>{(selected.top_tools ?? []).join(', ') || '—'}</dd></div>
       </dl>
+
+      {#if tot && tot.agent_spawns > 0}
+        <p class="muted">
+          {tot.agent_spawns} subagent{tot.agent_spawns === 1 ? '' : 's'} spawned{#if tot.subagent_reports > 0}, {tot.subagent_reports}
+            reported their own totals{:else}, none reported their own totals{/if}.
+          {#if tot.subagent_reports < tot.agent_spawns}
+            <!-- Measured: coverage is bimodal — some sessions report every
+                 spawn, others none. Saying so beats implying the missing
+                 children did not exist. -->
+            The rest ran without emitting a completion record, so their detail
+            is not available here.
+          {/if}
+        </p>
+      {/if}
 
       {#if agentBreakdown.length > 1}
         <!-- Only api_request and assistant_response carry query_source, so this

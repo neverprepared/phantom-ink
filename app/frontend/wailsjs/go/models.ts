@@ -4106,6 +4106,7 @@ export namespace opensearch {
 	    last_tool: string;
 	    top_tools: string[];
 	    models: string[];
+	    last_beat?: string;
 	    cost_usd: number;
 	    tokens_in: number;
 	    tokens_out: number;
@@ -4128,6 +4129,7 @@ export namespace opensearch {
 	        this.last_tool = source["last_tool"];
 	        this.top_tools = source["top_tools"];
 	        this.models = source["models"];
+	        this.last_beat = source["last_beat"];
 	        this.cost_usd = source["cost_usd"];
 	        this.tokens_in = source["tokens_in"];
 	        this.tokens_out = source["tokens_out"];
@@ -4240,6 +4242,8 @@ export namespace opensearch {
 	    }
 	}
 	export class SessionTotals {
+	    agent_spawns: number;
+	    subagent_reports: number;
 	    turns: number;
 	    tool_calls: number;
 	    failures: number;
@@ -4254,6 +4258,8 @@ export namespace opensearch {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.agent_spawns = source["agent_spawns"];
+	        this.subagent_reports = source["subagent_reports"];
 	        this.turns = source["turns"];
 	        this.tool_calls = source["tool_calls"];
 	        this.failures = source["failures"];
