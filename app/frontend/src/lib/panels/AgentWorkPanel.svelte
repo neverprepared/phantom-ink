@@ -32,6 +32,12 @@
     top_tools: string[];
     models: string[];
     last_beat?: string;
+    // Server-derived; see app/opensearch/liveness.go. Deliberately not
+    // recomputed here — a threshold in a component is a threshold with no
+    // tests, and the previous one in this file was wrong for a month.
+    liveness: 'active' | 'idle' | 'dormant' | 'unknown';
+    last_activity_ms: number;
+    last_heartbeat_ms?: number;
     cost_usd: number;
     tokens_in: number;
     tokens_out: number;
@@ -88,16 +94,17 @@
     tool_details_available: boolean;
   }
 
-  // Liveness comes from the claude_code.active_time.total heartbeat, NOT from
-  // log recency. There is no session-end event anywhere in this telemetry, and
-  // an actively working session's own log gaps reach 80s — so any threshold on
-  // log recency tight enough to be useful marks a thinking session dead. The
-  // heartbeat is a strict 60s cadence that simply stops when the session does
-  // (measured: a live session's last beat 46s old, a finished one 4.3h).
+  // Liveness arrives already classified from the Go read layer. The previous
+  // version of this block computed it here, thresholding the
+  // claude_code.active_time.total heartbeat at 150s on the strength of one 46s
+  // sample, and asserted the heartbeat was "a strict 60s cadence". Re-measured
+  // over 3 days / 21 sessions / 1,538 gaps: median 60s but p90 180s, with 10.0%
+  // of gaps over 150s. The metric also carries no query_source on any of 26,566
+  // docs, so it is main-thread only and stalls during subagent fan-out —
+  // exactly when a session is busiest. That indicator reported working sessions
+  // as dead roughly a tenth of the time.
   //
-  // 150s rather than 60s because a beat covers the minute just ended and lands
-  // ~75s behind the wall clock.
-  const ACTIVE_WITHIN_MS = 150_000;
+  // See app/opensearch/liveness.go for the thresholds and their rationale.
 
   // The logs export batches every 10s; polling faster cannot surface fresher
   // data.
@@ -106,7 +113,6 @@
   const RANGES = [
     { label: '24h', value: 'now-24h' },
     { label: '7d', value: 'now-7d' },
-    { label: '30d', value: 'now-30d' },
   ];
 
   let sessions = $state<AgentSession[]>([]);
@@ -199,9 +205,29 @@
   });
 
   function isActive(s: AgentSession): boolean {
-    if (!s.last_beat) return false;
-    const t = new Date(s.last_beat).getTime();
-    return !Number.isNaN(t) && now - t < ACTIVE_WITHIN_MS;
+    return s.liveness === 'active';
+  }
+
+  // The heartbeat is main-thread only, so a session with fresh activity but a
+  // stale beat is the readable signature of subagent fan-out: children are
+  // working while the main thread waits. Surfaced as a tooltip rather than a
+  // separate state, because it is a hypothesis about what is happening, not a
+  // fact the data establishes.
+  function livenessTitle(s: AgentSession): string {
+    const secs = (ms: number) => `${Math.round(ms / 1000)}s`;
+    switch (s.liveness) {
+      case 'active':
+        if (s.last_heartbeat_ms !== undefined && s.last_heartbeat_ms > 150_000) {
+          return `Activity ${secs(s.last_activity_ms)} ago, but the main-thread heartbeat is ${secs(s.last_heartbeat_ms)} old — subagents are probably running.`;
+        }
+        return `Activity ${secs(s.last_activity_ms)} ago — working now.`;
+      case 'idle':
+        return `No activity for ${secs(s.last_activity_ms)}. Idle, or finished — this telemetry has no session-end event, so the two are indistinguishable.`;
+      case 'dormant':
+        return `Silent for ${secs(s.last_activity_ms)}. Finished, crashed or waiting on a human — not distinguishable from this data.`;
+      default:
+        return 'No activity timestamp for this session.';
+    }
   }
 
   const activeCount = $derived(sessions.filter(isActive).length);
@@ -488,9 +514,11 @@
               <td class="num">{usd(s.cost_usd)}</td>
               <td class="num">{duration(s.first_seen, s.last_seen)}</td>
               <td class="muted">
-                {#if isActive(s)}
-                  <span class="dot" title="Heartbeat within the last 150s — working now"></span>
-                {/if}
+                <span
+                  class="dot dot-{s.liveness}"
+                  title={livenessTitle(s)}
+                  aria-label={livenessTitle(s)}
+                ></span>
                 {ago(s.last_seen, now)}
               </td>
             </tr>
@@ -554,7 +582,7 @@
              is a share of MODEL CALLS, not of every event. Said plainly rather
              than presented as a whole-session breakdown. -->
         <div class="agents">
-          <span class="agents-label">model calls by agent</span>
+          <span class="agents-label">model calls by source</span>
           {#each agentBreakdown as [a, n] (a)}
             <span class="agent-chip" class:sub={isSubagent(a)}>
               {agentLabel(a) || 'main thread'} <span class="muted">{n}</span>
@@ -738,6 +766,28 @@
     background: var(--color-status-success-text, var(--color-text-primary));
     margin-right: 4px;
     vertical-align: middle;
+  }
+  /* Tri-state liveness. Never color-alone: every dot carries a title and
+     aria-label, and the relative age sits beside it in the same cell. The
+     filled/hollow distinction also survives a forced-colors or monochrome
+     rendering, where hue alone would not. */
+  .dot-active {
+    background: var(--color-status-success-text, var(--color-text-primary));
+  }
+  .dot-idle {
+    background: var(--color-status-warning-text, var(--color-text-secondary));
+  }
+  /* Dormant and unknown are hollow rather than filled: the panel does not know
+     that these sessions ended -- this telemetry has no session-end event -- so
+     a solid dot would overstate what the data supports. */
+  .dot-dormant {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--color-text-tertiary, var(--color-border));
+  }
+  .dot-unknown {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--color-border-secondary, var(--color-border));
+    opacity: 0.6;
   }
   .scope-note {
     margin: 0;
