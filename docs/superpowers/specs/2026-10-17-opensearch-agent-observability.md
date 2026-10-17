@@ -1086,3 +1086,59 @@ attributes:
 
 The content-stripping invariant therefore holds through the real encoder and
 the real transport, which is the part no unit test could establish.
+
+### 10.6 Deployed and verified on m3
+
+The router span exporter is live, not merely proven in a probe.
+
+**What changed on the host** (m3 = `100.89.35.33`; note `m3-64.neverprepared.com`
+and that address both resolve to a machine reporting the same tailscale
+hostname as the workstation, which is why an earlier attempt looked like it was
+talking to localhost):
+
+- `phantom-router` checkout moved from `feat/llm-langfuse-tracing` @ `81f700d`
+  to `feat/llm-otel-spans` @ `31b391e` (pushed to origin; the two branches had
+  diverged histories, so a new branch was used rather than clobbering the
+  existing one).
+- `docker-compose.override.yml` — the host-local, gitignored delta file already
+  in the compose invocation — gained three keys on `services.router.environment`:
+  `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://data-prepper:21890`,
+  `OTEL_EXPORTER_OTLP_PROTOCOL: grpc`, `OTEL_SERVICE_NAME: phantom-router`.
+  The **internal** compose address, so no TLS and no public Traefik hop.
+  Timestamped backups sit beside it.
+- Router image rebuilt (the previous image had no `opentelemetry` at all) and
+  the container recreated.
+
+**Verified** with one real completion through `POST /api/llm/complete`
+(backend ollama, model `qwen3:8b`, reply `OK`):
+
+| Check | Result |
+|---|---|
+| Spans landed | 2, correctly nested — `generate-completion` (root) → `ollama` |
+| Provenance | `llm@caller=api`, `llm@profile=personal`, `llm@quality=cheap`, `llm@seam_trace_id` |
+| Model | `gen_ai@response@model=qwen3:8b` |
+| Profile scoping | `resource.attributes.workspace=personal` |
+| Content canary | the probe marker was embedded in the PROMPT; it appears in **0** docs across `otel-v1-apm-span-*`, `logs-otel-*`, `metrics-otel-*` |
+
+### 10.7 Two gaps this deploy exposed
+
+- **Ollama reports no token counts or cost.** The real call produced
+  `gen_ai@usage@input_tokens = 0` and `llm@cost_usd = 0.0` `[VERIFIED]`; the
+  non-zero values in the index are from a synthetic probe. So the span index
+  can show ollama *latency and fallback shape* but not its spend. Whether that
+  is the seam passing zeros or the ollama backend not surfacing usage was not
+  determined.
+- **`session.id` is absent on spans from the stateless endpoint.**
+  `tracing.session()` is wrapped by `conversation_runtime` and
+  `conversation_orchestrator`, not by `POST /api/llm/complete`, so
+  endpoint-driven completions group by trace but not by session. Expected, and
+  worth closing if that endpoint ever needs session grouping.
+
+### 10.8 Still not applied on m3
+
+`phantom-platform` on m3 remains on `main`. The index-template fix (§3.2) and
+the provisioner extension (§9.3) are NOT on that checkout — the dashboards were
+provisioned directly against the live instance, and the template fix needs the
+branch plus a `data-prepper` restart before it affects newly created indices.
+The tracked `docker-compose.yml` wiring for the router (committed) is likewise
+not what m3 uses; m3 uses the override above.
