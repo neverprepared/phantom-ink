@@ -352,10 +352,11 @@ type termsAgg struct {
 	} `json:"buckets"`
 }
 
+// keys returns an empty slice, never nil, for an empty bucket list. A nil slice
+// marshals to JSON `null` rather than `[]`, and these fields reach the frontend
+// typed as string[] — so `null.join(...)` throws inside the template and blanks
+// the pane. A prompt-only session (no tool_result docs) hits exactly this.
 func (t termsAgg) keys() []string {
-	if len(t.Buckets) == 0 {
-		return nil
-	}
 	out := make([]string, 0, len(t.Buckets))
 	for _, b := range t.Buckets {
 		out = append(out, b.Key)

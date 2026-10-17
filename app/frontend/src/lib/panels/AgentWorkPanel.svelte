@@ -77,7 +77,14 @@
   let range = $state('now-24h');
   let allProfiles = $state(false);
 
-  let selected = $state<AgentSession | null>(null);
+  // The detail pane tracks an ID, not a row object. Holding the object itself
+  // detaches it from the list: a refresh replaces `sessions` with fresh rows
+  // while the pane keeps rendering counts, cost and timestamps frozen at the
+  // moment it was opened. `selectedSnapshot` is the fallback for when the row
+  // legitimately leaves the list (aged out of the window, or scope narrowed),
+  // so the pane shows last-known values instead of blanking.
+  let selectedId = $state<string | null>(null);
+  let selectedSnapshot = $state<AgentSession | null>(null);
   let timeline = $state<SessionTimeline | null>(null);
   let timelineLoading = $state(false);
   let timelineError = $state('');
@@ -87,6 +94,12 @@
   // "All profiles" wants. With no profile selected at all there is nothing to
   // scope to, so the view is global either way.
   const scope = $derived(allProfiles ? '' : activeProfile);
+
+  // Live row wins so the facts stay current; the snapshot covers the gap.
+  const selected = $derived(
+    (selectedId ? sessions.find((s) => s.session_id === selectedId) : null) ??
+      selectedSnapshot,
+  );
 
   // Two independent monotonic counters, deliberately NOT shared. A slow
   // in-flight request must not overwrite a newer one of its own kind — but the
@@ -128,17 +141,19 @@
   });
 
   // A selected session from another profile must not survive a scope change —
-  // otherwise the detail pane shows work the new scope excludes.
+  // otherwise the detail pane shows work the new scope excludes. Reads the
+  // snapshot rather than `selected` so this cannot depend on its own effect.
   $effect(() => {
     const s = scope;
-    if (selected && s && selected.workspace !== s) {
-      selected = null;
-      timeline = null;
+    const snap = selectedSnapshot;
+    if (snap && s && snap.workspace !== s) {
+      close();
     }
   });
 
   async function open(s: AgentSession) {
-    selected = s;
+    selectedId = s.session_id;
+    selectedSnapshot = s;
     timeline = null;
     timelineError = '';
     timelineLoading = true;
@@ -163,7 +178,8 @@
   function close() {
     timelineEpoch++;
     timelineLoading = false;
-    selected = null;
+    selectedId = null;
+    selectedSnapshot = null;
     timeline = null;
     timelineError = '';
   }
@@ -266,7 +282,7 @@
 
 <div class="agentwork">
   <header class="panel-header">
-    <h1>Agent Work</h1>
+    <h1 class="page-title">agent work</h1>
     <div class="head-actions">
       <div class="seg" role="group" aria-label="Time range">
         {#each RANGES as r (r.value)}
@@ -326,7 +342,7 @@
         <tbody>
           {#each sessions as s (s.session_id)}
             <tr
-              class="row"
+              class="trow"
               class:selected={selected?.session_id === s.session_id}
               onclick={() => open(s)}
               tabindex="0"
@@ -361,7 +377,7 @@
           <h2>Session <code>{shortId(selected.session_id)}</code></h2>
           <p class="sub">
             {selected.workspace || 'no profile'} ·
-            {selected.models.join(', ') || 'unknown model'} ·
+            {(selected.models ?? []).join(', ') || 'unknown model'} ·
             {clock(selected.first_seen)} → {clock(selected.last_seen)}
           </p>
         </div>
@@ -379,7 +395,7 @@
              as a contradiction, so the cached figure is shown beside it. -->
         <div><dt>Input (fresh)</dt><dd>{compact(selected.tokens_in)}</dd></div>
         <div><dt>Input (cached)</dt><dd>{compact(selected.tokens_cache_in)}</dd></div>
-        <div><dt>Tools used</dt><dd>{selected.top_tools.join(', ') || '—'}</dd></div>
+        <div><dt>Tools used</dt><dd>{(selected.top_tools ?? []).join(', ') || '—'}</dd></div>
       </dl>
 
       {#if timelineLoading}
@@ -463,7 +479,7 @@
   }
   .seg {
     display: inline-flex;
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-sm);
     overflow: hidden;
   }
@@ -476,7 +492,7 @@
     cursor: pointer;
   }
   .seg-btn:not(:last-child) {
-    border-right: 1px solid var(--color-border);
+    border-right: 1px solid var(--color-border-primary);
   }
   .seg-btn.active {
     background: var(--color-muted-bg);
@@ -528,12 +544,12 @@
     letter-spacing: 0.04em;
     font-size: 9px;
     padding: var(--spacing-xs) var(--spacing-sm);
-    border-bottom: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--color-border-secondary);
     white-space: nowrap;
   }
   .tbl td {
     padding: var(--spacing-xs) var(--spacing-sm);
-    border-bottom: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--color-border-secondary);
     color: var(--color-text-secondary);
     white-space: nowrap;
   }
@@ -541,14 +557,18 @@
     text-align: right;
     font-variant-numeric: tabular-nums;
   }
-  .row {
+  /* NOT `.row`: that is a global flex-card rule in styles/components.css,
+     imported app-wide, and `display: flex` on a <tr> destroys the table
+     layout. Svelte's scoping hashes our own selectors; it does not shield the
+     element from a global class of the same name. */
+  .trow {
     cursor: pointer;
   }
-  .row:hover td,
-  .row:focus-visible td {
+  .trow:hover td,
+  .trow:focus-visible td {
     background: var(--color-muted-bg);
   }
-  .row.selected td {
+  .trow.selected td {
     background: var(--color-muted-bg);
     color: var(--color-text-primary);
   }
@@ -560,7 +580,7 @@
   }
 
   .detail {
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-sm);
     padding: var(--spacing-md);
     display: flex;

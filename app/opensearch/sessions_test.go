@@ -346,3 +346,40 @@ func TestGetSessionTimelinePropagatesSearchError(t *testing.T) {
 		t.Fatal("a 400 from OpenSearch must surface as an error, not an empty timeline")
 	}
 }
+
+// A nil slice marshals to JSON `null`, which the frontend consumes as
+// string[] and calls .join() on. A prompt-only session has no tool_result
+// docs and so no tool buckets at all.
+func TestListAgentSessionsNeverReturnsNilSlices(t *testing.T) {
+	c, _ := serveJSON(t, `{"aggregations":{"sessions":{"buckets":[
+	  {"key":"prompt-only","doc_count":2,
+	   "last":{"value":1,"value_as_string":"2026-10-17T06:00:00.000Z"},
+	   "first":{"value":0,"value_as_string":"2026-10-17T06:00:00.000Z"},
+	   "turns":{"value":1},"ws":{"buckets":[]},"models":{"buckets":[]},
+	   "cost":{"value":0},"tokens_in":{"value":0},"tokens_out":{"value":0},
+	   "cache_in":{"value":0},"cache_new":{"value":0},
+	   "calls":{"doc_count":0,"tools":{"buckets":[]},"latest":{"hits":{"hits":[]}}},
+	   "fails":{"doc_count":0}}
+	]}}}`)
+	got, err := c.ListAgentSessions(context.Background(), "", "", 10)
+	if err != nil {
+		t.Fatalf("ListAgentSessions: %v", err)
+	}
+	if got[0].TopTools == nil {
+		t.Error("TopTools is nil; it marshals to JSON null and breaks .join() in the UI")
+	}
+	if got[0].Models == nil {
+		t.Error("Models is nil; same hazard")
+	}
+	// And the whole row must survive having no tool calls at all.
+	if got[0].SessionID != "prompt-only" || got[0].LastTool != "" {
+		t.Errorf("unexpected row: %+v", got[0])
+	}
+	b, err := json.Marshal(got[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), "null") {
+		t.Errorf("row marshals a null: %s", b)
+	}
+}
