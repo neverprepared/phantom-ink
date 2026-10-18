@@ -58,6 +58,10 @@ export function CancelLiveLoop(arg1, arg2) {
   return window['go']['main']['App']['CancelLiveLoop'](arg1, arg2);
 }
 
+export function ClearMeshErrors() {
+  return window['go']['main']['App']['ClearMeshErrors']();
+}
+
 export function ClearProfileServerOverride(arg1, arg2) {
   return window['go']['main']['App']['ClearProfileServerOverride'](arg1, arg2);
 }
@@ -356,6 +360,10 @@ export function GetLoopTemplate(arg1) {
 
 export function GetLoopTemplateSchema() {
   return window['go']['main']['App']['GetLoopTemplateSchema']();
+}
+
+export function GetMeshAdminKeySet() {
+  return window['go']['main']['App']['GetMeshAdminKeySet']();
 }
 
 export function GetMeshStatus() {
@@ -794,6 +802,10 @@ export function RescheduleOneShot(arg1, arg2) {
   return window['go']['main']['App']['RescheduleOneShot'](arg1, arg2);
 }
 
+export function ResetMeshPeerCursor(arg1) {
+  return window['go']['main']['App']['ResetMeshPeerCursor'](arg1);
+}
+
 export function RestartAllPlatformServices() {
   return window['go']['main']['App']['RestartAllPlatformServices']();
 }
@@ -816,6 +828,10 @@ export function RestoreDatabase(arg1) {
 
 export function RestoreProfile(arg1) {
   return window['go']['main']['App']['RestoreProfile'](arg1);
+}
+
+export function RetryMeshPeer(arg1) {
+  return window['go']['main']['App']['RetryMeshPeer'](arg1);
 }
 
 export function RetryRuleExecution(arg1) {
@@ -920,6 +936,10 @@ export function SetJiraEnabledForProfile(arg1, arg2) {
 
 export function SetJiraJQL(arg1, arg2) {
   return window['go']['main']['App']['SetJiraJQL'](arg1, arg2);
+}
+
+export function SetMeshAdminKey(arg1) {
+  return window['go']['main']['App']['SetMeshAdminKey'](arg1);
 }
 
 export function SetOTLPHost(arg1) {

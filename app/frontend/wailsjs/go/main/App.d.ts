@@ -35,6 +35,8 @@ export function CancelHubTask(arg1:string):Promise<void>;
 
 export function CancelLiveLoop(arg1:string,arg2:string):Promise<brainbox.LiveLoop>;
 
+export function ClearMeshErrors():Promise<main.MeshActionResult>;
+
 export function ClearProfileServerOverride(arg1:string,arg2:string):Promise<void>;
 
 export function CodeOverview(arg1:string):Promise<main.CodeOverview>;
@@ -184,6 +186,8 @@ export function GetLocalRunnerStatus():Promise<main.LocalRunnerStatus>;
 export function GetLoopTemplate(arg1:string):Promise<brainbox.LoopTemplate>;
 
 export function GetLoopTemplateSchema():Promise<Record<string, any>>;
+
+export function GetMeshAdminKeySet():Promise<boolean>;
 
 export function GetMeshStatus():Promise<main.MeshStatus>;
 
@@ -403,6 +407,8 @@ export function RescanAgents():Promise<Array<main.DetectedAgent>>;
 
 export function RescheduleOneShot(arg1:string,arg2:number):Promise<main.CollectJob>;
 
+export function ResetMeshPeerCursor(arg1:string):Promise<main.MeshActionResult>;
+
 export function RestartAllPlatformServices():Promise<void>;
 
 export function RestartBrainboxAPI():Promise<void>;
@@ -414,6 +420,8 @@ export function RestoreAttention(arg1:string):Promise<void>;
 export function RestoreDatabase(arg1:string):Promise<string>;
 
 export function RestoreProfile(arg1:string):Promise<void>;
+
+export function RetryMeshPeer(arg1:string):Promise<main.MeshActionResult>;
 
 export function RetryRuleExecution(arg1:number):Promise<brainbox.RuleExecution>;
 
@@ -466,6 +474,8 @@ export function SetJiraEnabled(arg1:boolean):Promise<void>;
 export function SetJiraEnabledForProfile(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetJiraJQL(arg1:string,arg2:string):Promise<void>;
+
+export function SetMeshAdminKey(arg1:string):Promise<void>;
 
 export function SetOTLPHost(arg1:string):Promise<void>;
 

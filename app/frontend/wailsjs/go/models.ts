@@ -3764,6 +3764,68 @@ export namespace main {
 	        this.line = source["line"];
 	    }
 	}
+	export class SyncError {
+	    at: string;
+	    peer: string;
+	    profile: string;
+	    phase: string;
+	    class: string;
+	    err: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SyncError(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.at = source["at"];
+	        this.peer = source["peer"];
+	        this.profile = source["profile"];
+	        this.phase = source["phase"];
+	        this.class = source["class"];
+	        this.err = source["err"];
+	    }
+	}
+	export class MeshActionResult {
+	    rows_merged: number;
+	    links_merged: number;
+	    blobs_fetched: number;
+	    cleared: number;
+	    reset: boolean;
+	    errors?: SyncError[];
+	
+	    static createFrom(source: any = {}) {
+	        return new MeshActionResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.rows_merged = source["rows_merged"];
+	        this.links_merged = source["links_merged"];
+	        this.blobs_fetched = source["blobs_fetched"];
+	        this.cleared = source["cleared"];
+	        this.reset = source["reset"];
+	        this.errors = this.convertValues(source["errors"], SyncError);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class MeshMetrics {
 	    pb_sync_rounds_total: string;
 	    pb_sync_rows_merged_total: string;
@@ -3795,6 +3857,8 @@ export namespace main {
 	    db_lag: string;
 	    links_lag: string;
 	    cursor_age: string;
+	    last_error?: SyncError;
+	    errors_24h: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new MeshPeer(source);
@@ -3810,13 +3874,35 @@ export namespace main {
 	        this.db_lag = source["db_lag"];
 	        this.links_lag = source["links_lag"];
 	        this.cursor_age = source["cursor_age"];
+	        this.last_error = this.convertValues(source["last_error"], SyncError);
+	        this.errors_24h = source["errors_24h"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class MeshStatus {
 	    node_id: string;
 	    sync_enabled: boolean;
 	    peers: MeshPeer[];
 	    metrics: MeshMetrics;
+	    recent_errors?: SyncError[];
+	    errors_15m: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new MeshStatus(source);
@@ -3828,6 +3914,8 @@ export namespace main {
 	        this.sync_enabled = source["sync_enabled"];
 	        this.peers = this.convertValues(source["peers"], MeshPeer);
 	        this.metrics = this.convertValues(source["metrics"], MeshMetrics);
+	        this.recent_errors = this.convertValues(source["recent_errors"], SyncError);
+	        this.errors_15m = source["errors_15m"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -4202,6 +4290,7 @@ export namespace main {
 	        this.running = source["running"];
 	    }
 	}
+	
 	export class SystemInfo {
 	    cpu_cores: number;
 	    mem_total_bytes: number;
