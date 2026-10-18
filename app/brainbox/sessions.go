@@ -96,6 +96,19 @@ func ReadProfileEnv(workspaceHome string) map[string]string {
 	}
 	for _, name := range []string{".env", ".env.secrets"} {
 		path := filepath.Join(workspaceHome, name)
+		// REGULAR FILES ONLY. `.env.secrets` is a NAMED PIPE in this
+		// workspace layout -- the profile's .envrc streams 1Password secrets
+		// through it -- and os.Open on a FIFO BLOCKS until a writer appears.
+		// With no writer that is forever, and the caller has no timeout to
+		// save it: this hung the Agent Work panel on a permanent spinner, with
+		// no error, because it blocks before any request is made.
+		//
+		// Reading it would be wrong even if it returned: the pipe drains on
+		// read, so consuming it steals the secrets from the shell that is
+		// waiting for them.
+		if fi, err := os.Lstat(path); err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
 		f, err := os.Open(path)
 		if err != nil {
 			continue
