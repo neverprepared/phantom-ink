@@ -14,6 +14,13 @@ import (
 	"phantom-ink/opensearch"
 )
 
+// livenessOverlayTimeout bounds the OpenSearch half of the list.
+//
+// Shorter than agentSessionQueryTimeout on purpose: the overlay is optional, so
+// it should give up well before the panel's own poll interval comes round
+// again. The list is already in hand by the time this starts.
+const livenessOverlayTimeout = 3 * time.Second
+
 // AgentWorkRow is one row of the Agent Work list, assembled from BOTH stores.
 //
 // The split is forced by measurement, not preference:
@@ -181,7 +188,31 @@ func (a *App) ListAgentWork(profile, since string, limit int) ([]AgentWorkRow, e
 			CostUSD:      s.CostUSD,
 		})
 	}
-	a.overlayLiveness(out, profile, since)
+	// HARD DEADLINE on the overlay. It is a decoration, and it must never be
+	// able to stop the list from loading -- which is exactly what happened:
+	// the panel sat on a permanent spinner because this half blocked.
+	//
+	// The blocking call is not the HTTP request (that is capped by the client
+	// and the context) but a.opensearchAPIURL -> a.db.GetIntegration, a SQLite
+	// read with NO context. database/sql waits indefinitely for a free
+	// connection, and this app keeps a busy write-ahead log, so a contended
+	// pool stalls the whole method. A goroutine plus a timeout makes that
+	// unreachable regardless of the cause.
+	overlayDone := make(chan struct{})
+	go func() {
+		defer close(overlayDone)
+		// A panic in the overlay must not take down the list either.
+		defer func() { _ = recover() }()
+		a.overlayLiveness(out, profile, since)
+	}()
+	select {
+	case <-overlayDone:
+	case <-time.After(livenessOverlayTimeout):
+		// Rows keep LivenessAvailable false, so the UI shows a hollow dot and
+		// explains that liveness was unavailable. The work itself still lists.
+		logErr("agent-work: liveness overlay timed out after %s; listing without it",
+			livenessOverlayTimeout)
+	}
 	return out, nil
 }
 

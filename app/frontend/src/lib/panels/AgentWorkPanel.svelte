@@ -85,6 +85,32 @@
   // data. Langfuse is slower still (Stop hook), so this is generous for it.
   const POLL_MS = 15_000;
 
+  // A client-side deadline on every call. The Go side bounds each of its own
+  // stages, but this panel sat on a permanent spinner twice while that was
+  // being established, and a spinner is the least diagnosable failure there
+  // is: no error, no state, nothing to act on. With this, a stuck call becomes
+  // a message that names the timeout.
+  const CALL_TIMEOUT_MS = 20_000;
+
+  function withTimeout<T>(p: Promise<T>, label: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const t = setTimeout(
+        () => reject(new Error(`${label} did not return within ${CALL_TIMEOUT_MS / 1000}s`)),
+        CALL_TIMEOUT_MS,
+      );
+      p.then(
+        (v) => {
+          clearTimeout(t);
+          resolve(v);
+        },
+        (e) => {
+          clearTimeout(t);
+          reject(e);
+        },
+      );
+    });
+  }
+
   const RANGES = [
     { label: '24h', value: 'now-24h' },
     { label: '7d', value: 'now-7d' },
@@ -133,7 +159,10 @@
         error = '';
         return;
       }
-      const rows = await api.ListAgentWork(activeProfile, range, 50);
+      const rows = await withTimeout(
+        api.ListAgentWork(activeProfile, range, 50),
+        'ListAgentWork',
+      );
       if (mine !== listEpoch) return;
       // The server already returns most-recently-active first; lift the
       // working ones, since "what is running" is the question this answers.
@@ -211,7 +240,10 @@
         timelineError = 'Wails bindings unavailable.';
         return;
       }
-      const tl = await api.GetAgentWorkTimeline(s.session_id, activeProfile, 500);
+      const tl = await withTimeout(
+        api.GetAgentWorkTimeline(s.session_id, activeProfile, 500),
+        'GetAgentWorkTimeline',
+      );
       if (mine !== timelineEpoch) return;
       timeline = tl as SessionTimeline;
     } catch (e) {

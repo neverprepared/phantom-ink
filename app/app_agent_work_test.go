@@ -167,3 +167,16 @@ func TestStrictProfileHomeRefusesWithoutAWorkspacesRoot(t *testing.T) {
 		t.Errorf("strictProfileHome = %q with nil config; must fail closed", got)
 	}
 }
+
+// The overlay is a decoration and must never be able to stop the list. A
+// permanent spinner is exactly what happened when it could.
+func TestOverlayTimeoutIsShorterThanTheQueryTimeout(t *testing.T) {
+	if livenessOverlayTimeout >= agentSessionQueryTimeout {
+		t.Errorf("livenessOverlayTimeout %v must be shorter than "+
+			"agentSessionQueryTimeout %v — the overlay is optional and should "+
+			"give up first", livenessOverlayTimeout, agentSessionQueryTimeout)
+	}
+	if livenessOverlayTimeout <= 0 {
+		t.Error("an unbounded overlay can hang the whole list")
+	}
+}
