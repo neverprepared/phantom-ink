@@ -10,6 +10,16 @@
   import EmptyState from '../components/EmptyState.svelte';
   import VaultBrowser from './VaultBrowser.svelte';
 
+  // One retained sync failure from the daemon's ring. Optional throughout:
+  // an older daemon sends none, and the panel must still work against it.
+  interface SyncError {
+    at: string;
+    peer: string;
+    profile: string;
+    phase: string;
+    class: string;
+    err: string;
+  }
   interface MeshPeer {
     id: string;
     base_url: string;
@@ -19,6 +29,8 @@
     db_lag: string;
     links_lag: string;
     cursor_age: string;
+    last_error?: SyncError;
+    errors_24h?: number;
   }
   interface MeshMetrics {
     pb_sync_rounds_total: string;
@@ -33,6 +45,8 @@
     sync_enabled: boolean;
     peers: MeshPeer[];
     metrics: MeshMetrics;
+    recent_errors?: SyncError[];
+    errors_15m?: number;
   }
   // Per-vault AUTH reachability for the active profile — whether the stored
   // bearer token actually authenticates against the daemon. This is separate
@@ -129,6 +143,17 @@
 
   const peers = $derived(status?.peers ?? []);
 
+  // The counter is cumulative since daemon start and never decays, so a healed
+  // outage stays red forever. errors_15m is the live signal; the counter alone
+  // is history.
+  const recentErrors = $derived(status?.recent_errors ?? []);
+  const errorsAreLive = $derived((status?.errors_15m ?? 0) > 0);
+  const lastErrorAge = $derived.by(() => {
+    if (recentErrors.length === 0) return '';
+    const ms = Date.parse(recentErrors[0].at);
+    return Number.isFinite(ms) ? timeAgo(ms) : '';
+  });
+
   // Mesh-view sub-tab filters: by machine (mesh node) and by profile. Values
   // are derived from the data, not hardcoded. Filters AND together.
   // Peer ids are <machine>-<profile>-<vault> (e.g. m3-gsa-agents), so the
@@ -223,8 +248,12 @@
           <span class="c-label">blobs fetched</span>
         </div>
         <div class="counter">
-          <span class="c-val err">{metric('pb_sync_errors_total')}</span>
+          <span class="c-val" class:err={errorsAreLive} class:stale={!errorsAreLive && metric('pb_sync_errors_total') !== '0'}
+            >{metric('pb_sync_errors_total')}</span>
           <span class="c-label">errors</span>
+          {#if !errorsAreLive && lastErrorAge}
+            <span class="c-note">none in {lastErrorAge}</span>
+          {/if}
         </div>
         <div class="counter">
           <span class="c-val">{lastTick()}</span>
@@ -379,6 +408,8 @@
   .counter { display: flex; flex-direction: column; gap: 2px; min-width: 88px; }
   .c-val { font-size: 1.3rem; font-weight: 600; font-variant-numeric: tabular-nums; }
   .c-val.err { color: var(--color-error); }
+  .c-val.stale { color: var(--color-warning); }
+  .c-note { font-size: 0.62rem; color: var(--color-text-tertiary); }
   .c-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-tertiary); }
 
   .peer-count { font-size: 0.72rem; font-weight: 400; color: var(--color-text-muted); }
