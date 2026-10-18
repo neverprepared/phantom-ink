@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -28,6 +30,9 @@ type MeshPeer struct {
 	DBLag     string `json:"db_lag"`
 	LinksLag  string `json:"links_lag"`
 	CursorAge string `json:"cursor_age"`
+
+	LastError *SyncError `json:"last_error,omitempty"`
+	Errors24h int        `json:"errors_24h"`
 }
 
 // MeshMetrics are the pb_sync_* counters/gauges. The daemon emits them as
@@ -48,6 +53,9 @@ type MeshStatus struct {
 	SyncEnabled bool        `json:"sync_enabled"`
 	Peers       []MeshPeer  `json:"peers"`
 	Metrics     MeshMetrics `json:"metrics"`
+
+	RecentErrors []SyncError `json:"recent_errors,omitempty"`
+	Errors15m    int         `json:"errors_15m"`
 }
 
 // meshURL resolves the configured mesh daemon URL, falling back to the default.
@@ -149,4 +157,60 @@ func postMeshAdmin(base, key, path string, hc *http.Client) (MeshActionResult, e
 		return out, fmt.Errorf("decode mesh action result: %w", err)
 	}
 	return out, nil
+}
+
+const meshClearErrorsPath = "/api/brain/admin/mesh/errors/clear"
+
+// Peer ids come from the daemon but round-trip through the frontend, so escape
+// them rather than trusting the shape.
+func meshRetryPath(id string) string {
+	return "/api/brain/admin/mesh/peers/" + url.PathEscape(id) + "/retry"
+}
+
+func meshResetCursorPath(id string) string {
+	return "/api/brain/admin/mesh/peers/" + url.PathEscape(id) + "/reset-cursor"
+}
+
+// meshAdminKey reads the stored operator key, falling back to an ambient
+// PB_ADMIN_KEY so a developer running the daemon locally needs no setup.
+func (a *App) meshAdminKey() string {
+	if a.db != nil {
+		if k := strings.TrimSpace(a.db.GetSetting(settingMeshAdminKey, "")); k != "" {
+			return k
+		}
+	}
+	return strings.TrimSpace(os.Getenv("PB_ADMIN_KEY"))
+}
+
+// GetMeshAdminKeySet reports whether an admin key is available, so the panel
+// can disable the action buttons with a reason instead of surfacing a 403.
+func (a *App) GetMeshAdminKeySet() bool { return a.meshAdminKey() != "" }
+
+// SetMeshAdminKey stores the operator key.
+func (a *App) SetMeshAdminKey(key string) error {
+	if a.db == nil {
+		return fmt.Errorf("no local database")
+	}
+	return a.db.SetSetting(settingMeshAdminKey, strings.TrimSpace(key))
+}
+
+func (a *App) meshActionClient() *http.Client {
+	return &http.Client{Timeout: 30 * time.Second}
+}
+
+// RetryMeshPeer pulls one peer immediately instead of waiting for the next
+// sync round — the "did my fix work?" button.
+func (a *App) RetryMeshPeer(id string) (MeshActionResult, error) {
+	return postMeshAdmin(a.meshURL(), a.meshAdminKey(), meshRetryPath(id), a.meshActionClient())
+}
+
+// ResetMeshPeerCursor forces a full op-log re-read for one peer. Costs
+// bandwidth, cannot lose data; the fix for a wedged or stale cursor.
+func (a *App) ResetMeshPeerCursor(id string) (MeshActionResult, error) {
+	return postMeshAdmin(a.meshURL(), a.meshAdminKey(), meshResetCursorPath(id), a.meshActionClient())
+}
+
+// ClearMeshErrors empties the daemon's retained error ring.
+func (a *App) ClearMeshErrors() (MeshActionResult, error) {
+	return postMeshAdmin(a.meshURL(), a.meshAdminKey(), meshClearErrorsPath, a.meshActionClient())
 }

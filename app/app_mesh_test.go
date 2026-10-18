@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -101,5 +102,75 @@ func TestPostMeshAdmin_DecodesErrors(t *testing.T) {
 	}
 	if got.Errors[0] != want {
 		t.Errorf("got.Errors[0] = %+v, want %+v", got.Errors[0], want)
+	}
+}
+
+// The three actions must target the exact daemon paths the server mounts. A
+// typo here is a 404 at runtime with no compiler help, so pin them.
+func TestMeshActionPaths(t *testing.T) {
+	cases := []struct {
+		name string
+		call func(base, key string, hc *http.Client) error
+		want string
+	}{
+		{"retry", func(b, k string, hc *http.Client) error {
+			_, err := postMeshAdmin(b, k, meshRetryPath("p1"), hc)
+			return err
+		}, "/api/brain/admin/mesh/peers/p1/retry"},
+		{"reset", func(b, k string, hc *http.Client) error {
+			_, err := postMeshAdmin(b, k, meshResetCursorPath("p1"), hc)
+			return err
+		}, "/api/brain/admin/mesh/peers/p1/reset-cursor"},
+		{"clear", func(b, k string, hc *http.Client) error {
+			_, err := postMeshAdmin(b, k, meshClearErrorsPath, hc)
+			return err
+		}, "/api/brain/admin/mesh/errors/clear"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base, hc, _, path := meshAdminStub(t, http.StatusOK, `{}`)
+			if err := tc.call(base, "k", hc); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if *path != tc.want {
+				t.Fatalf("path = %q, want %q", *path, tc.want)
+			}
+		})
+	}
+}
+
+// A peer id with a slash or space must not forge a path. url.PathEscape keeps
+// the literal ".." characters but escapes the surrounding "/" to "%2F", so a
+// bare substring check on ".." would false-fail (and would also false-fail on
+// a peer id that is legitimately two dots with no slashes). The real
+// traversal protection is that "/" never reaches the path unescaped — check
+// for that instead.
+func TestMeshRetryPath_EscapesID(t *testing.T) {
+	got := meshRetryPath("a/../b")
+	if strings.Contains(got, "/../") {
+		t.Fatalf("path traversal not escaped: %q", got)
+	}
+}
+
+// An OLDER daemon sends no recent_errors / errors_15m / errors_24h. The panel
+// must keep working against it, so decoding must leave the new fields zero
+// rather than failing. This is the degradation contract in test form.
+func TestMeshStatus_DecodesOldDaemonPayload(t *testing.T) {
+	const old = `{"node_id":"ncm5","sync_enabled":true,
+	  "peers":[{"id":"p1","base_url":"http://x:9998","profile":"personal",
+	            "live":true,"db_lag":"0","links_lag":"0","cursor_age":"10h"}],
+	  "metrics":{"pb_sync_errors_total":"996"}}`
+	var got MeshStatus
+	if err := json.Unmarshal([]byte(old), &got); err != nil {
+		t.Fatalf("old payload must still decode: %v", err)
+	}
+	if got.Errors15m != 0 || got.RecentErrors != nil {
+		t.Errorf("new fields should be zero, got %d / %v", got.Errors15m, got.RecentErrors)
+	}
+	if len(got.Peers) != 1 || got.Peers[0].LastError != nil || got.Peers[0].Errors24h != 0 {
+		t.Errorf("peer new fields should be zero, got %+v", got.Peers)
+	}
+	if got.Metrics.ErrorsTotal != "996" {
+		t.Errorf("existing fields must still decode, got %q", got.Metrics.ErrorsTotal)
 	}
 }
