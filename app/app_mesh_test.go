@@ -139,16 +139,15 @@ func TestMeshActionPaths(t *testing.T) {
 	}
 }
 
-// A peer id with a slash or space must not forge a path. url.PathEscape keeps
-// the literal ".." characters but escapes the surrounding "/" to "%2F", so a
-// bare substring check on ".." would false-fail (and would also false-fail on
-// a peer id that is legitimately two dots with no slashes). The real
-// traversal protection is that "/" never reaches the path unescaped — check
-// for that instead.
+// url.PathEscape neutralises traversal by escaping the separators, so the
+// literal dots survive and a ".." substring check would false-fail on a path
+// that is actually safe. The property that matters is that nothing from the
+// id escapes its own path segment, so pin the whole string.
 func TestMeshRetryPath_EscapesID(t *testing.T) {
 	got := meshRetryPath("a/../b")
-	if strings.Contains(got, "/../") {
-		t.Fatalf("path traversal not escaped: %q", got)
+	want := "/api/brain/admin/mesh/peers/a%2F..%2Fb/retry"
+	if got != want {
+		t.Fatalf("meshRetryPath(%q) = %q, want %q", "a/../b", got, want)
 	}
 }
 
