@@ -294,6 +294,12 @@ func (c *Client) ListAgentSessions(ctx context.Context, environment, since strin
 		if !a.lastT.IsZero() {
 			s.LastSeen = a.lastT.UTC().Format(time.RFC3339)
 		}
+		// NEVER nil. Go marshals a nil slice as JSON `null`, and the frontend
+		// reads s.models.length -- which threw "null is not an object" DURING
+		// RENDER, killing the component and leaving the panel on a permanent
+		// loading spinner while this method returned 3 rows perfectly happily.
+		// That is the whole bug: a backend success the UI could not survive.
+		s.Models = make([]string, 0, len(a.models))
 		for m := range a.models {
 			s.Models = append(s.Models, m)
 		}

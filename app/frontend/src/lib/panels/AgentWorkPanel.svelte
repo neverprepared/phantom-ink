@@ -38,7 +38,9 @@
     generations: number;
     tool_calls: number;
     tokens: number;
-    models: string[];
+    // Typed as possibly absent on purpose: Go marshals a nil slice as `null`,
+    // and reading .length on it threw during render and killed this component.
+    models?: string[] | null;
     cost_usd: number;
     // From OpenSearch. `liveness_available` distinguishes "no overlay" from
     // "the overlay says unknown"; without it a missing store would render as
@@ -140,6 +142,7 @@
   // Guards against an out-of-order response overwriting a newer one.
   let listEpoch = 0;
   let timelineEpoch = 0;
+
 
   async function load() {
     const mine = ++listEpoch;
@@ -413,7 +416,7 @@
             >
               <td class="sid" title={s.session_id}>
                 {s.session_id.slice(0, 8)}
-                {#if s.models.length}
+                {#if s.models?.length}
                   <span class="muted models">{s.models.join(', ')}</span>
                 {/if}
               </td>
@@ -484,11 +487,11 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
           </div>
         {/if}
 
-        {#if timeline.observations.length === 0}
+        {#if !timeline.observations?.length}
           <p class="muted">No observations recorded for this session.</p>
         {:else}
           <ol class="tree">
-            {#each timeline.observations as o (o.id)}
+            {#each timeline.observations ?? [] as o (o.id)}
               <li
                 class="obs"
                 class:bad={isError(o)}

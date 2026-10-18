@@ -3,6 +3,7 @@ package langfuse
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -445,5 +446,44 @@ func TestListRequestsTheBasicFieldGroup(t *testing.T) {
 	q := caps.get(obsPath)
 	if !strings.Contains(q, "fields=core%2Cbasic") && !strings.Contains(q, "fields=core,basic") {
 		t.Errorf("list must request the basic field group or sessionId is absent: %s", q)
+	}
+}
+
+// Every slice the frontend iterates or measures must be non-nil. Go marshals a
+// nil slice as JSON `null`, and the panel reads `s.models.length`, so a nil
+// here threw "null is not an object" DURING RENDER -- killing the component and
+// pinning the panel on a loading spinner while this method returned rows
+// correctly. The failure was in the UI; the cause was in this marshalling.
+func TestListNeverReturnsNilSlices(t *testing.T) {
+	// A session with no model on any observation: the exact shape that was nil.
+	const noModels = `{"data":[
+	 {"id":"o1","name":"claude_code.tool","type":"SPAN","startTime":"2026-10-17T12:00:00Z",
+	  "sessionId":"s1","environment":"personal"}]}`
+	c, _ := serve(t, noModels, `{"data":[]}`)
+	got, err := c.ListAgentSessions(context.Background(), "", "now-24h", 10)
+	if err != nil {
+		t.Fatalf("ListAgentSessions: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(got))
+	}
+	if got[0].Models == nil {
+		t.Error("Models is nil; it marshals as JSON null and the frontend does " +
+			".length on it, which throws during render")
+	}
+	if len(got[0].Models) != 0 {
+		t.Errorf("Models = %v, want empty", got[0].Models)
+	}
+
+	// And the JSON must actually say [] rather than null.
+	blob, err := json.Marshal(got[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(blob), `"models":null`) {
+		t.Errorf("marshalled as models:null — %s", blob)
+	}
+	if !strings.Contains(string(blob), `"models":[]`) {
+		t.Errorf("expected models:[] in %s", blob)
 	}
 }
