@@ -2754,6 +2754,80 @@ export namespace main {
 	        this.limit = source["limit"];
 	    }
 	}
+	export class ChartShare {
+	    name: string;
+	    value: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChartShare(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.value = source["value"];
+	    }
+	}
+	export class ChartPoint {
+	    ts: number;
+	    value: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChartPoint(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ts = source["ts"];
+	        this.value = source["value"];
+	    }
+	}
+	export class AgentWorkCharts {
+	    granularity: string;
+	    cost_series: ChartPoint[];
+	    obs_series: ChartPoint[];
+	    cost_by_model: ChartShare[];
+	    obs_by_type: ChartShare[];
+	    cost_understated: boolean;
+	    sessions_url?: string;
+	    traces_url?: string;
+	    dashboard_url?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentWorkCharts(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.granularity = source["granularity"];
+	        this.cost_series = this.convertValues(source["cost_series"], ChartPoint);
+	        this.obs_series = this.convertValues(source["obs_series"], ChartPoint);
+	        this.cost_by_model = this.convertValues(source["cost_by_model"], ChartShare);
+	        this.obs_by_type = this.convertValues(source["obs_by_type"], ChartShare);
+	        this.cost_understated = source["cost_understated"];
+	        this.sessions_url = source["sessions_url"];
+	        this.traces_url = source["traces_url"];
+	        this.dashboard_url = source["dashboard_url"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class AgentWorkRow {
 	    session_id: string;
 	    workspace: string;
@@ -2892,6 +2966,8 @@ export namespace main {
 	        this.definition = source["definition"];
 	    }
 	}
+	
+	
 	export class CodeOverview {
 	    profile: string;
 	    token_missing: boolean;

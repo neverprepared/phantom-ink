@@ -242,6 +242,10 @@ export function GetAgentState(arg1) {
   return window['go']['main']['App']['GetAgentState'](arg1);
 }
 
+export function GetAgentWorkCharts(arg1, arg2) {
+  return window['go']['main']['App']['GetAgentWorkCharts'](arg1, arg2);
+}
+
 export function GetAgentWorkTimeline(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetAgentWorkTimeline'](arg1, arg2, arg3);
 }

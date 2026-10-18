@@ -294,3 +294,98 @@ func (a *App) GetAgentWorkTimeline(sessionID, profile string, limit int) (*langf
 	defer cancel()
 	return c.GetSessionTimeline(ctx, sessionID, limit)
 }
+
+// ChartPoint is one sample of a chart time series. TS is unix SECONDS, which
+// is what the frontend's MetricsChart component consumes.
+type ChartPoint struct {
+	TS    int64   `json:"ts"`
+	Value float64 `json:"value"`
+}
+
+// ChartShare is one slice of a categorical breakdown, for PieChart.
+type ChartShare struct {
+	Name  string  `json:"name"`
+	Value float64 `json:"value"`
+}
+
+// AgentWorkCharts is the chart-tab payload: the aggregations plus deep links
+// into Langfuse's own UI for the same data.
+//
+// Declared FLAT with its own types rather than embedding *langfuse.Charts.
+// Wails' TypeScript generator does not follow an embedded pointer to another
+// package's struct: it emitted a class referencing langfuse.Point and
+// langfuse.Share without defining either, and the generated models.ts stopped
+// type-checking. Keeping the binding surface in this package also stops the
+// read layer's types leaking into the frontend contract.
+type AgentWorkCharts struct {
+	Granularity     string       `json:"granularity"`
+	CostSeries      []ChartPoint `json:"cost_series"`
+	ObsSeries       []ChartPoint `json:"obs_series"`
+	CostByModel     []ChartShare `json:"cost_by_model"`
+	ObsByType       []ChartShare `json:"obs_by_type"`
+	CostUnderstated bool         `json:"cost_understated"`
+	// Links are empty when the project id could not be resolved, and the UI
+	// omits the link rather than offering one that 404s.
+	SessionsURL  string `json:"sessions_url,omitempty"`
+	TracesURL    string `json:"traces_url,omitempty"`
+	DashboardURL string `json:"dashboard_url,omitempty"`
+}
+
+// chartsQueryTimeout is longer than the list's: GetCharts issues four
+// aggregations, and a metrics query scans a wider window than a session page.
+const chartsQueryTimeout = 20 * time.Second
+
+// GetAgentWorkCharts returns the trend and breakdown data for the chart tabs.
+//
+// Everything here comes from Langfuse, which is the operator's choice and has a
+// known consequence: its cost is UNDERSTATED, because the Claude Code capture
+// is a Stop hook that misses delegated subagent work. Charts.CostUnderstated
+// carries that so the UI can label it rather than presenting a figure the
+// reader has to silently correct.
+func (a *App) GetAgentWorkCharts(profile, since string) (*AgentWorkCharts, error) {
+	c := a.langfuseClient(profile)
+	if c == nil {
+		return nil, fmt.Errorf("Langfuse is not configured for profile %q", profile)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), chartsQueryTimeout)
+	defer cancel()
+
+	charts, err := c.GetCharts(ctx, a.langfuseEnvironment(profile), since)
+	if err != nil {
+		return nil, err
+	}
+
+	pts := func(in []langfuse.Point) []ChartPoint {
+		// Never nil: these marshal as JSON null and the panel iterates them.
+		out := make([]ChartPoint, 0, len(in))
+		for _, p := range in {
+			out = append(out, ChartPoint{TS: p.TS, Value: p.Value})
+		}
+		return out
+	}
+	shares := func(in []langfuse.Share) []ChartShare {
+		out := make([]ChartShare, 0, len(in))
+		for _, s := range in {
+			out = append(out, ChartShare{Name: s.Name, Value: s.Value})
+		}
+		return out
+	}
+
+	out := &AgentWorkCharts{
+		Granularity:     charts.Granularity,
+		CostSeries:      pts(charts.CostSeries),
+		ObsSeries:       pts(charts.ObsSeries),
+		CostByModel:     shares(charts.CostByModel),
+		ObsByType:       shares(charts.ObsByType),
+		CostUnderstated: charts.CostUnderstated,
+	}
+
+	// Links are a convenience: failing to resolve the project must not cost the
+	// charts, so the error is dropped and the links are simply absent.
+	if id, lerr := c.ProjectID(ctx); lerr == nil {
+		out.SessionsURL = c.UILink(id, "sessions")
+		out.TracesURL = c.UILink(id, "traces")
+		out.DashboardURL = c.UILink(id, "dashboards")
+	}
+	return out, nil
+}

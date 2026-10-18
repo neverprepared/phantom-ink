@@ -83,3 +83,35 @@ func TestLiveListAgentWork(t *testing.T) {
 		}
 	})
 }
+
+// Live exercise of the chart tabs' App method. AGENTWORK_LIVE=1 to run.
+func TestLiveGetAgentWorkCharts(t *testing.T) {
+	if os.Getenv("AGENTWORK_LIVE") == "" {
+		t.Skip("set AGENTWORK_LIVE=1 to run")
+	}
+	root := os.Getenv("WORKSPACES_ROOT")
+	if root == "" {
+		root = "/Users/cdowning/workspaces/profiles"
+	}
+	a := &App{config: &Config{WorkspacesRoot: root}}
+	for _, since := range []string{"now-24h", "now-7d"} {
+		start := time.Now()
+		c, err := a.GetAgentWorkCharts("personal", since)
+		if err != nil {
+			t.Fatalf("%s: %v", since, err)
+		}
+		var cost float64
+		for _, p := range c.CostSeries {
+			cost += p.Value
+		}
+		t.Logf("%s granularity=%s in %v: cost pts=%d ($%.2f) obs pts=%d models=%d types=%d",
+			since, c.Granularity, time.Since(start).Round(time.Millisecond),
+			len(c.CostSeries), cost, len(c.ObsSeries), len(c.CostByModel), len(c.ObsByType))
+		if c.DashboardURL == "" {
+			t.Error("no dashboard link resolved")
+		}
+		if !c.CostUnderstated {
+			t.Error("CostUnderstated must be true for this source")
+		}
+	}
+}

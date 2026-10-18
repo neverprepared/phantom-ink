@@ -25,7 +25,10 @@
   import { profileState } from '../stores.svelte';
   import Badge from '../components/Badge.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import MetricsChart from '../components/MetricsChart.svelte';
+  import PieChart from '../components/PieChart.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import { openInBrowser } from '../utils/api';
 
   interface AgentWorkRow {
     session_id: string;
@@ -83,6 +86,39 @@
     content_available: boolean;
   }
 
+  interface Point {
+    ts: number; // unix seconds — matches MetricsChart's Sample
+    value: number;
+  }
+
+  interface Share {
+    name: string;
+    value: number;
+  }
+
+  interface Charts {
+    granularity: string;
+    cost_series?: Point[] | null;
+    obs_series?: Point[] | null;
+    cost_by_model?: Share[] | null;
+    obs_by_type?: Share[] | null;
+    // Always true for this source. Langfuse's Claude Code capture is a Stop
+    // hook that misses delegated subagent work, so its cost is lower than
+    // OpenSearch's for the same sessions. Labelled rather than silently shown.
+    cost_understated: boolean;
+    sessions_url?: string;
+    traces_url?: string;
+    dashboard_url?: string;
+  }
+
+  type View = 'sessions' | 'trends' | 'breakdown';
+
+  const VIEWS: { id: View; label: string }[] = [
+    { id: 'sessions', label: 'sessions' },
+    { id: 'trends', label: 'trends' },
+    { id: 'breakdown', label: 'breakdown' },
+  ];
+
   // The logs export batches every 10s; polling faster cannot surface fresher
   // data. Langfuse is slower still (Stop hook), so this is generous for it.
   const POLL_MS = 15_000;
@@ -117,6 +153,12 @@
     { label: '24h', value: 'now-24h' },
     { label: '7d', value: 'now-7d' },
   ];
+
+  let view = $state<View>('sessions');
+  let charts = $state<Charts | null>(null);
+  let chartsLoading = $state(false);
+  let chartsError = $state('');
+  let chartsEpoch = 0;
 
   let sessions = $state<AgentWorkRow[]>([]);
   let loading = $state(true);
@@ -181,6 +223,31 @@
     }
   }
 
+  // Charts are fetched only while a chart tab is open. GetCharts issues four
+  // aggregations, and running them every 15s behind the Sessions tab would be
+  // four wasted queries per poll.
+  async function loadCharts() {
+    const mine = ++chartsEpoch;
+    chartsLoading = true;
+    chartsError = '';
+    try {
+      const api = await getApi();
+      if (!api || !activeProfile) return;
+      const c = await withTimeout(
+        api.GetAgentWorkCharts(activeProfile, range),
+        'GetAgentWorkCharts',
+      );
+      if (mine !== chartsEpoch) return;
+      charts = c as Charts;
+    } catch (e) {
+      if (mine !== chartsEpoch) return;
+      chartsError = String(e);
+      charts = null;
+    } finally {
+      if (mine === chartsEpoch) chartsLoading = false;
+    }
+  }
+
   $effect(() => {
     // Re-read when the profile or range changes.
     void activeProfile;
@@ -189,9 +256,19 @@
   });
 
   $effect(() => {
+    // And re-read the charts when the tab, profile or range changes.
+    const v = view;
+    void activeProfile;
+    void range;
+    if (v !== 'sessions') void loadCharts();
+  });
+
+  $effect(() => {
     const tick = setInterval(() => {
       now = Date.now();
-      if (!document.hidden && !loading) void load();
+      if (document.hidden) return;
+      if (!loading) void load();
+      if (view !== 'sessions' && !chartsLoading) void loadCharts();
     }, POLL_MS);
     return () => clearInterval(tick);
   });
@@ -322,6 +399,30 @@
     return (o.level ?? '').toUpperCase() === 'ERROR';
   }
 
+  // PieChart wants {name, value, label}; the label is formatted here rather
+  // than in Go, which keeps presentation out of the read layer.
+  const modelSlices = $derived(
+    (charts?.cost_by_model ?? []).map((s) => ({
+      name: s.name,
+      value: s.value,
+      label: usd(s.value),
+    })),
+  );
+  const typeSlices = $derived(
+    (charts?.obs_by_type ?? []).map((s) => ({
+      name: s.name.toLowerCase(),
+      value: s.value,
+      label: String(s.value),
+    })),
+  );
+
+  const costTotal = $derived(
+    (charts?.cost_series ?? []).reduce((a, p) => a + p.value, 0),
+  );
+  const obsTotal = $derived(
+    (charts?.obs_series ?? []).reduce((a, p) => a + p.value, 0),
+  );
+
   // Depth is capped for LAYOUT only — the real depth stays in the tooltip, so
   // a deep tree indents readably without hiding its shape.
   function indent(depth: number): string {
@@ -343,9 +444,25 @@
           >{r.label}</button>
         {/each}
       </div>
-      <button class="btn btn-sm" disabled={loading} onclick={() => load()}>refresh</button>
+      <button
+        class="btn btn-sm"
+        disabled={loading || chartsLoading}
+        onclick={() => (view === 'sessions' ? load() : loadCharts())}
+      >refresh</button>
     </div>
   </header>
+
+  <div class="seg tabs" role="tablist" aria-label="View">
+    {#each VIEWS as v (v.id)}
+      <button
+        class="seg-btn"
+        class:active={view === v.id}
+        role="tab"
+        aria-selected={view === v.id}
+        onclick={() => (view = v.id)}
+      >{v.label}</button>
+    {/each}
+  </div>
 
   <p class="scope-note">
     Sessions and content from <strong>Langfuse</strong>; the activity dot from
@@ -373,6 +490,7 @@
     </div>
   {/if}
 
+  {#if view === 'sessions'}
   {#if loading && sessions.length === 0}
     <p class="muted"><Spinner /> Loading sessions…</p>
   {:else if !error && sessions.length === 0}
@@ -532,6 +650,96 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
         {/if}
       {/if}
     </section>
+  {/if}
+  {/if}
+
+  {#if view !== 'sessions'}
+    {#if chartsError}
+      <div class="notice notice-bad">
+        <strong>Could not load charts.</strong>
+        <p>{chartsError}</p>
+      </div>
+    {:else if chartsLoading && !charts}
+      <p class="muted"><Spinner /> Loading charts…</p>
+    {:else if charts}
+      {#if charts.cost_understated}
+        <p class="note caveat">
+          Cost here is <strong>understated</strong>. Langfuse's Claude Code
+          capture is a Stop hook that misses delegated subagent work — measured
+          on one session, $318.82 here against $515.78 in OpenSearch. Use it for
+          shape and trend, not for a spend figure.
+        </p>
+      {/if}
+
+      {#if view === 'trends'}
+        <div class="charts">
+          <div class="chart-card">
+            <MetricsChart
+              data={charts.cost_series ?? []}
+              label={`cost per ${charts.granularity}`}
+              current={usd(costTotal)}
+              formatY={(v: number) => (v >= 1 ? `$${v.toFixed(0)}` : `$${v.toFixed(2)}`)}
+              height={150}
+            />
+          </div>
+          <div class="chart-card">
+            <MetricsChart
+              data={charts.obs_series ?? []}
+              label={`observations per ${charts.granularity}`}
+              current={compact(obsTotal)}
+              formatY={(v: number) => compact(v)}
+              height={150}
+            />
+          </div>
+        </div>
+      {:else}
+        <div class="charts">
+          <div class="chart-card">
+            <h3>cost by model</h3>
+            {#if modelSlices.length}
+              <div class="pie-row">
+                <PieChart slices={modelSlices} size={150} />
+                <ul class="legend">
+                  {#each modelSlices as s (s.name)}
+                    <li><span class="k">{s.name}</span><span class="v">{s.label}</span></li>
+                  {/each}
+                </ul>
+              </div>
+            {:else}
+              <p class="muted">No priced model calls in this window.</p>
+            {/if}
+          </div>
+          <div class="chart-card">
+            <h3>observations by type</h3>
+            {#if typeSlices.length}
+              <div class="pie-row">
+                <PieChart slices={typeSlices} size={150} />
+                <ul class="legend">
+                  {#each typeSlices as s (s.name)}
+                    <li><span class="k">{s.name}</span><span class="v">{s.label}</span></li>
+                  {/each}
+                </ul>
+              </div>
+            {:else}
+              <p class="muted">No observations in this window.</p>
+            {/if}
+          </div>
+        </div>
+      {/if}
+
+      {#if charts.dashboard_url || charts.sessions_url}
+        <p class="links">
+          {#if charts.dashboard_url}
+            <button class="linkish" onclick={() => openInBrowser(charts!.dashboard_url!)}
+              >open Langfuse dashboards ↗</button>
+          {/if}
+          {#if charts.sessions_url}
+            <button class="linkish" onclick={() => openInBrowser(charts!.sessions_url!)}
+              >open Langfuse sessions ↗</button>
+          {/if}
+        </p>
+      {/if}
+    {/if}
   {/if}
 </div>
 
@@ -754,6 +962,77 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
   }
   /* Content is unbounded, so it scrolls in its own box rather than pushing the
      timeline off screen. */
+  .tabs {
+    align-self: flex-start;
+  }
+  .caveat {
+    border-style: dashed;
+  }
+  .charts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: var(--spacing-md);
+  }
+  .chart-card {
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    min-width: 0;
+  }
+  .chart-card h3 {
+    margin: 0 0 var(--spacing-xs);
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-tertiary);
+  }
+  .pie-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
+  }
+  ul.legend {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: 11px;
+    min-width: 0;
+  }
+  ul.legend li {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    padding: 1px 0;
+  }
+  ul.legend .k {
+    color: var(--color-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  ul.legend .v {
+    color: var(--color-text-primary);
+    font-variant-numeric: tabular-nums;
+  }
+  .links {
+    display: flex;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
+    margin: 0;
+  }
+  .linkish {
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--color-text-secondary);
+    text-decoration: underline;
+  }
+  .linkish:hover {
+    color: var(--color-text-primary);
+  }
   .io pre {
     margin: 0;
     flex: 1 1 auto;
