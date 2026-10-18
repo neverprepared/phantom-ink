@@ -32,8 +32,8 @@ Langfuse therefore cannot be the source of truth. That decision is already taken
 > **SUPERSEDED BY §10.** This heading is wrong: it *is* a configuration problem.
 > Span emission is independently gated on `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`,
 > which the binary's own admin help text documents alongside
-> `OTEL_TRACES_EXPORTER=otlp`. The flag has been set; it takes effect next
-> session. Everything below correctly describes the state as MEASURED, and the
+> `OTEL_TRACES_EXPORTER=otlp`. The flag was set and **has now taken effect**:
+> 210 `claude-code` spans across 2 traces are in the span index — see §11. Everything below correctly describes the state as MEASURED, and the
 > designs built on it remain sound, but do not read the premise as permanent.
 
 **r1 was wrong about this.** The claim "traces are available via env var, currently unset"
@@ -1142,3 +1142,108 @@ provisioned directly against the live instance, and the template fix needs the
 branch plus a `data-prepper` restart before it affects newly created indices.
 The tracked `docker-compose.yml` wiring for the router (committed) is likewise
 not what m3 uses; m3 uses the override above.
+
+---
+
+## 11. Claude Code spans ARRIVED — measured, not predicted
+
+`CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1` worked. `serviceName: claude-code` is
+in `otel-v1-apm-span-*`: **210 spans across 2 traces**, 208 of them carrying a
+`parentSpanId` `[VERIFIED]`. P2 is now empirically dead, not merely suspected
+wrong. Everything below is measured against those spans.
+
+### 11.1 The span inventory — §10.3's claims adjudicated
+
+Two of the three unverified claims hold; the most consequential one does not.
+
+**CONFIRMED — the five emitting spans, exactly as reported:**
+
+| Span | Count | p50 latency | p90 |
+|---|---|---|---|
+| `claude_code.interaction` | 2 | 739 s | 1,477 s |
+| `claude_code.llm_request` | 54 | 12.3 s | 22.1 s |
+| `claude_code.tool` | 52 | 336 ms | 36.8 s |
+| `claude_code.tool.execution` | 51 | 333 ms | 36.9 s |
+| `claude_code.tool.blocked_on_user` | 52 | 5 ms | 10 ms |
+
+`tool.blocked_on_user` is NOT rare — it fires on essentially every tool call,
+carrying `decision` (`accept`) and `source` (`config`). It records the
+permission *decision*, including an auto-accept, rather than a human wait. At a
+5 ms p50 it also quantifies permission overhead as negligible.
+
+**CONFIRMED — the hard-disabled set.** `claude_code.subagent.spawn`,
+`bash.subprocess`, `mcp.rpc`, `compaction` and `hook`: **zero spans each**
+`[VERIFIED]`. The `T3(){return!1}` gate holds.
+
+**REFUTED — `agent_id` / `parent_agent_id`.** §10.3 reported that `llm_request`
+and `tool` spans carry these, which would make subagent attribution an
+attribute join and partly reopen P3/N4. They are present on **0 of 210 spans**,
+and so is `query_source` `[VERIFIED]`. **P3 and N4 stand unchanged: a tool call
+still cannot be attributed to the agent that ran it.** With `subagent.spawn`
+disabled there is no subtree root for delegated work either, so the span tree
+does not rescue attribution. The scepticism in §10.3 was warranted — this was
+the one claim to not build against.
+
+### 11.2 What spans give that the logs never did
+
+Per-span attributes, from a real `llm_request`: `gen_ai@request@model`
+(`claude-opus-5[1m]`), `gen_ai@response@id`, `gen_ai@response@finish_reasons`,
+`gen_ai@system` (`anthropic`), `input_tokens`, `output_tokens`,
+**`cache_read_tokens`** (365,626 on one request), `cache_creation_tokens`,
+**`ttft_ms`** (1,179), `stop_reason`, `attempt`, `speed`, `success`,
+`client_request_id`. A `tool` span carries `tool_name`, `tool_use_id` /
+`gen_ai@tool@call@id`, and `duration_ms`.
+
+Three of these are genuinely new:
+
+- **`ttft_ms`** — time to first token. Nothing in `logs-otel-*` carried it.
+- **A real tree.** 208/210 spans are parented, so Trace Analytics waterfalls
+  and the service map work for Claude Code — which §2.1 marked "not usable".
+- **`tool_use_id` on tool spans**, which joins a tool span to the model call
+  that requested it.
+
+### 11.3 Narrowing §9.1: the API-failure monitor IS implementable — on spans
+
+§9.1 states that `success` exists only on `tool_result` and that an
+API-failure monitor is therefore unimplementable. That is correct **for
+`logs-otel-*`** and must be read that way. On the span index,
+`claude_code.llm_request` carries `success` — 54 of 54, all `true`
+`[VERIFIED]`. So a model-call failure rate is computable from spans even though
+it is not from logs. The §3.6 monitor is revived, against a different index.
+
+### 11.4 A NEW trap: every span attribute is a keyword
+
+Data Prepper's built-in `trace-analytics-raw` template maps **all** of
+`span.attributes.*` as `keyword` `[VERIFIED from the live mapping]`. So the
+numeric ones are not aggregatable: `sum`/`percentiles` over
+`span.attributes.ttft_ms`, `input_tokens`, `cache_read_tokens` or
+`duration_ms` all return null, even though the values are plainly there on the
+documents.
+
+This is the same class of defect §3.2 fixed for `logs-otel-*`, and the §3.2 fix
+does **not** cover it — that patch edits the `otel-logs` pipeline, while traces
+go through `otel-traces-raw` with `index_type: trace-analytics-raw`, whose
+template is Data Prepper's own.
+
+**The workaround is sufficient for latency and needs no change:** the
+top-level `durationInNanos` is a `long`, and every latency figure in §11.1 was
+computed from it, including per-tool percentiles (Bash p50 397 ms / p90 36.9 s;
+Write 28 ms; Read 9 ms). **Token and ttft aggregation is blocked** until the
+span template pins those fields. Not attempted here: overriding a built-in
+Data Prepper template is a larger change than this work, and the per-document
+values remain readable in a drill-down.
+
+### 11.5 Correction: the span PII is not new
+
+The spans carry `user@email`, `user@account_id`, `user@account_uuid`,
+`user@id`, `organization@id` and `terminal@type` on every document. I was about
+to report that as a new exposure introduced by enabling the flag. It is not:
+the same email already appears in **390,208** `logs-otel-*` documents and
+**169,133** `metrics-otel-*` documents, against **211** in the span index
+`[VERIFIED]`. The identity attributes have been pervasive in these stores all
+along.
+
+This changes nothing about the standing concern and sharpens it: both stores
+hold operator PII, `DISABLE_SECURITY_PLUGIN=true`, and there is no retention
+policy — see §1's "Explicitly NOT solved". Enabling traces added ~0.05% to an
+existing exposure; it did not create one.
