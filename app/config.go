@@ -36,6 +36,10 @@ const (
 	// the mcp-atlassian server consumes, so two profiles can point at two
 	// different Atlassian sites. Only the per-profile opt-in is app state.
 	settingJiraProfilePrefix = "jira_enabled:"
+	// settingMeshAdminKey is the phantom-brain operator key (PB_ADMIN_KEY) used
+	// for the mesh remediation actions. Distinct from the per-vault bearer
+	// tokens: those authenticate a vault, this authorises node-wide admin ops.
+	settingMeshAdminKey = "mesh_admin_key"
 )
 
 // Config is the in-memory representation of app settings.

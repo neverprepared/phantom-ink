@@ -10,6 +10,16 @@
   import EmptyState from '../components/EmptyState.svelte';
   import VaultBrowser from './VaultBrowser.svelte';
 
+  // One retained sync failure from the daemon's ring. Optional throughout:
+  // an older daemon sends none, and the panel must still work against it.
+  interface SyncError {
+    at: string;
+    peer: string;
+    profile: string;
+    phase: string;
+    class: string;
+    err: string;
+  }
   interface MeshPeer {
     id: string;
     base_url: string;
@@ -19,6 +29,8 @@
     db_lag: string;
     links_lag: string;
     cursor_age: string;
+    last_error?: SyncError;
+    errors_24h?: number;
   }
   interface MeshMetrics {
     pb_sync_rounds_total: string;
@@ -33,6 +45,8 @@
     sync_enabled: boolean;
     peers: MeshPeer[];
     metrics: MeshMetrics;
+    recent_errors?: SyncError[];
+    errors_15m?: number;
   }
   // Per-vault AUTH reachability for the active profile — whether the stored
   // bearer token actually authenticates against the daemon. This is separate
@@ -95,6 +109,13 @@
     } catch {
       /* keep previous auth snapshot */
     }
+    // Whether the remediation buttons can work at all. Probed every refresh so
+    // saving a key elsewhere takes effect without reloading the panel.
+    try {
+      adminKeySet = Boolean(await (a as any).GetMeshAdminKeySet());
+    } catch {
+      adminKeySet = false;
+    }
   }
 
   // Auth-indicator helpers, shared by the tab dots and the overview summary.
@@ -128,6 +149,134 @@
   }
 
   const peers = $derived(status?.peers ?? []);
+
+  // The counter is cumulative since daemon start and never decays, so a healed
+  // outage stays red forever. errors_15m is the live signal; the counter alone
+  // is history.
+  const recentErrors = $derived(status?.recent_errors ?? []);
+  const errorsAreLive = $derived((status?.errors_15m ?? 0) > 0);
+  const lastErrorAge = $derived.by(() => {
+    if (recentErrors.length === 0) return '';
+    const ms = Date.parse(recentErrors[0].at);
+    return Number.isFinite(ms) ? timeAgo(ms) : '';
+  });
+
+  // The class is the daemon's closed vocabulary; the diagnosis is what the
+  // operator actually needs to read. Keep these in step with ClassifyError.
+  const DIAGNOSIS: Record<string, string> = {
+    dns: "The daemon container's resolver cannot reach this peer's hostname. Usually Docker DNS churn, not a peer outage.",
+    timeout: 'The peer accepted the connection but did not answer in time.',
+    refused: 'Nothing is listening at the peer URL.',
+    auth: "This node's peer token is missing, wrong, or revoked.",
+    proto: 'Breaking wire-version gap — finish the staggered upgrade on both nodes.',
+    fenced: 'The peer is reconciling and withholding its op-log. Benign.',
+    blob: 'Record metadata merged; attachment reconciliation failed.',
+    pool: 'This node could not open its local database for the profile.',
+    other: 'Unclassified — the message below is the whole diagnosis.',
+  };
+
+  interface ErrorGroup {
+    key: string;
+    peer: string;
+    cls: string;
+    count: number;
+    latest: SyncError;
+  }
+
+  // Group by (peer × class): one row per distinct failure mode per peer, which
+  // is the unit an operator acts on. recentErrors is newest-first, so the first
+  // entry per key is the latest.
+  const errorGroups = $derived.by<ErrorGroup[]>(() => {
+    const byKey = new Map<string, ErrorGroup>();
+    for (const e of recentErrors) {
+      const key = `${e.peer}::${e.class}`;
+      const existing = byKey.get(key);
+      if (existing) existing.count++;
+      else byKey.set(key, { key, peer: e.peer, cls: e.class, count: 1, latest: e });
+    }
+    // Count descending, then a deterministic tie-break on peer then class. The
+    // rows are keyed, so Svelte MOVES them on a reorder rather than rebuilding
+    // — smooth enough to miss mid-click, which would land "reset cursor" on a
+    // row the operator did not aim at. Equal counts must therefore hold a fixed
+    // order rather than inheriting Map insertion order.
+    return [...byKey.values()].sort(
+      (a, b) => b.count - a.count || a.peer.localeCompare(b.peer) || a.cls.localeCompare(b.cls),
+    );
+  });
+
+  let errorsOpen = $state(false);
+  let errorPeerFilter = $state<string | null>(null);
+  let adminKeySet = $state(false);
+  let actionBusy = $state<string | null>(null);
+  let actionNote = $state<string | null>(null);
+
+  const shownGroups = $derived(
+    errorPeerFilter ? errorGroups.filter((g) => g.peer === errorPeerFilter) : errorGroups,
+  );
+
+  function errAge(e: SyncError): string {
+    const ms = Date.parse(e.at);
+    return Number.isFinite(ms) ? timeAgo(ms) : '';
+  }
+
+  async function runAction(label: string, fn: () => Promise<any>, note: (r: any) => string) {
+    actionBusy = label;
+    actionNote = null;
+    try {
+      actionNote = note(await fn());
+    } catch (e: any) {
+      actionNote = e?.message ?? String(e);
+    } finally {
+      actionBusy = null;
+      await refresh();
+    }
+  }
+
+  // The action is per-peer, but the in-flight LABEL is keyed by group so only
+  // the clicked row reads "retrying…". Keyed by peer, a peer with both a dns
+  // and an auth group lit up both rows — which, combined with a reorder, makes
+  // the clicked row look idle while a sibling looks busy.
+  async function retryPeer(id: string, groupKey: string) {
+    const a = await getApi();
+    if (!a) return;
+    // A retry that fails must say why — reporting failure is the button's whole
+    // point, so the daemon's own error text wins over the merged counts.
+    await runAction(`retry:${groupKey}`, () => (a as any).RetryMeshPeer(id), (r) =>
+      r?.errors?.length
+        ? `${id}: retry failed — ${r.errors[0].err}`
+        : `${id}: merged ${r?.rows_merged ?? 0} rows, ${r?.links_merged ?? 0} links`,
+    );
+  }
+
+  async function resetCursor(id: string, groupKey: string) {
+    if (
+      !window.confirm(
+        `Reset the sync cursor for ${id}?\n\nThe next pull re-reads its whole op-log. Costs bandwidth; cannot lose data.`,
+      )
+    )
+      return;
+    const a = await getApi();
+    if (!a) return;
+    await runAction(`reset:${groupKey}`, () => (a as any).ResetMeshPeerCursor(id), () => `${id}: cursor reset`);
+  }
+
+  // A note describes one click against one filter view, so it must not outlive
+  // either — closing the card or changing the filter retires it.
+  function toggleErrors() {
+    errorsOpen = !errorsOpen;
+    if (!errorsOpen) actionNote = null;
+  }
+
+  function setErrorPeerFilter(peer: string | null) {
+    errorPeerFilter = peer;
+    actionNote = null;
+  }
+
+  async function clearErrors() {
+    const a = await getApi();
+    if (!a) return;
+    await runAction('clear', () => (a as any).ClearMeshErrors(), (r) => `cleared ${r?.cleared ?? 0} recorded errors`);
+  }
 
   // Mesh-view sub-tab filters: by machine (mesh node) and by profile. Values
   // are derived from the data, not hardcoded. Filters AND together.
@@ -188,7 +337,10 @@
         class:active={activeTab === t.id}
         role="tab"
         aria-selected={activeTab === t.id}
-        onclick={() => (activeTab = t.id)}
+        onclick={() => {
+          activeTab = t.id;
+          actionNote = null;
+        }}
       >{t.label}{#if t.id !== 'mesh' && authFor(t.id)}<span
             class="auth-dot {authClass(t.id)}"
             title={authTitle(t.id)}
@@ -198,6 +350,16 @@
   </div>
 
   {#if activeTab === 'mesh'}
+  <!-- Remediation feedback lives at panel level, not in the errors card: a
+       successful clear empties the ring and unmounts that card, and an action
+       against a dead daemon swaps the whole chain for the unreachable state.
+       Either would take the note with it and leave the click unconfirmed. -->
+  {#if actionNote}
+    <p class="action-note" role="status" aria-live="polite">
+      {actionNote}
+      <button class="note-x" onclick={() => (actionNote = null)} aria-label="dismiss">✕</button>
+    </p>
+  {/if}
   {#if !loaded}
     <Spinner />
   {:else if loadError}
@@ -222,16 +384,84 @@
           <span class="c-val">{metric('pb_sync_blobs_fetched_total')}</span>
           <span class="c-label">blobs fetched</span>
         </div>
-        <div class="counter">
-          <span class="c-val err">{metric('pb_sync_errors_total')}</span>
-          <span class="c-label">errors</span>
-        </div>
+        <button
+          class="counter counter-btn"
+          onclick={toggleErrors}
+          disabled={recentErrors.length === 0}
+          aria-expanded={errorsOpen}
+          title={recentErrors.length ? 'show recorded errors' : 'no recorded error detail to show'}
+        >
+          <span class="c-val" class:err={errorsAreLive} class:stale={!errorsAreLive && metric('pb_sync_errors_total') !== '0'}
+            >{metric('pb_sync_errors_total')}</span>
+          <span class="c-label">errors{#if recentErrors.length} {errorsOpen ? '▾' : '▸'}{/if}</span>
+          {#if !errorsAreLive && lastErrorAge}
+            <span class="c-note">none in {lastErrorAge}</span>
+          {/if}
+        </button>
         <div class="counter">
           <span class="c-val">{lastTick()}</span>
           <span class="c-label">last tick</span>
         </div>
       </div>
     </section>
+
+    <!-- Recorded sync errors, grouped by peer and cause -->
+    {#if errorsOpen && errorGroups.length}
+      <section class="card errors-card">
+        <h2>
+          Errors
+          <span class="peer-count">{errorGroups.length} grouped by peer and cause</span>
+          {#if errorPeerFilter}
+            <button class="pill active" onclick={() => setErrorPeerFilter(null)}>{errorPeerFilter} ✕</button>
+          {/if}
+          <button class="btn sm" onclick={() => void clearErrors()} disabled={!adminKeySet || actionBusy !== null}>
+            {actionBusy === 'clear' ? 'clearing…' : 'clear errors'}
+          </button>
+        </h2>
+        {#if !adminKeySet}
+          <p class="no-match">
+            No mesh admin key configured — actions are disabled. Save one under
+            <strong>brain mesh admin key</strong> in Settings, or set an ambient
+            <code>PB_ADMIN_KEY</code> in the app's environment, matching the daemon's.
+          </p>
+        {/if}
+        {#if shownGroups.length === 0}
+          <p class="no-match">No recorded errors for {errorPeerFilter}.</p>
+        {/if}
+        <div class="err-list">
+          {#each shownGroups as g (g.key)}
+            <div class="err-row">
+              <div class="err-head">
+                <span class="err-peer">{g.peer}</span>
+                <span class="err-class">{g.cls}</span>
+                <span class="err-count">×{g.count}</span>
+                <span class="err-age">{errAge(g.latest)}</span>
+              </div>
+              <div class="err-diag">{DIAGNOSIS[g.cls] ?? DIAGNOSIS.other}</div>
+              <div class="err-msg">{g.latest.err}</div>
+              <div class="err-actions">
+                <button
+                  class="btn sm"
+                  onclick={() => void retryPeer(g.peer, g.key)}
+                  disabled={!adminKeySet || actionBusy !== null}
+                >
+                  {actionBusy === `retry:${g.key}` ? 'retrying…' : 'retry peer'}
+                </button>
+                {#if g.latest.phase === 'pull' || g.latest.phase === 'links'}
+                  <button
+                    class="btn sm danger"
+                    onclick={() => void resetCursor(g.peer, g.key)}
+                    disabled={!adminKeySet || actionBusy !== null}
+                  >
+                    {actionBusy === `reset:${g.key}` ? 'resetting…' : 'reset cursor'}
+                  </button>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      </section>
+    {/if}
 
     <!-- Peers -->
     <section class="card peers">
@@ -281,6 +511,15 @@
                   <td>
                     <div class="peer-id">{p.id}</div>
                     {#if p.base_url}<div class="peer-url">{p.base_url}</div>{/if}
+                    {#if p.errors_24h}
+                      <button
+                        class="peer-warn"
+                        title={`${p.errors_24h} recorded errors — show them`}
+                        onclick={() => {
+                          setErrorPeerFilter(p.id);
+                          errorsOpen = true;
+                        }}>⚠ {p.errors_24h}</button>
+                    {/if}
                   </td>
                   <td>{p.profile}</td>
                   <td>
@@ -334,6 +573,10 @@
   }
   .btn:hover:not(:disabled) { color: var(--color-text-primary); }
   .btn:disabled { opacity: 0.5; cursor: default; }
+  /* Svelte styles are component-scoped, so the modifiers other panels define
+     do not reach here — they are declared locally, matching VaultBrowser. */
+  .btn.sm { font-size: 0.68rem; padding: 0.15rem 0.45rem; }
+  .btn.danger { color: #fff; background: var(--color-error); border-color: var(--color-error); }
 
   .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--color-border-primary); margin-bottom: var(--spacing-lg); }
   .tab {
@@ -379,9 +622,53 @@
   .counter { display: flex; flex-direction: column; gap: 2px; min-width: 88px; }
   .c-val { font-size: 1.3rem; font-weight: 600; font-variant-numeric: tabular-nums; }
   .c-val.err { color: var(--color-error); }
+  .c-val.stale { color: var(--color-warning); }
+  .c-note { font-size: 0.62rem; color: var(--color-text-tertiary); }
   .c-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-tertiary); }
 
+  .counter-btn { background: none; border: none; padding: 0; text-align: left; cursor: pointer; font: inherit; color: inherit; }
+  .counter-btn:disabled { cursor: default; }
+
   .peer-count { font-size: 0.72rem; font-weight: 400; color: var(--color-text-muted); }
+
+  /* Recorded-errors card. NOTE: --color-border is NOT defined in tokens.css
+     (only --color-border-primary / -secondary), so use the real tokens. */
+  .errors-card h2 { display: flex; align-items: center; gap: var(--spacing-sm); flex-wrap: wrap; }
+  .err-list { display: flex; flex-direction: column; gap: var(--spacing-sm); }
+  .err-row { border: 1px solid var(--color-border-primary); border-radius: 6px; padding: var(--spacing-sm); }
+  .err-head { display: flex; align-items: baseline; gap: var(--spacing-sm); flex-wrap: wrap; }
+  .err-peer { font-family: var(--font-mono); font-weight: 600; }
+  .err-class {
+    font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 1px 6px; border-radius: 999px; border: 1px solid var(--color-border-secondary);
+    color: var(--color-text-muted);
+  }
+  .err-count, .err-age { font-size: 0.72rem; color: var(--color-text-muted); }
+  .err-diag { margin-top: 4px; font-size: 0.82rem; }
+  .err-msg {
+    margin-top: 4px; font-family: var(--font-mono); font-size: 0.7rem;
+    color: var(--color-text-tertiary); overflow-wrap: anywhere;
+  }
+  .err-actions { margin-top: 6px; display: flex; gap: 6px; }
+  /* Panel-level, so it outlives both the errors card and the unreachable swap. */
+  .action-note {
+    display: flex; align-items: center; gap: var(--spacing-sm);
+    font-size: 0.78rem; color: var(--color-text-secondary);
+    margin: 0 0 var(--spacing-lg); padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--color-bg-secondary); border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-sm);
+  }
+  .note-x {
+    margin-left: auto; background: none; border: none; cursor: pointer;
+    color: var(--color-text-tertiary); font-size: 0.7rem; padding: 0 2px; line-height: 1;
+  }
+  .note-x:hover { color: var(--color-text-primary); }
+  .errors-card code { font-family: var(--font-mono); font-size: 0.78rem; }
+  .peer-warn {
+    display: inline-block; margin-top: 2px; font-size: 0.66rem; background: none; cursor: pointer;
+    border: 1px solid var(--color-border-secondary); border-radius: 999px; padding: 0 6px;
+    color: var(--color-warning);
+  }
 
   .filters { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--spacing-md); }
   .filter-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }

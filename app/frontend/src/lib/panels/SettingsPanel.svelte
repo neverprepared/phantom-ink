@@ -40,6 +40,15 @@
   let otlpHost = $state('');
   let savingOTLP = $state(false);
 
+  // --- Brain mesh admin key (phantom-brain's PB_ADMIN_KEY operator key) ---
+  let meshAdminKey = $state('');
+  let meshAdminKeySet = $state(false);
+  let savingMeshAdminKey = $state(false);
+  // The key is deliberately never read back, so a blank field must never be
+  // written: SetMeshAdminKey('') would clear a perfectly good stored key. Save
+  // stays disabled until something is actually typed.
+  let meshAdminKeyEntered = $derived(meshAdminKey.trim() !== '');
+
   // --- Platform node (which runner drives the platform stack) ---
   let platformNode = $state('');
   let platformNodes = $state<{ name: string; host: string }[]>([]);
@@ -61,7 +70,7 @@
     const a = await getApi();
     if (!a) { loaded = true; return; }
     try {
-      const [cfg, plat, reg, olh, rs] = await Promise.all([a.GetConfig(), a.GetPlatform(), a.GetRegistrySettings(), a.GetOTLPHost(), a.GetLocalRunnerStatus()]);
+      const [cfg, plat, reg, olh, rs, mak] = await Promise.all([a.GetConfig(), a.GetPlatform(), a.GetRegistrySettings(), a.GetOTLPHost(), a.GetLocalRunnerStatus(), a.GetMeshAdminKeySet()]);
       baseURL = cfg?.base_url ?? 'http://127.0.0.1:9999';
       apiKey = cfg?.api_key ?? '';
       workspacesRoot = cfg?.workspaces_root ?? '';
@@ -73,6 +82,7 @@
       otlpHost = olh ?? '';
       runnerStatus = rs ?? runnerStatus;
       runnerName = rs?.name ?? 'local-mac';
+      meshAdminKeySet = Boolean(mak);
       applyTheme(theme);
       // Platform node (best-effort — needs a reachable router for the node list).
       try {
@@ -155,6 +165,29 @@
       notifications.error(`Failed to save observability settings: ${err}`);
     } finally {
       savingOTLP = false;
+    }
+  }
+
+  async function handleSaveMeshAdminKey() {
+    const key = meshAdminKey.trim();
+    // Belt and braces alongside the disabled button: never overwrite a stored
+    // key with nothing.
+    if (!key) {
+      notifications.error('Enter a key first — an empty save would leave the stored key unchanged');
+      return;
+    }
+    savingMeshAdminKey = true;
+    const a = await getApi();
+    if (!a) { savingMeshAdminKey = false; return; }
+    try {
+      await a.SetMeshAdminKey(key);
+      meshAdminKey = '';
+      meshAdminKeySet = Boolean(await a.GetMeshAdminKeySet());
+      notifications.success('Mesh admin key saved');
+    } catch (err: any) {
+      notifications.error(`Failed to save mesh admin key: ${err}`);
+    } finally {
+      savingMeshAdminKey = false;
     }
   }
 
@@ -342,6 +375,29 @@
         <div class="form-actions">
           <button class="btn-save" onclick={handleSaveOTLP} disabled={savingOTLP}>
             {savingOTLP ? 'saving...' : 'save observability settings'}
+          </button>
+        </div>
+      </div>
+
+      <!-- Brain mesh admin key -->
+      <div class="section">
+        <h2>brain mesh admin key</h2>
+        <p class="hint" style="margin-bottom: 14px;">authorises the remediation actions in the <strong>Brain Mesh</strong> panel (retry a peer, reset a cursor, clear errors). This is phantom-brain's <code>PB_ADMIN_KEY</code> operator key — not a per-vault bearer token — and must match the value the daemon is running with.</p>
+
+        <div class="field">
+          <label for="mesh-admin-key">operator key</label>
+          <input id="mesh-admin-key" type="password" bind:value={meshAdminKey} placeholder="PB_ADMIN_KEY" autocomplete="new-password" />
+          <p class="hint">write-only: the stored key is never shown. Saving with this field empty changes nothing — type a key to replace the stored one.</p>
+        </div>
+
+        <div class="key-status-row">
+          {#if meshAdminKeySet}
+            <span class="badge badge-ok">key available</span>
+          {:else}
+            <span class="badge badge-off">no key</span>
+          {/if}
+          <button class="btn-save" onclick={handleSaveMeshAdminKey} disabled={savingMeshAdminKey || !meshAdminKeyEntered}>
+            {savingMeshAdminKey ? 'saving...' : 'save mesh admin key'}
           </button>
         </div>
       </div>
@@ -635,7 +691,8 @@
   }
   .btn-browse:hover { border-color: var(--color-accent); color: var(--color-accent); }
 
-  .runner-status-row {
+  .runner-status-row,
+  .key-status-row {
     display: flex;
     align-items: center;
     gap: 12px;
