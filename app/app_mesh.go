@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -86,4 +87,66 @@ func (a *App) GetMeshStatus() (MeshStatus, error) {
 		return MeshStatus{}, fmt.Errorf("decode mesh status from %s: %w", url, err)
 	}
 	return status, nil
+}
+
+// SyncError mirrors nodesync.SyncError in phantom-brain — one retained sync
+// failure, returned by the retry action so an "it worked" 200 can still carry
+// a failed pull.
+type SyncError struct {
+	At      string `json:"at"`
+	Peer    string `json:"peer"`
+	Profile string `json:"profile"`
+	Phase   string `json:"phase"`
+	Class   string `json:"class"`
+	Err     string `json:"err"`
+}
+
+// MeshActionResult is the union of the three remediation responses — each
+// endpoint fills the fields it owns and leaves the rest zero. Errors is
+// populated only by retry, and only when at least one pull/push failed.
+type MeshActionResult struct {
+	RowsMerged   int         `json:"rows_merged"`
+	LinksMerged  int         `json:"links_merged"`
+	BlobsFetched int         `json:"blobs_fetched"`
+	Cleared      int         `json:"cleared"`
+	Reset        bool        `json:"reset"`
+	Errors       []SyncError `json:"errors,omitempty"`
+}
+
+// postMeshAdmin POSTs one mesh remediation action. Free function over its
+// dependencies so it is testable without an App.
+//
+// A missing key short-circuits before the request: the daemon's 403 for an
+// unset PB_ADMIN_KEY and for a wrong key are indistinguishable, and "you never
+// set a key" is the more useful of the two diagnoses.
+func postMeshAdmin(base, key, path string, hc *http.Client) (MeshActionResult, error) {
+	var out MeshActionResult
+	if strings.TrimSpace(key) == "" {
+		return out, fmt.Errorf("no mesh admin key configured — set one in Settings")
+	}
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(base, "/")+path, nil)
+	if err != nil {
+		return out, fmt.Errorf("build mesh action request: %w", err)
+	}
+	req.Header.Set("X-API-Key", key)
+	resp, err := hc.Do(req)
+	if err != nil {
+		return out, fmt.Errorf("mesh daemon unreachable at %s: %w", base, err)
+	}
+	defer resp.Body.Close()
+
+	switch {
+	case resp.StatusCode == http.StatusForbidden:
+		return out, fmt.Errorf("mesh admin key rejected by the daemon")
+	case resp.StatusCode == http.StatusNotFound:
+		return out, fmt.Errorf("unknown peer — the peer list is stale, refresh and retry")
+	case resp.StatusCode == http.StatusServiceUnavailable:
+		return out, fmt.Errorf("sync is disabled on this node")
+	case resp.StatusCode < 200 || resp.StatusCode >= 300:
+		return out, fmt.Errorf("mesh action failed: HTTP %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return out, fmt.Errorf("decode mesh action result: %w", err)
+	}
+	return out, nil
 }
