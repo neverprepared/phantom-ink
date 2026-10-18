@@ -27,6 +27,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import MetricsChart from '../components/MetricsChart.svelte';
   import PieChart from '../components/PieChart.svelte';
+  import SessionTree from '../components/SessionTree.svelte';
   import Spinner from '../components/Spinner.svelte';
   import { openInBrowser } from '../utils/api';
 
@@ -113,6 +114,17 @@
 
   type View = 'sessions' | 'trends' | 'breakdown';
 
+  // Three shapes of one session, per the Agent Work Wheel probe: a list to act
+  // on, a tree to audit, a wheel to see scale. Each answers a different
+  // question, so all three are kept rather than one being chosen.
+  type SessionView = 'list' | 'tree' | 'radial';
+
+  const SESSION_VIEWS: { id: SessionView; label: string; hint: string }[] = [
+    { id: 'list', label: 'list', hint: 'Chronological rows — scan and act' },
+    { id: 'tree', label: 'tree', hint: 'Depth across, time down — the audit shape' },
+    { id: 'radial', label: 'radial', hint: 'Time clockwise, depth outward — scale and fan-out' },
+  ];
+
   const VIEWS: { id: View; label: string }[] = [
     { id: 'sessions', label: 'sessions' },
     { id: 'trends', label: 'trends' },
@@ -155,6 +167,10 @@
   ];
 
   let view = $state<View>('sessions');
+  let sessionView = $state<SessionView>('list');
+  // A pinned observation survives hover, so clicking one and then moving the
+  // mouse does not lose it.
+  let pinnedObsId = $state<string | null>(null);
   let charts = $state<Charts | null>(null);
   let chartsLoading = $state(false);
   let chartsError = $state('');
@@ -326,6 +342,9 @@
       );
       if (mine !== timelineEpoch) return;
       timeline = tl as SessionTimeline;
+      // A pin from the previous session would point at an id this one has not
+      // got, leaving an empty detail block.
+      pinnedObsId = null;
     } catch (e) {
       if (mine !== timelineEpoch) return;
       timelineError = String(e);
@@ -339,7 +358,12 @@
     selectedSnapshot = null;
     timeline = null;
     timelineError = '';
+    pinnedObsId = null;
   }
+
+  const pinnedObs = $derived(
+    (timeline?.observations ?? []).find((o) => o.id === pinnedObsId) ?? null,
+  );
 
   // --- formatting -----------------------------------------------------------
 
@@ -423,11 +447,6 @@
     (charts?.obs_series ?? []).reduce((a, p) => a + p.value, 0),
   );
 
-  // Depth is capped for LAYOUT only — the real depth stays in the tooltip, so
-  // a deep tree indents readably without hiding its shape.
-  function indent(depth: number): string {
-    return `${Math.min(depth, 6) * 14}px`;
-  }
 </script>
 
 <div class="agentwork">
@@ -605,48 +624,69 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
           </div>
         {/if}
 
-        {#if !timeline.observations?.length}
-          <p class="muted">No observations recorded for this session.</p>
-        {:else}
-          <ol class="tree">
-            {#each timeline.observations ?? [] as o (o.id)}
-              <li
-                class="obs"
-                class:bad={isError(o)}
-                style="margin-left: {indent(o.depth)}"
-                title={o.depth > 6 ? `nesting depth ${o.depth}` : undefined}
-              >
-                <div class="obs-head">
-                  <span class="t">{clock(o.start_time)}</span>
-                  <Badge text={o.type.toLowerCase()} variant={typeVariant(o.type)} />
-                  <strong class="name">{o.name || '(unnamed)'}</strong>
-                  {#if o.model}<span class="muted">{o.model}</span>{/if}
-                  {#if o.latency_ms}<span class="muted">{ms(o.latency_ms)}</span>{/if}
-                  {#if o.cost_usd}<span class="muted">{usd(o.cost_usd)}</span>{/if}
-                </div>
-                {#if isError(o) && o.status_message}
-                  <p class="status">{o.status_message}</p>
-                {/if}
-                {#if o.input || o.output}
-                  <details class="content">
-                    <summary>content</summary>
-                    {#if o.input}
-                      <div class="io">
-                        <span class="io-label">in</span>
-                        <pre>{o.input}</pre>
-                      </div>
-                    {/if}
-                    {#if o.output}
-                      <div class="io">
-                        <span class="io-label">out</span>
-                        <pre>{o.output}</pre>
-                      </div>
-                    {/if}
-                  </details>
-                {/if}
-              </li>
+        <div class="viewbar">
+          <span class="vlbl">shape</span>
+          <div class="seg" role="tablist" aria-label="Session shape">
+            {#each SESSION_VIEWS as v (v.id)}
+              <button
+                class="seg-btn"
+                class:active={sessionView === v.id}
+                role="tab"
+                aria-selected={sessionView === v.id}
+                title={v.hint}
+                onclick={() => (sessionView = v.id)}
+              >{v.label}</button>
             {/each}
-          </ol>
+          </div>
+          <span class="muted vhint">
+            {SESSION_VIEWS.find((v) => v.id === sessionView)?.hint}
+          </span>
+        </div>
+
+        <SessionTree
+          observations={timeline.observations}
+          view={sessionView}
+          selectedId={pinnedObsId}
+          onSelect={(id) => (pinnedObsId = id)}
+        />
+
+        <!-- The pinned observation's full detail, including the conversation.
+             Lives here rather than inside the shapes: a tree node or a wheel dot
+             cannot hold a transcript, and in the list it made every row a
+             collapsible, which buried the thing being looked for. -->
+        {#if pinnedObs}
+          <div class="obsdetail">
+            <div class="obs-head">
+              <span class="t">{clock(pinnedObs.start_time)}</span>
+              <Badge text={pinnedObs.type.toLowerCase()} variant={typeVariant(pinnedObs.type)} />
+              <strong class="name">{pinnedObs.name || '(unnamed)'}</strong>
+              {#if pinnedObs.model}<span class="muted">{pinnedObs.model}</span>{/if}
+              {#if pinnedObs.latency_ms}<span class="muted">{ms(pinnedObs.latency_ms)}</span>{/if}
+              {#if pinnedObs.cost_usd}<span class="muted">{usd(pinnedObs.cost_usd)}</span>{/if}
+              <button class="linkish" onclick={() => (pinnedObsId = null)}>clear</button>
+            </div>
+            {#if isError(pinnedObs) && pinnedObs.status_message}
+              <p class="status">{pinnedObs.status_message}</p>
+            {/if}
+            {#if pinnedObs.input}
+              <div class="io">
+                <span class="io-label">in</span>
+                <pre>{pinnedObs.input}</pre>
+              </div>
+            {/if}
+            {#if pinnedObs.output}
+              <div class="io">
+                <span class="io-label">out</span>
+                <pre>{pinnedObs.output}</pre>
+              </div>
+            {/if}
+            {#if !pinnedObs.input && !pinnedObs.output}
+              <p class="muted">
+                This observation carries no message text — native OTLP spans
+                record metadata only.
+              </p>
+            {/if}
+          </div>
         {/if}
       {/if}
     </section>
@@ -906,22 +946,6 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
     font-size: 13px;
     font-weight: 600;
   }
-  ol.tree {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .obs {
-    border-left: 2px solid var(--color-border-secondary);
-    padding: 2px var(--spacing-sm);
-    font-size: 12px;
-  }
-  .obs.bad {
-    border-left-color: var(--color-status-error-text);
-  }
   .obs-head {
     display: flex;
     align-items: center;
@@ -933,21 +957,10 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
     color: var(--color-text-tertiary);
     font-size: 11px;
   }
-  .obs-head .name {
-    font-weight: 500;
-  }
   .status {
     margin: 2px 0 0;
     font-size: 11px;
     color: var(--color-status-error-text);
-  }
-  details.content {
-    margin-top: 2px;
-  }
-  details.content summary {
-    cursor: pointer;
-    font-size: 11px;
-    color: var(--color-text-tertiary);
   }
   .io {
     display: flex;
@@ -964,6 +977,29 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
      timeline off screen. */
   .tabs {
     align-self: flex-start;
+  }
+  .viewbar {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+  }
+  .vlbl {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-text-tertiary);
+  }
+  .vhint {
+    font-size: 11px;
+  }
+  .obsdetail {
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
   }
   .caveat {
     border-style: dashed;
