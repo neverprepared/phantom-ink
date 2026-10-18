@@ -126,8 +126,11 @@
         return;
       }
       if (!activeProfile) {
+        // Normal transient state while the profile store resolves, and a
+        // normal steady state with no profile selected. Not an error: a red
+        // notice here reads as a failure when nothing has failed.
         sessions = [];
-        error = 'Select a profile — Langfuse credentials are per profile.';
+        error = '';
         return;
       }
       const rows = await api.ListAgentWork(activeProfile, range, 50);
@@ -339,8 +342,12 @@
     <p class="muted"><Spinner /> Loading sessions…</p>
   {:else if !error && sessions.length === 0}
     <EmptyState
-      title="No agent sessions in this window"
-      message="Nothing has been traced to Langfuse for this profile in the selected range."
+      title={activeProfile
+        ? 'No agent sessions in this window'
+        : 'No profile selected'}
+      message={activeProfile
+        ? `Queried Langfuse for environment "${activeProfile}" over ${range.replace('now-', 'the last ')}. Nothing has been traced there in that range.`
+        : 'Agent Work reads Langfuse, whose API keys are per profile. Select a profile to load its sessions.'}
     />
   {:else if sessions.length > 0}
     <div class="table-wrap">

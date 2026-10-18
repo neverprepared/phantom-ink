@@ -3,6 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"phantom-ink/brainbox"
@@ -52,6 +56,34 @@ type AgentWorkRow struct {
 	LivenessAvailable bool `json:"liveness_available"`
 }
 
+// strictProfileHome resolves a profile's workspace home WITHOUT the ambient
+// fallback, and returns "" when it cannot be established for that exact
+// profile.
+//
+// a.profileWorkspaceHome must not be used for credentials. Its last resort is
+// envLookup(profileEnv(name), "WORKSPACE_HOME"), and profileEnv starts from
+// os.Environ() -- so an unknown or mistyped profile silently resolves to
+// whichever workspace launched the app, and this function would then hand back
+// THAT profile's Langfuse keys. Caught by a test asking for a profile that does
+// not exist and getting "personal" back.
+//
+// Failing closed is the right direction here: the panel says "not configured"
+// rather than quietly reading another profile's traces.
+func (a *App) strictProfileHome(profile string) string {
+	if profile == "" || a.config == nil || a.config.WorkspacesRoot == "" {
+		return ""
+	}
+	// Reject anything that could escape the workspaces root.
+	if profile != filepath.Base(profile) || profile == "." || profile == ".." {
+		return ""
+	}
+	home := filepath.Join(a.config.WorkspacesRoot, profile)
+	if fi, err := os.Stat(home); err != nil || !fi.IsDir() {
+		return ""
+	}
+	return home
+}
+
 // langfuseClient builds a reader for the given profile, or nil when the
 // profile has no Langfuse credentials.
 //
@@ -61,7 +93,7 @@ type AgentWorkRow struct {
 // projects -- so resolving them per profile is also what keeps one profile's
 // panel from reading another's traces.
 func (a *App) langfuseClient(profile string) *langfuse.Client {
-	home := a.profileWorkspaceHome(profile)
+	home := a.strictProfileHome(profile)
 	if home == "" {
 		return nil
 	}
@@ -75,6 +107,22 @@ func (a *App) langfuseClient(profile string) *langfuse.Client {
 		}
 	}
 	return langfuse.NewClient(base, env["LANGFUSE_PUBLIC_KEY"], env["LANGFUSE_SECRET_KEY"])
+}
+
+// langfuseEnvironment is the value to filter observations on for this profile.
+//
+// It is NOT the profile name. The environment is stamped at emission from
+// LANGFUSE_TRACING_ENVIRONMENT, so that variable is the authority; the profile
+// name is only a fallback for a profile that never set it. Assuming the two are
+// equal is how the list ends up correctly empty and silently unexplained -- they
+// happen to match on this machine, which is exactly what hides the bug.
+func (a *App) langfuseEnvironment(profile string) string {
+	if home := a.strictProfileHome(profile); home != "" {
+		if env := brainbox.ReadProfileEnv(home)["LANGFUSE_TRACING_ENVIRONMENT"]; env != "" {
+			return env
+		}
+	}
+	return profile
 }
 
 // ListAgentWork returns the Agent Work list: sessions from Langfuse, liveness
@@ -93,9 +141,29 @@ func (a *App) ListAgentWork(profile, since string, limit int) ([]AgentWorkRow, e
 	ctx, cancel := context.WithTimeout(context.Background(), agentSessionQueryTimeout)
 	defer cancel()
 
-	sessions, err := c.ListAgentSessions(ctx, profile, since, limit)
+	environment := a.langfuseEnvironment(profile)
+	sessions, err := c.ListAgentSessions(ctx, environment, since, limit)
 	if err != nil {
 		return nil, err
+	}
+	if len(sessions) == 0 {
+		// An empty list is ambiguous: nothing ran, or the environment filter
+		// matches nothing. Name the environments that DO exist so the second
+		// case is visible instead of looking like the first.
+		if envs, eerr := c.Environments(ctx, since); eerr == nil && len(envs) > 0 {
+			if _, ok := envs[environment]; !ok {
+				names := make([]string, 0, len(envs))
+				for name, n := range envs {
+					names = append(names, fmt.Sprintf("%s (%d)", name, n))
+				}
+				sort.Strings(names)
+				return nil, fmt.Errorf(
+					"no sessions for environment %q; this project has: %s. "+
+						"The environment is stamped from LANGFUSE_TRACING_ENVIRONMENT, "+
+						"not from the profile name",
+					environment, strings.Join(names, ", "))
+			}
+		}
 	}
 
 	out := make([]AgentWorkRow, 0, len(sessions))

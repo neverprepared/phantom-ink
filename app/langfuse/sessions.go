@@ -449,3 +449,46 @@ func (c *Client) GetSessionTimeline(ctx context.Context, sessionID string, limit
 	}
 	return tl, nil
 }
+
+// Environments returns the distinct `environment` values this project holds,
+// newest window first, with an observation count each.
+//
+// Exists to make an EMPTY session list diagnosable. The environment is stamped
+// from LANGFUSE_TRACING_ENVIRONMENT at emission; if the value the reader filters
+// on does not match any of these, the list is correctly empty and silently
+// unexplained. Showing the real values turns that into a visible mismatch.
+func (c *Client) Environments(ctx context.Context, since string) (map[string]int64, error) {
+	from := sinceTime(since, time.Now().UTC())
+	query := map[string]any{
+		"view":          "observations",
+		"dimensions":    []any{map[string]any{"field": "environment"}},
+		"metrics":       []any{map[string]any{"measure": "count", "aggregation": "count"}},
+		"fromTimestamp": from.UTC().Format(time.RFC3339),
+		"toTimestamp":   time.Now().UTC().Add(time.Minute).Format(time.RFC3339),
+	}
+	body, err := json.Marshal(query)
+	if err != nil {
+		return nil, err
+	}
+	q := url.Values{}
+	q.Set("query", string(body))
+
+	var resp struct {
+		Data []struct {
+			Environment *string  `json:"environment"`
+			CountCount  *float64 `json:"count_count"`
+		} `json:"data"`
+	}
+	if err := c.get(ctx, "/api/public/v2/metrics", q, &resp); err != nil {
+		return nil, err
+	}
+	out := make(map[string]int64, len(resp.Data))
+	for _, r := range resp.Data {
+		name := "(none)"
+		if r.Environment != nil && *r.Environment != "" {
+			name = *r.Environment
+		}
+		out[name] = int64(f64(r.CountCount))
+	}
+	return out, nil
+}

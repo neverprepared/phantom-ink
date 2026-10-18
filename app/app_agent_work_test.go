@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"phantom-ink/opensearch"
@@ -86,5 +88,82 @@ func TestMergeLivenessHandlesEmptyInputs(t *testing.T) {
 	mergeLiveness(rows, nil)
 	if rows[0].LivenessAvailable {
 		t.Error("no OpenSearch data must mean no overlay")
+	}
+}
+
+// The Langfuse environment is stamped from LANGFUSE_TRACING_ENVIRONMENT at
+// emission, not from the profile name. They coincide on the development
+// machine, which is precisely what hid this: a mismatch produces a correctly
+// empty list with no explanation.
+func TestLangfuseEnvironmentPrefersTheStampedValue(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"),
+		[]byte("LANGFUSE_TRACING_ENVIRONMENT=prod-eu\nOTHER=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := &App{config: &Config{WorkspacesRoot: filepath.Dir(dir)}}
+	got := a.langfuseEnvironment(filepath.Base(dir))
+	if got != "prod-eu" {
+		t.Errorf("langfuseEnvironment = %q, want the stamped value prod-eu", got)
+	}
+}
+
+// With no stamp, the profile name is the only sensible guess.
+func TestLangfuseEnvironmentFallsBackToTheProfileName(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OTHER=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := &App{config: &Config{WorkspacesRoot: filepath.Dir(dir)}}
+	name := filepath.Base(dir)
+	if got := a.langfuseEnvironment(name); got != name {
+		t.Errorf("langfuseEnvironment = %q, want the profile name %q", got, name)
+	}
+}
+
+// An unknown profile must fall back to the profile NAME, never to another
+// profile's stamped environment read through the ambient WORKSPACE_HOME.
+func TestLangfuseEnvironmentHandlesAnUnknownProfile(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_HOME", root)
+	a := &App{config: &Config{WorkspacesRoot: root}}
+	if got := a.langfuseEnvironment("nope"); got != "nope" {
+		t.Errorf("langfuseEnvironment = %q, want nope — anything else means it "+
+			"read another profile's environment", got)
+	}
+}
+
+// strictProfileHome must never resolve to another profile's workspace.
+// a.profileWorkspaceHome falls back to the AMBIENT WORKSPACE_HOME, so asking
+// for a profile that does not exist previously returned the workspace that
+// launched the app -- and would have handed back ITS Langfuse credentials.
+func TestStrictProfileHomeRefusesUnknownProfiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "real"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// An ambient WORKSPACE_HOME is exactly the trap: it must be ignored.
+	t.Setenv("WORKSPACE_HOME", filepath.Join(root, "real"))
+	a := &App{config: &Config{WorkspacesRoot: root}}
+
+	if got := a.strictProfileHome("real"); got != filepath.Join(root, "real") {
+		t.Errorf("strictProfileHome(real) = %q, want the real home", got)
+	}
+	for _, bad := range []string{"nope", "", "..", ".", "../real", "a/b"} {
+		if got := a.strictProfileHome(bad); got != "" {
+			t.Errorf("strictProfileHome(%q) = %q, want \"\" — resolving to any "+
+				"home here leaks another profile's credentials", bad, got)
+		}
+	}
+}
+
+func TestStrictProfileHomeRefusesWithoutAWorkspacesRoot(t *testing.T) {
+	a := &App{config: &Config{}}
+	if got := a.strictProfileHome("personal"); got != "" {
+		t.Errorf("strictProfileHome = %q; with no root it must fail closed", got)
+	}
+	b := &App{}
+	if got := b.strictProfileHome("personal"); got != "" {
+		t.Errorf("strictProfileHome = %q with nil config; must fail closed", got)
 	}
 }
