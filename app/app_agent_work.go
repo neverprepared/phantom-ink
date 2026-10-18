@@ -151,6 +151,18 @@ func (a *App) ListAgentWork(profile, since string, limit int) ([]AgentWorkRow, e
 	environment := a.langfuseEnvironment(profile)
 	sessions, err := c.ListAgentSessions(ctx, environment, since, limit)
 	if err != nil {
+		// A 401 is a configuration answer, not a transient failure, and it is
+		// worth naming the profile: each profile carries its OWN Langfuse key
+		// pair, so "invalid credentials" means THAT profile's keys, not the
+		// app's. Observed with a profile whose pair was stale while another
+		// profile's worked against the same host.
+		if strings.Contains(err.Error(), "http 401") {
+			return nil, fmt.Errorf(
+				"Langfuse rejected profile %q's credentials (HTTP 401). Each "+
+					"profile has its own key pair; check LANGFUSE_PUBLIC_KEY and "+
+					"LANGFUSE_SECRET_KEY in that profile's env file, or remove them "+
+					"to hide this panel for it", profile)
+		}
 		return nil, err
 	}
 	if len(sessions) == 0 {
