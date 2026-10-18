@@ -192,7 +192,7 @@
   let sessions = $state<AgentWorkRow[]>([]);
   let loading = $state(true);
   let error = $state('');
-  let range = $state('now-24h');
+  let range = $state('now-15m');
   let now = $state(Date.now());
 
   // The detail pane tracks an ID, not a row object: a refresh replaces
@@ -598,7 +598,7 @@
         <tbody>
           {#each sessions as s (s.session_id)}
             <tr
-              class="row"
+              class="session-row"
               class:selected={s.session_id === selectedId}
               onclick={() => open(s)}
               tabindex="0"
@@ -918,13 +918,18 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
     text-align: right;
     font-variant-numeric: tabular-nums;
   }
-  tr.row {
+  /* NOT class="row": the global .row in styles/components.css is a flex card
+     utility (display:flex + background + gap + border). On a <tr> it takes the
+     row out of the table layout entirely — the cells stop participating in the
+     column algorithm, so the header spreads across the full width while the
+     values bunch left, and the table overflows its wrapper. */
+  tr.session-row {
     cursor: pointer;
   }
-  tr.row:hover td {
+  tr.session-row:hover td {
     background: var(--color-muted-bg);
   }
-  tr.row.selected td {
+  tr.session-row.selected td {
     background: var(--color-muted-bg);
   }
   .sid {
