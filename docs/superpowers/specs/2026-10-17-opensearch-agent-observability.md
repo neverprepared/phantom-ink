@@ -1335,3 +1335,52 @@ is now on the live authentication path for every session's trace export. It was
 previously only used by the hook. Rotate it in the Langfuse UI (project
 settings → API keys), update the single value in `$WORKSPACE_HOME/.env`, and
 run `direnv reload`; the header is derived, so nothing else needs touching.
+
+### 12.5 The OTLP path does not carry the environment
+
+A fresh session did not appear in the panel, and its observations were visible
+in Langfuse under environment **`default`** rather than `personal`. The
+operator spotted this from the Langfuse UI; it is a real defect in §12.2 as
+shipped.
+
+**Cause.** `LANGFUSE_TRACING_ENVIRONMENT` is read by the Langfuse *SDK*, so the
+transcript hook files its observations under it. The OTLP path knows nothing
+about that variable. Langfuse takes the environment from a **resource
+attribute**, and nothing was setting one — so every native span landed in the
+default bucket and was invisible to a panel scoped to `personal`.
+
+**Which attribute.** Probed against the live deployment rather than assumed —
+all three work `[VERIFIED]`:
+
+- `langfuse.environment`
+- `deployment.environment`
+- `deployment.environment.name`
+
+`deployment.environment` is the OTel semantic convention, so it is the portable
+choice and is what was configured.
+
+**Fix.** `.envrc` appends it to the existing resource attributes, derived from
+the same stamp so the two cannot drift:
+
+```
+OTEL_RESOURCE_ATTRIBUTES = workspace=personal,deployment.environment=personal
+```
+
+Appended, never assigned: `.env` already sets `workspace=personal` and an
+assignment would drop it. Verified by emitting a span with **only** the ambient
+environment — it filed under `personal` `[VERIFIED]`.
+
+**Two consequences worth stating.**
+
+- The environment is read at process start, so a session already running keeps
+  writing to `default` until it is restarted. One more restart is needed after
+  this change.
+- Observations already filed under `default` do not move. At the time of
+  writing: `personal` 2,208, `default` 115 `[VERIFIED]`.
+
+**The general hazard.** Any harness that exports OTLP to Langfuse without this
+resource attribute silently lands in `default` and disappears from every
+environment-scoped view. That is a quiet failure with no error anywhere, so it
+belongs in the setup checklist for each new harness rather than being
+rediscovered. The router is unaffected — it exports to Data Prepper, not
+Langfuse — but anything pointed at Langfuse directly needs it.
