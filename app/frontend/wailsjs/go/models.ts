@@ -2511,6 +2511,89 @@ export namespace jira {
 
 }
 
+export namespace langfuse {
+	
+	export class Observation {
+	    id: string;
+	    parent_id?: string;
+	    depth: number;
+	    name: string;
+	    type: string;
+	    start_time: string;
+	    end_time?: string;
+	    latency_ms?: number;
+	    model?: string;
+	    cost_usd?: number;
+	    level?: string;
+	    status_message?: string;
+	    input?: string;
+	    output?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Observation(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.parent_id = source["parent_id"];
+	        this.depth = source["depth"];
+	        this.name = source["name"];
+	        this.type = source["type"];
+	        this.start_time = source["start_time"];
+	        this.end_time = source["end_time"];
+	        this.latency_ms = source["latency_ms"];
+	        this.model = source["model"];
+	        this.cost_usd = source["cost_usd"];
+	        this.level = source["level"];
+	        this.status_message = source["status_message"];
+	        this.input = source["input"];
+	        this.output = source["output"];
+	    }
+	}
+	export class SessionTimeline {
+	    session_id: string;
+	    workspace: string;
+	    observations: Observation[];
+	    total: number;
+	    truncated: boolean;
+	    content_available: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionTimeline(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.session_id = source["session_id"];
+	        this.workspace = source["workspace"];
+	        this.observations = this.convertValues(source["observations"], Observation);
+	        this.total = source["total"];
+	        this.truncated = source["truncated"];
+	        this.content_available = source["content_available"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace main {
 	
 	export class ADOConnectionStatus {
@@ -2671,6 +2754,134 @@ export namespace main {
 	        this.limit = source["limit"];
 	    }
 	}
+	export class ChartShare {
+	    name: string;
+	    value: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChartShare(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.value = source["value"];
+	    }
+	}
+	export class ChartPoint {
+	    ts: number;
+	    value: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChartPoint(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ts = source["ts"];
+	        this.value = source["value"];
+	    }
+	}
+	export class AgentWorkCharts {
+	    granularity: string;
+	    cost_series: ChartPoint[];
+	    obs_series: ChartPoint[];
+	    cost_by_model: ChartShare[];
+	    obs_by_type: ChartShare[];
+	    cost_understated: boolean;
+	    sessions_url?: string;
+	    traces_url?: string;
+	    dashboard_url?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentWorkCharts(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.granularity = source["granularity"];
+	        this.cost_series = this.convertValues(source["cost_series"], ChartPoint);
+	        this.obs_series = this.convertValues(source["obs_series"], ChartPoint);
+	        this.cost_by_model = this.convertValues(source["cost_by_model"], ChartShare);
+	        this.obs_by_type = this.convertValues(source["obs_by_type"], ChartShare);
+	        this.cost_understated = source["cost_understated"];
+	        this.sessions_url = source["sessions_url"];
+	        this.traces_url = source["traces_url"];
+	        this.dashboard_url = source["dashboard_url"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class AgentWorkFreshness {
+	    newest_iso?: string;
+	    age_ms: number;
+	    has_data: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentWorkFreshness(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.newest_iso = source["newest_iso"];
+	        this.age_ms = source["age_ms"];
+	        this.has_data = source["has_data"];
+	    }
+	}
+	export class AgentWorkRow {
+	    session_id: string;
+	    workspace: string;
+	    first_seen: string;
+	    last_seen: string;
+	    observations: number;
+	    generations: number;
+	    tool_calls: number;
+	    tokens: number;
+	    models: string[];
+	    cost_usd: number;
+	    liveness?: string;
+	    last_activity_ms?: number;
+	    last_heartbeat_ms?: number;
+	    liveness_available: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentWorkRow(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.session_id = source["session_id"];
+	        this.workspace = source["workspace"];
+	        this.first_seen = source["first_seen"];
+	        this.last_seen = source["last_seen"];
+	        this.observations = source["observations"];
+	        this.generations = source["generations"];
+	        this.tool_calls = source["tool_calls"];
+	        this.tokens = source["tokens"];
+	        this.models = source["models"];
+	        this.cost_usd = source["cost_usd"];
+	        this.liveness = source["liveness"];
+	        this.last_activity_ms = source["last_activity_ms"];
+	        this.last_heartbeat_ms = source["last_heartbeat_ms"];
+	        this.liveness_available = source["liveness_available"];
+	    }
+	}
 	export class ArtifactPreview {
 	    kind: string;
 	    content_type: string;
@@ -2771,6 +2982,8 @@ export namespace main {
 	        this.definition = source["definition"];
 	    }
 	}
+	
+	
 	export class CodeOverview {
 	    profile: string;
 	    token_missing: boolean;
@@ -4184,6 +4397,54 @@ export namespace main {
 
 export namespace opensearch {
 	
+	export class AgentSession {
+	    session_id: string;
+	    workspace: string;
+	    first_seen: string;
+	    last_seen: string;
+	    turns: number;
+	    tool_calls: number;
+	    failures: number;
+	    last_tool: string;
+	    top_tools: string[];
+	    models: string[];
+	    last_beat?: string;
+	    liveness: string;
+	    last_activity_ms: number;
+	    last_heartbeat_ms?: number;
+	    cost_usd: number;
+	    tokens_in: number;
+	    tokens_out: number;
+	    tokens_cache_in: number;
+	    tokens_cache_new: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentSession(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.session_id = source["session_id"];
+	        this.workspace = source["workspace"];
+	        this.first_seen = source["first_seen"];
+	        this.last_seen = source["last_seen"];
+	        this.turns = source["turns"];
+	        this.tool_calls = source["tool_calls"];
+	        this.failures = source["failures"];
+	        this.last_tool = source["last_tool"];
+	        this.top_tools = source["top_tools"];
+	        this.models = source["models"];
+	        this.last_beat = source["last_beat"];
+	        this.liveness = source["liveness"];
+	        this.last_activity_ms = source["last_activity_ms"];
+	        this.last_heartbeat_ms = source["last_heartbeat_ms"];
+	        this.cost_usd = source["cost_usd"];
+	        this.tokens_in = source["tokens_in"];
+	        this.tokens_out = source["tokens_out"];
+	        this.tokens_cache_in = source["tokens_cache_in"];
+	        this.tokens_cache_new = source["tokens_cache_new"];
+	    }
+	}
 	export class LogEntry {
 	    time: string;
 	    body: string;
@@ -4229,6 +4490,138 @@ export namespace opensearch {
 	        this.workspace = source["workspace"];
 	        this.matched_workspace = source["matched_workspace"];
 	    }
+	}
+	export class SessionEvent {
+	    sequence: number;
+	    time: string;
+	    kind: string;
+	    turn_id: string;
+	    tool_name?: string;
+	    tool_use_id?: string;
+	    success?: boolean;
+	    duration_ms?: number;
+	    input_size?: number;
+	    result_size?: number;
+	    agent?: string;
+	    agent_type?: string;
+	    agent_source?: string;
+	    tool_uses?: number;
+	    total_tokens?: number;
+	    model?: string;
+	    tokens_in?: number;
+	    tokens_out?: number;
+	    cost_usd?: number;
+	    tool_input?: string;
+	    tool_params?: Record<string, string>;
+	    content?: string;
+	    redacted?: boolean;
+	    content_length?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionEvent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sequence = source["sequence"];
+	        this.time = source["time"];
+	        this.kind = source["kind"];
+	        this.turn_id = source["turn_id"];
+	        this.tool_name = source["tool_name"];
+	        this.tool_use_id = source["tool_use_id"];
+	        this.success = source["success"];
+	        this.duration_ms = source["duration_ms"];
+	        this.input_size = source["input_size"];
+	        this.result_size = source["result_size"];
+	        this.agent = source["agent"];
+	        this.agent_type = source["agent_type"];
+	        this.agent_source = source["agent_source"];
+	        this.tool_uses = source["tool_uses"];
+	        this.total_tokens = source["total_tokens"];
+	        this.model = source["model"];
+	        this.tokens_in = source["tokens_in"];
+	        this.tokens_out = source["tokens_out"];
+	        this.cost_usd = source["cost_usd"];
+	        this.tool_input = source["tool_input"];
+	        this.tool_params = source["tool_params"];
+	        this.content = source["content"];
+	        this.redacted = source["redacted"];
+	        this.content_length = source["content_length"];
+	    }
+	}
+	export class SessionTotals {
+	    agent_spawns: number;
+	    subagent_reports: number;
+	    turns: number;
+	    tool_calls: number;
+	    failures: number;
+	    cost_usd: number;
+	    tokens_out: number;
+	    first_seen: string;
+	    last_seen: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionTotals(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.agent_spawns = source["agent_spawns"];
+	        this.subagent_reports = source["subagent_reports"];
+	        this.turns = source["turns"];
+	        this.tool_calls = source["tool_calls"];
+	        this.failures = source["failures"];
+	        this.cost_usd = source["cost_usd"];
+	        this.tokens_out = source["tokens_out"];
+	        this.first_seen = source["first_seen"];
+	        this.last_seen = source["last_seen"];
+	    }
+	}
+	export class SessionTimeline {
+	    session_id: string;
+	    workspace: string;
+	    events: SessionEvent[];
+	    truncated: boolean;
+	    total_events: number;
+	    warning?: string;
+	    content_available: boolean;
+	    totals: SessionTotals;
+	    tool_details_available: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionTimeline(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.session_id = source["session_id"];
+	        this.workspace = source["workspace"];
+	        this.events = this.convertValues(source["events"], SessionEvent);
+	        this.truncated = source["truncated"];
+	        this.total_events = source["total_events"];
+	        this.warning = source["warning"];
+	        this.content_available = source["content_available"];
+	        this.totals = this.convertValues(source["totals"], SessionTotals);
+	        this.tool_details_available = source["tool_details_available"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }

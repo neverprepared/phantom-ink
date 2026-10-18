@@ -89,7 +89,16 @@ otel-logs:
                     "properties": {
                       "attributes": {
                         "properties": {
-                          "duration_ms": { "type": "long" }
+                          "duration_ms": { "type": "long" },
+                          "event@sequence": { "type": "long" },
+                          "input_tokens": { "type": "long" },
+                          "output_tokens": { "type": "long" },
+                          "cache_read_tokens": { "type": "long" },
+                          "cache_creation_tokens": { "type": "long" },
+                          "response_length": { "type": "long" },
+                          "prompt_length": { "type": "long" },
+                          "tool_input_size_bytes": { "type": "long" },
+                          "tool_result_size_bytes": { "type": "long" }
                         }
                       }
                     }

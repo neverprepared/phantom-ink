@@ -2,6 +2,13 @@
 """
 Provision OpenSearch Dashboards index patterns, visualisations, and the
 Claude Code observability dashboard.  Idempotent — 409 = already exists.
+
+Because save() POSTs and an ignored 409 means "already exists", an existing
+object is never updated in place: every id must ALSO appear in the delete pass
+above the index patterns, or a re-run silently keeps the old definition.
+
+This file is kept byte-identical with two copies in phantom-ink
+(docker/opensearch/config/, app/compose/opensearch/config/). Edit all three.
 """
 import json, urllib.request, urllib.error, sys
 
@@ -64,7 +71,8 @@ def refresh_index_pattern(id_, pattern, time_field):
 print("==> Deleting existing objects")
 for vis_id in ["cc-total-cost", "cc-active-time", "cc-cost-over-time",
                "cc-token-usage", "cc-api-requests", "cc-api-latency",
-               "cc-model-cost"]:
+               "cc-model-cost", "cc-cost-by-source", "cc-cost-by-workspace",
+               "cc-tool-failures"]:
     delete("visualization", vis_id)
 delete("dashboard", "cc-dashboard")
 for ip_id in ["logs-otel", "metrics-otel", "otel-apm-span"]:
@@ -254,6 +262,55 @@ vis("cc-model-cost", "Cost by Model", "pie",
     "metrics-otel", 'name: "claude_code.cost.usage"')
 
 
+# Cost split by who spent it. This is the headline measured problem: a
+# transcript-based capture of the same sessions sees only the main thread, and
+# over 30 days main was $5154.69 against $503.27 subagent and $434.52
+# auxiliary -- 15.4% of spend invisible to it. query_source exists on the
+# cost.usage metric (verified: main / subagent / auxiliary), and `auxiliary`
+# is real spend with no agent behind it at all (compact, away_summary,
+# prompt_suggestion), which is why this reads "by source" and not "by agent".
+#
+# Stacked over time rather than a pie: the question is whether subagent spend
+# is growing, not only what it totals.
+vis("cc-cost-by-source", "Cost by Source (main / subagent / auxiliary)", "histogram",
+    bar_params("USD"),
+    [sum_agg("value", "Cost (USD)"), date_hist(),
+     terms_agg("metric.attributes.query_source.keyword", "Source", size=6)],
+    "metrics-otel", 'name: "claude_code.cost.usage"')
+
+# Every other visualisation here is cross-profile, which in this codebase is a
+# defect rather than a default -- profiles are the isolation boundary. Verified
+# over 30 days: personal $4457.50, lakeview $1609.62, gsa $25.36. This is also
+# the panel that makes the omission visible, so nobody reads the single Total
+# Cost figure as belonging to one profile.
+vis("cc-cost-by-workspace", "Cost by Workspace", "pie",
+    {"type": "pie", "addTooltip": True, "addLegend": True,
+     "legendPosition": "right", "isDonut": True,
+     "labels": {"show": False, "values": True, "last_level": True, "truncate": 100}},
+    [sum_agg("value", "Cost (USD)"),
+     {"id": "2", "enabled": True, "type": "terms",
+      "params": {"field": "metric.attributes.workspace.keyword", "size": 10,
+                 "order": "desc", "orderBy": "1", "customLabel": "Workspace"},
+      "schema": "segment"}],
+    "metrics-otel", 'name: "claude_code.cost.usage"')
+
+# Tool failures are the ONLY failure signal this index carries. Verified:
+# log.attributes.success exists on tool_result (6077 of 6077 docs over 7d) and
+# on NOTHING else -- zero of 6962 api_request, zero of 3719 assistant_response,
+# zero of 10654 hook_execution_*. So an API-error panel is not implementable
+# against this data, and this replaces the idea of one. Over 30 days: 764
+# failures, Bash 523 and mcp_tool 214.
+#
+# success is `text` with a .keyword subfield, hence the quoted "false" rather
+# than a boolean.
+vis("cc-tool-failures", "Tool Failures by Tool", "histogram",
+    bar_params("Failures"),
+    [count_agg("Failures"), date_hist(),
+     terms_agg("log.attributes.tool_name.keyword", "Tool", size=8)],
+    "logs-otel",
+    'log.attributes.event@name: "tool_result" and log.attributes.success: "false"')
+
+
 # ── Dashboard ──────────────────────────────────────────────────────────────────
 
 print("==> Dashboard")
@@ -268,6 +325,9 @@ layout = [
     ("cc-token-usage",     0,  15,  24, 10),
     ("cc-api-requests",   24,  15,  24, 10),
     ("cc-api-latency",     0,  25,  48, 10),
+    ("cc-cost-by-source",    0,  35, 24, 10),
+    ("cc-cost-by-workspace", 24, 35, 24, 10),
+    ("cc-tool-failures",     0,  45, 48, 10),
 ]
 
 panels, refs = [], []

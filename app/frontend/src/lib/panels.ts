@@ -36,6 +36,12 @@ export const panels: Panel[] = [
     icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/><circle cx="21" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>`,
   },
   {
+    id: 'agent-work',
+    label: 'Agent Work',
+    section: 'workspace',
+    icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4" r="2"/><circle cx="5" cy="14" r="2"/><circle cx="12" cy="14" r="2"/><circle cx="19" cy="14" r="2"/><path d="M12 6v2M12 8H5v4M12 8h7v4M12 8v4"/><path d="M3 20h18"/></svg>`,
+  },
+  {
     id: 'sessions',
     label: 'Sessions',
     section: 'workspace',

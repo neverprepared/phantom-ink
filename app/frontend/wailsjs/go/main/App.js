@@ -238,8 +238,24 @@ export function GetAgentRole(arg1) {
   return window['go']['main']['App']['GetAgentRole'](arg1);
 }
 
+export function GetAgentSessionTimeline(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetAgentSessionTimeline'](arg1, arg2, arg3);
+}
+
 export function GetAgentState(arg1) {
   return window['go']['main']['App']['GetAgentState'](arg1);
+}
+
+export function GetAgentWorkCharts(arg1, arg2) {
+  return window['go']['main']['App']['GetAgentWorkCharts'](arg1, arg2);
+}
+
+export function GetAgentWorkFreshness(arg1) {
+  return window['go']['main']['App']['GetAgentWorkFreshness'](arg1);
+}
+
+export function GetAgentWorkTimeline(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetAgentWorkTimeline'](arg1, arg2, arg3);
 }
 
 export function GetAppLogs() {
@@ -534,8 +550,16 @@ export function ListAgentRoles() {
   return window['go']['main']['App']['ListAgentRoles']();
 }
 
+export function ListAgentSessions(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListAgentSessions'](arg1, arg2, arg3);
+}
+
 export function ListAgentState(arg1) {
   return window['go']['main']['App']['ListAgentState'](arg1);
+}
+
+export function ListAgentWork(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListAgentWork'](arg1, arg2, arg3);
 }
 
 export function ListAgents() {

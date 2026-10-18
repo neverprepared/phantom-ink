@@ -210,7 +210,15 @@ class StreamLiveStore {
   // append; terminal/done statuses drop off the live view.
   applyAgentEvent(env: any): void {
     if (!env || typeof env !== 'object') return;
-    if (env.workspace && this.workspaceFilter && env.workspace !== this.workspaceFilter) return;
+    // Match refreshLive's server-side filter exactly. That query sends
+    // `workspace` only when it is non-empty (the Go client omits empty params),
+    // so phantom-events applies a strict `workspace = %s` for an active profile
+    // and no clause at all when none is active. The leading `env.workspace &&`
+    // here contradicted that: a workspace-less envelope passed the SSE filter
+    // under EVERY profile, then vanished on the next poll that excluded it.
+    // runner-work carries no workspace and is 59% of the bus, so this was the
+    // bulk of what the live view showed.
+    if (this.workspaceFilter && env.workspace !== this.workspaceFilter) return;
 
     // Retain an envelope if its status is in the set the view is currently
     // showing: the selected chips, or the default live set when none are picked.
