@@ -129,6 +129,8 @@ export function GetAgentState(arg1:string):Promise<brainbox.AgentStateItem>;
 
 export function GetAgentWorkCharts(arg1:string,arg2:string):Promise<main.AgentWorkCharts>;
 
+export function GetAgentWorkFreshness(arg1:string):Promise<main.AgentWorkFreshness>;
+
 export function GetAgentWorkTimeline(arg1:string,arg2:string,arg3:number):Promise<langfuse.SessionTimeline>;
 
 export function GetAppLogs():Promise<Array<string>>;

@@ -2828,6 +2828,22 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class AgentWorkFreshness {
+	    newest_iso?: string;
+	    age_ms: number;
+	    has_data: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentWorkFreshness(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.newest_iso = source["newest_iso"];
+	        this.age_ms = source["age_ms"];
+	        this.has_data = source["has_data"];
+	    }
+	}
 	export class AgentWorkRow {
 	    session_id: string;
 	    workspace: string;

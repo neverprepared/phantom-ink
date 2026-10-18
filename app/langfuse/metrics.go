@@ -69,13 +69,28 @@ type metricsShareRow struct {
 
 // granularityFor picks the time bucket from the window.
 //
-// Hourly over a day and daily over longer: an hourly series over a week is 168
-// points in a chart a few hundred pixels wide, which reads as noise.
+// The API accepts auto, minute, hour, day, week and month -- it names the set
+// in its own validation error. `auto` works, but it decides the bucket without
+// telling us which, and the chart axis label has to state it, so the mapping is
+// explicit here instead:
+//
+//	<= 60m  minute  (15 to 60 points)
+//	<= 72h  hour    (24 to 72 points)
+//	else    day
+//
+// Hour is kept up to 3 days deliberately: daily buckets over 3 days is three
+// points, which is a table pretending to be a chart. The ceiling in the other
+// direction is the same judgement -- an hourly series over a week is 168 points
+// in a few hundred pixels, which reads as noise.
 func granularityFor(from, to time.Time) string {
-	if to.Sub(from) <= 26*time.Hour {
+	switch d := to.Sub(from); {
+	case d <= 61*time.Minute:
+		return "minute"
+	case d <= 73*time.Hour:
 		return "hour"
+	default:
+		return "day"
 	}
-	return "day"
 }
 
 // parseBucket reads the two shapes the API returns for a bucket label: a bare
@@ -297,4 +312,35 @@ func (c *Client) UILink(projectID, path string) string {
 		return ""
 	}
 	return fmt.Sprintf("%s/project/%s/%s", c.baseURL, projectID, strings.TrimPrefix(path, "/"))
+}
+
+// Freshness reports the newest observation in the project, regardless of any
+// window.
+//
+// Exists because a SHORT range is routinely empty here and that looks like a
+// broken panel rather than a property of the capture: the Claude Code hook
+// fires on Stop, once per COMPLETED turn, so nothing is written during a long
+// turn. Measured while adding the short ranges -- the newest observation was
+// 148 minutes old while the session was actively working. A panel that can say
+// that is telling the truth; one that just shows an empty chart is not.
+//
+// Returns the zero time when the project has no observations at all.
+func (c *Client) Freshness(ctx context.Context) (time.Time, error) {
+	q := url.Values{}
+	q.Set("limit", "1")
+	// `basic` carries startTime; `core` alone omits the fields we need.
+	q.Set("fields", "core,basic")
+
+	var resp obsResponse
+	if err := c.get(ctx, "/api/public/v2/observations", q, &resp); err != nil {
+		return time.Time{}, err
+	}
+	if len(resp.Data) == 0 {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, resp.Data[0].StartTime)
+	if err != nil {
+		return time.Time{}, nil
+	}
+	return t.UTC(), nil
 }

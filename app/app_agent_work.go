@@ -389,3 +389,47 @@ func (a *App) GetAgentWorkCharts(profile, since string) (*AgentWorkCharts, error
 	}
 	return out, nil
 }
+
+// AgentWorkFreshness reports how far behind Langfuse is.
+//
+// Called by the panel when a list comes back EMPTY, which is routine on a short
+// range and looks exactly like a broken panel otherwise. The Claude Code
+// capture is a Stop hook: it writes once per COMPLETED turn, so nothing lands
+// during a long turn. Measured while the short ranges were added -- the newest
+// observation was 148 minutes old while the session was actively working, so
+// every window under an hour was legitimately empty.
+type AgentWorkFreshness struct {
+	// NewestISO is empty when the project holds no observations at all, which
+	// the UI must distinguish from "nothing in this window".
+	NewestISO string `json:"newest_iso,omitempty"`
+	AgeMS     int64  `json:"age_ms"`
+	HasData   bool   `json:"has_data"`
+}
+
+// GetAgentWorkFreshness returns the age of the newest observation.
+func (a *App) GetAgentWorkFreshness(profile string) (*AgentWorkFreshness, error) {
+	c := a.langfuseClient(profile)
+	if c == nil {
+		return nil, fmt.Errorf("Langfuse is not configured for profile %q", profile)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), agentSessionQueryTimeout)
+	defer cancel()
+
+	t, err := c.Freshness(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := &AgentWorkFreshness{}
+	if t.IsZero() {
+		return out, nil
+	}
+	out.HasData = true
+	out.NewestISO = t.UTC().Format(time.RFC3339)
+	// Clamp: the app's clock and the ingest path's are independent, and a
+	// slightly-future timestamp is skew rather than an age of minus three
+	// minutes.
+	if ms := time.Since(t).Milliseconds(); ms > 0 {
+		out.AgeMS = ms
+	}
+	return out, nil
+}

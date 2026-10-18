@@ -129,12 +129,25 @@ func TestGetChartsDropsEmptyAndNullCategories(t *testing.T) {
 	}
 }
 
-func TestGranularityFollowsTheWindow(t *testing.T) {
-	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	cases := map[string]string{"now-1h": "hour", "now-24h": "hour", "now-7d": "day", "now-30d": "day"}
-	for since, want := range cases {
-		if got := granularityFor(sinceTime(since, now), now); got != want {
-			t.Errorf("granularityFor(%s) = %q, want %q", since, got, want)
+func TestGranularityBoundaries(t *testing.T) {
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	// Asserted on BOTH sides of each threshold. A table of typical ranges
+	// passes against an off-by-one comparison; these do not.
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{time.Minute, "minute"},
+		{61 * time.Minute, "minute"}, // inclusive upper bound
+		{61*time.Minute + time.Second, "hour"},
+		{24 * time.Hour, "hour"},
+		{73 * time.Hour, "hour"}, // inclusive upper bound
+		{73*time.Hour + time.Second, "day"},
+		{7 * 24 * time.Hour, "day"},
+	}
+	for _, tc := range cases {
+		if got := granularityFor(now.Add(-tc.d), now); got != tc.want {
+			t.Errorf("granularityFor(-%v) = %q, want %q", tc.d, got, tc.want)
 		}
 	}
 }
@@ -225,5 +238,76 @@ func TestProjectIDAndUILink(t *testing.T) {
 	// No project id means no link, rather than a URL that 404s.
 	if c.UILink("", "sessions") != "" {
 		t.Error("UILink with no project id should be empty")
+	}
+}
+
+func TestGranularityCoversTheShortRanges(t *testing.T) {
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	// The panel's own range set. Minute buckets for the short ones or a 15m
+	// trend chart is a single point; hour up to 3 days, because daily buckets
+	// over 3 days is three points.
+	cases := map[string]string{
+		"now-15m": "minute",
+		"now-30m": "minute",
+		"now-60m": "minute",
+		"now-24h": "hour",
+		"now-3d":  "hour",
+		"now-7d":  "day",
+		"now-30d": "day",
+	}
+	for since, want := range cases {
+		if got := granularityFor(sinceTime(since, now), now); got != want {
+			t.Errorf("granularityFor(%s) = %q, want %q", since, got, want)
+		}
+	}
+}
+
+// Point counts per range, so a change to the thresholds cannot quietly produce
+// a chart with two points or two hundred.
+func TestGranularityYieldsAReadablePointCount(t *testing.T) {
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	per := map[string]time.Duration{
+		"minute": time.Minute, "hour": time.Hour, "day": 24 * time.Hour,
+	}
+	for _, since := range []string{"now-15m", "now-30m", "now-60m", "now-24h", "now-3d"} {
+		from := sinceTime(since, now)
+		g := granularityFor(from, now)
+		pts := int(now.Sub(from) / per[g])
+		if pts < 10 || pts > 100 {
+			t.Errorf("%s at %q granularity gives %d points; want 10..100 for a "+
+				"chart a few hundred pixels wide", since, g, pts)
+		}
+	}
+}
+
+func TestFreshnessReportsTheNewestObservation(t *testing.T) {
+	const body = `{"data":[{"id":"o1","startTime":"2026-10-18T12:00:00Z",
+	  "type":"GENERATION","sessionId":"s1"}]}`
+	c, caps := serve(t, body, `{"data":[]}`)
+	got, err := c.Freshness(context.Background())
+	if err != nil {
+		t.Fatalf("Freshness: %v", err)
+	}
+	want := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("Freshness = %v, want %v", got, want)
+	}
+	// startTime lives in the `basic` group; `core` alone omits it, which is the
+	// same trap that made the session list return zero rows.
+	if q := caps.get(obsPath); !strings.Contains(q, "basic") {
+		t.Errorf("Freshness must request the basic field group: %s", q)
+	}
+}
+
+// An empty project is not an error: it means nothing has been traced yet, and
+// the caller renders that differently from a failure.
+func TestFreshnessOnAnEmptyProject(t *testing.T) {
+	c, _ := serve(t, `{"data":[]}`, `{"data":[]}`)
+	got, err := c.Freshness(context.Background())
+	if err != nil {
+		t.Fatalf("Freshness: %v", err)
+	}
+	if !got.IsZero() {
+		t.Errorf("Freshness = %v, want the zero time", got)
 	}
 }

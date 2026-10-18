@@ -115,3 +115,46 @@ func TestLiveGetAgentWorkCharts(t *testing.T) {
 		}
 	}
 }
+
+// Every range the panel offers, end to end: the list, the charts and the
+// freshness explanation. AGENTWORK_LIVE=1 to run.
+func TestLiveAllRanges(t *testing.T) {
+	if os.Getenv("AGENTWORK_LIVE") == "" {
+		t.Skip("set AGENTWORK_LIVE=1 to run")
+	}
+	root := os.Getenv("WORKSPACES_ROOT")
+	if root == "" {
+		root = "/Users/cdowning/workspaces/profiles"
+	}
+	a := &App{config: &Config{WorkspacesRoot: root}}
+
+	if f, err := a.GetAgentWorkFreshness("personal"); err != nil {
+		t.Fatalf("freshness: %v", err)
+	} else {
+		t.Logf("newest observation: %s old (has_data=%v)",
+			(time.Duration(f.AgeMS) * time.Millisecond).Round(time.Second), f.HasData)
+	}
+
+	for _, since := range []string{"now-15m", "now-30m", "now-60m", "now-24h", "now-3d"} {
+		rows, err := a.ListAgentWork("personal", since, 50)
+		if err != nil {
+			t.Fatalf("%s list: %v", since, err)
+		}
+		c, err := a.GetAgentWorkCharts("personal", since)
+		if err != nil {
+			t.Fatalf("%s charts: %v", since, err)
+		}
+		var cost float64
+		for _, p := range c.CostSeries {
+			cost += p.Value
+		}
+		t.Logf("%-8s sessions=%-2d granularity=%-6s points=%-3d cost=$%.2f",
+			since, len(rows), c.Granularity, len(c.CostSeries), cost)
+		// A chart with fewer than two points is a number, not a trend. Empty is
+		// fine (nothing happened); one point means the bucket is too coarse.
+		if len(c.CostSeries) == 1 {
+			t.Errorf("%s produced a single-point series at %q granularity",
+				since, c.Granularity)
+		}
+	}
+}

@@ -162,9 +162,21 @@
   }
 
   const RANGES = [
+    { label: '15m', value: 'now-15m' },
+    { label: '30m', value: 'now-30m' },
+    { label: '60m', value: 'now-60m' },
     { label: '24h', value: 'now-24h' },
-    { label: '7d', value: 'now-7d' },
+    { label: '3d', value: 'now-3d' },
   ];
+
+  // Ranges under an hour are routinely EMPTY here, and that is a property of
+  // the capture rather than a fault: Langfuse's Claude Code hook fires on Stop,
+  // once per completed turn, so nothing is written during a long turn. Measured
+  // while these ranges were added, the newest observation was 2h30m old while
+  // the session was actively working. So when a list comes back empty the panel
+  // asks how far behind the store is and says so, instead of showing a blank
+  // table that looks like the bug we spent five rounds chasing.
+  const SHORT_RANGES = new Set(['now-15m', 'now-30m', 'now-60m']);
 
   let view = $state<View>('sessions');
   let sessionView = $state<SessionView>('list');
@@ -172,6 +184,7 @@
   // mouse does not lose it.
   let pinnedObsId = $state<string | null>(null);
   let charts = $state<Charts | null>(null);
+  let freshness = $state<{ age_ms: number; has_data: boolean } | null>(null);
   let chartsLoading = $state(false);
   let chartsError = $state('');
   let chartsEpoch = 0;
@@ -230,6 +243,13 @@
       sessions = ((rows ?? []) as AgentWorkRow[])
         .slice()
         .sort((a, b) => Number(isActive(b)) - Number(isActive(a)));
+      // Only asked for when there is nothing to show: one extra call in the
+      // case that needs an explanation, none in the case that does not.
+      if (sessions.length === 0) {
+        void loadFreshness();
+      } else {
+        freshness = null;
+      }
     } catch (e) {
       if (mine !== listEpoch) return;
       error = String(e);
@@ -237,6 +257,29 @@
     } finally {
       if (mine === listEpoch) loading = false;
     }
+  }
+
+  async function loadFreshness() {
+    try {
+      const api = await getApi();
+      if (!api || !activeProfile) return;
+      freshness = (await withTimeout(
+        api.GetAgentWorkFreshness(activeProfile),
+        'GetAgentWorkFreshness',
+      )) as { age_ms: number; has_data: boolean };
+    } catch {
+      // A failed explanation must not become an error of its own.
+      freshness = null;
+    }
+  }
+
+  function humanAge(ms: number): string {
+    const s = Math.round(ms / 1000);
+    if (s < 60) return `${s}s`;
+    if (s < 3600) return `${Math.round(s / 60)}m`;
+    const h = Math.floor(s / 3600);
+    const m = Math.round((s % 3600) / 60);
+    return m ? `${h}h ${m}m` : `${h}h`;
   }
 
   // Charts are fetched only while a chart tab is open. GetCharts issues four
@@ -440,6 +483,24 @@
     })),
   );
 
+  // Says WHY the window is empty, using the measured lag rather than a
+  // generic "no data" that reads as a malfunction.
+  const emptyMessage = $derived.by(() => {
+    const win = range.replace('now-', 'the last ');
+    const base = `Queried Langfuse for environment "${activeProfile}" over ${win}.`;
+    if (freshness && !freshness.has_data) {
+      return `${base} This project holds no observations at all yet.`;
+    }
+    if (freshness) {
+      const age = humanAge(freshness.age_ms);
+      const short = SHORT_RANGES.has(range)
+        ? ' Langfuse captures Claude Code on a Stop hook — it writes once per completed turn, so a short window is often empty even while work is happening.'
+        : '';
+      return `${base} The newest observation in Langfuse is ${age} old, so nothing falls inside this window.${short}`;
+    }
+    return `${base} Nothing has been traced there in that range.`;
+  });
+
   const costTotal = $derived(
     (charts?.cost_series ?? []).reduce((a, p) => a + p.value, 0),
   );
@@ -517,9 +578,7 @@
       title={activeProfile
         ? 'No agent sessions in this window'
         : 'No profile selected'}
-      message={activeProfile
-        ? `Queried Langfuse for environment "${activeProfile}" over ${range.replace('now-', 'the last ')}. Nothing has been traced there in that range.`
-        : 'Agent Work reads Langfuse, whose API keys are per profile. Select a profile to load its sessions.'}
+      message={activeProfile ? emptyMessage : 'Agent Work reads Langfuse, whose API keys are per profile. Select a profile to load its sessions.'}
     />
   {:else if sessions.length > 0}
     <div class="table-wrap">
