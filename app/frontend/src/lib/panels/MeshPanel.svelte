@@ -6,6 +6,9 @@
   import { onMount, onDestroy } from 'svelte';
   import { getApi } from '../utils/api';
   import { timeAgo } from '../utils/format';
+  import { buildVaultTree } from '../utils/meshPivot';
+  import { getProfileColor } from '../utils/profileColors';
+  import { profileColorStore } from '../stores.svelte';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import VaultBrowser from './VaultBrowser.svelte';
@@ -278,23 +281,29 @@
     await runAction('clear', () => (a as any).ClearMeshErrors(), (r) => `cleared ${r?.cleared ?? 0} recorded errors`);
   }
 
-  // Mesh-view sub-tab filters: by machine (mesh node) and by profile. Values
-  // are derived from the data, not hardcoded. Filters AND together.
-  // Peer ids are <machine>-<profile>-<vault> (e.g. m3-gsa-agents), so the
-  // machine is the first segment — every peer on m3 folds into one "m3" chip.
-  const machineOf = (id: string): string => id.split('-')[0];
-  let machineFilter = $state<string>('all');
-  let profileFilter = $state<string>('all');
-  const machines = $derived([...new Set(peers.map((p) => machineOf(p.id)))].sort());
+  // The daemon reports one peer per (machine, profile, vault) triple, so three
+  // profiles × four vaults × two machines is 24 flat rows describing a grid
+  // that is really 12 × 2. Pivot it: rows are profile-vault, columns are
+  // machines. "Is personal-memory behind on m3 but not storage?" then reads at
+  // a glance instead of by scanning two dozen rows for a shared prefix.
+  // Derivation lives in utils/meshPivot so the panel holds no parsing logic.
   const profiles = $derived([...new Set(peers.map((p) => p.profile))].sort());
-  const filteredPeers = $derived(
-    peers.filter(
-      (p) =>
-        (machineFilter === 'all' || machineOf(p.id) === machineFilter) &&
-        (profileFilter === 'all' || p.profile === profileFilter),
-    ),
+  let profileFilter = $state<string>('all');
+
+  // Filter first, then group, so a profile filter prunes the tree rather than
+  // leaving empty branches — and so the root counts describe what is shown.
+  const visiblePeers = $derived(
+    peers.filter((p) => profileFilter === 'all' || p.profile === profileFilter),
   );
-  const liveCount = $derived(filteredPeers.filter((p) => p.live).length);
+  const vaultTree = $derived(buildVaultTree(visiblePeers));
+  const liveCount = $derived(vaultTree.reduce((n, v) => n + v.liveCount, 0));
+  const shownPeerCount = $derived(vaultTree.reduce((n, v) => n + v.peerCount, 0));
+
+  // One expanded vault at a time. Expanding reveals the whole subtree — every
+  // profile and, under each, every machine with its own latency, errors and
+  // full <machine>-<profile>-<vault> id.
+  let expandedVault = $state<string | null>(null);
+  const toggleVault = (key: string) => (expandedVault = expandedVault === key ? null : key);
 </script>
 
 <div class="mesh">
@@ -465,7 +474,7 @@
 
     <!-- Peers -->
     <section class="card peers">
-      <h2>Peers <span class="peer-count">{liveCount}/{filteredPeers.length} live</span></h2>
+      <h2>Peers <span class="peer-count">{liveCount}/{shownPeerCount} live across {vaultTree.length} vaults</span></h2>
       {#if peers.length === 0}
         <EmptyState
           title={status.sync_enabled ? 'No peers' : 'Sync disabled'}
@@ -476,13 +485,6 @@
       {:else}
         <div class="filters">
           <div class="filter-row">
-            <span class="filter-label">machine</span>
-            <button class="pill" class:active={machineFilter === 'all'} onclick={() => (machineFilter = 'all')}>all</button>
-            {#each machines as m (m)}
-              <button class="pill" class:active={machineFilter === m} onclick={() => (machineFilter = m)}>{m}</button>
-            {/each}
-          </div>
-          <div class="filter-row">
             <span class="filter-label">profile</span>
             <button class="pill" class:active={profileFilter === 'all'} onclick={() => (profileFilter = 'all')}>all</button>
             {#each profiles as pr (pr)}
@@ -490,52 +492,93 @@
             {/each}
           </div>
         </div>
-        {#if filteredPeers.length === 0}
+        {#if vaultTree.length === 0}
           <p class="no-match">No peers match the current filters.</p>
         {:else}
-        <div class="table-wrap">
-          <table class="peer-table">
-            <thead>
-              <tr>
-                <th>peer</th>
-                <th>profile</th>
-                <th>live</th>
-                <th class="num">db-lag</th>
-                <th class="num">links-lag</th>
-                <th class="num">cursor-age</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each filteredPeers as p (p.id + p.profile)}
-                <tr>
-                  <td>
-                    <div class="peer-id">{p.id}</div>
-                    {#if p.base_url}<div class="peer-url">{p.base_url}</div>{/if}
-                    {#if p.errors_24h}
-                      <button
-                        class="peer-warn"
-                        title={`${p.errors_24h} recorded errors — show them`}
-                        onclick={() => {
-                          setErrorPeerFilter(p.id);
-                          errorsOpen = true;
-                        }}>⚠ {p.errors_24h}</button>
-                    {/if}
-                  </td>
-                  <td>{p.profile}</td>
-                  <td>
-                    <span class="dot" class:up={p.live} class:down={!p.live}></span>
-                    <span class="live-txt">{p.live ? 'up' : 'down'}</span>
-                    {#if !p.live && p.live_note}
-                      <span class="live-note">{p.live_note}</span>
-                    {/if}
-                  </td>
-                  <td class="num">{p.db_lag}</td>
-                  <td class="num">{p.links_lag}</td>
-                  <td class="num">{p.cursor_age}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+        <div class="vault-cards">
+          {#each vaultTree as v (v.key)}
+            <section class="vault-card" class:open={expandedVault === v.key}>
+              <button
+                class="vault-head"
+                aria-expanded={expandedVault === v.key}
+                title="show every profile and machine for this vault"
+                onclick={() => toggleVault(v.key)}
+              >
+                <span class="caret">{expandedVault === v.key ? '▾' : '▸'}</span>
+                <span class="vault-name">{v.vault}</span>
+                <span class="stat"><span class="k">profiles</span><span class="v num-v">{v.profiles.length}</span></span>
+                <span class="stat"><span class="k">peers up</span><span class="v num-v" class:degraded={v.liveCount < v.peerCount}>{v.liveCount}/{v.peerCount}</span></span>
+                <span class="stat"><span class="k">worst lag</span><span class="v num-v" class:degraded={v.worstLag !== '0' && v.worstLag !== '-'}>{v.worstLag}</span></span>
+                {#if v.errors24h}
+                  <span class="stat"><span class="k">errors</span><span class="v num-v warn">{v.errors24h}</span></span>
+                {/if}
+              </button>
+
+              {#if expandedVault === v.key}
+                <div class="profile-cards">
+                  {#each v.profiles as pg (pg.key)}
+                    {@const pc = getProfileColor(pg.profile, profileColorStore.getOverride(pg.profile))}
+                    <section
+                      class="profile-card"
+                      style="background:{pc.bg}; border-color:{pc.border}; border-left-color:{pc.text}"
+                    >
+                      <header class="profile-head">
+                        <span class="profile-name" style="color:{pc.text}">{pg.profile}</span>
+                        <span class="stat"><span class="k">peers up</span><span class="v num-v" class:degraded={pg.liveCount < pg.peerCount}>{pg.liveCount}/{pg.peerCount}</span></span>
+                        <span class="stat"><span class="k">worst lag</span><span class="v num-v" class:degraded={pg.worstLag !== '0' && pg.worstLag !== '-'}>{pg.worstLag}</span></span>
+                      </header>
+
+                      <div class="machine-cards">
+                        {#each pg.machines as me (me.peer.id)}
+                          <div class="machine-card">
+                            <div class="machine-line">
+                              <span class="k">machine</span>
+                              <span class="machine-name">{me.machine}</span>
+                              <span class="dot" class:up={me.peer.live} class:down={!me.peer.live}></span>
+                              <span class="live-txt">{me.peer.live ? 'up' : 'down'}</span>
+                              {#if !me.peer.live && me.peer.live_note}
+                                <span class="live-note-inline">{me.peer.live_note}</span>
+                              {/if}
+                              {#if me.peer.errors_24h}
+                                <button
+                                  class="peer-warn"
+                                  title={`${me.peer.errors_24h} recorded errors on ${me.peer.id} — show them`}
+                                  onclick={() => { setErrorPeerFilter(me.peer.id); errorsOpen = true; }}
+                                >⚠ {me.peer.errors_24h} errors</button>
+                              {/if}
+                            </div>
+                            {#if me.peer.live}
+                              <div class="kv-row">
+                                <span class="kv"><span class="k">db lag</span><span class="v num-v">{me.peer.db_lag}</span></span>
+                                <span class="kv"><span class="k">links lag</span><span class="v num-v">{me.peer.links_lag}</span></span>
+                                <span class="kv"><span class="k">cursor age</span><span class="v num-v">{me.peer.cursor_age}</span></span>
+                              </div>
+                            {/if}
+                            <div class="kv-row">
+                              <span class="kv"><span class="k">peer</span><span class="v mono">{me.peer.id}</span></span>
+                            </div>
+                            {#if me.peer.base_url}
+                              <div class="kv-row">
+                                <span class="kv"><span class="k">url</span><span class="v mono">{me.peer.base_url}</span></span>
+                              </div>
+                            {/if}
+                            {#if me.peer.last_error}
+                              <div class="kv-row">
+                                <span class="kv">
+                                  <span class="k">last error</span>
+                                  <span class="v mono drill-err">{me.peer.last_error.class} · {me.peer.last_error.phase} · {me.peer.last_error.err}</span>
+                                </span>
+                              </div>
+                            {/if}
+                          </div>
+                        {/each}
+                      </div>
+                    </section>
+                  {/each}
+                </div>
+              {/if}
+            </section>
+          {/each}
         </div>
         {/if}
       {/if}
@@ -682,20 +725,76 @@
   .pill.active { color: var(--color-text-primary); border-color: var(--color-text-primary); }
   .no-match { color: var(--color-text-muted); font-size: 0.85rem; margin: 0; }
 
-  .table-wrap { overflow-x: auto; }
-  .peer-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  .peer-table th {
-    text-align: left; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em;
-    color: var(--color-text-tertiary); font-weight: 500; padding: 0 12px 8px 0; white-space: nowrap;
-  }
-  .peer-table th.num, .peer-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  .peer-table td { padding: 8px 12px 8px 0; border-top: 1px solid var(--color-border-secondary); vertical-align: top; }
-  .peer-id { font-family: var(--font-mono); color: var(--color-text-primary); }
-  .peer-url { font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-text-muted); margin-top: 2px; }
-
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
   .dot.up { background: var(--color-success); }
   .dot.down { background: var(--color-error); }
   .live-txt { color: var(--color-text-secondary); }
-  .live-note { display: block; font-size: 0.7rem; color: var(--color-text-muted); margin-top: 2px; }
+
+  /* A group that is not fully live, or is behind: the number is the signal. */
+  .v.degraded { color: var(--color-warning); font-weight: 600; }
+
+  /* Vault → profile → machine as nested cards, using the same surface,
+     border, radius and spacing tokens as every other card in the app. */
+  .vault-cards { display: flex; flex-direction: column; gap: var(--spacing-sm); }
+  .vault-card {
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-card);
+    overflow: hidden;
+  }
+  .vault-head {
+    display: flex; align-items: baseline; gap: var(--spacing-md); flex-wrap: wrap;
+    width: 100%; padding: 10px 14px; background: none; border: none;
+    font: inherit; text-align: left; cursor: pointer;
+  }
+  .vault-head:hover { background: var(--color-bg-tertiary); }
+  .caret { color: var(--color-text-tertiary); }
+  .vault-name {
+    font-family: var(--font-mono); font-weight: 600; font-size: 0.95rem;
+    color: var(--color-text-primary); min-width: 78px;
+  }
+  .stat { display: inline-flex; align-items: baseline; gap: 5px; }
+  .v.warn { color: var(--color-warning); }
+
+  /* A profile is its own card inside the vault, tinted in that profile's
+     palette colour (hash + user override) so it looks the same here as in the
+     title bar, and so three profiles read as three cards not one block. */
+  .profile-cards {
+    display: flex; flex-direction: column; gap: var(--spacing-sm);
+    padding: 0 14px 14px;
+  }
+  .profile-card {
+    border: 1px solid transparent; border-left-width: 3px;
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+  }
+  .profile-head {
+    display: flex; align-items: baseline; gap: var(--spacing-md); flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .profile-name { font-weight: 600; }
+
+  .machine-cards { display: flex; flex-direction: column; gap: 8px; }
+  .machine-card {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+  }
+  .machine-line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .machine-name { font-family: var(--font-mono); font-weight: 600; color: var(--color-text-primary); }
+  .live-note-inline { font-size: 0.7rem; color: var(--color-text-muted); }
+
+  /* Every value carries its key, so nothing in the tree is a bare string the
+     reader has to infer the meaning of. */
+  .kv-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 3px; }
+  .kv { display: inline-flex; align-items: baseline; gap: 5px; }
+  .k {
+    font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--color-text-tertiary); white-space: nowrap;
+  }
+  .v { color: var(--color-text-secondary); }
+  .v.num-v { font-variant-numeric: tabular-nums; }
+  .v.mono { font-family: var(--font-mono); font-size: 0.72rem; overflow-wrap: anywhere; }
+  .drill-err { color: var(--color-text-tertiary); max-width: 520px; }
 </style>
