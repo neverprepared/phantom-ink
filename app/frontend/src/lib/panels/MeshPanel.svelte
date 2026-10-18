@@ -194,7 +194,14 @@
       if (existing) existing.count++;
       else byKey.set(key, { key, peer: e.peer, cls: e.class, count: 1, latest: e });
     }
-    return [...byKey.values()].sort((a, b) => b.count - a.count);
+    // Count descending, then a deterministic tie-break on peer then class. The
+    // rows are keyed, so Svelte MOVES them on a reorder rather than rebuilding
+    // — smooth enough to miss mid-click, which would land "reset cursor" on a
+    // row the operator did not aim at. Equal counts must therefore hold a fixed
+    // order rather than inheriting Map insertion order.
+    return [...byKey.values()].sort(
+      (a, b) => b.count - a.count || a.peer.localeCompare(b.peer) || a.cls.localeCompare(b.cls),
+    );
   });
 
   let errorsOpen = $state(false);
@@ -225,19 +232,23 @@
     }
   }
 
-  async function retryPeer(id: string) {
+  // The action is per-peer, but the in-flight LABEL is keyed by group so only
+  // the clicked row reads "retrying…". Keyed by peer, a peer with both a dns
+  // and an auth group lit up both rows — which, combined with a reorder, makes
+  // the clicked row look idle while a sibling looks busy.
+  async function retryPeer(id: string, groupKey: string) {
     const a = await getApi();
     if (!a) return;
     // A retry that fails must say why — reporting failure is the button's whole
     // point, so the daemon's own error text wins over the merged counts.
-    await runAction(`retry:${id}`, () => (a as any).RetryMeshPeer(id), (r) =>
+    await runAction(`retry:${groupKey}`, () => (a as any).RetryMeshPeer(id), (r) =>
       r?.errors?.length
         ? `${id}: retry failed — ${r.errors[0].err}`
         : `${id}: merged ${r?.rows_merged ?? 0} rows, ${r?.links_merged ?? 0} links`,
     );
   }
 
-  async function resetCursor(id: string) {
+  async function resetCursor(id: string, groupKey: string) {
     if (
       !window.confirm(
         `Reset the sync cursor for ${id}?\n\nThe next pull re-reads its whole op-log. Costs bandwidth; cannot lose data.`,
@@ -246,7 +257,19 @@
       return;
     const a = await getApi();
     if (!a) return;
-    await runAction(`reset:${id}`, () => (a as any).ResetMeshPeerCursor(id), () => `${id}: cursor reset`);
+    await runAction(`reset:${groupKey}`, () => (a as any).ResetMeshPeerCursor(id), () => `${id}: cursor reset`);
+  }
+
+  // A note describes one click against one filter view, so it must not outlive
+  // either — closing the card or changing the filter retires it.
+  function toggleErrors() {
+    errorsOpen = !errorsOpen;
+    if (!errorsOpen) actionNote = null;
+  }
+
+  function setErrorPeerFilter(peer: string | null) {
+    errorPeerFilter = peer;
+    actionNote = null;
   }
 
   async function clearErrors() {
@@ -314,7 +337,10 @@
         class:active={activeTab === t.id}
         role="tab"
         aria-selected={activeTab === t.id}
-        onclick={() => (activeTab = t.id)}
+        onclick={() => {
+          activeTab = t.id;
+          actionNote = null;
+        }}
       >{t.label}{#if t.id !== 'mesh' && authFor(t.id)}<span
             class="auth-dot {authClass(t.id)}"
             title={authTitle(t.id)}
@@ -324,6 +350,16 @@
   </div>
 
   {#if activeTab === 'mesh'}
+  <!-- Remediation feedback lives at panel level, not in the errors card: a
+       successful clear empties the ring and unmounts that card, and an action
+       against a dead daemon swaps the whole chain for the unreachable state.
+       Either would take the note with it and leave the click unconfirmed. -->
+  {#if actionNote}
+    <p class="action-note" role="status" aria-live="polite">
+      {actionNote}
+      <button class="note-x" onclick={() => (actionNote = null)} aria-label="dismiss">✕</button>
+    </p>
+  {/if}
   {#if !loaded}
     <Spinner />
   {:else if loadError}
@@ -350,7 +386,7 @@
         </div>
         <button
           class="counter counter-btn"
-          onclick={() => (errorsOpen = !errorsOpen)}
+          onclick={toggleErrors}
           disabled={recentErrors.length === 0}
           aria-expanded={errorsOpen}
           title={recentErrors.length ? 'show recorded errors' : 'no recorded error detail to show'}
@@ -376,7 +412,7 @@
           Errors
           <span class="peer-count">{errorGroups.length} grouped by peer and cause</span>
           {#if errorPeerFilter}
-            <button class="pill active" onclick={() => (errorPeerFilter = null)}>{errorPeerFilter} ✕</button>
+            <button class="pill active" onclick={() => setErrorPeerFilter(null)}>{errorPeerFilter} ✕</button>
           {/if}
           <button class="btn sm" onclick={() => void clearErrors()} disabled={!adminKeySet || actionBusy !== null}>
             {actionBusy === 'clear' ? 'clearing…' : 'clear errors'}
@@ -384,11 +420,11 @@
         </h2>
         {#if !adminKeySet}
           <p class="no-match">
-            No mesh admin key configured — actions are disabled. Set <code>PB_ADMIN_KEY</code> in the
-            app's environment to match the daemon's.
+            No mesh admin key configured — actions are disabled. Save one under
+            <strong>brain mesh admin key</strong> in Settings, or set an ambient
+            <code>PB_ADMIN_KEY</code> in the app's environment, matching the daemon's.
           </p>
         {/if}
-        {#if actionNote}<p class="action-note">{actionNote}</p>{/if}
         {#if shownGroups.length === 0}
           <p class="no-match">No recorded errors for {errorPeerFilter}.</p>
         {/if}
@@ -406,18 +442,18 @@
               <div class="err-actions">
                 <button
                   class="btn sm"
-                  onclick={() => void retryPeer(g.peer)}
+                  onclick={() => void retryPeer(g.peer, g.key)}
                   disabled={!adminKeySet || actionBusy !== null}
                 >
-                  {actionBusy === `retry:${g.peer}` ? 'retrying…' : 'retry peer'}
+                  {actionBusy === `retry:${g.key}` ? 'retrying…' : 'retry peer'}
                 </button>
                 {#if g.latest.phase === 'pull' || g.latest.phase === 'links'}
                   <button
                     class="btn sm danger"
-                    onclick={() => void resetCursor(g.peer)}
+                    onclick={() => void resetCursor(g.peer, g.key)}
                     disabled={!adminKeySet || actionBusy !== null}
                   >
-                    {actionBusy === `reset:${g.peer}` ? 'resetting…' : 'reset cursor'}
+                    {actionBusy === `reset:${g.key}` ? 'resetting…' : 'reset cursor'}
                   </button>
                 {/if}
               </div>
@@ -480,7 +516,7 @@
                         class="peer-warn"
                         title={`${p.errors_24h} recorded errors — show them`}
                         onclick={() => {
-                          errorPeerFilter = p.id;
+                          setErrorPeerFilter(p.id);
                           errorsOpen = true;
                         }}>⚠ {p.errors_24h}</button>
                     {/if}
@@ -614,7 +650,19 @@
     color: var(--color-text-tertiary); overflow-wrap: anywhere;
   }
   .err-actions { margin-top: 6px; display: flex; gap: 6px; }
-  .action-note { font-size: 0.78rem; color: var(--color-text-secondary); margin: 0 0 var(--spacing-sm); }
+  /* Panel-level, so it outlives both the errors card and the unreachable swap. */
+  .action-note {
+    display: flex; align-items: center; gap: var(--spacing-sm);
+    font-size: 0.78rem; color: var(--color-text-secondary);
+    margin: 0 0 var(--spacing-lg); padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--color-bg-secondary); border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-sm);
+  }
+  .note-x {
+    margin-left: auto; background: none; border: none; cursor: pointer;
+    color: var(--color-text-tertiary); font-size: 0.7rem; padding: 0 2px; line-height: 1;
+  }
+  .note-x:hover { color: var(--color-text-primary); }
   .errors-card code { font-family: var(--font-mono); font-size: 0.78rem; }
   .peer-warn {
     display: inline-block; margin-top: 2px; font-size: 0.66rem; background: none; cursor: pointer;
