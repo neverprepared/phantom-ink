@@ -3,6 +3,7 @@
 import {brainbox} from '../models';
 import {main} from '../models';
 import {opensearch} from '../models';
+import {langfuse} from '../models';
 import {provider} from '../models';
 import {doctor} from '../models';
 
@@ -125,6 +126,8 @@ export function GetAgentRole(arg1:string):Promise<brainbox.AgentDefinition>;
 export function GetAgentSessionTimeline(arg1:string,arg2:string,arg3:number):Promise<opensearch.SessionTimeline>;
 
 export function GetAgentState(arg1:string):Promise<brainbox.AgentStateItem>;
+
+export function GetAgentWorkTimeline(arg1:string,arg2:string,arg3:number):Promise<langfuse.SessionTimeline>;
 
 export function GetAppLogs():Promise<Array<string>>;
 
@@ -273,6 +276,8 @@ export function ListAgentRoles():Promise<Array<brainbox.AgentDefinition>>;
 export function ListAgentSessions(arg1:string,arg2:string,arg3:number):Promise<Array<opensearch.AgentSession>>;
 
 export function ListAgentState(arg1:main.AgentStateFilter):Promise<Array<brainbox.AgentStateItem>>;
+
+export function ListAgentWork(arg1:string,arg2:string,arg3:number):Promise<Array<main.AgentWorkRow>>;
 
 export function ListAgents():Promise<Array<main.DetectedAgent>>;
 

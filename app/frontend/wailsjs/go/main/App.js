@@ -242,6 +242,10 @@ export function GetAgentState(arg1) {
   return window['go']['main']['App']['GetAgentState'](arg1);
 }
 
+export function GetAgentWorkTimeline(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetAgentWorkTimeline'](arg1, arg2, arg3);
+}
+
 export function GetAppLogs() {
   return window['go']['main']['App']['GetAppLogs']();
 }
@@ -536,6 +540,10 @@ export function ListAgentSessions(arg1, arg2, arg3) {
 
 export function ListAgentState(arg1) {
   return window['go']['main']['App']['ListAgentState'](arg1);
+}
+
+export function ListAgentWork(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListAgentWork'](arg1, arg2, arg3);
 }
 
 export function ListAgents() {

@@ -1,113 +1,88 @@
 <script lang="ts">
-  // Agent Work: the table/list of agent sessions, and the drill-down into one.
+  // Agent Work: the table of agent sessions, and the drill-down into one.
   //
-  // Everything here reads `logs-otel-*` in OpenSearch, which Claude Code
-  // already writes. No new capture pipeline stands behind this panel — the
-  // session list, the tool timeline, per-turn cost and model are all present
-  // today. Prompt and completion TEXT is the one thing that is not: the
-  // exporter emits those attributes as the literal "<REDACTED>" unless the
-  // content flags are set. We report that as a state rather than rendering the
-  // sentinel as if it were a message.
+  // Reads from BOTH stores, because neither can do the whole job and the
+  // measurements are the reason this is a split rather than a choice:
   //
-  // Scope follows the active profile, matching the rest of the app: with a
-  // profile selected you see its sessions; "All profiles" is an explicit
-  // choice, not the default. Profile comes from the event's own
-  // resource.attributes.workspace — stamped at emission, never inherited.
+  //  - LANGFUSE owns the work. Its observations carry the real prompt and
+  //    completion text, so "click a session and read what it said" is only
+  //    answerable there. OpenSearch has no content at all — it is stripped from
+  //    spans by design, and the log attributes read "<REDACTED>".
+  //  - OPENSEARCH owns liveness. Measured together on one live session,
+  //    OpenSearch was 33s behind and Langfuse 725s: the Claude Code capture is
+  //    a Stop hook, firing once per COMPLETED turn, so a session mid-turn is
+  //    invisible in Langfuse until the turn ends. A dot built on Langfuse
+  //    recency marks a working session dead.
+  //
+  // The Go side merges them (app_agent_work.go) and each half degrades on its
+  // own: either store being unreachable costs its own columns, never the row.
+  //
+  // Scope is the ACTIVE PROFILE, always. There is no "all profiles" view and
+  // cannot be: Langfuse API keys are project-scoped, so the credentials
+  // themselves select the profile. That is also what stops this panel reading
+  // another profile's traces.
   import { getApi } from '../utils/api';
   import { profileState } from '../stores.svelte';
   import Badge from '../components/Badge.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Spinner from '../components/Spinner.svelte';
-  import { SvelteSet } from 'svelte/reactivity';
 
-  interface AgentSession {
+  interface AgentWorkRow {
     session_id: string;
     workspace: string;
     first_seen: string;
     last_seen: string;
-    turns: number;
+    // From Langfuse. `observations` counts generations, tool calls and spans
+    // together — it is NOT the OpenSearch tool-call figure.
+    observations: number;
+    generations: number;
     tool_calls: number;
-    failures: number;
-    last_tool: string;
-    top_tools: string[];
+    tokens: number;
     models: string[];
-    last_beat?: string;
-    // Server-derived; see app/opensearch/liveness.go. Deliberately not
-    // recomputed here — a threshold in a component is a threshold with no
-    // tests, and the previous one in this file was wrong for a month.
-    liveness: 'active' | 'idle' | 'dormant' | 'unknown';
-    last_activity_ms: number;
-    last_heartbeat_ms?: number;
     cost_usd: number;
-    tokens_in: number;
-    tokens_out: number;
-    tokens_cache_in: number;
-    tokens_cache_new: number;
+    // From OpenSearch. `liveness_available` distinguishes "no overlay" from
+    // "the overlay says unknown"; without it a missing store would render as
+    // a confident "dormant".
+    liveness?: 'active' | 'idle' | 'dormant' | 'unknown';
+    last_activity_ms?: number;
+    last_heartbeat_ms?: number;
+    liveness_available: boolean;
   }
 
-  interface SessionEvent {
-    sequence: number;
-    time: string;
-    kind: string;
-    turn_id: string;
-    tool_name?: string;
-    tool_use_id?: string;
-    success?: boolean;
-    duration_ms?: number;
-    input_size?: number;
-    result_size?: number;
-    agent?: string;
-    agent_type?: string;
-    agent_source?: string;
-    tool_uses?: number;
-    total_tokens?: number;
-    tool_input?: string;
-    tool_params?: Record<string, string>;
+  interface Observation {
+    id: string;
+    parent_id?: string;
+    // Precomputed in Go from the parent links, so rendering never walks the
+    // tree. A parent outside the fetched page counts as a root, which stops a
+    // truncated fetch producing runaway indentation.
+    depth: number;
+    name: string;
+    type: string;
+    start_time: string;
+    end_time?: string;
+    latency_ms?: number;
     model?: string;
-    tokens_in?: number;
-    tokens_out?: number;
     cost_usd?: number;
-    content?: string;
-    redacted?: boolean;
-    content_length?: number;
+    level?: string;
+    status_message?: string;
+    input?: string;
+    output?: string;
   }
 
   interface SessionTimeline {
     session_id: string;
     workspace: string;
-    events: SessionEvent[];
-    totals: {
-      agent_spawns: number;
-      subagent_reports: number;
-      turns: number;
-      tool_calls: number;
-      failures: number;
-      cost_usd: number;
-      tokens_out: number;
-      first_seen: string;
-      last_seen: string;
-    };
+    observations: Observation[];
+    total: number;
     truncated: boolean;
-    total_events: number;
-    warning?: string;
+    // False when nothing carried input or output. Native OTLP spans carry
+    // neither, so a span-only session has structure but no conversation — said
+    // plainly rather than rendered as an empty transcript.
     content_available: boolean;
-    tool_details_available: boolean;
   }
 
-  // Liveness arrives already classified from the Go read layer. The previous
-  // version of this block computed it here, thresholding the
-  // claude_code.active_time.total heartbeat at 150s on the strength of one 46s
-  // sample, and asserted the heartbeat was "a strict 60s cadence". Re-measured
-  // over 3 days / 21 sessions / 1,538 gaps: median 60s but p90 180s, with 10.0%
-  // of gaps over 150s. The metric also carries no query_source on any of 26,566
-  // docs, so it is main-thread only and stalls during subagent fan-out —
-  // exactly when a session is busiest. That indicator reported working sessions
-  // as dead roughly a tenth of the time.
-  //
-  // See app/opensearch/liveness.go for the thresholds and their rationale.
-
   // The logs export batches every 10s; polling faster cannot surface fresher
-  // data.
+  // data. Langfuse is slower still (Stop hook), so this is generous for it.
   const POLL_MS = 15_000;
 
   const RANGES = [
@@ -115,45 +90,28 @@
     { label: '7d', value: 'now-7d' },
   ];
 
-  let sessions = $state<AgentSession[]>([]);
+  let sessions = $state<AgentWorkRow[]>([]);
   let loading = $state(true);
   let error = $state('');
   let range = $state('now-24h');
-  let allProfiles = $state(false);
-
-  // The detail pane tracks an ID, not a row object. Holding the object itself
-  // detaches it from the list: a refresh replaces `sessions` with fresh rows
-  // while the pane keeps rendering counts, cost and timestamps frozen at the
-  // moment it was opened. `selectedSnapshot` is the fallback for when the row
-  // legitimately leaves the list (aged out of the window, or scope narrowed),
-  // so the pane shows last-known values instead of blanking.
-  // Ticks so `ago()` and the active indicator re-evaluate between fetches
-  // rather than freezing at whatever the last load computed.
   let now = $state(Date.now());
 
+  // The detail pane tracks an ID, not a row object: a refresh replaces
+  // `sessions` with fresh rows, and holding the object would freeze the pane's
+  // counts at the moment it was opened. `selectedSnapshot` covers the case
+  // where the row legitimately leaves the list.
   let selectedId = $state<string | null>(null);
-  let selectedSnapshot = $state<AgentSession | null>(null);
+  let selectedSnapshot = $state<AgentWorkRow | null>(null);
   let timeline = $state<SessionTimeline | null>(null);
   let timelineLoading = $state(false);
   let timelineError = $state('');
 
   const activeProfile = $derived(profileState.active?.name ?? '');
-  // An empty workspace means unfiltered on the Go side, which is exactly what
-  // "All profiles" wants. With no profile selected at all there is nothing to
-  // scope to, so the view is global either way.
-  const scope = $derived(allProfiles ? '' : activeProfile);
-
-  // Live row wins so the facts stay current; the snapshot covers the gap.
   const selected = $derived(
-    (selectedId ? sessions.find((s) => s.session_id === selectedId) : null) ??
-      selectedSnapshot,
+    sessions.find((s) => s.session_id === selectedId) ?? selectedSnapshot,
   );
 
-  // Two independent monotonic counters, deliberately NOT shared. A slow
-  // in-flight request must not overwrite a newer one of its own kind — but the
-  // list and the timeline are unrelated, so a single counter would make opening
-  // a session discard an in-flight list refresh, and a list refresh discard a
-  // timeline the operator just asked for.
+  // Guards against an out-of-order response overwriting a newer one.
   let listEpoch = 0;
   let timelineEpoch = 0;
 
@@ -167,11 +125,16 @@
         error = 'Wails bindings unavailable.';
         return;
       }
-      const rows = await api.ListAgentSessions(scope, range, 50);
+      if (!activeProfile) {
+        sessions = [];
+        error = 'Select a profile — Langfuse credentials are per profile.';
+        return;
+      }
+      const rows = await api.ListAgentWork(activeProfile, range, 50);
       if (mine !== listEpoch) return;
-      // Server order is by last activity; lift the working ones to the top,
-      // since "what is running" is the question this panel exists to answer.
-      sessions = ((rows ?? []) as AgentSession[])
+      // The server already returns most-recently-active first; lift the
+      // working ones, since "what is running" is the question this answers.
+      sessions = ((rows ?? []) as AgentWorkRow[])
         .slice()
         .sort((a, b) => Number(isActive(b)) - Number(isActive(a)));
     } catch (e) {
@@ -183,19 +146,13 @@
     }
   }
 
-  // Reloads when the range, the profile scope, or the active profile changes.
-  // A $effect rather than a $derived: this is a side effect, and mutating
-  // state inside $derived loops.
   $effect(() => {
+    // Re-read when the profile or range changes.
+    void activeProfile;
     void range;
-    void scope;
     void load();
   });
 
-  // Keeps the panel usable as a live view: without this it only updated on a
-  // range change or a manual Refresh, which is not "an up front view of what
-  // is running". Paused while the tab is hidden so a backgrounded window does
-  // not poll the platform indefinitely.
   $effect(() => {
     const tick = setInterval(() => {
       now = Date.now();
@@ -204,17 +161,17 @@
     return () => clearInterval(tick);
   });
 
-  function isActive(s: AgentSession): boolean {
+  function isActive(s: AgentWorkRow): boolean {
     return s.liveness === 'active';
   }
 
-  // The heartbeat is main-thread only, so a session with fresh activity but a
-  // stale beat is the readable signature of subagent fan-out: children are
-  // working while the main thread waits. Surfaced as a tooltip rather than a
-  // separate state, because it is a hypothesis about what is happening, not a
-  // fact the data establishes.
-  function livenessTitle(s: AgentSession): string {
-    const secs = (ms: number) => `${Math.round(ms / 1000)}s`;
+  const activeCount = $derived(sessions.filter(isActive).length);
+
+  function livenessTitle(s: AgentWorkRow): string {
+    if (!s.liveness_available) {
+      return 'No liveness data — the OpenSearch overlay was unavailable. This is not a statement that the session is idle.';
+    }
+    const secs = (ms?: number) => `${Math.round((ms ?? 0) / 1000)}s`;
     switch (s.liveness) {
       case 'active':
         if (s.last_heartbeat_ms !== undefined && s.last_heartbeat_ms > 150_000) {
@@ -230,36 +187,30 @@
     }
   }
 
-  const activeCount = $derived(sessions.filter(isActive).length);
-
-  // A selected session from another profile must not survive a scope change —
-  // otherwise the detail pane shows work the new scope excludes. Reads the
-  // snapshot rather than `selected` so this cannot depend on its own effect.
+  // A selected session must not survive a profile change, or the pane shows
+  // work the new scope excludes.
   $effect(() => {
-    const s = scope;
+    const p = activeProfile;
     const snap = selectedSnapshot;
-    if (snap && s && snap.workspace !== s) {
-      close();
-    }
+    if (snap && p && snap.workspace && snap.workspace !== p) close();
   });
 
-  async function open(s: AgentSession) {
+  async function open(s: AgentWorkRow) {
+    const mine = ++timelineEpoch;
     selectedId = s.session_id;
     selectedSnapshot = s;
     timeline = null;
     timelineError = '';
     timelineLoading = true;
-    expanded = new SvelteSet();
-    const mine = ++timelineEpoch;
     try {
       const api = await getApi();
       if (!api) {
         timelineError = 'Wails bindings unavailable.';
         return;
       }
-      const tl = await api.GetAgentSessionTimeline(s.session_id, s.workspace, 1000);
+      const tl = await api.GetAgentWorkTimeline(s.session_id, activeProfile, 500);
       if (mine !== timelineEpoch) return;
-      timeline = tl as unknown as SessionTimeline;
+      timeline = tl as SessionTimeline;
     } catch (e) {
       if (mine !== timelineEpoch) return;
       timelineError = String(e);
@@ -268,38 +219,14 @@
     }
   }
 
-  // Which events have had their captured text expanded. Keyed by sequence and
-  // reset whenever a different session is opened.
-  let expanded = $state(new SvelteSet<number>());
-
-  function toggleExpanded(seq: number) {
-    // Reassigned, not mutated in place, so the template reliably re-renders.
-    const next = new SvelteSet(expanded);
-    if (next.has(seq)) next.delete(seq);
-    else next.add(seq);
-    expanded = next;
-  }
-
   function close() {
-    timelineEpoch++;
-    timelineLoading = false;
     selectedId = null;
     selectedSnapshot = null;
     timeline = null;
     timelineError = '';
   }
 
-  // --- formatting ----------------------------------------------------------
-
-  function shortId(id: string): string {
-    return id.slice(0, 8);
-  }
-
-  function clock(iso: string): string {
-    if (!iso) return '—';
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleTimeString();
-  }
+  // --- formatting -----------------------------------------------------------
 
   function ago(iso: string, ref: number): string {
     if (!iso) return '—';
@@ -316,103 +243,52 @@
     const s = new Date(a).getTime();
     const e = new Date(b).getTime();
     if (Number.isNaN(s) || Number.isNaN(e) || e < s) return '—';
-    const m = Math.round((e - s) / 60000);
-    if (m < 60) return `${m}m`;
-    return `${Math.floor(m / 60)}h ${m % 60}m`;
-  }
-
-  function ms(n?: number): string {
-    if (!n) return '';
-    return n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`;
-  }
-
-  function bytes(n?: number): string {
-    if (!n) return '';
-    if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-    return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    const sec = Math.round((e - s) / 1000);
+    if (sec < 60) return `${sec}s`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+    return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
   }
 
   function usd(n: number): string {
-    if (!n) return '$0.00';
+    if (!n) return '—';
     return n < 0.01 ? '<$0.01' : `$${n.toFixed(2)}`;
   }
 
   function compact(n: number): string {
-    if (!n) return '0';
-    if (n < 1000) return String(n);
-    if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
-    if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-    return `${(n / 1_000_000_000).toFixed(2)}B`;
+    if (!n) return '—';
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return String(n);
   }
 
-  const KIND_LABEL: Record<string, string> = {
-    user_prompt: 'prompt',
-    assistant_response: 'response',
-    tool_result: 'tool',
-    api_request: 'model call',
-    subagent_completed: 'subagent done',
-  };
-
-  // query_source values. "repl_main_thread" is the session's own thread;
-  // "agent:custom" / "agent:builtin:<Type>" are subagents; the rest is harness
-  // overhead that still costs money and should not masquerade as agent work.
-  function agentLabel(a?: string): string {
-    if (!a || a === 'repl_main_thread') return '';
-    if (a === 'agent:custom') return 'subagent';
-    if (a.startsWith('agent:builtin:')) return a.slice('agent:builtin:'.length);
-    return a.replace(/_/g, ' ');
-  }
-  const isSubagent = (a?: string) => !!a && a.startsWith('agent:');
-
-  // Badge variants are limited to those Badge.svelte defines; a failed tool
-  // call is the only thing that earns a loud one.
-  function kindVariant(e: SessionEvent): string {
-    if (e.kind === 'tool_result') return e.success === false ? 'failed' : 'completed';
-    if (e.kind === 'subagent_completed') return 'worker';
-    if (e.kind === 'api_request') return 'running';
-    return '';
+  function ms(n?: number): string {
+    if (!n) return '';
+    return n < 1000 ? `${Math.round(n)}ms` : `${(n / 1000).toFixed(1)}s`;
   }
 
-  // Turns are the unit an operator reads a session in. Grouping by turn_id
-  // preserves execution order because the events arrive ordered by sequence.
-  interface Turn {
-    id: string;
-    events: SessionEvent[];
+  function clock(iso: string): string {
+    const t = new Date(iso);
+    if (Number.isNaN(t.getTime())) return '';
+    return t.toLocaleTimeString([], { hour12: false });
   }
-  const turns = $derived.by<Turn[]>(() => {
-    const out: Turn[] = [];
-    for (const e of timeline?.events ?? []) {
-      const id = e.turn_id || '(no turn)';
-      const last = out[out.length - 1];
-      if (last && last.id === id) last.events.push(e);
-      else out.push({ id, events: [e] });
-    }
-    return out;
-  });
 
-  // The two capture flags are independent and reported separately: an operator
-  // may well want to know what a task touched without exporting prompt text.
-  // The authoritative rollups: computed over the session's whole life, so they
-  // do not move when the list's range changes. Null until the timeline lands,
-  // when the range-scoped row is the only thing available.
-  const tot = $derived(timeline?.totals ?? null);
+  // Observation types, mapped onto the Badge VARIANTS this codebase already
+  // defines (Badge takes text + variant props, not slot children).
+  function typeVariant(t: string): string {
+    if (t === 'GENERATION') return 'completed';
+    if (t === 'TOOL') return 'worker';
+    return 'default';
+  }
 
-  const hasEvents = $derived(!!timeline && timeline.events.length > 0);
-  const promptCaptureOff = $derived(hasEvents && !timeline!.content_available);
-  const toolCaptureOff = $derived(hasEvents && !timeline!.tool_details_available);
+  function isError(o: Observation): boolean {
+    return (o.level ?? '').toUpperCase() === 'ERROR';
+  }
 
-  // How much of this session's work was done by subagents rather than the main
-  // thread. Only model calls carry attribution, so this is a share of those,
-  // not of all events — the label says so.
-  const agentBreakdown = $derived.by(() => {
-    const counts = new Map<string, number>();
-    for (const e of timeline?.events ?? []) {
-      if (!e.agent) continue;
-      counts.set(e.agent, (counts.get(e.agent) ?? 0) + 1);
-    }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  });
+  // Depth is capped for LAYOUT only — the real depth stays in the tooltip, so
+  // a deep tree indents readably without hiding its shape.
+  function indent(depth: number): string {
+    return `${Math.min(depth, 6) * 14}px`;
+  }
 </script>
 
 <div class="agentwork">
@@ -424,98 +300,93 @@
           <button
             class="seg-btn"
             class:active={range === r.value}
+            disabled={loading}
             onclick={() => (range = r.value)}
-            disabled={loading}>{r.label}</button>
+          >{r.label}</button>
         {/each}
       </div>
-      <label class="toggle">
-        <input type="checkbox" bind:checked={allProfiles} disabled={loading} />
-        All profiles
-      </label>
-      <button class="btn" onclick={() => load()} disabled={loading}>
-        {#if loading}<Spinner />{/if}
-        Refresh
-      </button>
+      <button class="btn btn-sm" disabled={loading} onclick={() => load()}>refresh</button>
     </div>
   </header>
 
   <p class="scope-note">
-    {#if scope}
-      Sessions stamped <code>{scope}</code>.
-    {:else if activeProfile}
-      All profiles. Active profile is <code>{activeProfile}</code>.
-    {:else}
-      All profiles. No profile is currently active.
-    {/if}
-    Counts and cost below cover the selected range only — a session that started
-    earlier shows just the part inside it. Open one for its real totals.
+    Sessions and content from <strong>Langfuse</strong>; the activity dot from
+    OpenSearch, which ingests in seconds where the Langfuse capture waits for a
+    turn to finish. Scoped to <strong>{activeProfile || 'no profile'}</strong> —
+    Langfuse keys are per project, so there is no all-profiles view.
   </p>
 
-  <p class="scope-note">
-    {#if activeCount}
-      <span class="dot"></span>{activeCount} working right now.
-    {/if}
-    Liveness is the agent's own activity heartbeat, which stops when the session
-    does. It beats only while a session is <em>working</em>, so one sitting idle
-    at a prompt reads the same as one that exited — and it pauses across laptop
-    sleep.
-  </p>
+  {#if activeCount}
+    <p class="working">
+      <span class="dot dot-active"></span>{activeCount} working right now.
+    </p>
+  {/if}
 
   {#if error}
-    <p class="error">{error}</p>
+    <div class="notice notice-bad">
+      <strong>Could not load sessions.</strong>
+      <p>{error}</p>
+      <p class="notice-sub">
+        This panel needs <code>LANGFUSE_BASE_URL</code>,
+        <code>LANGFUSE_PUBLIC_KEY</code> and <code>LANGFUSE_SECRET_KEY</code> in
+        the profile's env file. The keys are project-scoped, so each profile
+        carries its own.
+      </p>
+    </div>
   {/if}
 
   {#if loading && sessions.length === 0}
     <p class="muted"><Spinner /> Loading sessions…</p>
-  {:else if !loading && !error && sessions.length === 0}
+  {:else if !error && sessions.length === 0}
     <EmptyState
       title="No agent sessions in this window"
-      message="Nothing has run in the selected range for this scope. Widen the range, or switch to all profiles." />
+      message="Nothing has been traced to Langfuse for this profile in the selected range."
+    />
   {:else if sessions.length > 0}
     <div class="table-wrap">
-      <table class="tbl">
+      <table class="list">
         <thead>
           <tr>
-            <th>Session</th>
-            <th>Profile</th>
-            <th>Doing</th>
-            <th class="num">Turns</th>
-            <th class="num">Tools</th>
-            <th class="num" title="Failed tool calls. API errors and exhausted retries are separate events and are not counted here.">
-              Failed
-            </th>
-            <th class="num">Out</th>
-            <th class="num">Cost</th>
-            <th class="num">Ran</th>
-            <th>Last active</th>
+            <th>session</th>
+            <th class="num">obs</th>
+            <th class="num">model calls</th>
+            <th class="num">tools</th>
+            <th class="num">tokens</th>
+            <th class="num">cost</th>
+            <th class="num">elapsed</th>
+            <th>last active</th>
           </tr>
         </thead>
         <tbody>
           {#each sessions as s (s.session_id)}
             <tr
-              class="trow"
-              class:selected={selected?.session_id === s.session_id}
-              aria-selected={selected?.session_id === s.session_id}
+              class="row"
+              class:selected={s.session_id === selectedId}
               onclick={() => open(s)}
               tabindex="0"
+              role="button"
               onkeydown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
                   open(s);
                 }
-              }}>
-              <td><code class="sid">{shortId(s.session_id)}</code></td>
-              <td>{s.workspace || '—'}</td>
-              <td class="doing">{s.last_tool || '—'}</td>
-              <td class="num">{s.turns}</td>
-              <td class="num">{s.tool_calls}</td>
-              <td class="num" class:bad={s.failures > 0}>{s.failures || ''}</td>
-              <td class="num">{compact(s.tokens_out)}</td>
+              }}
+            >
+              <td class="sid" title={s.session_id}>
+                {s.session_id.slice(0, 8)}
+                {#if s.models.length}
+                  <span class="muted models">{s.models.join(', ')}</span>
+                {/if}
+              </td>
+              <td class="num">{s.observations}</td>
+              <td class="num">{s.generations || '—'}</td>
+              <td class="num">{s.tool_calls || '—'}</td>
+              <td class="num">{compact(s.tokens)}</td>
               <td class="num">{usd(s.cost_usd)}</td>
               <td class="num">{duration(s.first_seen, s.last_seen)}</td>
               <td class="muted">
                 <span
-                  class="dot dot-{s.liveness}"
+                  class="dot dot-{s.liveness_available ? s.liveness : 'none'}"
                   title={livenessTitle(s)}
                   aria-label={livenessTitle(s)}
                 ></span>
@@ -531,181 +402,92 @@
   {#if selected}
     <section class="detail">
       <header class="detail-head">
-        <div>
-          <h2>Session <code>{shortId(selected.session_id)}</code></h2>
-          <p class="sub">
-            {selected.workspace || 'no profile'} ·
-            {(selected.models ?? []).join(', ') || 'unknown model'} ·
-            {clock(tot?.first_seen ?? selected.first_seen)} →
-            {clock(tot?.last_seen ?? selected.last_seen)}
-            {#if tot}<span class="muted">· whole session, not just the selected range</span>{/if}
-          </p>
-        </div>
-        <button class="btn" onclick={close}>Close</button>
+        <h2>
+          session {selected.session_id.slice(0, 8)}
+          <span class="muted">{selected.workspace}</span>
+        </h2>
+        <button class="btn btn-sm" onclick={close}>close</button>
       </header>
 
-      <dl class="facts">
-        <div><dt>Turns</dt><dd>{tot?.turns ?? selected.turns}</dd></div>
-        <div><dt>Tool calls</dt><dd>{tot?.tool_calls ?? selected.tool_calls}</dd></div>
-        <div><dt>Failures</dt><dd>{tot?.failures ?? selected.failures}</dd></div>
-        <div>
-          <dt title="Includes background calls the harness makes on your behalf — summaries, prompt suggestions, compaction.">
-            Cost
-          </dt>
-          <dd>{usd(tot?.cost_usd ?? selected.cost_usd)}</dd>
-        </div>
-        <div><dt>Output tokens</dt><dd>{compact(tot?.tokens_out ?? selected.tokens_out)}</dd></div>
-        <!-- input_tokens EXCLUDES cache reads, which dominate by orders of
-             magnitude on a long session. Showing it alone next to cost reads
-             as a contradiction, so the cached figure is shown beside it. -->
-        <div><dt>Input (fresh)</dt><dd>{compact(selected.tokens_in)}</dd></div>
-        <div><dt>Input (cached)</dt><dd>{compact(selected.tokens_cache_in)}</dd></div>
-        <div><dt>Tools used</dt><dd>{(selected.top_tools ?? []).join(', ') || '—'}</dd></div>
-      </dl>
-
-      {#if tot && tot.agent_spawns > 0}
-        <p class="muted">
-          {tot.agent_spawns} subagent{tot.agent_spawns === 1 ? '' : 's'} spawned{#if tot.subagent_reports > 0}, {tot.subagent_reports}
-            reported their own totals{:else}, none reported their own totals{/if}.
-          {#if tot.subagent_reports < tot.agent_spawns}
-            <!-- Measured: coverage is bimodal — some sessions report every
-                 spawn, others none. Saying so beats implying the missing
-                 children did not exist. -->
-            The rest ran without emitting a completion record, so their detail
-            is not available here.
-          {/if}
-        </p>
-      {/if}
-
-      {#if agentBreakdown.length > 1}
-        <!-- Only api_request and assistant_response carry query_source, so this
-             is a share of MODEL CALLS, not of every event. Said plainly rather
-             than presented as a whole-session breakdown. -->
-        <div class="agents">
-          <span class="agents-label">model calls by source</span>
-          {#each agentBreakdown as [a, n] (a)}
-            <span class="agent-chip" class:sub={isSubagent(a)}>
-              {agentLabel(a) || 'main thread'} <span class="muted">{n}</span>
-            </span>
-          {/each}
-        </div>
-      {/if}
+      <p class="muted totals">
+        {selected.observations} observations · {selected.generations} model calls ·
+        {selected.tool_calls} tool calls · {compact(selected.tokens)} tokens ·
+        <span title="Langfuse's own pricing of the generations it captured. The
+OpenSearch figure for the same session is higher, because the Stop hook misses
+delegated work — treat this as Langfuse's view, not authoritative spend."
+          >{usd(selected.cost_usd)} <span class="qual">(Langfuse view)</span></span>
+      </p>
 
       {#if timelineLoading}
         <p class="muted"><Spinner /> Loading timeline…</p>
       {:else if timelineError}
         <p class="error">{timelineError}</p>
       {:else if timeline}
-        {#if timeline.warning}
-          <div class="notice notice-bad">
-            <strong>This timeline may be incomplete.</strong>
-            <p>{timeline.warning}</p>
-            <p class="notice-sub">
-              The search succeeded only partially, so events may be missing from
-              what is shown below.
-            </p>
-          </div>
-        {/if}
-        {#if toolCaptureOff || promptCaptureOff}
-          <div class="notice">
-            <strong>Some capture is off for these sessions.</strong>
-            {#if toolCaptureOff}
-              <p>
-                <strong>What a task touched</strong> — file paths, commands, MCP
-                tool names — needs <code>OTEL_LOG_TOOL_DETAILS</code>. It carries
-                no prompt or completion text, so it answers "what did this do"
-                without exporting conversations.
-              </p>
-            {/if}
-            {#if promptCaptureOff}
-              <p>
-                <strong>Prompt and completion text</strong> needs
-                <code>OTEL_LOG_USER_PROMPTS</code> and
-                <code>OTEL_LOG_ASSISTANT_RESPONSES</code>. The exporter writes
-                those attributes as <code>&lt;REDACTED&gt;</code> until then.
-              </p>
-            {/if}
-            <p class="notice-sub">
-              Both are privacy decisions, so neither is a control in this panel.
-              This view reads every one of those fields already, so whatever you
-              enable shows up here on the next session — but note the cluster
-              currently has no retention policy and no index-level access
-              control, which is the reason the design marked this blocking.
-            </p>
-          </div>
-        {/if}
         {#if timeline.truncated}
-          <p class="muted">
-            Showing the {timeline.events.length} most recent of {timeline.total_events}
-            events — earlier activity is not listed.
-          </p>
+          <div class="notice">
+            <strong>This timeline is truncated.</strong>
+            <p>
+              Showing the first {timeline.observations.length} observations of a
+              longer session. Deeper history is in Langfuse itself.
+            </p>
+          </div>
         {/if}
 
-        <ol class="turns">
-          {#each turns as t, i (t.id + i)}
-            <li class="turn">
-              <div class="turn-head">Turn {i + 1}</div>
-              <ul class="events">
-                {#each t.events as e, j (e.sequence + '-' + j)}
-                  <li class="ev" class:sub={isSubagent(e.agent) || e.kind === 'subagent_completed'}>
-                    <span class="seq">{e.sequence}</span>
-                    <Badge text={KIND_LABEL[e.kind] ?? e.kind} variant={kindVariant(e)} />
-                    <span class="ev-main">
-                      {#if e.kind === 'subagent_completed'}
-                        <!-- The child's own summary row: the only record that
-                             names a subagent and totals its work. -->
-                        <strong>{e.agent_type || 'subagent'}</strong>
-                        <span class="muted">
-                          {e.agent_source ?? ''} · {e.tool_uses ?? 0} tool calls ·
-                          {compact(e.total_tokens ?? 0)} tokens
-                        </span>
-                      {:else}
-                        {#if agentLabel(e.agent)}
-                          <span class="agent">{agentLabel(e.agent)}</span>
-                        {/if}
-                        {#if e.tool_name}<strong>{e.tool_name}</strong>{/if}
-                        {#if e.model}<span class="muted">{e.model}</span>{/if}
-                        {#if e.tool_params?.full_command || e.tool_params?.bash_command}
-                          <code class="touched"
-                            >{e.tool_params.full_command ?? e.tool_params.bash_command}</code>
-                        {:else if e.tool_params?.mcp_tool_name}
-                          <code class="touched"
-                            >{e.tool_params.mcp_server_name
-                              ? e.tool_params.mcp_server_name + '__'
-                              : ''}{e.tool_params.mcp_tool_name}</code>
-                        {:else if e.tool_input}
-                          <code class="touched">{e.tool_input}</code>
-                        {/if}
-                        {#if e.content}
-                          <!-- Clamped: with the content flags on, a session's
-                               full prompts and responses would otherwise render
-                               in their entirety across up to 1000 events. -->
-                          <button
-                            type="button"
-                            class="content"
-                            class:expanded={expanded.has(e.sequence)}
-                            title="Click to expand or collapse"
-                            onclick={(ev) => {
-                              ev.stopPropagation();
-                              toggleExpanded(e.sequence);
-                            }}>{e.content}</button>
-                        {:else if e.redacted}
-                          <span class="muted">redacted · {e.content_length} chars</span>
-                        {/if}
-                      {/if}
-                    </span>
-                    <span class="ev-meta">
-                      {#if e.duration_ms}{ms(e.duration_ms)}{/if}
-                      {#if e.result_size}· {bytes(e.result_size)}{/if}
-                      {#if e.cost_usd}· {usd(e.cost_usd)}{/if}
-                      {#if e.success === false}· <span class="bad">failed</span>{/if}
-                    </span>
-                  </li>
-                {/each}
-              </ul>
-            </li>
-          {/each}
-        </ol>
+        {#if !timeline.content_available}
+          <div class="notice">
+            <strong>No prompt or completion text in this session.</strong>
+            <p>
+              Its observations came from native OTLP spans, which carry metadata
+              only — timings, models, tool names — and no message text. Content
+              arrives via the transcript hook, which captures conversations but
+              misses most delegated subagent work.
+            </p>
+          </div>
+        {/if}
+
+        {#if timeline.observations.length === 0}
+          <p class="muted">No observations recorded for this session.</p>
+        {:else}
+          <ol class="tree">
+            {#each timeline.observations as o (o.id)}
+              <li
+                class="obs"
+                class:bad={isError(o)}
+                style="margin-left: {indent(o.depth)}"
+                title={o.depth > 6 ? `nesting depth ${o.depth}` : undefined}
+              >
+                <div class="obs-head">
+                  <span class="t">{clock(o.start_time)}</span>
+                  <Badge text={o.type.toLowerCase()} variant={typeVariant(o.type)} />
+                  <strong class="name">{o.name || '(unnamed)'}</strong>
+                  {#if o.model}<span class="muted">{o.model}</span>{/if}
+                  {#if o.latency_ms}<span class="muted">{ms(o.latency_ms)}</span>{/if}
+                  {#if o.cost_usd}<span class="muted">{usd(o.cost_usd)}</span>{/if}
+                </div>
+                {#if isError(o) && o.status_message}
+                  <p class="status">{o.status_message}</p>
+                {/if}
+                {#if o.input || o.output}
+                  <details class="content">
+                    <summary>content</summary>
+                    {#if o.input}
+                      <div class="io">
+                        <span class="io-label">in</span>
+                        <pre>{o.input}</pre>
+                      </div>
+                    {/if}
+                    {#if o.output}
+                      <div class="io">
+                        <span class="io-label">out</span>
+                        <pre>{o.output}</pre>
+                      </div>
+                    {/if}
+                  </details>
+                {/if}
+              </li>
+            {/each}
+          </ol>
+        {/if}
       {/if}
     </section>
   {/if}
@@ -751,235 +533,130 @@
     cursor: default;
     opacity: 0.6;
   }
-  .toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--spacing-xs);
+  .scope-note,
+  .working,
+  .totals {
+    margin: 0;
     font-size: 11px;
     color: var(--color-text-secondary);
   }
+  .qual {
+    opacity: 0.75;
+  }
+  .table-wrap {
+    overflow-x: auto;
+  }
+  table.list {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  table.list th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--color-text-tertiary);
+    border-bottom: 1px solid var(--color-border-primary);
+    padding: 4px 8px;
+    white-space: nowrap;
+  }
+  table.list td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--color-border-secondary);
+    white-space: nowrap;
+  }
+  table.list th.num,
+  table.list td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  tr.row {
+    cursor: pointer;
+  }
+  tr.row:hover td {
+    background: var(--color-muted-bg);
+  }
+  tr.row.selected td {
+    background: var(--color-muted-bg);
+  }
+  .sid {
+    font-family: var(--font-mono, monospace);
+  }
+  .models {
+    margin-left: var(--spacing-xs);
+    font-family: inherit;
+  }
+  .muted {
+    color: var(--color-text-tertiary);
+  }
+  .error {
+    color: var(--color-status-error-text);
+    font-size: 12px;
+  }
+  /* Liveness. Never colour-alone: every dot carries a title and aria-label,
+     and the relative age sits beside it in the same cell. The filled/hollow
+     distinction also survives a monochrome or forced-colours rendering. */
   .dot {
     display: inline-block;
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--color-status-success-text, var(--color-text-primary));
     margin-right: 4px;
     vertical-align: middle;
+    background: var(--color-status-success-text, var(--color-text-primary));
   }
-  /* Tri-state liveness. Never color-alone: every dot carries a title and
-     aria-label, and the relative age sits beside it in the same cell. The
-     filled/hollow distinction also survives a forced-colors or monochrome
-     rendering, where hue alone would not. */
   .dot-active {
     background: var(--color-status-success-text, var(--color-text-primary));
   }
   .dot-idle {
     background: var(--color-status-warning-text, var(--color-text-secondary));
   }
-  /* Dormant and unknown are hollow rather than filled: the panel does not know
-     that these sessions ended -- this telemetry has no session-end event -- so
-     a solid dot would overstate what the data supports. */
+  /* Dormant and unknown are hollow: this telemetry has no session-end event,
+     so a solid dot would overstate what the data supports. */
   .dot-dormant {
     background: transparent;
     box-shadow: inset 0 0 0 1px var(--color-text-tertiary, var(--color-border));
   }
-  .dot-unknown {
+  .dot-unknown,
+  .dot-none {
     background: transparent;
     box-shadow: inset 0 0 0 1px var(--color-border-secondary, var(--color-border));
     opacity: 0.6;
   }
-  .scope-note {
-    margin: 0;
-    font-size: 11px;
-    color: var(--color-text-tertiary);
-  }
-  .error {
-    font-size: 11px;
-    color: var(--color-status-error-text);
-  }
-  .muted {
-    font-size: 11px;
-    color: var(--color-text-tertiary);
-  }
-  .bad {
-    color: var(--color-status-error-text);
-  }
-
-  /* The table is the only thing allowed to scroll sideways; the panel itself
-     must not. */
-  .table-wrap {
-    overflow-x: auto;
-  }
-  .tbl {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 11px;
-  }
-  .tbl th {
-    text-align: left;
-    font-weight: 600;
-    color: var(--color-text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-size: 9px;
-    padding: var(--spacing-xs) var(--spacing-sm);
-    border-bottom: 1px solid var(--color-border-secondary);
-    white-space: nowrap;
-  }
-  .tbl td {
-    padding: var(--spacing-xs) var(--spacing-sm);
-    border-bottom: 1px solid var(--color-border-secondary);
-    color: var(--color-text-secondary);
-    white-space: nowrap;
-  }
-  .tbl .num {
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-  }
-  /* NOT `.row`: that is a global flex-card rule in styles/components.css,
-     imported app-wide, and `display: flex` on a <tr> destroys the table
-     layout. Svelte's scoping hashes our own selectors; it does not shield the
-     element from a global class of the same name. */
-  .trow {
-    cursor: pointer;
-  }
-  .trow:hover td,
-  .trow:focus-visible td {
-    background: var(--color-muted-bg);
-  }
-  .trow.selected td {
-    background: var(--color-muted-bg);
-    color: var(--color-text-primary);
-  }
-  .sid {
-    font-family: var(--font-mono);
-  }
-  .doing {
-    color: var(--color-text-primary);
-  }
-
-  .detail {
+  .notice {
     border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-sm);
-    padding: var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: 11px;
+    color: var(--color-text-secondary);
+  }
+  .notice-bad {
+    border-color: var(--color-status-error-text);
+  }
+  .notice p {
+    margin: var(--spacing-xs) 0 0;
+  }
+  .notice-sub {
+    opacity: 0.8;
+  }
+  .detail {
+    border-top: 1px solid var(--color-border-primary);
+    padding-top: var(--spacing-md);
     display: flex;
     flex-direction: column;
     gap: var(--spacing-sm);
   }
   .detail-head {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
     gap: var(--spacing-md);
   }
   .detail-head h2 {
     margin: 0;
     font-size: 13px;
+    font-weight: 600;
   }
-  .sub {
-    margin: 2px 0 0;
-    font-size: 11px;
-    color: var(--color-text-tertiary);
-  }
-  .facts {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: var(--spacing-sm);
-    margin: 0;
-  }
-  .facts dt {
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--color-text-tertiary);
-  }
-  .facts dd {
-    margin: 2px 0 0;
-    font-size: 12px;
-    color: var(--color-text-primary);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .notice {
-    border: 1px solid var(--color-warning-border);
-    background: var(--color-warning-bg);
-    border-radius: var(--radius-sm);
-    padding: var(--spacing-md);
-    font-size: 11px;
-    color: var(--color-text-secondary);
-  }
-  .notice p {
-    margin: var(--spacing-xs) 0 0;
-  }
-  .notice-sub {
-    color: var(--color-text-tertiary);
-  }
-
-  .agents {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: var(--spacing-xs);
-    font-size: 11px;
-  }
-  .agents-label {
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--color-text-tertiary);
-  }
-  .agent-chip {
-    border: 1px solid var(--color-border-secondary);
-    border-radius: 9999px;
-    padding: 1px 8px;
-    color: var(--color-text-secondary);
-  }
-  .agent-chip.sub,
-  .agent {
-    color: var(--color-text-primary);
-  }
-  /* Subagent rows are indented so the fan-out inside a turn is visible at a
-     glance; attribution exists only on model calls, so this is a hint about
-     who issued the call, not a strict tree. */
-  .ev.sub {
-    padding-left: var(--spacing-md);
-    border-left: 2px solid var(--color-border-secondary);
-  }
-  .agent {
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    flex-shrink: 0;
-  }
-  .touched {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--color-text-primary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .notice-bad {
-    border-color: var(--color-status-error-text);
-  }
-
-  .turns {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-sm);
-  }
-  .turn-head {
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--color-text-tertiary);
-    margin-bottom: 2px;
-  }
-  .events {
+  ol.tree {
     list-style: none;
     margin: 0;
     padding: 0;
@@ -987,60 +664,65 @@
     flex-direction: column;
     gap: 2px;
   }
-  .ev {
-    display: flex;
-    align-items: baseline;
-    gap: var(--spacing-xs);
-    font-size: 11px;
-    color: var(--color-text-secondary);
-    padding: 2px 0;
+  .obs {
+    border-left: 2px solid var(--color-border-secondary);
+    padding: 2px var(--spacing-sm);
+    font-size: 12px;
   }
-  .seq {
-    font-family: var(--font-mono);
-    font-size: 9px;
+  .obs.bad {
+    border-left-color: var(--color-status-error-text);
+  }
+  .obs-head {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    flex-wrap: wrap;
+  }
+  .obs-head .t {
+    font-family: var(--font-mono, monospace);
     color: var(--color-text-tertiary);
-    min-width: 3.5em;
-    text-align: right;
-    flex-shrink: 0;
+    font-size: 11px;
   }
-  .ev-main {
-    flex: 1;
-    min-width: 0;
+  .obs-head .name {
+    font-weight: 500;
+  }
+  .status {
+    margin: 2px 0 0;
+    font-size: 11px;
+    color: var(--color-status-error-text);
+  }
+  details.content {
+    margin-top: 2px;
+  }
+  details.content summary {
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--color-text-tertiary);
+  }
+  .io {
     display: flex;
     gap: var(--spacing-xs);
-    align-items: baseline;
-    overflow: hidden;
+    margin-top: 2px;
   }
-  /* Captured text can be long; it wraps inside its own cell rather than
-     widening the row. */
-  /* A button so it is focusable and operable from the keyboard, but styled as
-     the text it contains. Clamped to three lines until expanded. */
-  .content {
+  .io-label {
+    flex: 0 0 24px;
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    text-transform: uppercase;
+  }
+  /* Content is unbounded, so it scrolls in its own box rather than pushing the
+     timeline off screen. */
+  .io pre {
+    margin: 0;
+    flex: 1 1 auto;
+    max-height: 220px;
+    overflow: auto;
     white-space: pre-wrap;
     word-break: break-word;
-    color: var(--color-text-primary);
-    background: none;
-    border: 0;
-    padding: 0;
-    margin: 0;
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    line-clamp: 3;
-    -webkit-box-orient: vertical;
-  }
-  .content.expanded {
-    display: block;
-    max-height: 40vh;
-    overflow-y: auto;
-  }
-  .ev-meta {
-    font-size: 9px;
-    color: var(--color-text-tertiary);
-    flex-shrink: 0;
-    font-variant-numeric: tabular-nums;
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+    background: var(--color-muted-bg);
+    border-radius: var(--radius-sm);
+    padding: var(--spacing-xs) var(--spacing-sm);
   }
 </style>
