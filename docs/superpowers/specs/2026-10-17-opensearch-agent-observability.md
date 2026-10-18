@@ -1247,3 +1247,91 @@ This changes nothing about the standing concern and sharpens it: both stores
 hold operator PII, `DISABLE_SECURITY_PLUGIN=true`, and there is no retention
 policy — see §1's "Explicitly NOT solved". Enabling traces added ~0.05% to an
 existing exposure; it did not create one.
+
+---
+
+## 12. Decision reversed: Langfuse owns session reading
+
+The operator's judgement, and it is correct: *"I'm not sure this is as easy to
+read as langfuse is, even if it's not reporting 100% of the data."*
+
+Langfuse is a purpose-built trace reader; OpenSearch Dashboards is an analytics
+tool. And the specific thing asked for first — *"prompt & completion capture…
+click to get more details"* — is precisely what OpenSearch does not have:
+content is stripped from spans by design (§10.4) and the log attributes read
+`<REDACTED>` (N2). The drill-down was always going to be a flat event list with
+no conversation in it. That is structural, not a polish gap.
+
+### 12.1 What made this cheap
+
+Two facts, both measured today:
+
+1. **Nothing on the OpenSearch side reads spans.** All ten dashboard panels
+   resolve to `logs-otel` or `metrics-otel`, and the app's Go read layer has 19
+   index references — 10 `logs-otel-*`, 9 `metrics-otel-*`, **zero** to
+   `otel-v1-apm-span-*` `[VERIFIED]`. So moving traces costs the dashboards,
+   the cost figures, the failure view and the Agent Work panel nothing.
+2. **Native OTLP removes the objection that disqualified Langfuse.** The
+   46–82% subagent miss (the plugin's own issue #100: 18 of 220) was the
+   transcript HOOK's failure, not Langfuse's. Spans come from the binary, so
+   delegated work is not skipped. Langfuse 4.63.0 ingests OTLP at
+   `/api/public/otel/v1/traces` `[VERIFIED]` — and classifies
+   `claude_code.llm_request` as a **GENERATION** from its `gen_ai.*`
+   attributes, so it renders as a real generation rather than an opaque span
+   `[VERIFIED]`.
+
+### 12.2 The split, as configured
+
+| Signal | Destination | Protocol |
+|---|---|---|
+| **traces** | Langfuse `/api/public/otel/v1/traces` | http/protobuf |
+| logs | Data Prepper → `logs-otel-*` | grpc |
+| metrics | Data Prepper → `metrics-otel-*` | grpc |
+
+Per-signal endpoints and a per-signal protocol override, so OpenSearch keeps
+everything it was good at and Langfuse gets the one job it is better at.
+
+Configured in `.envrc` rather than `.env` because the `Authorization` header is
+**derived** from `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` at shell load — a
+dotenv file cannot do command substitution, and writing the base64 literal
+would put a second copy of the secret on disk. Rotation is therefore a
+one-place change. Fail-safe: with the keys absent the block is skipped and the
+Data Prepper trace endpoint stays in force, so a missing credential degrades to
+the previous behaviour instead of breaking export.
+
+**Verified** with an export driven by the ambient environment alone — nothing
+configured in the probe — so a malformed or line-wrapped derived header would
+have 401'd. It did not; the trace appeared in Langfuse `[VERIFIED]`.
+
+### 12.3 The content gap is upstream of Langfuse
+
+Worth stating precisely, because it decides where a contribution would go:
+
+| Path | Coverage | Content |
+|---|---|---|
+| Native OTLP spans | complete (from the binary) | **none** — spans carry metadata only |
+| Transcript hook / plugin | ~18% of subagent work | full prompt + completion |
+
+So the two are complementary and both are left enabled: they feed the same
+Langfuse project and coexist (observed: native `claude_code.*` names sitting
+alongside hook-produced `Claude Generation 15` / `Tool: Bash`).
+
+Closing the gap properly is **not a Langfuse bug**. Spans carry no message
+text because Claude Code does not put it there — the `OTEL_LOG_*` content flags
+apply to LOGS, not spans. A useful upstream contribution therefore splits:
+
+- **To Langfuse** — subagent walking in `claude-observability-plugin` (#100),
+  which is where the 18-of-220 number comes from.
+- **To Claude Code** — content on spans, or a documented way to correlate the
+  content-bearing log records to a span by `trace_id`/`span_id`. The binary's
+  own help text says spans and events carry `trace_id`/`span_id` and that
+  metrics do not, so the correlation key may already exist on the log side;
+  that is the first thing to check.
+
+### 12.4 Rotation is now blocking
+
+The Langfuse secret key — leaked earlier in this session and still unrotated —
+is now on the live authentication path for every session's trace export. It was
+previously only used by the hook. Rotate it in the Langfuse UI (project
+settings → API keys), update the single value in `$WORKSPACE_HOME/.env`, and
+run `direnv reload`; the header is derived, so nothing else needs touching.
