@@ -2,9 +2,14 @@
   /**
    * CodeMirror 6 markdown editor with debounced server-side lint.
    *
-   * Used by LoopsPanel's Templates tab to author Loop templates (now
-   * markdown with YAML frontmatter). Same props/behavior as YamlEditor;
-   * just swaps the language extension for markdown highlighting.
+   * Used by LoopsPanel's Templates tab to author Loop templates (markdown
+   * with YAML frontmatter).
+   *
+   * There used to be a near-identical YamlEditor alongside this — 176 lines
+   * differing only in the language extension, and MISSING the theme block
+   * below, so it ignored the active theme. It had no consumers, so it was
+   * deleted rather than merged behind a language prop: an abstraction for one
+   * live caller is speculative, and theming a dead component fixes nothing.
    */
   import { onMount, onDestroy } from 'svelte';
   import { EditorView, lineNumbers, highlightActiveLine, keymap } from '@codemirror/view';

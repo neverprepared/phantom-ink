@@ -7,26 +7,15 @@
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import { runnerQueueHistory } from '../metricsHistory.svelte';
+  import { runnersRes, poolsRes, refreshRunners, type Runner, type Pool } from '../stores/runners.svelte';
 
-  interface Runner {
-    name: string;
-    capabilities: Record<string, boolean>;
-    tags: string[];
-    version: string;
-    registered_at: number;  // epoch ms
-    last_seen: number;      // epoch ms
-    queue_depth: number;
-    in_flight: number;
-    max_concurrent: number;
-    host: string;
-  }
-
-  interface Pool { name: string; match_tags: string[]; policy: string; }
-
-  let runners = $state<Runner[]>([]);
-  let pools = $state<Pool[]>([]);
-  let loaded = $state(false);
-  let loadError: string | null = $state(null);
+  // State lives in a module-scope store, so navigating away and back renders
+  // the retained rows instead of blanking to a spinner (see runners.svelte.ts).
+  const runners = $derived(runnersRes.value);
+  const pools = $derived(poolsRes.value);
+  const loaded = $derived(runnersRes.loaded);
+  const refreshing = $derived(runnersRes.refreshing);
+  const loadError = $derived(runnersRes.error);
   let now = $state(Date.now());
   let showingPair = $state(false);
   let confirmRemove: Runner | null = $state(null);
@@ -56,32 +45,8 @@
     if (tickerHandle !== undefined) window.clearInterval(tickerHandle);
   });
 
-  async function refresh() {
-    const a = await getApi();
-    if (!a) { loaded = true; loadError = 'API bindings unavailable'; return; }
-    try {
-      const list = await a.ListRunners();
-      runners = (list ?? []) as Runner[];
-      // Record a queue-depth sample per runner so the inline sparkline and
-      // dashboard peak card have history without any backend work.
-      const ts = Date.now();
-      const activeNames = new Set<string>();
-      for (const r of runners) {
-        activeNames.add(r.name);
-        runnerQueueHistory.update(r.name, {
-          ts,
-          depth: r.queue_depth || 0,
-          inflight: r.in_flight || 0,
-        });
-      }
-      runnerQueueHistory.pruneKeys(activeNames);
-      pools = ((await a.ListPools()) ?? []) as Pool[];
-      loadError = null;
-    } catch (err: any) {
-      loadError = `${err?.message ?? err}`;
-    } finally {
-      loaded = true;
-    }
+  function refresh() {
+    return refreshRunners();
   }
 
   // Sparkline paths, recomputed when the SAMPLES change rather than on every
@@ -197,7 +162,14 @@
   <header class="panel-header">
     <h1 class="page-title">runners</h1>
     <div class="header-actions">
-      {#if !loaded}<Spinner />{/if}
+      {#if !loaded}
+        <Spinner />
+      {:else if refreshing}
+        <!-- Re-fetching over rows that are already on screen: a quiet marker,
+             not a spinner that hides data the operator was just reading.
+             Same affordance the Dashboard already uses. -->
+        <span class="refreshing" title="refreshing">·</span>
+      {/if}
       <button class="btn primary" onclick={() => (showingPair = true)}>+ pair a runner</button>
     </div>
   </header>
@@ -321,6 +293,17 @@
 </div>
 
 <style>
+  .refreshing {
+    color: var(--color-text-tertiary);
+    font-size: 16px;
+    line-height: 1;
+    animation: pulse-dot 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 0.25; }
+    50%      { opacity: 0.9; }
+  }
+
   .panel {
     padding: var(--panel-padding);
     max-width: 1100px;

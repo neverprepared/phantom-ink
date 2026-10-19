@@ -56,6 +56,19 @@
   margin-bottom: var(--spacing-xl);
 }
 
+/* --- Metric widget error line ---
+   Shared by ScriptMetricWidget and HttpMetricWidget. The http widget used to
+   type its error as a boolean and render a bare "!", discarding the reason its
+   otherwise-identical sibling displayed. */
+.stat-err {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-error);
+  opacity: 0.8;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
 /* --- Row / list item --- */
 .row {
   display: flex;
