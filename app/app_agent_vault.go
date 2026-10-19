@@ -59,11 +59,6 @@ func (a *App) tokenFor(vault, profile string) string {
 	return a.db.GetSetting(vaultTokenKey(vault, profile), "")
 }
 
-// GetVaultToken returns the ACTIVE profile's token for a vault ("" if unset).
-func (a *App) GetVaultToken(vault string) string {
-	return a.tokenFor(vault, a.activeProfileName())
-}
-
 // SetVaultToken persists the ACTIVE profile's token for a vault (trimmed).
 func (a *App) SetVaultToken(vault, token string) error {
 	p := a.activeProfileName()
