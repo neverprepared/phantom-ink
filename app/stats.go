@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,9 +10,31 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
+
+// dockerCmdTimeout bounds every docker shell-out on this path.
+//
+// These all used exec.Command with no context, so a wedged or restarting
+// daemon left the child process AND the bound call hanging forever with
+// nothing to kill them -- and because the UI re-polls on a 10s timer, the
+// hung goroutines accumulated one per tick. `docker ps -a --size` is the
+// slow one: it computes the writable layer of every container, stopped
+// ones included.
+const dockerCmdTimeout = 10 * time.Second
+
+// dockerOutput runs a docker subcommand under dockerCmdTimeout.
+func dockerOutput(args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dockerCmdTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("docker %s timed out after %s", args[0], dockerCmdTimeout)
+	}
+	return out, err
+}
 
 // ContainerStat represents live resource usage for a Docker container.
 type ContainerStat struct {
@@ -27,9 +50,8 @@ type ContainerStat struct {
 
 // GetDockerStats returns live resource stats for all running containers.
 func (a *App) GetDockerStats() ([]ContainerStat, error) {
-	cmd := exec.Command("docker", "stats", "--no-stream", "--format",
+	out, err := dockerOutput("stats", "--no-stream", "--format",
 		`{"name":"{{.Name}}","id":"{{.ID}}","cpu_perc":"{{.CPUPerc}}","mem_usage":"{{.MemUsage}}","mem_perc":"{{.MemPerc}}","net_io":"{{.NetIO}}","block_io":"{{.BlockIO}}","pids":"{{.PIDs}}"}`)
-	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
@@ -81,12 +103,17 @@ func parseDockerSize(s string) int64 {
 	return 0
 }
 
-// GetContainerDiskUsage returns disk usage for all containers (running and stopped).
-// Uses `docker ps --size` which reports the writable layer size and total virtual size.
+// GetContainerDiskUsage returns disk usage for all containers (running and
+// stopped), served from a short TTL cache shared with GetDiskBreakdown.
 func (a *App) GetContainerDiskUsage() ([]ContainerDiskStat, error) {
-	cmd := exec.Command("docker", "ps", "-a", "--size", "--format",
+	return a.containerDiskUsageCached()
+}
+
+// containerDiskUsage does the real work: `docker ps -a --size` reports the
+// writable layer size and total virtual size.
+func (a *App) containerDiskUsage() ([]ContainerDiskStat, error) {
+	out, err := dockerOutput("ps", "-a", "--size", "--format",
 		`{"name":"{{.Names}}","size":"{{.Size}}"}`)
-	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
@@ -148,8 +175,53 @@ func humanBytes(b int64) string {
 	}
 }
 
-// dirSize returns total size of all files under a directory.
+// statsCacheTTL is how long a docker/filesystem measurement is reused.
+//
+// Short enough that the numbers still look live, long enough that the UI's
+// overlapping 10s and 30s timers stop re-running the same walk and the same
+// `docker ps -a --size` against each other.
+const statsCacheTTL = 8 * time.Second
+
+var (
+	dirSizeMu    sync.Mutex
+	dirSizeCache = map[string]dirSizeEntry{}
+
+	containerDiskMu  sync.Mutex
+	containerDiskAt  time.Time
+	containerDiskVal []ContainerDiskStat
+	containerDiskErr error
+)
+
+type dirSizeEntry struct {
+	bytes int64
+	at    time.Time
+}
+
+// containerDiskUsageCached serves GetContainerDiskUsage from a short TTL so
+// the several callers in one UI refresh share a single docker invocation.
+func (a *App) containerDiskUsageCached() ([]ContainerDiskStat, error) {
+	containerDiskMu.Lock()
+	defer containerDiskMu.Unlock()
+	if time.Since(containerDiskAt) < statsCacheTTL && (containerDiskVal != nil || containerDiskErr != nil) {
+		return containerDiskVal, containerDiskErr
+	}
+	containerDiskVal, containerDiskErr = a.containerDiskUsage()
+	containerDiskAt = time.Now()
+	return containerDiskVal, containerDiskErr
+}
+
+// dirSize returns total size of all files under a directory, memoised for
+// statsCacheTTL. The walk is unbounded -- CLAUDE_CONFIG_DIR and the sessions
+// directory both grow without limit -- so repeating it per poll tick was the
+// expensive part.
 func dirSize(path string) int64 {
+	dirSizeMu.Lock()
+	if e, ok := dirSizeCache[path]; ok && time.Since(e.at) < statsCacheTTL {
+		dirSizeMu.Unlock()
+		return e.bytes
+	}
+	dirSizeMu.Unlock()
+
 	var total int64
 	filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -158,17 +230,26 @@ func dirSize(path string) int64 {
 		total += info.Size()
 		return nil
 	})
+
+	dirSizeMu.Lock()
+	dirSizeCache[path] = dirSizeEntry{bytes: total, at: time.Now()}
+	dirSizeMu.Unlock()
 	return total
 }
 
 // GetDiskBreakdown returns disk usage grouped by category:
 // containers (writable layers), images, sessions data, workspace config.
+//
+// Container sizes come from the same cached read GetContainerDiskUsage
+// serves, because the Sessions panel calls BOTH in one Promise.all -- this
+// used to re-run `docker ps -a --size` (the expensive form: it sizes every
+// container, stopped included) a second time within milliseconds.
 func (a *App) GetDiskBreakdown() DiskBreakdown {
 	var cats []DiskCategory
 
 	// 1. Container writable layers
 	var containerTotal int64
-	if disks, err := a.GetContainerDiskUsage(); err == nil {
+	if disks, err := a.containerDiskUsageCached(); err == nil {
 		for _, d := range disks {
 			containerTotal += d.WritableSizeBytes
 		}
@@ -177,7 +258,7 @@ func (a *App) GetDiskBreakdown() DiskBreakdown {
 
 	// 2. Docker images — parse `docker system df --format`
 	var imageBytes int64
-	if out, err := exec.Command("docker", "system", "df", "--format", "{{.Type}}\t{{.Size}}").Output(); err == nil {
+	if out, err := dockerOutput("system", "df", "--format", "{{.Type}}\t{{.Size}}"); err == nil {
 		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 			parts := strings.SplitN(line, "\t", 2)
 			if len(parts) == 2 && parts[0] == "Images" {
@@ -228,7 +309,7 @@ type ProfileDiskUsage struct {
 
 // DiskOverview is the full-disk pie chart data.
 type DiskOverview struct {
-	TotalDisk  int64              `json:"total_disk"`  // full disk capacity
+	TotalDisk  int64              `json:"total_disk"` // full disk capacity
 	TotalLabel string             `json:"total_label"`
 	UsedDisk   int64              `json:"used_disk"`
 	UsedLabel  string             `json:"used_label"`

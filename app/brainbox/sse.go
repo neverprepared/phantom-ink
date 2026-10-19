@@ -21,6 +21,15 @@ import (
 // single oversized event into a reconnect loop that backed off to 30s.
 const maxSSELineBytes = 1024 * 1024
 
+// sseDispatchBuffer is how many received events may queue for the handler.
+//
+// The handler used to run INLINE in the scan loop, so the work it does (a Wails
+// EventsEmit, a full json.Unmarshal, a second EventsEmit) applied backpressure
+// to the TCP read. On an SSE stream that does not delay events, it loses them:
+// the server-side buffer fills while the reader is busy marshalling. Draining
+// through a buffered channel keeps the socket read hot.
+const sseDispatchBuffer = 256
+
 // SSEListener connects to /api/events and forwards events via a callback.
 type SSEListener struct {
 	client     *Client
@@ -147,11 +156,51 @@ func (s *SSEListener) connect(ctx context.Context) error {
 	// reconnects into the same failure until the backoff hits its 30s ceiling
 	// -- one big event was enough to wedge this listener.
 	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELineBytes)
+
+	// Hand events to a draining goroutine rather than calling onEvent inline.
+	// onEvent does a Wails emit plus a full unmarshal plus a second emit, and
+	// inline that applied backpressure to the socket read -- which on SSE loses
+	// events instead of delaying them.
+	//
+	// Drop-oldest with a counter when the consumer falls behind, so loss is
+	// bounded AND visible, rather than silently stalling the stream.
+	events := make(chan string, sseDispatchBuffer)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for data := range events {
+			s.onEvent(data)
+		}
+	}()
+	dropped := 0
+	defer func() {
+		close(events)
+		<-done
+		if dropped > 0 {
+			log.Printf("sse: dropped %d event(s); handler could not keep up", dropped)
+		}
+	}()
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
 			data := strings.TrimPrefix(line, "data: ")
-			s.onEvent(data)
+			select {
+			case events <- data:
+			default:
+				// Consumer is behind: discard the oldest queued event to make
+				// room, so the newest state still gets through.
+				select {
+				case <-events:
+					dropped++
+				default:
+				}
+				select {
+				case events <- data:
+				default:
+					dropped++
+				}
+			}
 		}
 		select {
 		case <-ctx.Done():

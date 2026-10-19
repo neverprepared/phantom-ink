@@ -473,18 +473,48 @@ func (a *App) waitAndReconnect() error {
 		addr = net.JoinHostPort(h, p)
 	}
 
-	for i := 0; i < 30; i++ {
-		time.Sleep(1 * time.Second)
-		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
-		if err == nil {
-			conn.Close()
-			break
+	// Probe in the background and report via the bus. This used to block the
+	// bound call for up to 30 seconds with no progress signal and no
+	// cancellation, so the frontend promise just hung; and the dial loop kept
+	// sleeping even after the app context was gone.
+	ctx := a.ctx
+	go func() {
+		deadline := time.Now().Add(30 * time.Second)
+		for time.Now().Before(deadline) {
+			if ctx != nil && ctx.Err() != nil {
+				return
+			}
+			conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+			if err == nil {
+				conn.Close()
+				if a.sse != nil {
+					a.sse.Restart()
+				}
+				if ctx != nil {
+					runtime.EventsEmit(ctx, "brainbox:restarted", map[string]any{"ok": true, "addr": addr})
+				}
+				return
+			}
+			select {
+			case <-time.After(1 * time.Second):
+			case <-ctxDone(ctx):
+				return
+			}
 		}
-	}
-	if a.sse != nil {
-		a.sse.Restart()
-	}
+		if ctx != nil {
+			runtime.EventsEmit(ctx, "brainbox:restarted",
+				map[string]any{"ok": false, "addr": addr, "error": "timed out waiting for the API to come back"})
+		}
+	}()
 	return nil
+}
+
+// ctxDone returns a channel that closes with ctx, or never for a nil ctx.
+func ctxDone(ctx context.Context) <-chan struct{} {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Done()
 }
 
 // ---------------------------------------------------------------------------

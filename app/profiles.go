@@ -17,13 +17,19 @@ type Profile struct {
 	Path          string `json:"path"`
 	WorkspaceHome string `json:"workspace_home"`
 	HasSecrets    bool   `json:"has_secrets"`
-	SecretsMode   string `json:"secrets_mode"`   // "1password", "plaintext", or "none"
+	SecretsMode   string `json:"secrets_mode"` // "1password", "plaintext", or "none"
 	SecretsPath   string `json:"secrets_path"`
 	HasBackup     bool   `json:"has_backup"`
 }
 
-// defaultWorkspacesRoot returns the profiles root from the phantom-ink database,
-// falling back to ~/workspaces/profiles.
+// defaultWorkspacesRoot returns the profiles root from the phantom-ink
+// database, falling back to ~/workspaces/profiles.
+//
+// This opens its OWN read-only handle, so it is only for the bootstrap path
+// that runs before a.db exists. Everything else must read a.config
+// .WorkspacesRoot (or a.db.GetWorkspacesRoot) -- this used to be called from
+// the env-refresh timer, which meant a fresh second connection on the same WAL
+// file every tick for a value the app already had in memory.
 func defaultWorkspacesRoot() string {
 	home := os.Getenv("HOME")
 
@@ -40,6 +46,26 @@ func defaultWorkspacesRoot() string {
 	}
 
 	return filepath.Join(home, "workspaces", "profiles")
+}
+
+// workspacesRoot returns the configured profiles root from memory, falling back
+// to the bootstrap lookup only if config has not been loaded yet.
+//
+// Prefer this over defaultWorkspacesRoot() anywhere a.config exists: the latter
+// opens a fresh read-only SQLite handle on the same WAL file, and it was being
+// called from the env-refresh timer for a value already held in memory.
+func (a *App) workspacesRoot() string {
+	var root string
+	a.mu.RLock()
+	if a.config != nil {
+		root = a.config.WorkspacesRoot
+	}
+	a.mu.RUnlock()
+	if strings.TrimSpace(root) != "" {
+		return root
+	}
+	// config not loaded yet (bootstrap) or the value is unset.
+	return defaultWorkspacesRoot()
 }
 
 // scanProfiles scans root for directories containing an .envrc (shell-profiler

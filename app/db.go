@@ -32,6 +32,22 @@ func OpenDB() (*DB, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
+	// One connection. Under WAL, concurrent writers serialise at the file
+	// level and otherwise queue on busy_timeout(5000) -- and database/sql will
+	// happily open a connection per concurrent caller, so the collect
+	// scheduler, the outbox flusher, the env-refresh watcher and N bound UI
+	// methods could pile up against each other until one hit a 5s SQLITE_BUSY
+	// stall. That is not hypothetical here: the liveness-overlay goroutine in
+	// app_agent_work.go exists to work around an observed hang attributed to
+	// exactly this ("a contended pool stalls the whole method").
+	//
+	// Serialising in the pool turns that contention into a short queue instead
+	// of a lock timeout. A single-file desktop SQLite app does not benefit from
+	// a wider pool.
+	conn.SetMaxOpenConns(1)
+	conn.SetMaxIdleConns(1)
+	conn.SetConnMaxLifetime(0)
+
 	db := &DB{conn: conn}
 	if err := db.migrate(); err != nil {
 		conn.Close()

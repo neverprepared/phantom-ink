@@ -155,7 +155,7 @@ func (a *App) startEnvRefreshWatcher() {
 // advanced since last seen (first sight counts, so startup reconciles once).
 // `seen` is mutated in place.
 func (a *App) scanAndRefreshEnv(seen map[string]time.Time) {
-	profiles, err := scanProfiles(defaultWorkspacesRoot())
+	profiles, err := scanProfiles(a.workspacesRoot())
 	if err != nil {
 		return
 	}
