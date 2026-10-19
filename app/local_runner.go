@@ -93,20 +93,44 @@ func (r *localRunner) run(ctx context.Context) {
 		default:
 		}
 
+		// The server is expected to hold this open for ~30 s, so a returning
+		// call normally means real work or a real failure. Time it anyway: a
+		// server that answers "no work" instantly would otherwise turn this
+		// into a hot loop, which is what a swallowed transport error used to do.
+		start := time.Now()
 		item, err := r.client.GetPendingWork(r.name, r.longPoll)
 		if err != nil {
-			select {
-			case <-ctx.Done():
+			fmt.Printf("local runner poll: %v\n", err)
+			if !r.pause(ctx, 2*time.Second) {
 				return
-			case <-r.stopCh:
-				return
-			case <-time.After(2 * time.Second):
 			}
 			continue
 		}
 		if item != nil {
 			go r.handleWork(ctx, item)
+			continue
 		}
+		if elapsed := time.Since(start); elapsed < minPollInterval {
+			if !r.pause(ctx, minPollInterval-elapsed) {
+				return
+			}
+		}
+	}
+}
+
+// minPollInterval floors the time between two pending-work requests, so the
+// loop cannot spin regardless of how fast the server answers.
+const minPollInterval = 1 * time.Second
+
+// pause sleeps for d, returning false if the runner was asked to stop first.
+func (r *localRunner) pause(ctx context.Context, d time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-r.stopCh:
+		return false
+	case <-time.After(d):
+		return true
 	}
 }
 
