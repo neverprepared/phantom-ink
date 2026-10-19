@@ -4,7 +4,7 @@
   import CommandPalette from './lib/components/CommandPalette.svelte';
   import ConfirmHost from './lib/components/ConfirmHost.svelte';
   import Notifications from './lib/components/Notifications.svelte';
-  import { commandPalette, currentPanel, profileState, profileColorStore, featureFlags, refreshTick } from './lib/stores.svelte';
+  import { commandPalette, currentPanel, profileState, profileColorStore, featureFlags, refreshTick, toProfile} from './lib/stores.svelte';
   import { panels } from './lib/panels';
   import { notifications } from './lib/notifications.svelte';
   import { startEventListener } from './lib/events.svelte';
@@ -50,8 +50,8 @@
       ]);
       document.documentElement.dataset.platform = platform;
       document.documentElement.dataset.theme = (cfg.theme === 'muse' ? 'brew' : cfg.theme) || 'dark';
-      profileState.profiles = scanned ?? [];
-      profileState.active = active?.name ? active : null;
+      profileState.profiles = (scanned ?? []).map(toProfile);
+      profileState.active = active?.name ? toProfile(active) : null;
       // Load hidden-profile preferences (UI-only visibility).
       try {
         const hidden = await (mod as any).GetHiddenProfiles?.();
