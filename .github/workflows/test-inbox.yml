@@ -1,6 +1,11 @@
 name: Test inbox
 on:
+  # Branch pushes are covered by the pull_request trigger. Without the branch
+  # filter both events fire on a PR branch, producing two identical runs of the
+  # same commit -- and if either is left unscheduled the PR sits at UNSTABLE
+  # forever waiting on a duplicate. One run per commit instead.
   push:
+    branches: [main]
     paths: ['scripts/inbox/**', '.github/workflows/test-inbox.yml']
   pull_request:
     paths: ['scripts/inbox/**', '.github/workflows/test-inbox.yml']
