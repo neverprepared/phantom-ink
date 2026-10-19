@@ -9,24 +9,28 @@
   import IntegrationsCard from '../components/IntegrationsCard.svelte';
   import JiraCard from '../components/JiraCard.svelte';
   import DatabasesCard from '../components/DatabasesCard.svelte';
+  import { servicesRes } from '../stores/services.svelte';
+  import type { main } from '../../../wailsjs/go/models';
 
-  interface Service {
-    name: string;
-    label: string;
-    description: string;
-    default_url: string;
-    port: number;
-    native: boolean;
-    enabled: boolean;
-    remote: boolean;
-    local_url: string;
-    remote_url: string;
-    url: string;
-    running: boolean;
-  }
+  // main.ServiceStatus rows are typed by the generated main.ServiceStatus via the store.
 
-  let services = $state<Service[]>([]);
-  let loading = $state(true);
+  // Module-scope store: returning to this panel shows the retained rows
+  // instead of blanking (stores/services.svelte.ts).
+  const services = $derived(servicesRes.value);
+  const loading = $derived(servicesRes.loading);
+  const refreshing = $derived(servicesRes.refreshing);
+  const loadError = $derived(servicesRes.error);
+
+  // Mirror into the app-wide flags only for an ACCEPTED response. Doing this
+  // inside the fetcher would also apply a response the resource discarded as
+  // stale, which is how a superseded fetch leaks into global state.
+  $effect(() => {
+    featureFlags.services = services.map(s => ({
+      name: s.name,
+      enabled: s.enabled,
+      running: s.running,
+    }));
+  });
   let busyServices = $state<Set<string>>(new Set());
   let expandedServices = $state<Set<string>>(new Set());
   // The compose-services group is demoted to a collapsed section, collapsed by
@@ -43,21 +47,8 @@
   let showOpGuide = $state(false);
   let credsExpanded = $state(false);
 
-  async function refresh() {
-    const a = await getApi();
-    if (!a) { loading = false; return; }
-    try {
-      services = (await a.ListServices()) ?? [];
-      featureFlags.services = services.map(s => ({
-        name: s.name,
-        enabled: s.enabled,
-        running: s.running,
-      }));
-    } catch (err: any) {
-      notifications.error(`Failed to load services: ${err?.message ?? err}`);
-    } finally {
-      loading = false;
-    }
+  function refresh() {
+    return servicesRes.refresh();
   }
 
   onMount(async () => {
@@ -108,7 +99,7 @@
     } finally { clearBusy(name); }
   }
 
-  function saveSvc(svc: Service, overrides: Partial<Service> = {}) {
+  function saveSvc(svc: main.ServiceStatus, overrides: Partial<main.ServiceStatus> = {}) {
     const s = { ...svc, ...overrides };
     return getApi().then(a => a?.SetServiceConfig(s.name, s.enabled, s.local_url, s.remote_url, s.remote));
   }
@@ -122,7 +113,7 @@
 
   // The toggle is a power switch: for local docker integrations the backend also
   // brings the container up or down. Native/remote services only record config.
-  async function handleToggle(svc: Service) {
+  async function handleToggle(svc: main.ServiceStatus) {
     const next = !svc.enabled;
     setBusy(svc.name);
     try {
@@ -139,7 +130,7 @@
     } finally { clearBusy(svc.name); }
   }
 
-  async function handleRemoteToggle(svc: Service) {
+  async function handleRemoteToggle(svc: main.ServiceStatus) {
     try {
       await saveSvc(svc, { remote: !svc.remote });
       await refresh();
@@ -147,12 +138,12 @@
     } catch (err: any) { notifications.error(`Failed to update ${svc.label}: ${err}`); }
   }
 
-  function startEditURL(svc: Service) {
+  function startEditURL(svc: main.ServiceStatus) {
     editingService = svc.name;
     editURL = svc.remote ? svc.remote_url : svc.local_url;
   }
 
-  async function saveURL(svc: Service) {
+  async function saveURL(svc: main.ServiceStatus) {
     try {
       const overrides = svc.remote ? { remote_url: editURL } : { local_url: editURL };
       await saveSvc(svc, overrides);
@@ -502,7 +493,7 @@
 <style>
   .panel { padding: var(--panel-padding); }
 
-  /* Service card */
+  /* main.ServiceStatus card */
   .service-list { display: flex; flex-direction: column; gap: 12px; }
 
   .service-card {
