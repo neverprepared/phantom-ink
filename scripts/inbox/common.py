@@ -417,6 +417,50 @@ def entry(
     return e
 
 
+# A stage's status row. collected_entries is keyed PRIMARY KEY (job_id,
+# entry_id) and upserted ON CONFLICT (app/collect.go:504-508), so a STABLE
+# entry_id gives one always-current row per job rather than 96 rows a day.
+#
+# This exists because a successful collect job that emits no items is
+# completely invisible: stdout is parsed and discarded, and stderr only
+# surfaces in last_error on a non-zero exit. "Ran, nothing to do" looked
+# identical to "never ran", which caused two misdiagnoses while building this.
+STATUS_ENTRY_PREFIX = "inbox-status"
+
+
+def status_entry(
+    stage: str,
+    *,
+    ok: bool,
+    summary: str,
+    counts: dict[str, int] | None = None,
+    attention: bool = False,
+) -> dict[str, Any]:
+    """One upserted row describing this stage's most recent run.
+
+    `ok=False` marks a run that failed outright; `attention` marks a successful
+    run that produced items a human needs to look at (rejected or quarantined),
+    so the timeline surfaces it without anyone scanning the item list.
+    """
+    counts = {k: v for k, v in (counts or {}).items() if v}
+    detail = ", ".join(f"{k}: {v}" for k, v in sorted(counts.items())) or "nothing to do"
+    if not ok:
+        status = STATUS_FAILED
+    elif attention:
+        status = STATUS_NEEDS_ACTION
+    else:
+        status = STATUS_DONE
+    return entry(
+        f"{STATUS_ENTRY_PREFIX}-{stage}",
+        "inbox_run",
+        f"Drive inbox {stage}: {summary}",
+        description=f"last run {utc_now_iso()} — {detail}",
+        status=status,
+        tags=["inbox", "run", stage],
+        metadata={"stage": stage, "ok": ok, **counts},
+    )
+
+
 def emit(entries: list[dict[str, Any]]) -> None:
     """Print the entries array on stdout. Must be the ONLY thing on stdout."""
     json.dump(entries, sys.stdout)

@@ -53,6 +53,7 @@ from common import (
     log,
     scan_secrets,
     split_frontmatter,
+    status_entry,
     utc_now_iso,
     write_spool,
 )
@@ -197,12 +198,14 @@ def drain(
 ) -> list[dict[str, Any]]:
     folders = drive.resolve()
     entries: list[dict[str, Any]] = []
+    counts = {"spooled": 0, "rejected": 0, "already filed": 0, "errors": 0, "skipped": 0}
 
     for meta in drive.list_inbox(folders, cap):
         name = meta.get("name", meta["id"])
 
         if is_furniture(name):
             log(f"skipping {name!r} (not a capture)")
+            counts["skipped"] += 1
             continue
 
         try:
@@ -218,11 +221,13 @@ def drain(
             gate_secrets(text)
         except Rejected as exc:
             log(f"reject {name!r}: {exc.reason} ({exc.detail})")
+            counts["rejected"] += 1
             entries.append(reject(drive, folders, meta, exc, dry=dry))
             continue
         # One bad file must not stall the rest of the queue.
         except Exception as exc:
             log(f"error on {name!r}: {exc}")
+            counts["errors"] += 1
             entries.append(
                 entry(
                     f"error-{meta['id']}",
@@ -240,6 +245,7 @@ def drain(
             # Same content already filed -- a re-drop, not new work. Dispose of
             # it rather than creating a duplicate reminder or todo.
             log(f"{name!r} already filed as {iid}; disposing")
+            counts["already filed"] += 1
             if not dry:
                 drive.dispose(meta["id"], hard_delete=hard_delete)
             entries.append(
@@ -281,6 +287,7 @@ def drain(
             write_spool(cfg, rec)
             drive.move(meta["id"], to=folders["processing"], from_=folders["inbox"])
 
+        counts["spooled"] += 1
         entries.append(
             entry(
                 iid,
@@ -293,6 +300,19 @@ def drain(
             )
         )
 
+    # One upserted status row, so a run that found nothing is still visible.
+    verb = "would spool" if dry else "spooled"
+    summary = f"{verb} {counts['spooled']}" if counts["spooled"] else "idle"
+    entries.insert(
+        0,
+        status_entry(
+            "drain",
+            ok=True,
+            summary=summary,
+            counts=counts,
+            attention=bool(counts["rejected"] or counts["errors"]),
+        ),
+    )
     return entries
 
 
@@ -376,12 +396,12 @@ def main(argv: list[str] | None = None) -> int:
         drive = open_drive(cfg)
     except ConfigError as exc:
         log(f"config error: {exc}")
-        emit([])
+        emit([status_entry("drain", ok=False, summary=f"config error: {exc}"[:120])])
         return 1
     except Exception as exc:
         log(f"drive init failed: {exc}")
         log(traceback.format_exc())
-        emit([])
+        emit([status_entry("drain", ok=False, summary=f"drive unavailable: {exc}"[:120])])
         return 1
 
     try:
@@ -421,12 +441,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except ConfigError as exc:
         log(f"config error: {exc}")
-        emit([])
+        emit([status_entry("drain", ok=False, summary=f"config error: {exc}"[:120])])
         return 1
     except Exception as exc:
         log(f"drain failed: {exc}")
         log(traceback.format_exc())
-        emit([])
+        emit([status_entry("drain", ok=False, summary=f"failed: {exc}"[:120])])
         return 1
 
 
