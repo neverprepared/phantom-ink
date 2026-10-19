@@ -28,6 +28,7 @@ from typing import Any
 
 from common import (
     APPLY_CAP,
+    ENTRY_KIND,
     KIND_REMINDER,
     STATUS_BLOCKED,
     STATUS_DONE,
@@ -78,7 +79,7 @@ def quarantine_item(
     drop_spool(cfg, rec.item_id)
     return entry(
         rec.item_id,
-        "inbox_quarantined",
+        ENTRY_KIND,
         rec.drive_name,
         description=reason[:500],
         status=STATUS_NEEDS_ACTION,
@@ -106,7 +107,7 @@ def apply_item(
         log(f"{rec.item_id} [{v.kind}] apply failed, will retry: {exc}")
         return entry(
             rec.item_id,
-            "inbox_retry",
+            ENTRY_KIND,
             v.title,
             description=f"apply failed, will retry: {exc}"[:500],
             status=STATUS_BLOCKED,
@@ -147,7 +148,7 @@ def apply_item(
     log(f"{rec.item_id} [{v.kind}] applied -> {detail}")
     return entry(
         rec.item_id,
-        "inbox_applied",
+        ENTRY_KIND,
         v.title,
         description=detail[:500],
         status=STATUS_DONE,
@@ -279,9 +280,10 @@ def main(argv: list[str] | None = None) -> int:
             reminders.close()
 
     for e in entries:
-        if e.get("kind") == "inbox_applied":
+        tags = e.get("tags") or []
+        if "applied" in tags:
             counts["filed"] += 1
-        elif e.get("kind") == "inbox_retry":
+        elif "retry" in tags:
             counts["retrying"] += 1
 
     summary = f"filed {counts['filed']}" if counts["filed"] else "idle"

@@ -35,6 +35,7 @@ from typing import Any
 from common import (
     ALLOWED_MIMES,
     DRAIN_CAP,
+    ENTRY_KIND,
     MAX_BODY_BYTES,
     STALE_PROCESSING_S,
     STATUS_DONE,
@@ -47,7 +48,6 @@ from common import (
     emit,
     entry,
     item_id_for,
-    kind_from_filename,
     ledger_ids,
     load_config,
     log,
@@ -179,7 +179,7 @@ def reject(
             log(f"reject-move failed for {meta.get('name')!r}: {move_err}")
     return entry(
         f"rejected-{meta['id']}",
-        "inbox_rejected",
+        ENTRY_KIND,
         f"Rejected: {meta.get('name', meta['id'])}",
         description=f"{exc.reason} — {exc.detail}",
         status=STATUS_FAILED,
@@ -231,7 +231,7 @@ def drain(
             entries.append(
                 entry(
                     f"error-{meta['id']}",
-                    "inbox_error",
+                    ENTRY_KIND,
                     f"Drain failed: {name}",
                     description=str(exc)[:500],
                     status=STATUS_FAILED,
@@ -245,26 +245,14 @@ def drain(
             # Same content already filed -- a re-drop, not new work. Dispose of
             # it rather than creating a duplicate reminder or todo.
             log(f"{name!r} already filed as {iid}; disposing")
+            # Also no per-item row: a re-drop is noise, and like the pending
+            # row above it would never clear. It shows in the status counts.
             counts["already filed"] += 1
             if not dry:
                 drive.dispose(meta["id"], hard_delete=hard_delete)
-            entries.append(
-                entry(
-                    f"redrop-{meta['id']}",
-                    "inbox_redrop",
-                    f"Already filed: {name}",
-                    description=f"content matches {iid}, which is already in the ledger",
-                    status=STATUS_DONE,
-                    tags=["inbox", "redrop"],
-                )
-            )
             continue
 
         kind = declared_kind(fm, name)
-        # A filename marker ("r: call the accountant") is a prefix, not part of
-        # the title, so strip it before using the name for display.
-        _, clean_name = kind_from_filename(name)
-
         rec = SpoolRecord(
             item_id=iid,
             profile=cfg.profile,
@@ -287,18 +275,13 @@ def drain(
             write_spool(cfg, rec)
             drive.move(meta["id"], to=folders["processing"], from_=folders["inbox"])
 
+        # Deliberately NO per-item row here. The two stages are separate
+        # collect jobs and collected_entries upserts per (job_id, entry_id), so
+        # a "pending" row written under the DRAIN job can never be superseded
+        # by the apply job's "applied" row -- it sat at `upcoming` forever, one
+        # stale row per item ever captured. The status row below carries the
+        # spooled count instead, and apply emits the durable per-item record.
         counts["spooled"] += 1
-        entries.append(
-            entry(
-                iid,
-                "inbox_pending",
-                fm.get("title") or clean_name or name,
-                description=rec.body[:300],
-                status=STATUS_UPCOMING,
-                tags=["inbox", "pending"] + ([kind] if kind else []),
-                metadata={"declared_kind": kind, "drive_file_id": meta["id"]},
-            )
-        )
 
     # One upserted status row, so a run that found nothing is still visible.
     verb = "would spool" if dry else "spooled"
@@ -356,7 +339,7 @@ def requeue_stale(
         entries.append(
             entry(
                 f"stale-{meta['id']}",
-                "inbox_requeued",
+                ENTRY_KIND,
                 f"{name} {outcome}",
                 status=status,
                 tags=["inbox", "requeued"],

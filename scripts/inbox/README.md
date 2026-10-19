@@ -154,11 +154,27 @@ store (`~/.google_workspace_mcp/credentials/`), so there is no second auth flow.
   running again. This is a deliberate trade (the jobs stay manageable in the
   Collectors panel, with a per-job play button) and not a bug, but it does mean
   the inbox is not a background service.
-- **Each stage writes one status row per run** (`kind: inbox_run`, a stable
-  `entry_id`, upserted). Check it to tell "ran, nothing to do" from "never
-  ran" — a successful job that emits no items is otherwise completely silent,
-  because stdout is parsed and discarded and stderr only reaches `last_error`
-  on a non-zero exit.
+- **Seeing the runs in the app.** Two surfaces, and neither is automatic:
+  - The **Collectors panel** shows each job's last run as a relative time and
+    an `✗ error` badge (`CollectorsPanel.svelte:216`, `:434`). That is the
+    "is it running" indicator.
+  - For the entries themselves, add a **Stream widget** to the dashboard with
+    tag `inbox`. That is the *only* consumer of `collected_entries` in the app
+    (`StreamWidget.svelte:92`), and it queries a hard-coded `kind: 'event'` —
+    which is why every entry this pipeline emits uses that kind and puts the
+    discriminator in tags (`inbox` plus `run`/`rejected`/`applied`/…). The app
+    timeline does **not** read entries at all; it projects `collect_jobs` into
+    planned items.
+- **Each stage writes one status row per run** (a stable `entry_id`, upserted).
+  Check it to tell "ran, nothing to do" from "never ran" — a successful job that
+  emits no items is otherwise completely silent, because stdout is parsed and
+  discarded and stderr only reaches `last_error` on a non-zero exit.
+- **The drain emits no per-item rows.** The two stages are separate collect
+  jobs and entries upsert per `(job_id, entry_id)`, so a "pending" row written
+  by the drain could never be superseded by the apply job's "applied" row — it
+  stayed at `upcoming` forever, one stale row per item ever captured. The
+  drain's status row carries the counts; apply emits the durable per-item
+  record.
 - **Prime the EventKit grant once** by running `macos-mcp` from a terminal before
   registering the apply job. Launched as a subprocess of the Wails app the TCC
   prompt may not be attributable, and Stage C will fail.
