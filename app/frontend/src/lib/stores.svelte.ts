@@ -312,6 +312,7 @@ export const profileColorStore = {
 
 import type { DashboardLayout, DashboardData, WidgetInstance } from './widgets/types';
 import { getApi } from './utils/api';
+import { onWailsTopic } from './utils/wailsTopic';
 
 let _dashboardLayout = $state<DashboardLayout | null>(null);
 
@@ -361,8 +362,18 @@ export interface AttentionItemLite {
 let _attention = $state<AttentionItemLite[]>([]);
 let _attentionLoaded = $state(false);
 let _attentionPoll: number | undefined;
+let _attentionPushOff: (() => void) | undefined;
+let _attentionDebounce: number | undefined;
 let _attentionWorkspace = '';
-const ATTENTION_POLL_MS = 5_000;
+// Long, because this is now a SAFETY NET rather than the delivery mechanism:
+// agent:event pushes drive the refresh (see attentionState.start). A 5s poll
+// app-wide cost ~17k requests/day of a 200-item payload for a list that
+// changes a few times an hour.
+const ATTENTION_POLL_MS = 60_000;
+
+// Collapse bursts: a fleet run emits many envelopes in quick succession and
+// they would otherwise each trigger their own full ListAttention.
+const ATTENTION_PUSH_DEBOUNCE_MS = 400;
 
 async function _refreshAttention(): Promise<void> {
   if (typeof window === 'undefined') return;
@@ -393,11 +404,40 @@ export const attentionStore = {
   removeLocal(id: string): void {
     _attention = _attention.filter(i => i.id !== id);
   },
-  /** Bootstrap the poll. Idempotent — safe to call from multiple places. */
+  /**
+   * Bootstrap. Idempotent — safe to call from multiple places.
+   *
+   * Refreshes on an agent:event push and keeps a slow poll as the safety net,
+   * so a missed or dropped event costs at most one poll interval of staleness
+   * rather than going unnoticed.
+   */
   start(): void {
     if (typeof window === 'undefined' || _attentionPoll !== undefined) return;
     void _refreshAttention();
     _attentionPoll = window.setInterval(_refreshAttention, ATTENTION_POLL_MS);
+
+    if (_attentionPushOff === undefined) {
+      _attentionPushOff = onWailsTopic('agent:event', () => {
+        if (_attentionDebounce !== undefined) window.clearTimeout(_attentionDebounce);
+        _attentionDebounce = window.setTimeout(() => {
+          _attentionDebounce = undefined;
+          void _refreshAttention();
+        }, ATTENTION_PUSH_DEBOUNCE_MS);
+      });
+    }
+  },
+  /** Tear down the poll and the push subscription. */
+  stop(): void {
+    if (_attentionPoll !== undefined) {
+      window.clearInterval(_attentionPoll);
+      _attentionPoll = undefined;
+    }
+    if (_attentionDebounce !== undefined) {
+      window.clearTimeout(_attentionDebounce);
+      _attentionDebounce = undefined;
+    }
+    _attentionPushOff?.();
+    _attentionPushOff = undefined;
   },
 };
 

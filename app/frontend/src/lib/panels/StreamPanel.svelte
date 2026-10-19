@@ -2,7 +2,8 @@
   import { onMount, onDestroy } from 'svelte';
   import { timeAgo } from '../utils/format';
   import { getApi, openInBrowser } from '../utils/api';
-  import { profileState, currentPanel, attentionStore, streamFocus, ruleSeed } from '../stores.svelte';
+  import { profileState, currentPanel, attentionStore, streamFocus, ruleSeed, outboxStore } from '../stores.svelte';
+  import { onAgentEvent, onWailsTopic } from '../utils/wailsTopic';
   import { streamLive, STATUS_OPTIONS } from '../stores/streamLive.svelte';
   import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
@@ -81,17 +82,17 @@
   let respondText = $state('');
 
   // Outbox pending indicator, polled separately from list refresh.
-  let outboxPending = $state(0);
+
 
   let livePoll: number | undefined;
   let logsPoll: number | undefined;
-  let outboxPoll: number | undefined;
+
   let healthPoll: number | undefined;
   let sseCleanup: Array<() => void> = [];
 
   const LIVE_POLL_MS = 5_000;     // SSE drives instant updates; this is a safety net
   const LOGS_POLL_MS = 3_000;
-  const OUTBOX_POLL_MS = 5_000;
+
   const HEALTH_POLL_MS = 20_000;  // OpenSearch reachability changes rarely
   const LOGS_LIMIT = 1000;
 
@@ -167,15 +168,10 @@
     await attentionStore.refresh();
   }
 
-  async function refreshOutbox() {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      outboxPending = (await a.OutboxPending()) ?? 0;
-    } catch {
-      // outbox poll is best-effort; ignore transient errors
-    }
-  }
+  // Outbox pending comes from the app-wide outboxStore, which already polls it
+  // on the same cadence. This panel kept its own copy and its own interval, so
+  // whenever Stream was open the same endpoint was polled twice concurrently.
+  const outboxPending = $derived(outboxStore.pending);
 
   async function refreshLogs() {
     if (!opensearchActive) return;
@@ -200,35 +196,38 @@
     if (f?.sortBy) logsSortBy = f.sortBy;
 
     void streamLive.refreshLive();
-    void refreshOutbox();
     void refreshOpenSearchHealth();
+    // outboxStore.start() is idempotent and app-wide; no panel-local poll.
+    outboxStore.start();
     livePoll      = window.setInterval(() => streamLive.refreshLive(), LIVE_POLL_MS);
-    outboxPoll    = window.setInterval(refreshOutbox, OUTBOX_POLL_MS);
     healthPoll    = window.setInterval(refreshOpenSearchHealth, HEALTH_POLL_MS);
 
     // SSE-driven instant updates. agent:event is the typed envelope stream we
     // emit in app.go from the brainbox /api/events SSE wrapper.
-    const offAgent = (window as any).runtime?.EventsOn?.('agent:event', (env: any) => {
+    sseCleanup.push(onAgentEvent((env: any) => {
       streamLive.applyAgentEvent(env);
-    });
-    if (typeof offAgent === 'function') sseCleanup.push(offAgent);
+    }));
 
-    // Legacy events still poke a refresh so anything not yet on the bus stays
-    // current (P5 retired most, but defense-in-depth is cheap).
-    const legacy = ['task:event', 'loop:run:event', 'brainbox:event'];
-    for (const ev of legacy) {
-      const off = (window as any).runtime?.EventsOn?.(ev, () => {
-        void refreshAttention();
-        void streamLive.refreshLive();
-      });
-      if (typeof off === 'function') sseCleanup.push(off);
-    }
+    // The raw bus topic still pokes a refresh, so anything not carried as a
+    // typed agent:event envelope stays current.
+    //
+    // 'task:event' and 'loop:run:event' used to be subscribed here too, as
+    // "defense-in-depth". Nothing emits them -- the Go side emits
+    // collect:update, attention:responded, gateway:env-refreshed,
+    // app:startup-error, services:reconciled, brainbox:event, agent:event,
+    // conversation:event, profile-image:progress and base-image:progress --
+    // so they were coverage on paper only, which is worse than none: a reader
+    // auditing this file would conclude the safety net existed.
+    sseCleanup.push(onWailsTopic('brainbox:event', () => {
+      void refreshAttention();
+      void streamLive.refreshLive();
+    }));
   });
 
   onDestroy(() => {
     if (livePoll      !== undefined) window.clearInterval(livePoll);
     if (logsPoll      !== undefined) window.clearInterval(logsPoll);
-    if (outboxPoll    !== undefined) window.clearInterval(outboxPoll);
+
     if (healthPoll    !== undefined) window.clearInterval(healthPoll);
     sseCleanup.forEach(fn => fn());
   });

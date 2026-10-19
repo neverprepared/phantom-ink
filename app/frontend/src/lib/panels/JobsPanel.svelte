@@ -59,9 +59,41 @@
   onMount(() => {
     void bootstrap();
     void refresh();
-    pollHandle = window.setInterval(() => { void refresh(); void refreshDetail(); }, 5_000);
+    startPolling();
   });
-  onDestroy(() => { if (pollHandle !== undefined) window.clearInterval(pollHandle); });
+  onDestroy(() => stopPolling());
+
+  // TERMINAL existed but nothing consulted it, so parking on a finished
+  // fan-out's results issued two Go round-trips every 5s indefinitely -- and
+  // any transient failure then flipped loadError, so a completed static view
+  // could spontaneously replace itself with an error banner.
+  function allJobsSettled(): boolean {
+    if (jobs.length === 0) return false; // nothing yet: keep looking
+    return jobs.every(j => {
+      const statuses = Object.keys(j.by_status ?? {});
+      // No status breakdown yet means we do not know it is finished.
+      return statuses.length > 0 && statuses.every(s => TERMINAL.has(s));
+    });
+  }
+
+  function startPolling() {
+    if (pollHandle !== undefined) return;
+    pollHandle = window.setInterval(() => {
+      if (allJobsSettled()) {
+        stopPolling();
+        return;
+      }
+      void refresh();
+      void refreshDetail();
+    }, 5_000);
+  }
+
+  function stopPolling() {
+    if (pollHandle !== undefined) {
+      window.clearInterval(pollHandle);
+      pollHandle = undefined;
+    }
+  }
 
   async function bootstrap() {
     const a = await getApi();

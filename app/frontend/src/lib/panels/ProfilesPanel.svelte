@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getApi } from '../utils/api';
+  import { onWailsTopic } from '../utils/wailsTopic';
   import { onMount, untrack } from 'svelte';
   import { notifications } from '../notifications.svelte';
   import { profileState, profileColorStore, integrationState, type Profile } from '../stores.svelte';
@@ -286,31 +287,35 @@
     imageLogs[profile] = [];
     imageLogsOpen[profile] = true;
 
-    const rt = (window as any).runtime;
+    // Per-listener subscription, so building two profiles concurrently works:
+    // this used to EventsOff('profile-image:progress'), which removes EVERY
+    // handler for the topic — the first build to finish killed the other's
+    // progress stream, and its logs simply stopped with no explanation.
     let unsub: (() => void) | null = null;
-    if (rt?.EventsOn) {
-      rt.EventsOn('profile-image:progress', (evt: any) => {
-        if (evt?.profile !== profile) return;
-        imageLogs[profile] = [...(imageLogs[profile] ?? []), evt.step];
-        if (evt.done) {
-          imageBuilding[profile] = false;
-          if (evt.error) {
-            notifications.error(`Build failed: ${evt.error}`);
-          } else {
-            notifications.success(`Profile image built: ${evt.tag}`);
-            checkImageStatus(profile);
-          }
-          if (rt?.EventsOff) rt.EventsOff('profile-image:progress');
+    unsub = onWailsTopic('profile-image:progress', (payload: any) => {
+      const evt = payload as any;
+      if (evt?.profile !== profile) return;
+      imageLogs[profile] = [...(imageLogs[profile] ?? []), evt.step];
+      if (evt.done) {
+        imageBuilding[profile] = false;
+        if (evt.error) {
+          notifications.error(`Build failed: ${evt.error}`);
+        } else {
+          notifications.success(`Profile image built: ${evt.tag}`);
+          checkImageStatus(profile);
         }
-      });
-    }
+        unsub?.();
+        unsub = null;
+      }
+    });
 
     try {
       await a.BuildProfileImage({ profile, base_image: '', registry_url: '' });
     } catch (err: any) {
       imageBuilding[profile] = false;
       notifications.error(`Build error: ${err?.message ?? err}`);
-      if (rt?.EventsOff) rt.EventsOff('profile-image:progress');
+      unsub?.();
+      unsub = null;
     }
   }
 

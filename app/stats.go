@@ -190,6 +190,11 @@ var (
 	containerDiskAt  time.Time
 	containerDiskVal []ContainerDiskStat
 	containerDiskErr error
+	// containerDiskOK records that a measurement HAS been taken, which cannot
+	// be inferred from val/err: a host with no containers legitimately yields
+	// (nil, nil), and treating that as "nothing cached" defeats the cache
+	// exactly where it is cheapest to serve.
+	containerDiskOK bool
 )
 
 type dirSizeEntry struct {
@@ -202,11 +207,12 @@ type dirSizeEntry struct {
 func (a *App) containerDiskUsageCached() ([]ContainerDiskStat, error) {
 	containerDiskMu.Lock()
 	defer containerDiskMu.Unlock()
-	if time.Since(containerDiskAt) < statsCacheTTL && (containerDiskVal != nil || containerDiskErr != nil) {
+	if containerDiskOK && time.Since(containerDiskAt) < statsCacheTTL {
 		return containerDiskVal, containerDiskErr
 	}
 	containerDiskVal, containerDiskErr = a.containerDiskUsage()
 	containerDiskAt = time.Now()
+	containerDiskOK = true
 	return containerDiskVal, containerDiskErr
 }
 

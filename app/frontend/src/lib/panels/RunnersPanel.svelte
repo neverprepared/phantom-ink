@@ -44,7 +44,11 @@
   onMount(() => {
     void refresh();
     pollHandle = window.setInterval(refresh, 5_000);
-    tickerHandle = window.setInterval(() => { now = Date.now(); }, 1_000);
+    // 10s, not 1s. `now` is $state, so every tick invalidated every row and
+    // re-ran sparkPath twice per row -- a visible layout pulse and a steady
+    // CPU floor while merely parked on this panel. timeAgo's output does not
+    // change faster than this.
+    tickerHandle = window.setInterval(() => { now = Date.now(); }, 10_000);
   });
 
   onDestroy(() => {
@@ -80,9 +84,21 @@
     }
   }
 
+  // Sparkline paths, recomputed when the SAMPLES change rather than on every
+  // render. These were function calls in the template, invoked twice per row
+  // per render, each reducing and mapping the full sample history into a
+  // string -- so a clock tick cost 2N path builds.
+  const sparkPaths = $derived.by(() => {
+    const out: Record<string, string> = {};
+    for (const name of Object.keys(runnerQueueHistory.value)) {
+      out[name] = buildSparkPath(name);
+    }
+    return out;
+  });
+
   // Build a polyline path for a 60x20 sparkline normalised by the max value
   // observed in the sample window. Returns '' when there isn't enough data.
-  function sparkPath(name: string): string {
+  function buildSparkPath(name: string): string {
     const samples = runnerQueueHistory.value[name] ?? [];
     if (samples.length < 2) return '';
     const max = samples.reduce((acc, s) => Math.max(acc, s.depth), 0);
@@ -239,10 +255,10 @@
               {#if (r.queue_depth || 0) > 0}
                 <span class="queue-badge">+{r.queue_depth} queued</span>
               {/if}
-              {#if sparkPath(r.name)}
+              {#if sparkPaths[r.name]}
                 <span class="spark" title="{peakLabel(r.name)} (1h)">
                   <svg width="60" height="18" viewBox="0 0 60 18" aria-hidden="true">
-                    <path d={sparkPath(r.name)} fill="none" stroke="currentColor" stroke-width="1.2" />
+                    <path d={sparkPaths[r.name]} fill="none" stroke="currentColor" stroke-width="1.2" />
                   </svg>
                 </span>
               {/if}
