@@ -183,7 +183,6 @@
 
 <style>
   .jira-tab { padding: var(--panel-padding); display: flex; flex-direction: column; gap: var(--spacing-sm); }
-  .panel-header { display: flex; align-items: center; justify-content: space-between; }
   .head-actions { display: flex; gap: 6px; }
   .jql-view { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-tertiary); }
   .jql-edit { display: flex; gap: 6px; align-items: flex-start; }

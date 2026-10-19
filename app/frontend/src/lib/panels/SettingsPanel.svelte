@@ -539,7 +539,6 @@
   /* Embedded panels bring their own .panel padding; the general tab needs its
      own since it no longer sits inside a padded wrapper. */
   .general-tab { padding: var(--panel-padding); }
-  .loading { color: var(--color-text-tertiary); font-size: 13px; padding: 24px 0; }
 
   .settings-form { max-width: 560px; }
 
@@ -561,12 +560,6 @@
   }
 
   .field { margin-bottom: 16px; }
-
-  .hint {
-    font-size: 11px;
-    color: var(--color-text-tertiary);
-    margin-top: 4px;
-  }
 
   code {
     font-family: var(--font-mono);

@@ -502,14 +502,7 @@
 
 <style>
   h2 { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
-  .modal-sub { font-size: 12px; color: var(--color-text-muted); margin-bottom: 20px; }
   .field { margin-bottom: 14px; }
-
-  .hint {
-    font-size: 11px;
-    color: var(--color-text-tertiary);
-    margin-top: 4px;
-  }
   .warn-hint { color: var(--color-warning, #e0a64a); }
 
   /* Local backend */

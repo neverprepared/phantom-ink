@@ -574,9 +574,6 @@
     overflow: hidden;
   }
   .panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
     padding: 16px 24px;
     border-bottom: 1px solid var(--border);
   }
@@ -811,8 +808,6 @@
   .row {
     display: grid;
     grid-template-columns: 24px 1fr auto auto auto;
-    align-items: center;
-    gap: 12px;
     padding: 8px 12px;
     background: transparent;
     border: 1px solid transparent;

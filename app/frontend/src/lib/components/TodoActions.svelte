@@ -286,5 +286,5 @@
   .form-title { font-size: 0.78rem; color: var(--color-text-secondary); margin-bottom: 8px; }
   .fields { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .form-actions { display: flex; gap: 8px; margin-top: 10px; }
-  .hint { color: var(--color-text-muted); font-size: 0.7rem; margin: 8px 0 0; }
+  .hint { font-size: 0.7rem; margin: 8px 0 0; }
 </style>

@@ -370,7 +370,7 @@
 
 <style>
   .dora-tab { padding: var(--panel-padding); display: flex; flex-direction: column; gap: var(--spacing-sm); }
-  .panel-header { display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-md); flex-wrap: wrap; }
+  .panel-header { gap: var(--spacing-md); flex-wrap: wrap; }
   .head-actions { display: flex; gap: 8px; align-items: center; }
   .synced { font-size: 10px; color: var(--color-text-tertiary); font-family: var(--font-mono); }
 

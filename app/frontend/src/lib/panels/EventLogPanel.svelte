@@ -297,14 +297,12 @@
   }
 
   .empty {
-    color: var(--color-text-muted);
     padding: 24px 0;
   }
 
   .row {
     display: grid;
     grid-template-columns: 110px 140px 1fr;
-    gap: 12px;
     padding: 3px 6px;
     border-radius: var(--radius-sm);
     min-width: 0;

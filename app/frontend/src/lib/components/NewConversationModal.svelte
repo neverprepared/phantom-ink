@@ -152,15 +152,11 @@
   .section-label {
     margin-top: 0.4rem;
     font-size: 0.7rem;
-    text-transform: uppercase;
     letter-spacing: 0.04em;
     opacity: 0.7;
   }
   .persona-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
   .modal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.5rem;
     margin-top: 0.8rem;
   }
   .btn-cancel, .btn-primary {

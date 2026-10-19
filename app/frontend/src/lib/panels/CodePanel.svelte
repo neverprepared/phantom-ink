@@ -643,7 +643,8 @@
     border: 1px solid var(--color-border-secondary);
     border-radius: var(--radius-sm);
     padding: 7px 10px;
-    display: flex; flex-direction: column; gap: 5px;
+    flex-direction: column;
+    gap: 5px;
   }
   .row-main { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
   .row-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

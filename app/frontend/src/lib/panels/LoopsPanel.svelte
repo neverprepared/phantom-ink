@@ -880,16 +880,15 @@ Describe what the agent does each iteration.
 
   .panel-header {
     /* Match the app-wide panel inset (--panel-padding: 30px 40px) so the
-       header action lands in the same upper-right spot as every other panel,
-       instead of the old hard-coded 20px. */
+    header action lands in the same upper-right spot as every other panel,
+    instead of the old hard-coded 20px. */
     padding: var(--main-pad, 30px) 40px 0;
-    display: flex;
     flex-direction: column;
     /* The global .panel-header sets align-items: center (for its row layout);
-       in this column override that would center + shrink-wrap the title/tabs
-       (and break the header action's right-alignment). Force stretch so the
-       header-top row spans full width and space-between pushes the action to
-       the same upper-right spot as every other panel. */
+    in this column override that would center + shrink-wrap the title/tabs
+    (and break the header action's right-alignment). Force stretch so the
+    header-top row spans full width and space-between pushes the action to
+    the same upper-right spot as every other panel. */
     align-items: stretch;
     gap: 8px;
   }
@@ -1373,11 +1372,6 @@ Describe what the agent does each iteration.
     background: var(--fail-soft);
     border-left: 2px solid var(--fail);
     border-radius: 2px;
-  }
-  .modal-actions {
-    display: flex;
-    gap: 8px;
-    justify-content: flex-end;
   }
   .btn-modal-cancel,
   .btn-modal-create {

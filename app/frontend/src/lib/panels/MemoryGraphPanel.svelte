@@ -276,7 +276,6 @@
   .hint {
     margin: 0;
     max-width: 30rem;
-    color: var(--color-text-tertiary);
     font-size: 0.78rem;
     line-height: 1.4;
   }

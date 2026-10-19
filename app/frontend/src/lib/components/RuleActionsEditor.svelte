@@ -206,7 +206,7 @@
   .form-grid .form-row { min-width: 140px; }
   .form-row { display: flex; flex-direction: column; gap: 4px; }
   .form-label { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-muted); }
-  .hint { font-family: var(--font-mono); font-size: 9px; color: var(--color-text-tertiary); line-height: 1.5; }
+  .hint { font-family: var(--font-mono); font-size: 9px; line-height: 1.5; }
   .warn { font-family: var(--font-mono); font-size: 10px; color: var(--color-warning, #f59e0b); margin: 0; }
 
   .form-input {

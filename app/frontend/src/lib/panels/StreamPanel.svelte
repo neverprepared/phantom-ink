@@ -660,9 +660,7 @@
   }
 
   .panel-header {
-    display: flex;
     align-items: baseline;
-    justify-content: space-between;
     margin-bottom: 16px;
     gap: 16px;
     flex-shrink: 0;

@@ -341,7 +341,6 @@
   .section-label {
     margin-top: 0.4rem;
     font-size: 0.7rem;
-    text-transform: uppercase;
     letter-spacing: 0.04em;
     opacity: 0.7;
   }
@@ -357,7 +356,7 @@
   }
   .prompt-input { resize: vertical; }
   .grid { display: grid; grid-template-columns: 1fr 1fr 0.6fr; gap: 0.5rem; }
-  .modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.8rem; }
+  .modal-actions { margin-top: 0.8rem; }
   .btn-cancel, .btn-primary {
     padding: 0.35rem 0.8rem;
     border-radius: 4px;

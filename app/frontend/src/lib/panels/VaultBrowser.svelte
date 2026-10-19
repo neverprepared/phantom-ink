@@ -373,9 +373,16 @@
   .split { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: var(--spacing-lg); height: 62vh; min-height: 340px; }
   .list { list-style: none; margin: 0; padding: 0; overflow-y: auto; border: 1px solid var(--color-border-primary); border-radius: var(--radius-md); background: var(--color-bg-secondary); }
   .row {
-    display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left;
-    background: transparent; border: none; border-bottom: 1px solid var(--color-border-secondary);
-    color: var(--color-text-primary); cursor: pointer; padding: 10px 12px;
+    flex-direction: column;
+    gap: 3px;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--color-border-secondary);
+    color: var(--color-text-primary);
+    cursor: pointer;
+    padding: 10px 12px;
   }
   .row:hover { background: var(--color-bg-hover, rgba(255,255,255,0.03)); }
   .row.active { background: var(--color-bg-hover, rgba(255,255,255,0.06)); box-shadow: inset 2px 0 0 var(--color-accent, var(--color-text-secondary)); }
