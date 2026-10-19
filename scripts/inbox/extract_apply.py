@@ -4,6 +4,8 @@
 #   "google-api-python-client>=2.140",
 #   "google-auth>=2.33",
 #   "pyyaml>=6.0",
+#   "opentelemetry-sdk>=1.45",
+#   "opentelemetry-exporter-otlp-proto-grpc>=1.45",
 # ]
 # ///
 """Stages B and C -- extract fields from spooled items, then apply them.
@@ -23,9 +25,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 import traceback
 from typing import Any
 
+import obslog
 from common import (
     APPLY_CAP,
     ENTRY_KIND,
@@ -186,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
         help="permanently delete filed items instead of trashing them (not recoverable)",
     )
     args = ap.parse_args(argv)
+    started = time.monotonic()
 
     try:
         cfg = load_config(args.profile)
@@ -236,6 +241,14 @@ def main(argv: list[str] | None = None) -> int:
         log(f"extract stage crashed: {exc}")
         log(traceback.format_exc())
         emit([status_entry("apply", ok=False, summary=f"extract crashed: {exc}"[:120])])
+        # ADR-007: a crash is the one run you will come looking for later.
+        obslog.emit_run(
+            workspace=cfg.profile,
+            event_name="inbox.apply.run",
+            stage="apply",
+            counts={"errors": 1},
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
         return 1
 
     by_id = {r.item_id: r for r in fresh}
@@ -296,6 +309,16 @@ def main(argv: list[str] | None = None) -> int:
             counts=counts,
             attention=bool(counts["quarantined"] or counts["retrying"]),
         ),
+    )
+    # ADR-007: one record per run. The status row above is current state; this
+    # is the history behind it. The --dry-run path returns earlier and emits
+    # nothing, because it changed nothing.
+    obslog.emit_run(
+        workspace=cfg.profile,
+        event_name="inbox.apply.run",
+        stage="apply",
+        counts=counts,
+        duration_ms=int((time.monotonic() - started) * 1000),
     )
     emit(entries)
     return 0

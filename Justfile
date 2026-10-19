@@ -135,8 +135,7 @@ inbox-lint:
 
 # Offline unit tests for the inbox pipeline (gates, verdict validation, spool).
 inbox-test:
-    cd scripts/inbox && uv run --with pytest --with pyyaml \
-        --with google-api-python-client --with google-auth \
+    cd scripts/inbox && uv run --with-requirements tests/requirements.txt \
         python -m pytest tests/ -q
 
 # === Cross-cutting ===

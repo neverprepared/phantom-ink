@@ -26,10 +26,12 @@ jobs:
       # macOS runner. test_contract.py does read the committed
       # app/internal/contract/timeline-entry.schema.json, which is why the
       # checkout must not be sparse.
+      # Dependencies come from tests/requirements.txt, which the `inbox-test`
+      # Justfile recipe also reads. They used to be listed separately here, so
+      # adding one locally left CI installing the old set.
       - name: Run tests
         run: |
-          uv run --with pytest --with pyyaml \
-                 --with google-api-python-client --with google-auth \
+          uv run --with-requirements tests/requirements.txt \
                  python -m pytest tests/ -q
 
       - name: Lint
