@@ -210,15 +210,27 @@ func (a *App) ListAgentWork(profile, since string, limit int) ([]AgentWorkRow, e
 	// connection, and this app keeps a busy write-ahead log, so a contended
 	// pool stalls the whole method. A goroutine plus a timeout makes that
 	// unreachable regardless of the cause.
-	overlayDone := make(chan struct{})
+	// The goroutine must NOT touch `out`: on the timeout path we return it to
+	// Wails for marshalling while the goroutine is still running, so a merge
+	// there would race the marshaller -- under exactly the slow-OpenSearch
+	// condition this deadline exists to handle. So it only fetches, and the
+	// merge happens here, on the one goroutine that owns the slice.
+	//
+	// Buffered so a late send cannot block, which would leak the goroutine.
+	overlayCh := make(chan []opensearch.AgentSession, 1)
 	go func() {
-		defer close(overlayDone)
 		// A panic in the overlay must not take down the list either.
-		defer func() { _ = recover() }()
-		a.overlayLiveness(out, profile, since)
+		defer func() {
+			if r := recover(); r != nil {
+				overlayCh <- nil
+			}
+		}()
+		overlayCh <- a.fetchLiveness(profile, since)
 	}()
 	select {
-	case <-overlayDone:
+	case live := <-overlayCh:
+		// nil on any failure: mergeLiveness then leaves every row untouched.
+		mergeLiveness(out, live)
 	case <-time.After(livenessOverlayTimeout):
 		// Rows keep LivenessAvailable false, so the UI shows a hollow dot and
 		// explains that liveness was unavailable. The work itself still lists.
@@ -228,26 +240,26 @@ func (a *App) ListAgentWork(profile, since string, limit int) ([]AgentWorkRow, e
 	return out, nil
 }
 
-// overlayLiveness stamps OpenSearch's liveness onto rows that have a matching
-// session. Best effort: on any failure the rows keep LivenessAvailable false
-// and the UI shows no dot, rather than the list failing.
-func (a *App) overlayLiveness(rows []AgentWorkRow, profile, since string) {
-	if len(rows) == 0 {
-		return
-	}
+// fetchLiveness reads OpenSearch's liveness for a profile. Best effort: on any
+// failure it returns nil, so the caller's merge leaves rows with
+// LivenessAvailable false and the UI shows no dot rather than the list failing.
+//
+// It deliberately returns the sessions instead of stamping rows itself -- see
+// the race note at the call site.
+func (a *App) fetchLiveness(profile, since string) []opensearch.AgentSession {
 	url, err := a.opensearchAPIURL()
 	if err != nil {
-		return
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), agentSessionQueryTimeout)
 	defer cancel()
-	// Ask for more than len(rows): the two stores order differently, so a
+	// Ask for more than the page size: the two stores order differently, so a
 	// session present in the Langfuse page may sit further down OpenSearch's.
 	live, err := opensearch.NewClient(url).ListAgentSessions(ctx, profile, since, 200)
 	if err != nil {
-		return
+		return nil
 	}
-	mergeLiveness(rows, live)
+	return live
 }
 
 // mergeLiveness stamps OpenSearch liveness onto matching rows.
