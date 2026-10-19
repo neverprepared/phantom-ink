@@ -45,9 +45,19 @@
     ref: string;
   }
 
+  // Two document classes land here and they fill different halves: a
+  // claude-code record has model/session but NO severity (severityText is unset
+  // on every one), an ADR-007 record from one of our services has
+  // severity/event_name/outcome/run_id but no model or session. `service` is
+  // what tells them apart.
   interface LogEntry {
     time: string;
     body: string;
+    severity?: string;
+    service?: string;
+    event_name?: string;
+    outcome?: string;
+    run_id?: string;
     session?: string;
     workspace?: string;
     model?: string;
