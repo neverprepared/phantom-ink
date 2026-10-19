@@ -755,7 +755,7 @@
   }
   .toggle-chevron.open { transform: rotate(180deg); }
 
-  .loading { display: flex; justify-content: center; padding: 48px 0; color: var(--color-text-tertiary); }
+  .loading { display: flex; justify-content: center; padding: 48px 0; }
 
   .session-list { display: flex; flex-direction: column; gap: 12px; }
 
@@ -931,7 +931,6 @@
     color: var(--color-accent);
     text-decoration: none;
     font-family: var(--font-mono);
-    font-size: 11px;
   }
   .meta-url:hover { text-decoration: underline; }
 

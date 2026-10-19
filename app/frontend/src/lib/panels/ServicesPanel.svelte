@@ -736,5 +736,5 @@
   .ollama-model-size { font-size: 11px; color: var(--color-text-tertiary); flex-shrink: 0; }
 
   .btn-xs { padding: 2px 8px !important; font-size: 10px !important; }
-  .hint { font-size: 12px; color: var(--color-text-tertiary); font-style: italic; margin: 6px 0; }
+  .hint { font-size: 12px; font-style: italic; margin: 6px 0; }
 </style>

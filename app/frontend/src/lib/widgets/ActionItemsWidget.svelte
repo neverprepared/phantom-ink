@@ -106,8 +106,6 @@
   }
 
   .empty {
-    font-size: 12px;
-    color: var(--color-text-tertiary);
     padding: var(--spacing-xl) var(--spacing-md);
   }
 

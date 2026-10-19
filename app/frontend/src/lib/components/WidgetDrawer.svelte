@@ -861,8 +861,6 @@
   .btn-remove:hover { color: var(--color-error); }
 
   .empty {
-    font-size: 12px;
-    color: var(--color-text-tertiary);
     margin: 0;
   }
 

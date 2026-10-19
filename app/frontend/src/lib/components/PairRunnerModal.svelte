@@ -203,7 +203,6 @@
     line-height: 1.4;
   }
   .hint {
-    color: var(--color-text-tertiary);
     font-size: 12px;
   }
   .error {

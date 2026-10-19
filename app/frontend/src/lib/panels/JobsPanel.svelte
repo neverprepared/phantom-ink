@@ -394,7 +394,6 @@
 
   .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: var(--spacing-md); }
   .field.narrow { max-width: 90px; }
-  .row { display: flex; gap: var(--spacing-md); }
   .row .field { flex: 1; }
   .form-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-tertiary); }
   .opt { text-transform: none; letter-spacing: 0; color: var(--color-text-muted); }
@@ -423,7 +422,7 @@
   .chip.check { display: inline-flex; align-items: center; gap: 5px; }
   .chip.check input { width: auto; padding: 0; }
   .muted-note { color: var(--color-text-muted); font-size: 0.8rem; }
-  .hint { color: var(--color-text-muted); font-size: 0.78rem; margin: 0 0 var(--spacing-md); }
+  .hint { font-size: 0.78rem; margin: 0 0 var(--spacing-md); }
 
   button.primary {
     width: 100%;

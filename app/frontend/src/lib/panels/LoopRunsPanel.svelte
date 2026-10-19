@@ -404,9 +404,6 @@
   }
 
   .panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
     gap: 12px;
   }
 

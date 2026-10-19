@@ -220,7 +220,6 @@
   .empty {
     font-family: var(--font-mono);
     font-size: 11px;
-    color: var(--color-text-muted);
     padding: var(--spacing-md) var(--spacing-lg);
   }
 

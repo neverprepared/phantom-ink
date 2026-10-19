@@ -108,7 +108,7 @@
 
 <style>
   .gateway-panel { padding: 1.25rem 1.5rem; max-width: 760px; }
-  .panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+  .panel-header { align-items: flex-start; gap: 1rem; margin-bottom: 1rem; }
   h1 { font-size: 1.1rem; margin: 0 0 0.2rem; }
   .subtitle { font-size: 0.75rem; color: var(--text-muted); margin: 0; max-width: 48ch; }
   .header-actions { display: flex; align-items: center; gap: 0.6rem; white-space: nowrap; }

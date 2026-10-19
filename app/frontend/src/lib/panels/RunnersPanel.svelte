@@ -319,7 +319,6 @@
     border: 1px dashed var(--color-border-secondary);
     border-radius: var(--radius-xl);
     padding: 28px 20px;
-    color: var(--color-text-tertiary);
     text-align: center;
   }
   .empty.error {

@@ -111,11 +111,6 @@
     gap: var(--spacing-md);
   }
 
-  .empty {
-    font-size: 12px;
-    color: var(--color-text-tertiary);
-  }
-
   .bars { display: flex; flex-direction: column; gap: var(--spacing-xs); }
 
   .bar-row {

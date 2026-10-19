@@ -483,8 +483,9 @@
   .tag.active { border-color: var(--color-accent); color: var(--color-accent); background: rgba(234,179,8,0.06); }
 
   .empty {
-    font-size: 13px; color: var(--color-text-tertiary);
-    padding: var(--spacing-3xl) 0; line-height: 1.5;
+    font-size: 13px;
+    padding: var(--spacing-3xl) 0;
+    line-height: 1.5;
   }
 
   /* Job list */
