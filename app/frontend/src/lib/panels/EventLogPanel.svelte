@@ -4,6 +4,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import SessionSummaryCard from '../components/SessionSummaryCard.svelte';
   import { getApi } from '../utils/api';
+  import { profileState } from '../stores.svelte';
 
   // session.summary rows expand into a rich card (narrative + facts + evidence).
   let expandedSeq = $state<number | null>(null);
@@ -58,7 +59,10 @@
       const res = await api.SearchAgentEvents({
         q: query.trim(),
         type: typeFilter.trim(),
-        workspace: '',
+        // Scope to the active profile. This was hard-coded to '' , which
+        // returned other profiles' envelopes into a profile-scoped view with
+        // only a dim [ws] suffix to tell them apart.
+        workspace: profileState.active?.name ?? '',
         status: statusFilter,
         source: '',
         since_ms: 0,
@@ -111,12 +115,10 @@
       : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + formatTime(d);
   }
 
-  // Live events don't carry a timestamp so we record receipt time on render
-  let timestamps = new WeakMap<object, Date>();
-  function getTimestamp(event: object): Date {
-    if (!timestamps.has(event)) timestamps.set(event, new Date());
-    return timestamps.get(event)!;
-  }
+  // Oldest-first for display: the ring is newest-first, and the log pane
+  // scrolls to the bottom. $derived so this reverses once per new event
+  // instead of on every unrelated re-render (typing in the search box).
+  const orderedLog = $derived([...log].reverse());
 </script>
 
 <div class="panel">
@@ -196,9 +198,9 @@
       {#if log.length === 0}
         <EmptyState title="No events yet" message="Waiting for brainbox activity." />
       {:else}
-        {#each [...log].reverse() as event (event)}
+        {#each orderedLog as event (event)}
           <div class="row">
-            <span class="ts">{formatTime(getTimestamp(event))}</span>
+            <span class="ts">{formatTime(new Date(event.receivedAt))}</span>
             <span class="type">{event.type ?? '—'}</span>
             <span class="raw">{event.raw}</span>
           </div>
