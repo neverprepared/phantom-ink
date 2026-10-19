@@ -337,8 +337,9 @@
     if (!a) { clearBusy(name); return; }
     try {
       const resp = await a.StartSession(name);
-      if (resp.success ?? resp.Success) notifications.success(`Started: ${name}`);
-      else notifications.error(resp.error ?? resp.Error ?? 'Failed to start');
+      // No ?? resp.Success fallback: the wire contract is lowercase.
+      if (resp.success) notifications.success(`Started: ${name}`);
+      else notifications.error(resp.error || 'Failed to start');
       refresh();
     } catch (err: any) {
       notifications.error(`Failed to start: ${err}`);

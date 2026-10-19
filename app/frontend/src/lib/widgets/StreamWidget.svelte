@@ -122,7 +122,7 @@
   $effect(() => { if (_lastEv) void load(); });
 
   function openURL(url: string) {
-    window.runtime?.BrowserOpenURL(url);
+    (window as any).runtime?.BrowserOpenURL(url);
   }
 </script>
 

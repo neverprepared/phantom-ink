@@ -244,12 +244,16 @@
         req.vm_template = newVMTemplate;
         req.guest_os = newGuestOS;
       }
-      const resp = await a.CreateSession(req);
-      if (resp.success ?? resp.Success) {
+      // `req` is built as a Record because the UTM branch adds fields
+      // conditionally; the cast is at the call, so the request's required
+      // `name` is still guaranteed by the literal above.
+      const resp = await a.CreateSession(req as any);
+      // No PascalCase fallback: the wire contract is lowercase.
+      if (resp.success) {
         notifications.success(`Created session: ${newName}`);
         onCreated();
       } else {
-        notifications.error(resp.error ?? resp.Error ?? 'Failed to create session');
+        notifications.error(resp.error || 'Failed to create session');
       }
     } catch (err: any) {
       notifications.error(`Failed to create: ${err}`);

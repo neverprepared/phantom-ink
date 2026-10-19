@@ -123,7 +123,7 @@
     const a = await getApi();
     if (!a) { scanning = false; return; }
     try {
-      const scanned: Profile[] = await a.ScanProfiles();
+      const scanned = await a.ScanProfiles();
       profileState.profiles = (scanned ?? []).map(toProfile);
       const ap = await a.GetActiveProfile();
       profileState.active = ap?.name ? toProfile(ap) : null;
@@ -251,15 +251,15 @@
     await Promise.all([refreshProfiles(), loadBackups(), refreshDisk()]);
   }
 
+  const purgeBackupAction = action(
+    (api, name: string) => api.PurgeBackup(name),
+    { label: 'Failed to purge', onError: notifications.error },
+  );
+
   async function handlePurge(name: string) {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      await a.PurgeBackup(name);
+    if (await purgeBackupAction.run(name)) {
       notifications.success(`Backup "${name}" permanently deleted`);
       await loadBackups();
-    } catch (err: any) {
-      notifications.error(`Failed to purge: ${err}`);
     }
   }
 
@@ -332,7 +332,7 @@
     });
 
     try {
-      await a.BuildProfileImage({ profile, base_image: '', registry_url: '' });
+      await a.BuildProfileImage({ profile, base_image: '', registry_url: '', no_cache: false } as any);
     } catch (err: any) {
       imageBuilding[profile] = false;
       notifications.error(`Build error: ${err?.message ?? err}`);

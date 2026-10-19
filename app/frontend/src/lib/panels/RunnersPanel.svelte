@@ -8,6 +8,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import { runnerQueueHistory } from '../metricsHistory.svelte';
   import { runnersRes, poolsRes, refreshRunners, type Runner, type Pool } from '../stores/runners.svelte';
+  import { action } from '../stores/resource.svelte';
 
   // State lives in a module-scope store, so navigating away and back renders
   // the retained rows instead of blanking to a spinner (see runners.svelte.ts).
@@ -84,16 +85,18 @@
     return peak > 0 ? `peak ${peak}` : '';
   }
 
+  // No in-flight guard before: the confirm affordance could be double-clicked
+  // into two DeleteRunner calls. action() ignores the repeat.
+  const removeRunnerAction = action(
+    (api, name: string) => api.DeleteRunner(name),
+    { label: 'remove runner', onError: notifications.error },
+  );
+
   async function removeRunner(r: Runner) {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      await a.DeleteRunner(r.name);
+    if (await removeRunnerAction.run(r.name)) {
       notifications.success(`removed ${r.name}`);
       confirmRemove = null;
       await refresh();
-    } catch (err: any) {
-      notifications.error(`delete failed: ${err?.message ?? err}`);
     }
   }
 
@@ -145,15 +148,15 @@
     }
   }
 
+  const deletePoolAction = action(
+    (api, name: string) => api.DeletePool(name),
+    { label: 'delete pool', onError: notifications.error },
+  );
+
   async function deletePool(name: string) {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      await a.DeletePool(name);
+    if (await deletePoolAction.run(name)) {
       notifications.success(`pool ${name} deleted`);
       await refresh();
-    } catch (err: any) {
-      notifications.error(`delete failed: ${err?.message ?? err}`);
     }
   }
 </script>

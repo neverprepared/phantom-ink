@@ -55,8 +55,10 @@
   let savingPlatformNode = $state(false);
 
   // --- Local Runner ---
-  type LocalRunnerStatus = { enabled: boolean; running: boolean; name: string; work_dir: string };
-  let runnerStatus = $state<LocalRunnerStatus>({ enabled: false, running: false, name: 'local-mac', work_dir: '' });
+  // Mirrors the Go struct exactly. work_dir used to be declared here and
+  // seeded with '', but app_runners.go never sends it and nothing read it.
+  type LocalRunnerStatus = { enabled: boolean; running: boolean; name: string };
+  let runnerStatus = $state<LocalRunnerStatus>({ enabled: false, running: false, name: 'local-mac' });
   let runnerName = $state('local-mac');
   let savingRunner = $state(false);
 
