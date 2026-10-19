@@ -100,8 +100,8 @@ func (c *Client) ListArtifactsBuckets(profile string) ([]ArtifactBucket, error) 
 }
 
 // ListArtifactsFolder lists folders + files at one prefix in a bucket.
-// ``bucketKey`` is "vault" or "artifacts" (the logical name); the
-// profile prefix is applied server-side. ``prefix`` is the path the
+// “bucketKey“ is "vault" or "artifacts" (the logical name); the
+// profile prefix is applied server-side. “prefix“ is the path the
 // operator navigated to within their profile namespace.
 func (c *Client) ListArtifactsFolder(bucketKey, prefix string) (ArtifactListing, error) {
 	path := fmt.Sprintf("/api/artifacts/%s/list", url.PathEscape(bucketKey))
@@ -149,7 +149,7 @@ type ArtifactSearchResult struct {
 }
 
 // SearchArtifacts runs a substring search over object keys under
-// ``prefix`` (the bucket's scope_prefix; "" = whole bucket).
+// “prefix“ (the bucket's scope_prefix; "" = whole bucket).
 func (c *Client) SearchArtifacts(bucketKey, query, prefix string) (ArtifactSearchResult, error) {
 	path := fmt.Sprintf(
 		"/api/artifacts/%s/search?q=%s&prefix=%s",
@@ -164,9 +164,9 @@ func (c *Client) SearchArtifacts(bucketKey, query, prefix string) (ArtifactSearc
 	return res, nil
 }
 
-// PresignArtifactURL mints a presigned URL. ``op`` is "get" (for
+// PresignArtifactURL mints a presigned URL. “op“ is "get" (for
 // operator file opens) or "put" (reserved for the Phase 4 assist
-// worker writes). ``host`` is the base URL the caller will fetch from —
+// worker writes). “host“ is the base URL the caller will fetch from —
 // SigV4 signs the Host, so it must be supplied at signing time; empty
 // defers to the daemon's configured public endpoint.
 func (c *Client) PresignArtifactURL(bucketKey, key, op string, ttlSeconds int, host string) (ArtifactPresignedURL, error) {

@@ -222,13 +222,13 @@ func TestNonAuthoritativeSurfacesAsUnauthorized(t *testing.T) {
 func TestNormalizeCloneURL(t *testing.T) {
 	c := newTestClient("https://dev.azure.com")
 	cases := map[string]string{
-		"https://dev.azure.com/acme/widgets/_git/widget-api":     "https://dev.azure.com/acme/widgets/_git/widget-api",
+		"https://dev.azure.com/acme/widgets/_git/widget-api":      "https://dev.azure.com/acme/widgets/_git/widget-api",
 		"https://acme@dev.azure.com/acme/widgets/_git/widget-api": "https://dev.azure.com/acme/widgets/_git/widget-api",
 		"https://acme.visualstudio.com/widgets/_git/widget-api":   "https://dev.azure.com/acme/widgets/_git/widget-api",
-		"https://dev.azure.com/acme":        "", // org only, no project/repo
-		"https://acme.visualstudio.com":     "", // bare host, no path
-		"https://github.com/o/r.git":        "", // wrong host
-		"not a url":                         "",
+		"https://dev.azure.com/acme":                              "", // org only, no project/repo
+		"https://acme.visualstudio.com":                           "", // bare host, no path
+		"https://github.com/o/r.git":                              "", // wrong host
+		"not a url":                                               "",
 	}
 	for in, want := range cases {
 		if got := c.NormalizeCloneURL(in); got != want {

@@ -49,7 +49,7 @@ type LiveLoop struct {
 }
 
 // LiveLoopIteration is one row from the loop_iteration_metric table. The
-// ``convergence_metric_value`` column name is preserved for schema
+// “convergence_metric_value“ column name is preserved for schema
 // continuity; semantically it now carries the iteration's USD cost.
 type LiveLoopIteration struct {
 	LoopID                 string  `json:"loop_id"`
@@ -131,7 +131,7 @@ func (c *Client) ListLoopTemplates() ([]string, error) {
 }
 
 // LoopTemplate is the raw markdown + metadata for one template, returned
-// by GET /api/loops/templates/{name}. ``origin`` controls whether Save is
+// by GET /api/loops/templates/{name}. “origin“ controls whether Save is
 // enabled vs. requiring fork.
 type LoopTemplate struct {
 	Name     string `json:"name"`
@@ -225,9 +225,9 @@ func (c *Client) GetLoopTemplateSchema() (map[string]interface{}, error) {
 }
 
 // LoopAssistRequest is the body shape for POST /api/loops/templates/assist.
-// The ``current_yaml`` field name is preserved for one release for
+// The “current_yaml“ field name is preserved for one release for
 // server-side compatibility; semantically it now carries markdown.
-// ``save_as`` (generate only) persists the result server-side so the
+// “save_as“ (generate only) persists the result server-side so the
 // new template survives the operator navigating away from the panel.
 type LoopAssistRequest struct {
 	Mode            string                 `json:"mode"` // "generate" | "refine" | "explain"
@@ -237,11 +237,11 @@ type LoopAssistRequest struct {
 	SaveAs          string                 `json:"save_as,omitempty"`
 }
 
-// LoopAssistResult is the response shape. ``yaml`` field name preserved
+// LoopAssistResult is the response shape. “yaml“ field name preserved
 // for one release; payload is now markdown text.
 //
 // SavedTo / SaveError surface the server-side persist outcome when the
-// request set ``save_as``. SavedTo is the template name on success;
+// request set “save_as“. SavedTo is the template name on success;
 // SaveError carries the operator-readable reason on failure.
 type LoopAssistResult struct {
 	Markdown    string                   `json:"yaml"`
