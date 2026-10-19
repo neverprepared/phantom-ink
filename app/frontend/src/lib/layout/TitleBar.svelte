@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { connectionState, commandPalette, profileState, profileColorStore, currentPanel, settingsState } from '../stores.svelte';
+  import { connectionState, commandPalette, profileState, profileColorStore, currentPanel, settingsState, toProfile} from '../stores.svelte';
   import { getProfileColor } from '../utils/profileColors';
   import { notifications } from '../notifications.svelte';
 
@@ -39,7 +39,7 @@
       await api.SetActiveProfile(name ?? '');
       if (name) {
         const ap = await api.GetActiveProfile();
-        profileState.active = ap?.name ? ap : null;
+        profileState.active = ap?.name ? toProfile(ap) : null;
       } else {
         profileState.active = null;
       }
@@ -53,9 +53,9 @@
     try { api = await import('../../../wailsjs/go/main/App'); } catch { return; }
     try {
       const scanned = await api.ScanProfiles();
-      profileState.profiles = scanned ?? [];
+      profileState.profiles = (scanned ?? []).map(toProfile);
       const ap = await api.GetActiveProfile();
-      profileState.active = ap?.name ? ap : null;
+      profileState.active = ap?.name ? toProfile(ap) : null;
     } catch (err: any) {
       console.error('Failed to refresh profiles:', err);
     }

@@ -3,7 +3,7 @@
   import { onWailsTopic } from '../utils/wailsTopic';
   import { onMount, untrack } from 'svelte';
   import { notifications } from '../notifications.svelte';
-  import { profileState, profileColorStore, integrationState, type Profile } from '../stores.svelte';
+  import { profileState, profileColorStore, integrationState, type Profile, toProfile} from '../stores.svelte';
   import { getProfileColor, profileColorStyle, PROFILE_PALETTE } from '../utils/profileColors';
   import PieChart from '../components/PieChart.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -14,6 +14,8 @@
   import BrainSkillsEditor from '../components/BrainSkillsEditor.svelte';
   import BrainVaultTransfer from '../components/BrainVaultTransfer.svelte';
   import CardExpander from '../components/CardExpander.svelte';
+  import { action } from '../stores/resource.svelte';
+  import { backupsRes, diskOverviewRes } from '../stores/profilesData.svelte';
 
   // --- Profile image state ---
   // Mirrors Go's ProfileImageStatusView. `state` is the field to branch on:
@@ -63,9 +65,10 @@
   });
 
   let scanning = $state(false);
-  let diskOverview = $state<any | null>(null);
-  let loadingDisk = $state(true);
-  let scanningDisk = $state(false);
+  // Module-scope store: the disk overview walks the profile tree, so it was
+  // the most expensive cold load in the app and ran on every visit.
+  const diskOverview = $derived(diskOverviewRes.value);
+  const loadingDisk = $derived(diskOverviewRes.loading);
 
   // Create profile
   let showCreateProfile = $state(false);
@@ -74,7 +77,7 @@
 
   // Delete / backup / restore
   let confirmDelete = $state<string | null>(null);
-  let backups = $state<string[]>([]);
+  const backups = $derived(backupsRes.value);
 
   // MCP gateway (ADR-002): whether the operator key is configured, so the
   // per-profile secrets editor renders the form vs a "locked" hint.
@@ -121,9 +124,9 @@
     if (!a) { scanning = false; return; }
     try {
       const scanned: Profile[] = await a.ScanProfiles();
-      profileState.profiles = scanned ?? [];
+      profileState.profiles = (scanned ?? []).map(toProfile);
       const ap = await a.GetActiveProfile();
-      profileState.active = ap?.name ? ap : null;
+      profileState.active = ap?.name ? toProfile(ap) : null;
     } catch (err: any) {
       notifications.error(`Failed to scan profiles: ${err?.message ?? err}`);
     } finally {
@@ -131,28 +134,20 @@
     }
   }
 
-  async function refreshDisk() {
-    loadingDisk = true;
-    const a = await getApi();
-    if (!a) { loadingDisk = false; return; }
-    try {
-      diskOverview = await a.GetDiskOverview();
-    } catch { diskOverview = null; }
-    finally { loadingDisk = false; }
+  function refreshDisk() {
+    return diskOverviewRes.refresh();
   }
 
+  // A rescan produces a fresh overview, so it writes THROUGH the resource
+  // rather than keeping a second copy beside it — one owner for that value.
+  const scanDiskAction = action(
+    async (api) => diskOverviewRes.set((await api.ScanDiskUsage()) ?? null),
+    { label: 'Disk scan failed', onError: notifications.error },
+  );
+  const scanningDisk = $derived(scanDiskAction.busy);
+
   async function scanDisk() {
-    scanningDisk = true;
-    const a = await getApi();
-    if (!a) { scanningDisk = false; return; }
-    try {
-      diskOverview = await a.ScanDiskUsage();
-      notifications.success('Disk scan complete');
-    } catch (err: any) {
-      notifications.error(`Disk scan failed: ${err?.message ?? err}`);
-    } finally {
-      scanningDisk = false;
-    }
+    if (await scanDiskAction.run()) notifications.success('Disk scan complete');
   }
 
   function formatScanTime(iso: string): string {
@@ -177,7 +172,7 @@
       if (!a) return;
       await a.SetActiveProfile(name);
       const ap = await a.GetActiveProfile();
-      profileState.active = ap?.name ? ap : null;
+      profileState.active = ap?.name ? toProfile(ap) : null;
       if (!opts.silent) notifications.success(`Switched to ${name}`);
     } catch (err: any) {
       notifications.error(`Failed to switch profile: ${err}`);
@@ -216,10 +211,8 @@
     }
   }
 
-  async function loadBackups() {
-    const a = await getApi();
-    if (!a) return;
-    try { backups = (await a.ListBackups()) ?? []; } catch { backups = []; }
+  function loadBackups() {
+    return backupsRes.refresh();
   }
 
   async function toggleHidden(name: string) {
@@ -233,29 +226,29 @@
     }
   }
 
+  // Destructive and previously unguarded: there was no in-flight flag, so a
+  // double click issued two DeleteProfile calls. action() ignores the repeat.
+  const deleteProfileAction = action(
+    (api, name: string, backup: boolean) => api.DeleteProfile(name, backup),
+    { label: 'Failed to delete', onError: notifications.error },
+  );
+
   async function handleDelete(name: string, backup: boolean) {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      await a.DeleteProfile(name, backup);
-      confirmDelete = null;
-      notifications.success(backup ? `"${name}" backed up and removed` : `"${name}" permanently deleted`);
-      await Promise.all([refreshProfiles(), loadBackups(), refreshDisk()]);
-    } catch (err: any) {
-      notifications.error(`Failed to delete: ${err}`);
-    }
+    if (!(await deleteProfileAction.run(name, backup))) return;
+    confirmDelete = null;
+    notifications.success(backup ? `"${name}" backed up and removed` : `"${name}" permanently deleted`);
+    await Promise.all([refreshProfiles(), loadBackups(), refreshDisk()]);
   }
 
+  const restoreProfileAction = action(
+    (api, name: string) => api.RestoreProfile(name),
+    { label: 'Failed to restore', onError: notifications.error },
+  );
+
   async function handleRestore(name: string) {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      await a.RestoreProfile(name);
-      notifications.success(`"${name}" restored`);
-      await Promise.all([refreshProfiles(), loadBackups(), refreshDisk()]);
-    } catch (err: any) {
-      notifications.error(`Failed to restore: ${err}`);
-    }
+    if (!(await restoreProfileAction.run(name))) return;
+    notifications.success(`"${name}" restored`);
+    await Promise.all([refreshProfiles(), loadBackups(), refreshDisk()]);
   }
 
   async function handlePurge(name: string) {

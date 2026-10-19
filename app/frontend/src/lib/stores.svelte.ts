@@ -216,13 +216,59 @@ export const jobsState = {
 // Active profile
 // ---------------------------------------------------------------------------
 
+/**
+ * Secrets detection mode, as GO emits it.
+ *
+ * The literal was 'onepassword' here, which the Go side never produces —
+ * detectSecretsMode (profiles.go) returns "1password" | "plaintext" | "none".
+ * So this union declared a value that cannot occur and omitted one that can,
+ * which is why ServicesPanel's correct `=== '1password'` comparison read as a
+ * type error ("no overlap") while being right at runtime.
+ *
+ * Kept narrow rather than widened to the generated `string`: the narrowing is
+ * worth having now that it matches reality.
+ */
+export type SecretsMode = '1password' | 'plaintext' | 'none';
+
 export interface Profile {
   name: string;
   path: string;
   workspace_home: string;
   has_secrets: boolean;
-  secrets_mode: 'onepassword' | 'plaintext' | 'none';
+  secrets_mode: SecretsMode;
   secrets_path: string;
+  /** Present on the Go struct; previously omitted here. */
+  has_backup: boolean;
+}
+
+/**
+ * Narrow a generated main.Profile (secrets_mode: string) into the local type.
+ *
+ * The boundary is where the narrowing has to happen — assigning the generated
+ * type straight into the store is what produced the "not assignable" errors.
+ * An unrecognised mode degrades to 'none' rather than being asserted through,
+ * so a new Go-side value shows as "no secrets" instead of corrupting the type.
+ */
+export function toProfile(p: {
+  name: string;
+  path: string;
+  workspace_home: string;
+  has_secrets: boolean;
+  secrets_mode: string;
+  secrets_path: string;
+  has_backup?: boolean;
+}): Profile {
+  const mode: SecretsMode =
+    p.secrets_mode === '1password' || p.secrets_mode === 'plaintext' ? p.secrets_mode : 'none';
+  return {
+    name: p.name,
+    path: p.path,
+    workspace_home: p.workspace_home,
+    has_secrets: p.has_secrets,
+    secrets_mode: mode,
+    secrets_path: p.secrets_path,
+    has_backup: p.has_backup ?? false,
+  };
 }
 
 let _profiles = $state<Profile[]>([]);
