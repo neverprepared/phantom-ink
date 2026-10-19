@@ -220,10 +220,24 @@ func (a *App) SyncDORA(profile string) (DORASyncResult, error) {
 // syncDORA is the pure-ish core: given clients and a store it does the whole
 // fan-out, so tests drive it with a fake provider and an in-memory DB.
 //
-// Repos are walked SEQUENTIALLY, unlike CodeOverview's concurrent read fan-out.
-// This path WRITES, and every write is a transaction against one SQLite file;
-// parallelism would buy little on a manual button press and cost lock
-// contention. The bound on total work is the repo count, not latency.
+// Phased, because the two halves have opposite constraints. The REMOTE FETCH
+// is latency-bound — 1-10 paged calls for merged PRs plus one for commits, per
+// repo — so it fans out under a concurrency cap. The WRITES stay strictly
+// serial: every one is a transaction against a single SQLite file, and the
+// pool is deliberately one connection, so parallel writers would only queue.
+//
+// This used to be one sequential loop whose comment claimed "the bound on
+// total work is the repo count, not latency". That was the wrong way round:
+// the fetches dominate, so 50 repos on a cold sync meant ~45s to minutes of
+// almost entirely waiting.
+//
+// Ordering guarantees that survive the change:
+//   - A repo's watermark still advances ONLY on its own full success, so a
+//     partial sync cannot leave a permanent hole.
+//   - Revert candidates still include deploys written earlier in this same
+//     sync, because every deploy upsert happens before any revert matching.
+//   - Results are accumulated in a deterministic repo order, not completion
+//     order, so RepoErrors and Truncated do not depend on scheduling.
 func syncDORA(ctx context.Context, clients []provider.Client, db *DB, profile string, now time.Time) DORASyncResult {
 	res := DORASyncResult{Profile: profile, RepoErrors: map[string]string{}}
 	if db == nil {
@@ -235,6 +249,14 @@ func syncDORA(ctx context.Context, clients []provider.Client, db *DB, profile st
 	// would burn rate limit on events the dashboard cannot show.
 	horizon := now.AddDate(0, 0, -maxDORAWindowDays)
 
+	// --- Phase 1: enumerate repos and read each watermark (serial, local).
+	type repoJob struct {
+		client    provider.Client
+		kind      string
+		repo      provider.Repo
+		watermark time.Time
+	}
+	var jobs []repoJob
 	for _, c := range clients {
 		kind := string(c.Kind())
 		repos, err := c.ListRepos(ctx)
@@ -248,46 +270,160 @@ func syncDORA(ctx context.Context, clients []provider.Client, db *DB, profile st
 			continue
 		}
 		for _, repo := range repos {
-			deploys, failures, truncated, err := syncOneRepo(ctx, c, db, profile, repo, now, horizon)
+			watermark, err := db.DORAWatermark(profile, kind, repo.FullName)
 			if err != nil {
-				if provider.IsUnauthorized(err) {
-					res.TokenInvalid = true
-				}
 				res.RepoErrors[repo.FullName] = err.Error()
 				continue
 			}
-			res.ReposSynced++
-			res.DeployEventsAdded += deploys
-			res.FailureEventsAdded += failures
-			if truncated {
-				res.Truncated = append(res.Truncated, repo.FullName)
-			}
+			jobs = append(jobs, repoJob{client: c, kind: kind, repo: repo, watermark: watermark})
 		}
 	}
+	if len(jobs) == 0 {
+		sort.Strings(res.Truncated)
+		return res
+	}
+
+	// --- Phase 2: fetch every repo's remote data concurrently.
+	fetched := make([]repoFetch, len(jobs))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrentReads)
+	for i, j := range jobs {
+		wg.Add(1)
+		go func(i int, j repoJob) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				fetched[i] = repoFetch{err: ctx.Err()}
+				return
+			}
+			fetched[i] = fetchRepoDORA(ctx, j.client, j.repo, j.watermark)
+		}(i, j)
+	}
+	wg.Wait()
+
+	// --- Phase 3: store deploy events (serial), in job order.
+	//
+	// All of them, before any revert matching, so a revert can match a deploy
+	// this sync just learned about in another repo's pass — the property the
+	// old per-repo read provided incidentally.
+	deployCounts := make([]int, len(jobs))
+	storeFailed := make([]bool, len(jobs))
+	for i, j := range jobs {
+		f := fetched[i]
+
+		// Store whatever was successfully fetched FIRST, even when a later
+		// call failed: those deploys are correct, and the watermark staying
+		// put is what makes re-fetching safe.
+		if f.mergedOK {
+			rows := deployRowsFor(j.kind, j.repo, f.merged)
+			if err := db.UpsertDeployEvents(profile, rows); err != nil {
+				res.RepoErrors[j.repo.FullName] = fmt.Errorf("store deploy events: %w", err).Error()
+				storeFailed[i] = true
+				continue
+			}
+			deployCounts[i] = len(rows)
+		}
+
+		if f.err != nil {
+			if provider.IsUnauthorized(f.err) {
+				res.TokenInvalid = true
+			}
+			res.RepoErrors[j.repo.FullName] = f.err.Error()
+			storeFailed[i] = true
+			continue
+		}
+	}
+
+	// --- Phase 4: read known deploys ONCE and group by repo.
+	//
+	// This was previously re-read inside every repo's pass — the same
+	// profile+horizon query, N times, each returning every repo's rows only to
+	// filter all but one away in Go.
+	known, err := db.DeployEventsSince(profile, horizon)
+	if err != nil {
+		res.RepoErrors["*"] = fmt.Errorf("read known deploys: %w", err).Error()
+		sort.Strings(res.Truncated)
+		return res
+	}
+	candidatesByRepo := make(map[string][]dora.DeployEvent, len(jobs))
+	for _, d := range toDoraDeploys(known) {
+		candidatesByRepo[d.RepoFullName] = append(candidatesByRepo[d.RepoFullName], d)
+	}
+
+	// --- Phase 5: match reverts, store failures, advance watermarks (serial).
+	for i, j := range jobs {
+		if storeFailed[i] {
+			continue
+		}
+		f := fetched[i]
+		failures, oldestSeen, err := failureRowsFor(j.kind, j.repo, f.commits, candidatesByRepo[j.repo.FullName])
+		if err != nil {
+			res.RepoErrors[j.repo.FullName] = err.Error()
+			continue
+		}
+		if err := db.UpsertFailureEvents(profile, failures); err != nil {
+			res.RepoErrors[j.repo.FullName] = fmt.Errorf("store failure events: %w", err).Error()
+			continue
+		}
+
+		// --- Watermark, and the truncation rule.
+		//
+		// ListRecentCommits is limit-based, so a busy repo can return 250
+		// commits that do not reach back to the watermark. The uncovered
+		// range's reverts were never looked at, which would understate the
+		// failure rate, so the repo is flagged AND the watermark advances only
+		// to the oldest commit actually seen — the next sync then re-covers
+		// the gap.
+		//
+		// Coverage is measured from the watermark, or from the display horizon
+		// when the watermark is older (or absent, on a first sync): history
+		// the widest window cannot show is not a gap worth warning about.
+		coverFrom := j.watermark
+		if coverFrom.Before(horizon) {
+			coverFrom = horizon
+		}
+		next := now
+		truncated := false
+		if !oldestSeen.IsZero() && oldestSeen.After(coverFrom) {
+			truncated = true
+			next = oldestSeen
+		}
+		if err := db.SetDORAWatermark(profile, j.kind, j.repo.FullName, next); err != nil {
+			res.RepoErrors[j.repo.FullName] = fmt.Errorf("advance watermark: %w", err).Error()
+			continue
+		}
+
+		res.ReposSynced++
+		res.DeployEventsAdded += deployCounts[i]
+		res.FailureEventsAdded += len(failures)
+		if truncated {
+			res.Truncated = append(res.Truncated, j.repo.FullName)
+		}
+	}
+
 	sort.Strings(res.Truncated)
 	return res
 }
 
-// syncOneRepo fetches and stores one repo's deploy and revert events.
-//
-// The watermark advances ONLY on full success. A half-completed sync that moved
-// it would leave a permanent hole: the skipped range is never re-requested, so
-// a revert inside it would never be counted and the failure rate would read
-// low forever. Re-fetching a range is cheap and the upserts are idempotent, so
-// retrying is strictly the safer failure mode.
-func syncOneRepo(
-	ctx context.Context,
-	c provider.Client,
-	db *DB,
-	profile string,
-	repo provider.Repo,
-	now, horizon time.Time,
-) (deployCount, failureCount int, truncated bool, err error) {
-	kind := string(c.Kind())
-	watermark, err := db.DORAWatermark(profile, kind, repo.FullName)
-	if err != nil {
-		return 0, 0, false, err
-	}
+// repoFetch is one repo's remote reads, carried from the concurrent fetch
+// phase to the serial write phase.
+type repoFetch struct {
+	merged []provider.MergedPR
+	// mergedOK records that the merged-PR call SUCCEEDED, independently of
+	// err. A commits failure must still let its deploys be stored -- they were
+	// fetched and are correct -- while leaving the watermark alone so the
+	// uncovered revert range is retried. Keying that off err alone silently
+	// dropped them.
+	mergedOK bool
+	commits  []provider.Commit
+	err      error
+}
+
+// fetchRepoDORA does ONLY the remote reads for one repo. No writes, so it is
+// safe to run concurrently with other repos.
+func fetchRepoDORA(ctx context.Context, c provider.Client, repo provider.Repo, watermark time.Time) repoFetch {
 	ref := provider.RepoRef{
 		Provider:      repo.Provider,
 		Owner:         repo.Owner,
@@ -296,12 +432,21 @@ func syncOneRepo(
 		CloneURL:      repo.CloneURL,
 		DefaultBranch: repo.DefaultBranch,
 	}
-
-	// --- Deploy events: merges into the DEFAULT branch.
 	merged, err := c.ListMergedPRs(ctx, ref, watermark)
 	if err != nil {
-		return 0, 0, false, fmt.Errorf("merged PRs: %w", err)
+		return repoFetch{err: fmt.Errorf("merged PRs: %w", err)}
 	}
+	commits, err := c.ListRecentCommits(ctx, ref, doraCommitLimit)
+	if err != nil {
+		// Deploys are still usable; the caller stores them and leaves the
+		// watermark alone, so this range's reverts get another chance.
+		return repoFetch{merged: merged, mergedOK: true, err: fmt.Errorf("recent commits: %w", err)}
+	}
+	return repoFetch{merged: merged, mergedOK: true, commits: commits}
+}
+
+// deployRowsFor converts merged PRs into storable deploy rows.
+func deployRowsFor(kind string, repo provider.Repo, merged []provider.MergedPR) []DeployEventRow {
 	rows := make([]DeployEventRow, 0, len(merged))
 	for _, m := range merged {
 		// The provider deliberately does not filter on base branch — the
@@ -327,34 +472,18 @@ func syncOneRepo(
 			HTMLURL:      m.HTMLURL,
 		})
 	}
-	if err := db.UpsertDeployEvents(profile, rows); err != nil {
-		return 0, 0, false, fmt.Errorf("store deploy events: %w", err)
-	}
-	deployCount = len(rows)
+	return rows
+}
 
-	// --- Failure events: `Revert "..."` commits on the same branch.
-	commits, err := c.ListRecentCommits(ctx, ref, doraCommitLimit)
-	if err != nil {
-		// The deploys above are already stored and are correct; the watermark
-		// still does not move, so this range's reverts get another chance.
-		return deployCount, 0, false, fmt.Errorf("recent commits: %w", err)
-	}
-
-	// Match reverts against every deploy the store knows for this repo inside
-	// the horizon, not just the merges fetched a moment ago: a revert landing
-	// today commonly undoes a merge from weeks back, which an earlier sync
-	// already recorded.
-	known, err := db.DeployEventsSince(profile, horizon)
-	if err != nil {
-		return deployCount, 0, false, fmt.Errorf("read known deploys: %w", err)
-	}
-	candidates := make([]dora.DeployEvent, 0, len(known))
-	for _, d := range toDoraDeploys(known) {
-		if d.RepoFullName == repo.FullName {
-			candidates = append(candidates, d)
-		}
-	}
-
+// failureRowsFor finds `Revert "..."` commits and matches them against this
+// repo's known deploys. Also returns the oldest commit date actually seen,
+// which drives the truncation rule.
+func failureRowsFor(
+	kind string,
+	repo provider.Repo,
+	commits []provider.Commit,
+	candidates []dora.DeployEvent,
+) ([]FailureEventRow, time.Time, error) {
 	oldestSeen := time.Time{}
 	failures := make([]FailureEventRow, 0, 8)
 	for _, cm := range commits {
@@ -384,35 +513,7 @@ func syncOneRepo(
 			RevertedAt:      at.Format(time.RFC3339),
 		})
 	}
-	if err := db.UpsertFailureEvents(profile, failures); err != nil {
-		return deployCount, 0, false, fmt.Errorf("store failure events: %w", err)
-	}
-	failureCount = len(failures)
-
-	// --- Watermark, and the truncation rule.
-	//
-	// ListRecentCommits is limit-based, so a busy repo can return 250 commits
-	// that do not reach back to the watermark. The uncovered range's reverts
-	// were never looked at, which would understate the failure rate, so the
-	// repo is flagged AND the watermark advances only to the oldest commit
-	// actually seen — the next sync then re-covers the gap.
-	//
-	// Coverage is measured from the watermark, or from the display horizon when
-	// the watermark is older (or absent, on a first sync): history the widest
-	// window cannot show is not a gap worth warning about.
-	coverFrom := watermark
-	if coverFrom.Before(horizon) {
-		coverFrom = horizon
-	}
-	next := now
-	if !oldestSeen.IsZero() && oldestSeen.After(coverFrom) {
-		truncated = true
-		next = oldestSeen
-	}
-	if err := db.SetDORAWatermark(profile, kind, repo.FullName, next); err != nil {
-		return deployCount, failureCount, truncated, fmt.Errorf("advance watermark: %w", err)
-	}
-	return deployCount, failureCount, truncated, nil
+	return failures, oldestSeen, nil
 }
 
 // repoFullNameOr prefers the provider's own full name and falls back to the

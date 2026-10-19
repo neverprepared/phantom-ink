@@ -39,7 +39,7 @@ export function ClearMeshErrors():Promise<main.MeshActionResult>;
 
 export function ClearProfileServerOverride(arg1:string,arg2:string):Promise<void>;
 
-export function CodeOverview(arg1:string):Promise<main.CodeOverview>;
+export function CodeOverview(arg1:string,arg2:boolean):Promise<main.CodeOverview>;
 
 export function CopyVaultRecord(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
@@ -256,6 +256,8 @@ export function ImportBrainVault(arg1:string,arg2:string):Promise<string>;
 export function ImportEnvFile():Promise<string>;
 
 export function InitBrainProfile(arg1:string):Promise<brainbox.BrainProfileInitResult>;
+
+export function InvalidateCodeOverview(arg1:string):Promise<void>;
 
 export function JiraGloballyEnabled():Promise<boolean>;
 

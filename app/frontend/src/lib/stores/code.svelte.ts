@@ -444,7 +444,7 @@ class CodeStore {
    * Fetch one profile's whole launchpad. `profile` is passed explicitly (not
    * read off profileState) so the caller's $effect owns the re-fetch trigger.
    */
-  async refresh(profile: string): Promise<void> {
+  async refresh(profile: string, force = false): Promise<void> {
     if (!profile) {
       this.reset();
       return;
@@ -456,7 +456,10 @@ class CodeStore {
     }
     this.loading = true;
     try {
-      const ov = (await (a as any).CodeOverview(profile)) as CodeOverview;
+      // force=true bypasses the Go-side per-profile memo; plain navigation
+      // reuses it, which is what stops every panel visit re-issuing the whole
+      // provider fan-out.
+      const ov = (await a.CodeOverview(profile, force)) as CodeOverview;
       // A response for a profile the user has since switched away from is
       // stale — dropping it keeps the header's profile name honest.
       if (ov.profile && ov.profile !== profile) return;

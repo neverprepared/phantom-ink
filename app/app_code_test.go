@@ -212,7 +212,7 @@ func TestCodeOverview_NoProviderIsNotAnError(t *testing.T) {
 	defer srv.Close()
 	app := &App{client: brainbox.NewClient(srv.URL, ""), ctx: context.Background()}
 
-	got, err := app.CodeOverview("work")
+	got, err := app.CodeOverview("work", true)
 	if err != nil {
 		t.Fatalf("missing provider must not be an error: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestCodeOverview_NoStoredEnvIsTokenMissing(t *testing.T) {
 	defer srv.Close()
 	app := &App{client: brainbox.NewClient(srv.URL, ""), ctx: context.Background()}
 
-	got, err := app.CodeOverview("fresh")
+	got, err := app.CodeOverview("fresh", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestCodeOverview_ADOOnlyIsConfigured(t *testing.T) {
 	defer srv.Close()
 	app := &App{client: brainbox.NewClient(srv.URL, ""), ctx: context.Background()}
 
-	got, err := app.CodeOverview("work")
+	got, err := app.CodeOverview("work", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

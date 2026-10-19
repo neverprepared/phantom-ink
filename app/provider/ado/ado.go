@@ -7,7 +7,9 @@ package ado
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +43,35 @@ type Client struct {
 	// meID caches the authenticated user's GUID (from connectionData); ADO PR
 	// creator/reviewer queries need it, work-item queries use @Me instead.
 	meID string
+
+	// identityKey scopes the PROCESS-WIDE identity cache. Clients are built
+	// one per project for the same org and credential, so a per-client cache
+	// still cost one connectionData call per project on every Code-panel open.
+	// The key is a hash that includes the credential, so two profiles with
+	// different PATs against the same org never share an answer.
+	identityKey string
+}
+
+// identityTTL bounds how long an org's authenticated-user GUID is reused. The
+// GUID is stable for the life of a credential; the TTL only exists so a
+// revoked or rotated credential is not pinned for the life of the process.
+const identityTTL = 10 * time.Minute
+
+type identityEntry struct {
+	id string
+	at time.Time
+}
+
+var (
+	identityMu    sync.Mutex
+	identityCache = map[string]identityEntry{}
+)
+
+// identityKeyFor hashes the request scope AND the credential together. The
+// credential is hashed, never stored or logged.
+func identityKeyFor(base, org, credential string) string {
+	sum := sha256.Sum256([]byte(base + "\x00" + org + "\x00" + credential))
+	return hex.EncodeToString(sum[:])
 }
 
 // New returns a PAT-authenticated client (Basic auth, empty username + PAT).
@@ -52,6 +83,7 @@ func NewWithBase(base, org, project, pat string, hc *http.Client) *Client {
 	c := newClient(base, org, project, hc)
 	basic := "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+pat))
 	c.authFn = func(context.Context) (string, error) { return basic, nil }
+	c.identityKey = identityKeyFor(base, org, "pat:"+pat)
 	return c
 }
 
@@ -68,6 +100,8 @@ func NewAzLoginWithBase(base, org, project, azConfigDir string, hc *http.Client)
 	c := newClient(base, org, project, hc)
 	src := &azTokenSource{azConfigDir: azConfigDir}
 	c.authFn = src.header
+	// The az session directory IS the credential scope here.
+	c.identityKey = identityKeyFor(base, org, "az:"+azConfigDir)
 	return c
 }
 
@@ -148,12 +182,26 @@ func (c *Client) projPath(p string) string {
 	return "/" + url.PathEscape(c.org) + "/" + url.PathEscape(c.project) + p
 }
 
-// me resolves and caches the authenticated user's GUID.
+// me resolves the authenticated user's GUID, cached per client and then
+// process-wide per (base, org, credential).
+//
+// Without the shared layer this was one connectionData call per ADO project
+// per Code-panel open -- 30 projects meant 30 identical identity lookups for
+// the same user.
 func (c *Client) me(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.meID != "" {
 		return c.meID, nil
+	}
+	if c.identityKey != "" {
+		identityMu.Lock()
+		e, ok := identityCache[c.identityKey]
+		identityMu.Unlock()
+		if ok && e.id != "" && time.Since(e.at) < identityTTL {
+			c.meID = e.id
+			return c.meID, nil
+		}
 	}
 	var cd struct {
 		AuthenticatedUser struct {
@@ -167,6 +215,11 @@ func (c *Client) me(ctx context.Context) (string, error) {
 		return "", err
 	}
 	c.meID = cd.AuthenticatedUser.ID
+	if c.identityKey != "" && c.meID != "" {
+		identityMu.Lock()
+		identityCache[c.identityKey] = identityEntry{id: c.meID, at: time.Now()}
+		identityMu.Unlock()
+	}
 	return c.meID, nil
 }
 

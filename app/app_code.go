@@ -8,9 +8,18 @@ package main
 // Everything is host-side and profile-scoped: each provider's credential is
 // the profile's EXISTING curated env (GITHUB_TOKEN, ADO_ORG/ADO_PROJECT/
 // ADO_PAT), read fresh out of the gateway env store on every call. No new
-// secret, no new credential storage, no cache — so a profile can only ever
-// see its own content, and switching profiles cannot serve stale rows from
-// the previous one.
+// secret and no new credential storage — so a profile can only ever see its
+// own content.
+//
+// Results ARE briefly memoised, per profile, with an explicit-refresh bypass.
+// This originally said "no cache", justified on isolation grounds, and the
+// isolation concern was right — but a profile-KEYED cache satisfies it, and
+// the cost of having none was severe: one open of this panel issues ~6 remote
+// calls per configured ADO project (plus GitHub's search quota, 30 req/min),
+// so an org with 30 projects auto-discovered via ADO_PROJECT=* meant ~181 HTTP
+// calls, repeated on every navigation back to the panel. The cache stores
+// rendered rows only, never credentials, is dropped wholesale on profile
+// switch, and is bypassed by an explicit refresh.
 
 import (
 	"bytes"
@@ -274,9 +283,66 @@ func (a *App) profileAzureConfigDir(profile string) string {
 	return ""
 }
 
-// CodeOverview fetches the active profile's launchpad across every configured
-// provider (GitHub, ADO), merged. Bound to the UI; one call drives the panel.
-func (a *App) CodeOverview(profile string) (CodeOverview, error) {
+// codeOverviewTTL is how long a profile's launchpad is reused for plain
+// navigation. Short enough that returning to the panel shows current data,
+// long enough that panel-switching stops re-issuing the whole fan-out.
+const codeOverviewTTL = 45 * time.Second
+
+type codeOverviewEntry struct {
+	overview CodeOverview
+	at       time.Time
+}
+
+var (
+	codeOverviewMu    sync.Mutex
+	codeOverviewCache = map[string]codeOverviewEntry{}
+)
+
+// InvalidateCodeOverview drops a profile's cached launchpad, or every profile's
+// when profile is empty. Called on explicit refresh and on profile switch.
+func (a *App) InvalidateCodeOverview(profile string) {
+	codeOverviewMu.Lock()
+	defer codeOverviewMu.Unlock()
+	if strings.TrimSpace(profile) == "" {
+		codeOverviewCache = map[string]codeOverviewEntry{}
+		return
+	}
+	delete(codeOverviewCache, profile)
+}
+
+// cachedCodeOverview returns a fresh-enough entry for profile, if any.
+func cachedCodeOverview(profile string) (CodeOverview, bool) {
+	codeOverviewMu.Lock()
+	defer codeOverviewMu.Unlock()
+	e, ok := codeOverviewCache[profile]
+	if !ok || time.Since(e.at) >= codeOverviewTTL {
+		return CodeOverview{}, false
+	}
+	return e.overview, true
+}
+
+// storeCodeOverview memoises a successful read for profile.
+func storeCodeOverview(profile string, ov CodeOverview) {
+	codeOverviewMu.Lock()
+	defer codeOverviewMu.Unlock()
+	codeOverviewCache[profile] = codeOverviewEntry{overview: ov, at: time.Now()}
+}
+
+// CodeOverview fetches a profile's launchpad across every configured provider
+// (GitHub, ADO), merged. Bound to the UI; one call drives the panel.
+//
+// force bypasses the per-profile memo — the refresh button passes true, plain
+// navigation passes false.
+func (a *App) CodeOverview(profile string, force bool) (CodeOverview, error) {
+	if !force {
+		if ov, ok := cachedCodeOverview(profile); ok {
+			return ov, nil
+		}
+	}
+	return a.codeOverviewUncached(profile)
+}
+
+func (a *App) codeOverviewUncached(profile string) (CodeOverview, error) {
 	env, err := a.GetGatewayEnv(profile)
 	if err != nil {
 		return CodeOverview{Profile: profile}, err
@@ -321,6 +387,11 @@ func (a *App) CodeOverview(profile string) (CodeOverview, error) {
 			decorateJira(&out, links, issues, jerr)
 		}
 	}
+	// Memoise per profile. Section errors are part of the payload (a 401 on
+	// notifications does not fail the call), so this stores partial results
+	// too -- which is correct: re-running the whole fan-out would not fix a
+	// scope problem, and the refresh button bypasses the memo anyway.
+	storeCodeOverview(profile, out)
 	return out, nil
 }
 
