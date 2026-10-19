@@ -12,13 +12,22 @@ import (
 type migration struct {
 	version int
 	sql     string
-	fn      func(conn *sql.DB) error
+	fn      func(conn migrationConn) error
+}
+
+// migrationConn is the subset of database/sql a migration may use. Both *sql.DB
+// and *sql.Tx satisfy it, which is what lets each step run inside its own
+// transaction without every migration knowing about it.
+type migrationConn interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // addColumnIfMissing adds a column to table only if it does not already exist.
 // modernc.org/sqlite does not support "ALTER TABLE … ADD COLUMN IF NOT EXISTS",
 // so we check PRAGMA table_info instead.
-func addColumnIfMissing(conn *sql.DB, table, column, definition string) error {
+func addColumnIfMissing(conn migrationConn, table, column, definition string) error {
 	rows, err := conn.Query("PRAGMA table_info(" + table + ")")
 	if err != nil {
 		return err
@@ -67,7 +76,7 @@ var migrations = []migration{
 	`},
 	// v2: workspace_home added to repos. Uses fn because modernc.org/sqlite
 	// does not support ALTER TABLE … ADD COLUMN IF NOT EXISTS.
-	{version: 2, fn: func(conn *sql.DB) error {
+	{version: 2, fn: func(conn migrationConn) error {
 		return addColumnIfMissing(conn, "repos", "workspace_home", "TEXT NOT NULL DEFAULT ''")
 	}},
 	// v3: disk usage cache for profile sizes (avoids slow directory walks on every load)
@@ -167,14 +176,14 @@ var migrations = []migration{
 	// v8: declarative on_success follow-ups for chains. Stored as a JSON
 	// array of ChainFollowup on the chains row so we don't need a join
 	// table; followups are read+written wholesale with the chain.
-	{version: 8, fn: func(conn *sql.DB) error {
+	{version: 8, fn: func(conn migrationConn) error {
 		return addColumnIfMissing(conn, "chains", "on_success_json", "TEXT NOT NULL DEFAULT '[]'")
 	}},
 	// v9: profile snapshotting on tasks and schedules. Every queued task and
 	// every saved schedule remembers the active profile at create time, so
 	// runs and cron firings always execute in the right workspace context
 	// regardless of who's at the keyboard later. Profiles are foundational.
-	{version: 9, fn: func(conn *sql.DB) error {
+	{version: 9, fn: func(conn migrationConn) error {
 		if err := addColumnIfMissing(conn, "tasks", "workspace_profile", "TEXT NOT NULL DEFAULT ''"); err != nil {
 			return err
 		}
@@ -184,12 +193,12 @@ var migrations = []migration{
 	// profile's workspace_home so the same chain works across profiles —
 	// "code/api/main.go" means whatever's at that location in the active
 	// profile at run time. {{files}} expands to absolute paths in prompts.
-	{version: 10, fn: func(conn *sql.DB) error {
+	{version: 10, fn: func(conn migrationConn) error {
 		return addColumnIfMissing(conn, "chains", "files_json", "TEXT NOT NULL DEFAULT '[]'")
 	}},
 	// v17: profile-scoped chains. workspace_profile="" means global (visible
 	// in all profiles). Non-empty means the chain belongs to that profile only.
-	{version: 17, fn: func(conn *sql.DB) error {
+	{version: 17, fn: func(conn migrationConn) error {
 		return addColumnIfMissing(conn, "chains", "workspace_profile", "TEXT NOT NULL DEFAULT ''")
 	}},
 	// v11: data collection scheduler — periodic commands whose output is
@@ -245,7 +254,7 @@ var migrations = []migration{
 		ALTER TABLE profile_images ADD COLUMN env_key TEXT NOT NULL DEFAULT '';
 	`},
 	// v14: composable job targets and time-of-day scheduling.
-	{version: 14, fn: func(conn *sql.DB) error {
+	{version: 14, fn: func(conn migrationConn) error {
 		for _, col := range []struct{ name, def string }{
 			{"target_type", "TEXT NOT NULL DEFAULT 'shell'"},
 			{"target_id", "TEXT NOT NULL DEFAULT ''"},
@@ -320,13 +329,13 @@ var migrations = []migration{
 	// ("widget" for dashboard-widget-bound, "" for manually created).
 	// Used by the Jobs panel to badge widget jobs and by the dashboard
 	// to safely dedupe widget-owned collect jobs.
-	{version: 20, fn: func(conn *sql.DB) error {
+	{version: 20, fn: func(conn migrationConn) error {
 		return addColumnIfMissing(conn, "collect_jobs", "source", "TEXT NOT NULL DEFAULT ''")
 	}},
 	// v21: collect_jobs.owner_widget_id — direct id-based link from a
 	// dashboard widget to its bound job. Replaces the fragile name+command
 	// fingerprint when looking up the owning widget.
-	{version: 21, fn: func(conn *sql.DB) error {
+	{version: 21, fn: func(conn migrationConn) error {
 		return addColumnIfMissing(conn, "collect_jobs", "owner_widget_id", "TEXT NOT NULL DEFAULT ''")
 	}},
 	// v22: outbox_events — durable queue of agent-event-bus envelopes pending
@@ -370,7 +379,7 @@ var migrations = []migration{
 	// `loop_id`) to avoid a third migration on the same tables. The Go
 	// SequenceRow / SequenceRunRow types deliberately reference these
 	// historical SQL names.
-	{version: 24, fn: func(conn *sql.DB) error {
+	{version: 24, fn: func(conn migrationConn) error {
 		// Order matters: rename the chain_id column on chain_runs BEFORE
 		// renaming the table, otherwise the column-rename statement runs
 		// against a name that no longer exists.
@@ -410,7 +419,7 @@ var migrations = []migration{
 	// v26: one-shot ("run once at T") collect jobs. Absolute wall-clock fire
 	// time in epoch ms; when set, the scheduler fires the job exactly once and
 	// then deletes it. NULL for recurring (interval / time-of-day) jobs.
-	{version: 26, fn: func(conn *sql.DB) error {
+	{version: 26, fn: func(conn migrationConn) error {
 		return addColumnIfMissing(conn, "collect_jobs", "run_once_at_ms", "INTEGER")
 	}},
 	// v27: manual code<->Jira links. Conventional links are DERIVED from PR
@@ -486,7 +495,7 @@ var migrations = []migration{
 	// ReconcileIntegrations converges on it at launch so a container torn down
 	// behind the app's back comes back. Defaults to 0: existing rows opt in the
 	// first time they are started, so the migration starts nothing by surprise.
-	{version: 29, fn: func(conn *sql.DB) error {
+	{version: 29, fn: func(conn migrationConn) error {
 		return addColumnIfMissing(conn, "integrations", "desired_running", "INTEGER NOT NULL DEFAULT 0")
 	}},
 }
@@ -501,31 +510,83 @@ func (db *DB) migrate() error {
 		return fmt.Errorf("create schema_version table: %w", err)
 	}
 
-	var current int
-	if err := db.conn.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&current); err != nil {
-		return fmt.Errorf("read schema version: %w", err)
+	// Read the set of versions already applied -- NOT MAX(version).
+	//
+	// A watermark makes a migration added later with a number below the current
+	// max unreachable forever: every DB that already passed that number skips
+	// it silently. That has bitten this schema once (see the v19 comment, which
+	// exists to repair DBs that recorded v16 without creating its table), and
+	// the failure is invisible -- the app starts and queries a missing column.
+	// With a set, only the specific versions a DB is missing run, so numbering
+	// order stops being load-bearing.
+	applied, err := db.appliedVersions()
+	if err != nil {
+		return err
 	}
 
-	// Sort by version to guard against slice misordering.
+	// Sort by version so a fresh DB still applies them in dependency order.
 	sorted := append([]migration(nil), migrations...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].version < sorted[j].version })
 
 	for _, m := range sorted {
-		if current >= m.version {
+		if applied[m.version] {
 			continue
 		}
-		if m.fn != nil {
-			if err := m.fn(db.conn); err != nil {
-				return fmt.Errorf("migration v%d: %w", m.version, err)
-			}
-		} else {
-			if _, err := db.conn.Exec(m.sql); err != nil {
-				return fmt.Errorf("migration v%d: %w", m.version, err)
-			}
+		if err := db.applyMigration(m); err != nil {
+			return err
 		}
-		if _, err := db.conn.Exec("INSERT INTO schema_version (version) VALUES (?)", m.version); err != nil {
-			return fmt.Errorf("record schema version v%d: %w", m.version, err)
+	}
+	return nil
+}
+
+// appliedVersions returns the set of migration versions recorded as applied.
+func (db *DB) appliedVersions() (map[int]bool, error) {
+	rows, err := db.conn.Query("SELECT version FROM schema_version")
+	if err != nil {
+		return nil, fmt.Errorf("read schema version: %w", err)
+	}
+	defer rows.Close()
+	applied := make(map[int]bool)
+	for rows.Next() {
+		var v int
+		if err := rows.Scan(&v); err != nil {
+			return nil, fmt.Errorf("scan schema version: %w", err)
 		}
+		applied[v] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read schema version: %w", err)
+	}
+	return applied, nil
+}
+
+// applyMigration runs one step and records it, both inside a single
+// transaction, so a multi-statement step that fails halfway leaves nothing
+// behind. Previously a step could apply its first statement, fail on the
+// second, and record no version -- re-running it on the next launch. The
+// IF NOT EXISTS / addColumnIfMissing idioms were what made that survivable;
+// they stay, but they are no longer the only thing standing between a partial
+// migration and a corrupt schema.
+func (db *DB) applyMigration(m migration) error {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return fmt.Errorf("migration v%d: begin: %w", m.version, err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op once committed
+
+	if m.fn != nil {
+		if err := m.fn(tx); err != nil {
+			return fmt.Errorf("migration v%d: %w", m.version, err)
+		}
+	} else if _, err := tx.Exec(m.sql); err != nil {
+		return fmt.Errorf("migration v%d: %w", m.version, err)
+	}
+
+	if _, err := tx.Exec("INSERT INTO schema_version (version) VALUES (?)", m.version); err != nil {
+		return fmt.Errorf("record schema version v%d: %w", m.version, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migration v%d: commit: %w", m.version, err)
 	}
 	return nil
 }
