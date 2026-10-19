@@ -1,0 +1,32 @@
+# Lint settings for the Drive inbox pipeline.
+#
+# Matches the repo's Python conventions (brainbox/pyproject.toml): line-length
+# 100, target py311.
+
+target-version = "py311"
+line-length = 100
+
+[lint]
+# These three are deliberate in this package, not oversights.
+#
+# This is an unattended background pipeline over a folder a human drops files
+# into. Its governing rule is that ONE malformed item must never stall the
+# queue: a corrupt spool file, a torn ledger line, a Drive call that fails
+# mid-run, or a file whose export blows up must all be stepped over so the
+# other items still get filed. Narrowing these to specific exception types
+# would mean enumerating every failure mode of three external systems (Drive,
+# EventKit, the brain daemon) and re-breaking the queue each time one of them
+# raises something new.
+#
+# Every such site is commented with what it is stepping over, and all of them
+# either log to stderr or record the failure on the emitted timeline entry, so
+# nothing is swallowed silently.
+ignore = [
+    "BLE001", # blind-except: step over one bad item, keep draining
+    "S110",   # try-except-pass: best-effort cleanup paths
+    "S112",   # try-except-continue: skip a corrupt record, keep going
+]
+
+[lint.per-file-ignores]
+# Tests assert on internals and build throwaway fixtures.
+"tests/*" = ["S101"]

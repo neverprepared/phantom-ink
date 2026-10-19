@@ -15,6 +15,7 @@ Guidance for Claude Code (and other agents) working in this repository.
 | `packages/brainbox-mcp/` | Guest-side MCP helper shipped **into** a session container | Python |
 | `packages/brainbox/` | Homebrew/packaged brainbox launcher (`brainbox.sh`, compose) | Shell |
 | `tier0/` | opencode + local ollama harness wired to the MCP gateway | Shell/JSON |
+| `scripts/inbox/` | **Drive inbox** — capture connector: a Drive folder is drained, typed and filed into Reminders / the todo + memory vaults ([README](scripts/inbox/README.md), [ADR-006](docs/architecture/ADR-006-drive-inbox-queues.md)) | Python |
 | `contracts/` | Collection-output JSON Schema (array framing over the timeline-entry contract) | JSON |
 | `docker/` | Compose stacks for local services (langfuse, minio, opensearch, brainbox) | YAML |
 | `Formula/` | Homebrew formulae | Ruby |
@@ -85,9 +86,16 @@ just sp-test               # go test ./...
 just sp-lint               # golangci-lint run
 
 # Cross-cutting
-just test-all              # bb-test + sp-test
-just lint-all              # bb-lint + sp-lint
+just test-all              # bb-test + sp-test + inbox-test
+just lint-all              # bb-lint + sp-lint + inbox-lint
 just validate-output ./script.sh    # validate collection output against the contract (needs ajv-cli)
+
+# Drive inbox (capture pipeline) — see scripts/inbox/README.md
+just inbox-init <profile>  # create the Drive folder tree (once per profile)
+just inbox-drain <profile> # stage A: Drive -> local spool (deterministic, no model)
+just inbox-apply <profile> # stages B+C: extract locally, then file
+just inbox-requeue <profile>  # recover items stranded in processing/
+just inbox-test / inbox-lint
 
 # Reflex plugin
 just reflex-dev            # claude --plugin-dir reflex
