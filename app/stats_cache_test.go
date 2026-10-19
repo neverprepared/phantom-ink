@@ -152,5 +152,56 @@ func resetLocalProcCache() {
 	localProcAt = time.Time{}
 	localProcVal = nil
 	localProcErr = nil
+	localProcOK = false
 	localProcMu.Unlock()
+}
+
+// An EMPTY result must still count as cached. This is the case CI hit and a
+// dev machine hides: with no claude/codex/ollama running, the scan's grep exits
+// non-zero and findClaudeProcesses returns (nil, nil). Inferring "nothing
+// cached" from val==nil && err==nil meant the cache never applied on exactly
+// the machines where the scan is cheapest to skip — so the flag is explicit.
+func TestEmptyScanResultIsStillCached(t *testing.T) {
+	a := &App{}
+
+	// Seed the cache as if a scan had just found nothing.
+	localProcMu.Lock()
+	localProcVal = nil
+	localProcErr = nil
+	localProcOK = true
+	localProcAt = time.Now()
+	localProcMu.Unlock()
+
+	at := localProcAt
+	got, err := a.FindClaudeProcesses()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected the cached empty result, got %d entries", len(got))
+	}
+	if !localProcAt.Equal(at) {
+		t.Error("an empty cached result was discarded and the scan re-ran")
+	}
+}
+
+// Same property for the container-disk cache: a host with no containers
+// yields (nil, nil) and that must be cached too.
+func TestEmptyContainerDiskResultIsStillCached(t *testing.T) {
+	a := &App{}
+
+	containerDiskMu.Lock()
+	containerDiskVal = nil
+	containerDiskErr = nil
+	containerDiskOK = true
+	containerDiskAt = time.Now()
+	containerDiskMu.Unlock()
+
+	at := containerDiskAt
+	if _, err := a.GetContainerDiskUsage(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !containerDiskAt.Equal(at) {
+		t.Error("an empty cached result was discarded and docker ran again")
+	}
 }

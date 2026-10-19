@@ -42,11 +42,12 @@ func (a *App) FindClaudeProcesses() ([]LocalProcess, error) {
 	// milliseconds. Same cache shape as GetContainerDiskUsage.
 	localProcMu.Lock()
 	defer localProcMu.Unlock()
-	if time.Since(localProcAt) < statsCacheTTL && (localProcVal != nil || localProcErr != nil) {
+	if localProcOK && time.Since(localProcAt) < statsCacheTTL {
 		return localProcVal, localProcErr
 	}
 	localProcVal, localProcErr = a.findClaudeProcesses()
 	localProcAt = time.Now()
+	localProcOK = true
 	return localProcVal, localProcErr
 }
 
@@ -55,6 +56,11 @@ var (
 	localProcAt  time.Time
 	localProcVal []LocalProcess
 	localProcErr error
+	// localProcOK records that a scan HAS run. It cannot be inferred from
+	// val/err: with no matching processes the pipeline's grep exits non-zero
+	// and the scan legitimately returns (nil, nil) -- which is the normal case
+	// on a CI machine, and inferring "uncached" from it defeated the cache.
+	localProcOK bool
 )
 
 // findClaudeProcesses does the real scan.
