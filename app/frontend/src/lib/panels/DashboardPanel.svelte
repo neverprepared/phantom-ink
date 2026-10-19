@@ -659,7 +659,30 @@
     });
   }
 
-  onMount(async () => {
+  // NOT async. Svelte only honours a cleanup function returned SYNCHRONOUSLY
+  // from onMount; an async callback returns a Promise and the cleanup is
+  // silently dropped. This one teardown owns the GridStack instance, every
+  // mounted widget (and therefore each widget's own cleanup) and the Docker
+  // poll -- and because AppShell renders panels under {#if}, Dashboard is a
+  // fresh instance per visit, so each visit used to leak another full set.
+  onMount(() => {
+    // Written by init(), read by the teardown below.
+    let dockerInterval: ReturnType<typeof setInterval> | undefined;
+    // Set if the panel is torn down while init() is still awaiting, so we
+    // never build a grid or start a timer nothing is left to clean up.
+    let disposed = false;
+
+    void init();
+
+    return () => {
+      disposed = true;
+      for (const [, inst] of mountedWidgets) unmount(inst);
+      mountedWidgets.clear();
+      grid?.destroy(false);
+      if (dockerInterval) clearInterval(dockerInterval);
+    };
+
+    async function init() {
     const a = await getApi();
     let layout = { version: 1 as const, widgets: [...DEFAULT_LAYOUT.widgets] };
 
@@ -675,6 +698,8 @@
       }
       try { systemInfo = await a.GetSystemInfo(); } catch {}
     }
+
+    if (disposed) return;
 
     dashboardState.layout = layout;
     _trackedProfile = profileState.active?.name ?? '';
@@ -716,17 +741,11 @@
 
     void load();
 
-    const dockerInterval = setInterval(async () => {
+    dockerInterval = setInterval(async () => {
       const api = await getApi();
       if (api) { try { dockerStats = (await api.GetDockerStats()) ?? []; } catch {} }
     }, 10_000);
-
-    return () => {
-      for (const [, inst] of mountedWidgets) unmount(inst);
-      mountedWidgets.clear();
-      grid?.destroy(false);
-      clearInterval(dockerInterval);
-    };
+    }
   });
 </script>
 
