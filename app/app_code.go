@@ -261,6 +261,13 @@ func (a *App) profileAzureConfigDir(profile string) string {
 	}
 	for _, kv := range a.resolveProfileEnv(profile) {
 		if v, ok := strings.CutPrefix(kv, "AZURE_CONFIG_DIR="); ok && strings.TrimSpace(v) != "" {
+			// An unexpanded reference is not a path. `az` would happily treat
+			// "$WORKSPACE_HOME/.azure" as a relative directory and create it
+			// under the app's working directory, writing a real session and
+			// token logs into the repo. Prefer az's own default to that.
+			if strings.ContainsRune(v, '$') {
+				continue
+			}
 			return v
 		}
 	}
