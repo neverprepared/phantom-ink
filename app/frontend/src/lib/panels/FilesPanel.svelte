@@ -10,6 +10,7 @@
    * isn't configured or isn't reachable, we render a distinct empty
    * state for each.
    */
+  import { confirmAsk } from '../confirm.svelte';
   import { onMount } from 'svelte';
   import { formatBytes } from '../utils/format';
   import { getApi } from '../utils/api';
@@ -348,7 +349,7 @@
     const prompt = inTrash
       ? `Permanently delete ${file.name}? This cannot be undone.`
       : `Move ${file.name} to trash?`;
-    if (!window.confirm(prompt)) return;
+    if (!(await confirmAsk(prompt, { confirmLabel: inTrash ? 'Delete permanently' : 'Move to trash' }))) return;
     try {
       const api = await getApi();
       if (!api) return;

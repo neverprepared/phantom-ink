@@ -3,12 +3,21 @@ package brainbox
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"sync"
 	"time"
 )
+
+// ErrNoContent reports that a successful (2xx) response carried an empty body
+// while the caller asked for a decoded result — the shape HTTP 204 takes here.
+// Callers for which "no content" is a meaningful outcome rather than a failure
+// test for it with errors.Is. Everything else (connection refused, 401, a
+// truncated or malformed body) stays a real error so it can be backed off or
+// surfaced, instead of being misread as an empty success.
+var ErrNoContent = errors.New("brainbox: no content")
 
 // Client is a typed HTTP client for the brainbox REST API.
 type Client struct {
@@ -102,6 +111,9 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, body inter
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	if result != nil {
+		if len(bytes.TrimSpace(respBody)) == 0 {
+			return ErrNoContent
+		}
 		if err := json.Unmarshal(respBody, result); err != nil {
 			return fmt.Errorf("unmarshal response: %w", err)
 		}

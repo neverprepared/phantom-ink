@@ -158,6 +158,14 @@ func (a *App) resolveProfileEnv(profile string) []string {
 		}
 	}
 
+	// These files are written to be sourced by direnv, so values routinely
+	// reference other vars -- every profile here has
+	// AZURE_CONFIG_DIR="$WORKSPACE_HOME/.azure". parseEnvFile is literal, so
+	// without this the string "$WORKSPACE_HOME/.azure" reached `az` as a path
+	// and it created a directory of that literal name relative to the app's
+	// working directory, complete with a live session and token logs.
+	expandOverrides(overrides, base)
+
 	merged := make([]string, len(base))
 	copy(merged, base)
 	index := make(map[string]int, len(base))
@@ -212,6 +220,44 @@ func parseEnvFile(data []byte) map[string]string {
 		result[strings.TrimSpace(k)] = v
 	}
 	return result
+}
+
+// expandOverrides resolves $VAR / ${VAR} references between dotenv values in
+// place, falling back to base (the inherited environment) and then os.Getenv.
+//
+// Iterates to a fixed point so a value may reference another dotenv value
+// regardless of map order, which is otherwise nondeterministic. Each pass
+// expands against a snapshot, so the result does not depend on iteration
+// order. The pass cap also terminates a self-referential cycle (A=$B, B=$A)
+// rather than spinning; such a value is left partially expanded, which is
+// visible, instead of hanging the caller.
+func expandOverrides(overrides map[string]string, base []string) {
+	lookup := make(map[string]string, len(base)+len(overrides))
+	for _, kv := range base {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			lookup[k] = v
+		}
+	}
+
+	const maxPasses = 4
+	for pass := 0; pass < maxPasses; pass++ {
+		for k, v := range overrides {
+			lookup[k] = v
+		}
+		changed := false
+		for k, v := range overrides {
+			if !strings.ContainsRune(v, '$') {
+				continue
+			}
+			if expanded := expandEnvVars(v, lookup); expanded != v {
+				overrides[k] = expanded
+				changed = true
+			}
+		}
+		if !changed {
+			return
+		}
+	}
 }
 
 // expandEnvVars expands $VAR and ${VAR} references using the provided env map.

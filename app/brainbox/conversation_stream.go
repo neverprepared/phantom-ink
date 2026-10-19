@@ -163,7 +163,7 @@ func (s *ConversationStreams) connect(ctx context.Context, conversationID, profi
 	scanner := bufio.NewScanner(resp.Body)
 	// Token deltas are small, but a finalized message frame carries the whole
 	// message — raise the line cap well above bufio's 64KB default.
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELineBytes)
 	for scanner.Scan() {
 		if line := scanner.Text(); strings.HasPrefix(line, "data: ") {
 			s.onEvent(conversationID, strings.TrimPrefix(line, "data: "))

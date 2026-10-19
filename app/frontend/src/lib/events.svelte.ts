@@ -7,6 +7,17 @@ export interface BrainboxEvent {
   type?: string;
   data?: unknown;
   raw: string;
+  /**
+   * Epoch ms at which this event reached the app.
+   *
+   * Stamped HERE, on arrival, not at render time. EventLogPanel used to stamp
+   * `new Date()` into a component-scoped WeakMap the first time it rendered
+   * each event -- but the log is a module-level ring that outlives the panel,
+   * so leaving the panel and coming back restamped all 500 historical events
+   * to the moment of reopen. A debug log with timestamps that silently lie is
+   * worse than one with none.
+   */
+  receivedAt: number;
 }
 
 let _last = $state<BrainboxEvent | null>(null);
@@ -30,10 +41,11 @@ function resetHeartbeat() {
 }
 
 function handleRaw(raw: string) {
+  const receivedAt = Date.now();
   let parsed: BrainboxEvent;
   try {
     const data = JSON.parse(raw);
-    parsed = { type: data?.type ?? raw, data, raw };
+    parsed = { type: data?.type ?? raw, data, raw, receivedAt };
 
     if (data?.action === 'runner.status') {
       const runner = data.runner ?? 'runner';
@@ -41,7 +53,7 @@ function handleRaw(raw: string) {
       notifications.info(`${runner}: ${msg}`, 6000);
     }
   } catch {
-    parsed = { raw };
+    parsed = { raw, receivedAt };
   }
   _last = parsed;
   _log = [parsed, ..._log].slice(0, 500);

@@ -15,6 +15,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -260,6 +261,13 @@ func (a *App) profileAzureConfigDir(profile string) string {
 	}
 	for _, kv := range a.resolveProfileEnv(profile) {
 		if v, ok := strings.CutPrefix(kv, "AZURE_CONFIG_DIR="); ok && strings.TrimSpace(v) != "" {
+			// An unexpanded reference is not a path. `az` would happily treat
+			// "$WORKSPACE_HOME/.azure" as a relative directory and create it
+			// under the app's working directory, writing a real session and
+			// token logs into the repo. Prefer az's own default to that.
+			if strings.ContainsRune(v, '$') {
+				continue
+			}
 			return v
 		}
 	}
@@ -868,7 +876,17 @@ func sessionNameFor(repoURL string) string {
 	if name == "" {
 		name = "repo"
 	}
-	return fmt.Sprintf("code-%s-%06x", name, time.Now().UnixNano()&0xffffff)
+	// Random, not time-derived. This used to be the low 24 bits of UnixNano,
+	// which collides whenever two launches fall inside the clock's granularity
+	// -- the unique-name test caught it failing intermittently, and a collision
+	// here means two sessions fighting over one container and route name.
+	var b [3]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand does not fail in practice; if it ever does, fall back to
+		// the clock rather than returning an unusable name.
+		return fmt.Sprintf("code-%s-%06x", name, time.Now().UnixNano()&0xffffff)
+	}
+	return fmt.Sprintf("code-%s-%02x%02x%02x", name, b[0], b[1], b[2])
 }
 
 // sanitizeNameSegment reduces a repo name to lowercase [a-z0-9-], the shape

@@ -240,20 +240,6 @@ func (a *App) RebuildBaseImage(req BaseImageBuildRequest) error {
 	return nil
 }
 
-// GetProfileEnvKey returns the AES key for a profile's encrypted .env.enc,
-// or an empty string if none is stored. Used to pass PROFILE_ENV_KEY when
-// creating sessions so the container can decrypt its environment.
-func (a *App) GetProfileEnvKey(profileName string) string {
-	if a.db == nil {
-		return ""
-	}
-	row, ok := a.db.GetProfileImage(profileName)
-	if !ok {
-		return ""
-	}
-	return row.EnvKey
-}
-
 // DeleteProfileImageRecord removes the local DB record for a profile image.
 // It does not delete the image from the registry.
 func (a *App) DeleteProfileImageRecord(profileName string) error {

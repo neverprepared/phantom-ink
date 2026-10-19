@@ -64,7 +64,9 @@
   }
 
   async function forgetTodo(a: any) {
-    await a.ForgetVaultRecord('todo', record.sha);
+    // The owning profile arrives as a prop, so this cannot drift to
+    // whichever profile happens to be active when the call lands.
+    await a.ForgetVaultRecord(profile, 'todo', record.sha);
   }
 
   async function runOnceAndRemove() {

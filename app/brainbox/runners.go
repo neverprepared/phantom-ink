@@ -1,6 +1,7 @@
 package brainbox
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"time"
@@ -79,8 +80,12 @@ func (c *Client) GetPendingWork(name string, longPollClient *http.Client) (*Runn
 	var item RunnerWorkItem
 	err := c.doWith(longPollClient, "GET", "/api/runners/"+url.PathEscape(name)+"/pending", nil, &item)
 	if err != nil {
-		// 204 No Content comes back as an unmarshal error on empty body — treat as no work.
-		if item.ID == "" {
+		// HTTP 204 (no work available) arrives as a 2xx with an empty body.
+		// Only that means "no work": every other error — connection refused,
+		// 401, a malformed body — must propagate so the caller backs off.
+		// Checking item.ID here instead would swallow all of them, because a
+		// failed request never populates item at all.
+		if errors.Is(err, ErrNoContent) {
 			return nil, nil
 		}
 		return nil, err

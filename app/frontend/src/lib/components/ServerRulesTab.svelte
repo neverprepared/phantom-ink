@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { confirmAsk } from '../confirm.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { getApi } from '../utils/api';
   import { profileState, ruleSeed, type RuleSeed } from '../stores.svelte';
@@ -93,7 +94,13 @@
   }
 
   async function remove(rule: Rule) {
-    if (!confirm(`Delete rule "${rule.name}"? Its execution history is kept.`)) return;
+    if (
+      !(await confirmAsk(`Delete rule "${rule.name}"? Its execution history is kept.`, {
+        title: 'Delete rule',
+        confirmLabel: 'Delete',
+      }))
+    )
+      return;
     const api = await getApi();
     if (!api) return;
     try {
