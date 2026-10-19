@@ -21,3 +21,25 @@ jobs:
       - name: Coverage report
         working-directory: app
         run: go tool cover -func=coverage.out
+
+      # Frontend unit tests. Added because the resource()/action() primitives
+      # guard cross-profile correctness for every panel that uses them, and
+      # until now this frontend had no test runner at all -- which is why the
+      # window.confirm ban is enforced from the Go suite by scanning source.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: app/frontend/package-lock.json
+      - name: Install frontend deps
+        working-directory: app/frontend
+        run: npm ci
+      - name: Frontend unit tests
+        working-directory: app/frontend
+        run: npm test
+
+      # NOT adding `npm run check` as a gate yet: svelte-check exits 1 on the
+      # 18 pre-existing Go<->TS type-drift errors (hand-written interfaces
+      # shadowing the generated models), so it would fail every PR on debt it
+      # did not introduce. Worth turning on once that drift is cleared --
+      # each panel migrated onto the generated types removes some of it.
