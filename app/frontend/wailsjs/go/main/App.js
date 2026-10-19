@@ -70,8 +70,8 @@ export function CodeOverview(arg1) {
   return window['go']['main']['App']['CodeOverview'](arg1);
 }
 
-export function CopyVaultRecord(arg1, arg2, arg3) {
-  return window['go']['main']['App']['CopyVaultRecord'](arg1, arg2, arg3);
+export function CopyVaultRecord(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['CopyVaultRecord'](arg1, arg2, arg3, arg4);
 }
 
 export function CreateAgent(arg1) {
@@ -214,8 +214,8 @@ export function FocusTerminalTab(arg1) {
   return window['go']['main']['App']['FocusTerminalTab'](arg1);
 }
 
-export function ForgetVaultRecord(arg1, arg2) {
-  return window['go']['main']['App']['ForgetVaultRecord'](arg1, arg2);
+export function ForgetVaultRecord(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ForgetVaultRecord'](arg1, arg2, arg3);
 }
 
 export function GatewayInfo() {
@@ -414,10 +414,6 @@ export function GetProfileColors() {
   return window['go']['main']['App']['GetProfileColors']();
 }
 
-export function GetProfileEnvKey(arg1) {
-  return window['go']['main']['App']['GetProfileEnvKey'](arg1);
-}
-
 export function GetProfileImageInfo(arg1) {
   return window['go']['main']['App']['GetProfileImageInfo'](arg1);
 }
@@ -482,12 +478,8 @@ export function GetVaultProfiles(arg1) {
   return window['go']['main']['App']['GetVaultProfiles'](arg1);
 }
 
-export function GetVaultRecords(arg1) {
-  return window['go']['main']['App']['GetVaultRecords'](arg1);
-}
-
-export function GetVaultToken(arg1) {
-  return window['go']['main']['App']['GetVaultToken'](arg1);
+export function GetVaultRecords(arg1, arg2) {
+  return window['go']['main']['App']['GetVaultRecords'](arg1, arg2);
 }
 
 export function GetWidgetCount(arg1, arg2) {
@@ -710,8 +702,8 @@ export function MintProfileToken(arg1, arg2, arg3) {
   return window['go']['main']['App']['MintProfileToken'](arg1, arg2, arg3);
 }
 
-export function MoveVaultRecord(arg1, arg2, arg3) {
-  return window['go']['main']['App']['MoveVaultRecord'](arg1, arg2, arg3);
+export function MoveVaultRecord(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['MoveVaultRecord'](arg1, arg2, arg3, arg4);
 }
 
 export function OpenLocalSession(arg1) {
@@ -982,8 +974,8 @@ export function SetTrustRule(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetTrustRule'](arg1, arg2, arg3);
 }
 
-export function SetVaultToken(arg1, arg2) {
-  return window['go']['main']['App']['SetVaultToken'](arg1, arg2);
+export function SetVaultToken(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetVaultToken'](arg1, arg2, arg3);
 }
 
 export function StartLiveLoop(arg1, arg2) {
@@ -1098,8 +1090,8 @@ export function ValidateLoopTemplate(arg1) {
   return window['go']['main']['App']['ValidateLoopTemplate'](arg1);
 }
 
-export function VaultAuthStatus() {
-  return window['go']['main']['App']['VaultAuthStatus']();
+export function VaultAuthStatus(arg1) {
+  return window['go']['main']['App']['VaultAuthStatus'](arg1);
 }
 
 export function VerifyJira(arg1) {

@@ -41,7 +41,7 @@ export function ClearProfileServerOverride(arg1:string,arg2:string):Promise<void
 
 export function CodeOverview(arg1:string):Promise<main.CodeOverview>;
 
-export function CopyVaultRecord(arg1:string,arg2:string,arg3:string):Promise<void>;
+export function CopyVaultRecord(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function CreateAgent(arg1:brainbox.CreateAgentRequest):Promise<brainbox.AgentDefinition>;
 
@@ -113,7 +113,7 @@ export function FindClaudeProcesses():Promise<Array<main.LocalProcess>>;
 
 export function FocusTerminalTab(arg1:string):Promise<void>;
 
-export function ForgetVaultRecord(arg1:string,arg2:string):Promise<void>;
+export function ForgetVaultRecord(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function GatewayInfo():Promise<brainbox.GatewayProfilesInfo>;
 
@@ -213,8 +213,6 @@ export function GetProfileBundleMeta(arg1:string):Promise<brainbox.BundleMeta>;
 
 export function GetProfileColors():Promise<Record<string, string>>;
 
-export function GetProfileEnvKey(arg1:string):Promise<string>;
-
 export function GetProfileImageInfo(arg1:string):Promise<main.ProfileImageRow|boolean>;
 
 export function GetProfileSecrets(arg1:string):Promise<Array<main.SecretKeyStatus>>;
@@ -247,9 +245,7 @@ export function GetTrust(arg1:string):Promise<brainbox.TrustConfig>;
 
 export function GetVaultProfiles(arg1:string):Promise<Array<string>>;
 
-export function GetVaultRecords(arg1:string):Promise<Array<main.VaultRecord>>;
-
-export function GetVaultToken(arg1:string):Promise<string>;
+export function GetVaultRecords(arg1:string,arg2:string):Promise<Array<main.VaultRecord>>;
 
 export function GetWidgetCount(arg1:string,arg2:string):Promise<number>;
 
@@ -361,7 +357,7 @@ export function MintGatewayToken(arg1:string,arg2:Array<string>,arg3:number,arg4
 
 export function MintProfileToken(arg1:string,arg2:Array<string>,arg3:string):Promise<brainbox.ProfileToken>;
 
-export function MoveVaultRecord(arg1:string,arg2:string,arg3:string):Promise<void>;
+export function MoveVaultRecord(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function OpenLocalSession(arg1:string):Promise<void>;
 
@@ -497,7 +493,7 @@ export function SetTheme(arg1:string):Promise<void>;
 
 export function SetTrustRule(arg1:string,arg2:string,arg3:string):Promise<void>;
 
-export function SetVaultToken(arg1:string,arg2:string):Promise<void>;
+export function SetVaultToken(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function StartLiveLoop(arg1:string,arg2:Record<string, any>):Promise<brainbox.LiveLoop>;
 
@@ -555,6 +551,6 @@ export function ValidateGitHubToken(arg1:string):Promise<main.GitHubTokenStatus>
 
 export function ValidateLoopTemplate(arg1:string):Promise<brainbox.LoopTemplateValidation>;
 
-export function VaultAuthStatus():Promise<Array<main.VaultAuth>>;
+export function VaultAuthStatus(arg1:string):Promise<Array<main.VaultAuth>>;
 
 export function VerifyJira(arg1:string):Promise<void>;

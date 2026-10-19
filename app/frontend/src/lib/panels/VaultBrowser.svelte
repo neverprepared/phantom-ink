@@ -91,14 +91,17 @@
   }
 
   async function transfer(move: boolean) {
+    // Captured before the first await: the source profile must be the one this
+    // view was rendered for, not whatever is active when the call lands.
+    const src = activeProfile;
     const a = await getApi();
-    if (!a || !selectedSha || !destProfile) return;
+    if (!a || !src || !selectedSha || !destProfile) return;
     transferring = true;
     transferMsg = null;
     const sha = selectedSha;
     try {
-      if (move) await (a as any).MoveVaultRecord(vault, sha, destProfile);
-      else await (a as any).CopyVaultRecord(vault, sha, destProfile);
+      if (move) await a.MoveVaultRecord(src, vault, sha, destProfile);
+      else await a.CopyVaultRecord(src, vault, sha, destProfile);
       transferMsg = `${move ? 'Moved' : 'Copied'} to ${destProfile}`;
       if (move) selectedSha = null;
       await refresh();
@@ -110,11 +113,15 @@
   }
 
   async function refresh() {
+    const profile = activeProfile;
     const a = await getApi();
     if (!a) { loaded = true; loadError = 'API bindings unavailable'; return; }
     refreshing = true;
     try {
-      const list = (await (a as any).GetVaultRecords(vault)) as VaultRecord[];
+      const list = (await a.GetVaultRecords(profile, vault)) as VaultRecord[];
+      // Discard a response that arrived after a profile switch rather than
+      // rendering one profile's records under another's header.
+      if (profile !== activeProfile) return;
       records = (list ?? []).slice().sort((x, y) => (y.updated_at ?? '').localeCompare(x.updated_at ?? ''));
       loadError = null;
       needsToken = false;
@@ -140,11 +147,12 @@
   }
 
   async function saveToken() {
+    const profile = activeProfile;
     const a = await getApi();
-    if (!a || !tokenInput.trim()) return;
+    if (!a || !profile || !tokenInput.trim()) return;
     savingToken = true;
     try {
-      await (a as any).SetVaultToken(vault, tokenInput.trim());
+      await a.SetVaultToken(profile, vault, tokenInput.trim());
       tokenInput = '';
       await refresh();
     } catch (e: any) {
@@ -155,11 +163,13 @@
   }
 
   async function deleteSelected() {
+    // Destructive: pin the profile before awaiting anything.
+    const profile = activeProfile;
     const a = await getApi();
-    if (!a || !selectedSha) return;
+    if (!a || !profile || !selectedSha) return;
     deleting = true;
     try {
-      await (a as any).ForgetVaultRecord(vault, selectedSha);
+      await a.ForgetVaultRecord(profile, vault, selectedSha);
       confirmingDelete = false;
       selectedSha = null;
       await refresh();

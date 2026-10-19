@@ -59,11 +59,16 @@ func (a *App) tokenFor(vault, profile string) string {
 	return a.db.GetSetting(vaultTokenKey(vault, profile), "")
 }
 
-// SetVaultToken persists the ACTIVE profile's token for a vault (trimmed).
-func (a *App) SetVaultToken(vault, token string) error {
-	p := a.activeProfileName()
+// SetVaultToken persists a profile's token for a vault (trimmed).
+//
+// The profile is an explicit argument, not a.activeProfileName(): the caller
+// renders under one profile and the user may switch before this lands, so an
+// ambient read here writes the token into whichever profile happens to be
+// active when the call completes.
+func (a *App) SetVaultToken(profile, vault, token string) error {
+	p := strings.TrimSpace(profile)
 	if p == "" {
-		return fmt.Errorf("no active profile selected")
+		return fmt.Errorf("no profile specified")
 	}
 	if a.db == nil {
 		return fmt.Errorf("no database")
@@ -93,11 +98,14 @@ func (a *App) GetVaultProfiles(vault string) []string {
 	return out
 }
 
-// GetVaultRecords lists the ACTIVE profile's vault records, head-only.
-func (a *App) GetVaultRecords(vault string) ([]VaultRecord, error) {
-	profile := a.activeProfileName()
+// GetVaultRecords lists a profile's vault records, head-only.
+//
+// Profile is explicit so a response cannot be rendered under a profile other
+// than the one it was read for.
+func (a *App) GetVaultRecords(profile, vault string) ([]VaultRecord, error) {
+	profile = strings.TrimSpace(profile)
 	if profile == "" {
-		return nil, fmt.Errorf("no active profile selected")
+		return nil, fmt.Errorf("no profile specified")
 	}
 	token := a.tokenFor(vault, profile)
 	if token == "" {
@@ -120,9 +128,9 @@ type VaultAuth struct {
 // daemon for each browsable vault, so the mesh view can show whether auth
 // works — not just whether peers are syncing. One cheap head-only limit-1
 // request per vault.
-func (a *App) VaultAuthStatus() []VaultAuth {
+func (a *App) VaultAuthStatus(profile string) []VaultAuth {
 	vaults := []string{"skills", "agents", "todo"}
-	profile := a.activeProfileName()
+	profile = strings.TrimSpace(profile)
 	out := make([]VaultAuth, 0, len(vaults))
 	for _, v := range vaults {
 		va := VaultAuth{Vault: v}
@@ -195,9 +203,16 @@ func (a *App) listVaultRecords(vault, token string) ([]VaultRecord, error) {
 	return out.Records, nil
 }
 
-// ForgetVaultRecord deletes one record by SHA from the ACTIVE profile's vault.
-func (a *App) ForgetVaultRecord(vault, sha string) error {
-	profile := a.activeProfileName()
+// ForgetVaultRecord deletes one record by SHA from a profile's vault.
+//
+// Destructive, so the profile MUST be explicit: reading it ambiently meant a
+// delete issued from a panel rendered under profile A could land after a
+// profile switch and tombstone a record in profile B instead.
+func (a *App) ForgetVaultRecord(profile, vault, sha string) error {
+	profile = strings.TrimSpace(profile)
+	if profile == "" {
+		return fmt.Errorf("no profile specified")
+	}
 	token := a.tokenFor(vault, profile)
 	if token == "" {
 		return fmt.Errorf("no %s-vault token for profile %q", vault, profile)
@@ -205,21 +220,25 @@ func (a *App) ForgetVaultRecord(vault, sha string) error {
 	return a.forgetWithToken(sha, token)
 }
 
-// CopyVaultRecord copies a record from the ACTIVE profile's vault into
-// destProfile's same vault (re-learned; verbatim ⇒ identical SHA). Source kept.
-func (a *App) CopyVaultRecord(vault, sha, destProfile string) error {
-	return a.copyOrMove(vault, sha, destProfile, false)
+// CopyVaultRecord copies a record from srcProfile's vault into destProfile's
+// same vault (re-learned; verbatim ⇒ identical SHA). Source kept.
+//
+// Both ends are explicit. The source used to be read from the active profile
+// while only the destination was an argument, so a move that landed after a
+// profile switch took the record out of the wrong profile.
+func (a *App) CopyVaultRecord(srcProfile, vault, sha, destProfile string) error {
+	return a.copyOrMove(srcProfile, vault, sha, destProfile, false)
 }
 
 // MoveVaultRecord copies then forgets the source — a profile-to-profile move.
-func (a *App) MoveVaultRecord(vault, sha, destProfile string) error {
-	return a.copyOrMove(vault, sha, destProfile, true)
+func (a *App) MoveVaultRecord(srcProfile, vault, sha, destProfile string) error {
+	return a.copyOrMove(srcProfile, vault, sha, destProfile, true)
 }
 
-func (a *App) copyOrMove(vault, sha, destProfile string, move bool) error {
-	src := a.activeProfileName()
+func (a *App) copyOrMove(srcProfile, vault, sha, destProfile string, move bool) error {
+	src := strings.TrimSpace(srcProfile)
 	if src == "" {
-		return fmt.Errorf("no active profile selected")
+		return fmt.Errorf("no source profile specified")
 	}
 	if destProfile == "" || destProfile == src {
 		return fmt.Errorf("choose a destination profile different from %q", src)
