@@ -33,6 +33,10 @@ manage-secrets = "brainbox.manage_secrets:main"
 [project.optional-dependencies]
 cli = ["questionary>=2.0", "rich>=13.9"]
 mcp = ["mcp[cli]>=1.9"]
+# ADR-007 log shipping. Optional because it is off unless an OTLP endpoint
+# is configured, and grpcio is not something to put in every install for a
+# default-off feature.
+otel = ["opentelemetry-sdk>=1.45", "opentelemetry-exporter-otlp-proto-grpc>=1.45"]
 
 [dependency-groups]
 dev = [

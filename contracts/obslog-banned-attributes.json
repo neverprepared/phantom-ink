@@ -1,0 +1,40 @@
+{
+  "$comment": [
+    "ADR-007 rule 4, as data: attribute names that must never be shipped to the",
+    "log store. Content and credentials belong in a store with an access model;",
+    "this one answers unauthenticated with the OpenSearch security plugin",
+    "disabled. Identity attributes are excluded too — the reader drops user@*",
+    "and organization@*, so emitting them ships PII nobody reads back.",
+    "",
+    "Matched as SUBSTRINGS, case-insensitively, so a near-miss name is caught",
+    "rather than squeaking past an exact-match list: note_content, access_token",
+    "and user.email all match.",
+    "",
+    "Why a contract file rather than a shared module: the two consumers cannot",
+    "import from each other. brainbox is an installed package; the Drive inbox",
+    "runs as a standalone `uv run --script` whose sys.path is its own directory.",
+    "So the CODE is duplicated by necessity and the POLICY is not — each",
+    "consumer carries a conformance test that fails if its copy drifts from",
+    "this file. Duplicating a security guard without that check is how one copy",
+    "quietly stops matching.",
+    "",
+    "Consumers: brainbox/src/brainbox/obslog.py, scripts/inbox/obslog.py.",
+    "Adding an entry here fails both suites until both copies are updated,",
+    "which is the intended workflow — widen the policy, then widen the code."
+  ],
+  "banned_substrings": [
+    "content",
+    "prompt",
+    "response",
+    "transcript",
+    "token",
+    "secret",
+    "password",
+    "credential",
+    "authorization",
+    "user.",
+    "user@",
+    "organization.",
+    "organization@"
+  ]
+}

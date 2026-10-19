@@ -185,6 +185,25 @@ async def _finalize_task(task: Task, reason: str) -> None:
         revoke_token(task.token_id)
 
 
+def _run_attrs(task: Task, outcome: str) -> dict:
+    """ADR-007 attributes for a finished task.
+
+    duration_ms is a NUMBER (rule 1): the same field arriving as a string on
+    some events is what makes it unaggregatable for a whole daily index. The
+    outcome is what drives severity downstream, so a failure is filterable even
+    though these are logged at info.
+    """
+    return {
+        "event.outcome": outcome,
+        "duration_ms": max(0, task.updated_at - task.created_at),
+        "task.id": task.id,
+        "agent": task.agent_name,
+        "workspace": task.workspace_profile,
+        "session.id": task.session_name,
+        "job.id": task.job_id,
+    }
+
+
 async def complete_task(task_id: str, result: Any = None) -> Task:
     """Mark a task as completed and recycle its container."""
     task = _tasks.get(task_id)
@@ -199,7 +218,7 @@ async def complete_task(task_id: str, result: Any = None) -> Task:
 
     await _finalize_task(task, reason="task_completed")
 
-    log.info("router.task_completed", metadata={"task_id": task_id})
+    log.info("router.task_completed", metadata=_run_attrs(task, "ok"))
     _emit("task.completed", task)
     return task
 
@@ -219,7 +238,10 @@ async def fail_task(task_id: str, error: str | None = None) -> Task:
 
     await _finalize_task(task, reason="task_failed")
 
-    log.info("router.task_failed", metadata={"task_id": task_id, "error": error})
+    log.info(
+        "router.task_failed",
+        metadata={**_run_attrs(task, "error"), "error_message": str(error or "")},
+    )
     _emit("task.failed", task)
     return task
 
@@ -339,7 +361,9 @@ async def cancel_task(task_id: str) -> Task:
 
     await _finalize_task(task, reason="task_cancelled")
 
-    log.info("router.task_cancelled", metadata={"task_id": task_id})
+    # Cancelled is a deliberate stop: not a success, not a failure. ADR-007's
+    # third outcome exists for this, and it warns rather than erroring.
+    log.info("router.task_cancelled", metadata=_run_attrs(task, "partial"))
     _emit("task.cancelled", task)
     return task
 

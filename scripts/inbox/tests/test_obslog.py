@@ -230,3 +230,18 @@ def test_an_idle_run_is_ok():
     """An empty inbox is the normal state, not a problem. ADR-007 wants the run
     visible either way, so this still emits -- as ok."""
     assert outcome_for({"spooled": 0, "rejected": 0, "errors": 0}) == "ok"
+
+
+def test_banned_list_matches_the_contract():
+    """Same policy, second consumer. This emitter cannot import brainbox's copy
+    (it runs as a standalone `uv run --script`), so the contract file is what
+    keeps the two from drifting."""
+    import json
+    from pathlib import Path
+
+    import obslog
+
+    contract = Path(__file__).resolve().parents[3] / "contracts" / "obslog-banned-attributes.json"
+    declared = json.loads(contract.read_text())["banned_substrings"]
+
+    assert list(obslog._BANNED_SUBSTRINGS) == declared

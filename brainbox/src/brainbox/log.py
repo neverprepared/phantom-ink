@@ -7,6 +7,8 @@ from typing import Any
 
 import structlog
 
+from . import obslog
+
 
 def _rename_warning_to_warn(
     logger: Any, method_name: str, event_dict: dict[str, Any]
@@ -17,14 +19,34 @@ def _rename_warning_to_warn(
     return event_dict
 
 
-def setup_logging() -> None:
-    """Configure structlog with JSON output matching the Node.js format."""
+def setup_logging(*, ship=None) -> None:
+    """Configure structlog with JSON output matching the Node.js format.
+
+    When an OTLP log endpoint is configured (or `ship` is supplied), an ADR-007
+    shipper is inserted before the renderer so brainbox's existing structured
+    events also reach the log store. It ships WARN+ and the declared task
+    lifecycle only -- see obslog -- and returns the event_dict untouched, so
+    stdout logging is unaffected either way.
+
+    `ship` exists for tests: the OTLP SDK is an optional extra, so this has to
+    be exercisable without it.
+    """
+    if ship is None and obslog.enabled():
+        ship = obslog.otlp_sink()
+
+    shipper = (
+        [obslog.processor(send=ship, allow=obslog.DECLARED_EVENTS)] if ship else []
+    )
+
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             _rename_warning_to_warn,
             structlog.processors.TimeStamper(fmt="iso", utc=True),
+            # Before the renderer: the shipper reads the event_dict, and after
+            # JSONRenderer it would be a string.
+            *shipper,
             structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(0),
