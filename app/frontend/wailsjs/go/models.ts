@@ -4498,6 +4498,11 @@ export namespace opensearch {
 	export class LogEntry {
 	    time: string;
 	    body: string;
+	    severity?: string;
+	    service?: string;
+	    event_name?: string;
+	    outcome?: string;
+	    run_id?: string;
 	    session?: string;
 	    workspace?: string;
 	    model?: string;
@@ -4511,6 +4516,11 @@ export namespace opensearch {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.time = source["time"];
 	        this.body = source["body"];
+	        this.severity = source["severity"];
+	        this.service = source["service"];
+	        this.event_name = source["event_name"];
+	        this.outcome = source["outcome"];
+	        this.run_id = source["run_id"];
 	        this.session = source["session"];
 	        this.workspace = source["workspace"];
 	        this.model = source["model"];
