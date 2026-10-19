@@ -14,7 +14,7 @@ import json
 import pytest
 
 import extract_apply
-from common import STATUS_DONE, STATUS_ENTRY_PREFIX, STATUS_FAILED
+from common import ENTRY_KIND, STATUS_DONE, STATUS_ENTRY_PREFIX, STATUS_FAILED
 
 
 def run_main(monkeypatch, capsys, tmp_path, argv):
@@ -35,7 +35,7 @@ def test_empty_spool_still_emits_a_status_row(monkeypatch, capsys, tmp_path):
     assert len(entries) == 1
     e = entries[0]
     assert e["id"] == f"{STATUS_ENTRY_PREFIX}-apply"
-    assert e["kind"] == "inbox_run"
+    assert e["kind"] == ENTRY_KIND
     assert e["status"] == STATUS_DONE
     assert "idle" in e["title"]
 

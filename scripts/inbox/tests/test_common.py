@@ -7,6 +7,7 @@ import json
 import pytest
 
 from common import (
+    ENTRY_KIND,
     STATUS_DONE,
     STATUS_ENTRY_PREFIX,
     STATUS_FAILED,
@@ -232,7 +233,7 @@ def test_secret_scan_does_not_flag_a_short_hex_string():
 
 def test_entry_has_the_required_fields():
     """runCollectCommand drops entries missing id/kind/title (app/collect.go:793)."""
-    e = entry("id1", "inbox_pending", "a title")
+    e = entry("id1", ENTRY_KIND, "a title")
     assert e["id"] and e["kind"] and e["title"]
     assert e["status"] == "active"
 

@@ -154,11 +154,24 @@ rather than by hoping a model behaves.
   therefore not a background service.
 - A successful collect job that emits no items is invisible — stdout is parsed
   and discarded, stderr only reaches `last_error` on a non-zero exit. Each
-  stage therefore emits one `inbox_run` status row with a stable `entry_id`,
-  which upserts (`PRIMARY KEY (job_id, entry_id)`, `app/collect.go:504`) into a
-  single always-current row rather than 96 a day. Without it, "ran, nothing to
-  do" and "never ran" are indistinguishable — a confusion that produced two
+  stage therefore emits one status row with a stable `entry_id`, which upserts
+  (`PRIMARY KEY (job_id, entry_id)`, `app/collect.go:504`) into a single
+  always-current row rather than 96 a day. Without it, "ran, nothing to do" and
+  "never ran" are indistinguishable — a confusion that produced two
   misdiagnoses while this was being built.
+- **Entries must use `kind: "event"`.** The only consumer of
+  `collected_entries` in the app is `StreamWidget.svelte:92`, which queries a
+  hard-coded `ListCollectedEntries(profile, 'event', tag)`. Semantic kinds like
+  `inbox_applied` were written to SQLite and rendered nowhere — invisible in
+  testing, because the rows are present and contract-valid either way. The
+  discriminator lives in tags instead. `"event"` is also the contract's own
+  default, so this is canonical rather than a workaround. Note the app timeline
+  does not read entries at all.
+- **The drain emits no per-item rows.** Entries upsert per `(job_id, entry_id)`
+  and the stages are separate jobs, so a drain-written "pending" row could
+  never be superseded by apply's "applied" row; it stayed `upcoming` forever,
+  accumulating one stale row per item ever captured. Counts go in the status
+  row; the durable per-item record is apply's.
 - Removing `done/` removed the visible proof that an item was processed. The
   local ledger is now the only such record, which is why disposal is trash
   rather than delete, and why the content-hash replay guard matters more.

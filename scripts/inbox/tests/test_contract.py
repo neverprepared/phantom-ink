@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from common import (
+    ENTRY_KIND,
     ENTRY_STATUSES,
     STATUS_BLOCKED,
     STATUS_DONE,
@@ -83,6 +84,46 @@ def test_no_source_file_emits_a_literal_status():
 def test_required_entry_fields_match_the_schema(schema):
     """runCollectCommand drops entries missing id/kind/title."""
     props = set(schema.get("properties", {}))
-    e = entry("id1", "inbox_upcoming", "a title", description="d", tags=["x"], url="u")
+    e = entry("id1", ENTRY_KIND, "a title", description="d", tags=["x"], url="u")
     unknown = set(e) - props
     assert not unknown, f"entry emits fields the contract does not define: {unknown}"
+
+
+# -- the kind must be renderable ------------------------------------------------
+
+# StreamWidget.svelte:92 is the ONLY consumer of collected_entries, and it
+# queries a hard-coded kind: ListCollectedEntries(profile, 'event', tag). An
+# entry with any other kind is written to SQLite and then rendered nowhere --
+# which is what happened on the first attempt, and is invisible in testing
+# because the rows are present and contract-valid either way.
+
+
+def test_entry_kind_is_the_one_the_widget_queries():
+    assert ENTRY_KIND == "event"
+
+
+def test_no_source_file_emits_a_semantic_kind():
+    """Every entry must use ENTRY_KIND; discriminate with tags instead."""
+    inbox = Path(__file__).resolve().parent.parent
+    offenders = []
+    for path in inbox.glob("*.py"):
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if '"inbox_' in stripped or "'inbox_" in stripped:
+                offenders.append(f"{path.name}:{n}: {stripped}")
+    assert not offenders, "use ENTRY_KIND + tags, not a semantic kind:\n" + "\n".join(offenders)
+
+
+def test_the_contract_defaults_to_this_kind(schema):
+    """'event' is the contract's own default, so this is canonical not a hack."""
+    assert schema["properties"]["kind"]["default"] == ENTRY_KIND
+
+
+def test_status_rows_carry_the_inbox_tag():
+    """The widget filters by tag, so the tag is what makes a row findable."""
+    from common import status_entry
+
+    for stage in ("drain", "apply"):
+        assert "inbox" in status_entry(stage, ok=True, summary="idle")["tags"]

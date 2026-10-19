@@ -361,8 +361,28 @@ def month_bucket() -> str:
 # ── collect-job stdout contract ────────────────────────────────────────────────
 
 # runCollectCommand (app/collect.go:793) requires stdout to be a JSON array of
-# entries, each with at least id/kind/title, and drops anything else. Emitting
-# these is how drained items show up on the app timeline.
+# entries, each with at least id/kind/title, and drops anything else.
+
+# Every entry MUST use this kind. The only thing in the app that reads
+# collected_entries is StreamWidget.svelte:92, and it queries a hard-coded
+# kind:
+#
+#     ListCollectedEntries(profile, 'event', tag)
+#
+# so an entry with a semantic kind like "inbox_applied" is written to the DB
+# and then never rendered anywhere -- which is exactly what happened on the
+# first attempt at this. "event" is also the contract's own default
+# (timeline-entry.schema.json), so this is the canonical value rather than a
+# workaround. The discriminator lives in TAGS instead: every entry carries
+# "inbox" plus a role tag, and a Stream widget configured with tag "inbox"
+# renders the lot.
+#
+# Note the app timeline does NOT read collected_entries at all -- it projects
+# collect_jobs into planned items. A Stream widget is the only surface.
+ENTRY_KIND = "event"
+
+# Role tags, used in place of a semantic kind.
+TAG_INBOX = "inbox"
 
 # The six display statuses the contract allows
 # (app/internal/contract/timeline-entry.schema.json, $defs/EnvelopeStatus).
@@ -452,7 +472,7 @@ def status_entry(
         status = STATUS_DONE
     return entry(
         f"{STATUS_ENTRY_PREFIX}-{stage}",
-        "inbox_run",
+        ENTRY_KIND,
         f"Drive inbox {stage}: {summary}",
         description=f"last run {utc_now_iso()} — {detail}",
         status=status,
