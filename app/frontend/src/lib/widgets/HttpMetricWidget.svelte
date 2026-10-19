@@ -15,6 +15,7 @@
   import { onCollectUpdate } from '../utils/collectEvents';
   import { profileState } from '../stores.svelte';
   import type { HttpMetricConfig } from './types';
+  import { resolveCollectJob } from './collectJob';
 
   let { config, widgetId, onConfigUpdate }: {
     config: HttpMetricConfig;
@@ -24,7 +25,10 @@
 
   const cached = config.jobId ? valueCache.get(config.jobId) ?? null : null;
   let value   = $state<string | null>(cached);
-  let error   = $state(false);
+  // A message, not a boolean. This was `boolean`, so an HTTP metric that
+  // failed showed a bare "!" with nothing to act on, while the otherwise
+  // identical ScriptMetricWidget captured and rendered the reason.
+  let error   = $state<string | null>(null);
   let loading = $state(cached === null);
 
   const isString = $derived(config.valueType === 'string');
@@ -64,11 +68,11 @@
         const entry = await a.GetLatestCollectedEntry(resolvedJobId, config.label);
         if (entry) {
           value = entry.value || null;
-          error = false;
+          error = null;
           if (value != null) valueCache.set(resolvedJobId, value);
         }
-      } catch {
-        error = true;
+      } catch (e: any) {
+        error = e?.message ?? String(e);
       } finally {
         loading = false;
       }
@@ -83,31 +87,21 @@
     registering = true;
     try {
       value = await a.FetchMetricUrl(profile, config.url, config.path ?? '', config.header ?? '');
-      error = false;
-      const all: any[] = (await (a as any).ListCollectJobs(profile)) ?? [];
-      let existing = widgetId ? all.find(j => j.owner_widget_id === widgetId) : null;
-      if (!existing) {
-        existing = all.find(j => j.name === config.label && j.command === syntheticCommand);
+      error = null;
+      // Shared with ScriptMetricWidget — see lib/widgets/collectJob.ts.
+      const jobId = await resolveCollectJob({
+        profile,
+        label: config.label,
+        command: syntheticCommand,
+        widgetId,
+        intervalS: config.interval,
+      });
+      if (jobId) {
+        resolvedJobId = jobId;
+        onConfigUpdate?.({ jobId });
       }
-      if (existing) {
-        resolvedJobId = existing.id;
-        onConfigUpdate?.({ jobId: existing.id });
-        const needsBackfill = !existing.source || (widgetId && existing.owner_widget_id !== widgetId);
-        if (needsBackfill) {
-          try { await (a as any).SaveCollectJob({ ...existing, source: 'widget', owner_widget_id: widgetId ?? '' }); } catch {}
-        }
-      } else {
-        const job = await a.SaveCollectJob({
-          id: '', profile, name: config.label, command: syntheticCommand,
-          interval_s: config.interval ?? 60, enabled: true,
-          default_actions: '[]', last_error: '', created_at: 0,
-          source: 'widget', owner_widget_id: widgetId ?? '',
-        } as any);
-        resolvedJobId = job.id;
-        onConfigUpdate?.({ jobId: job.id });
-      }
-    } catch {
-      error = true;
+    } catch (e: any) {
+      error = e?.message ?? String(e);
     } finally {
       registering = false;
       loading = false;
@@ -145,7 +139,8 @@
   {#if loading}
     <span class="stat-value muted">…</span>
   {:else if error}
-    <span class="stat-value err">!</span>
+    <span class="stat-value err" title={error}>!</span>
+    <span class="stat-err">{error}</span>
   {:else if isString}
     <span class="stat-str" style={config.color ? `color: ${config.color}` : ''}>{value}</span>
   {:else}

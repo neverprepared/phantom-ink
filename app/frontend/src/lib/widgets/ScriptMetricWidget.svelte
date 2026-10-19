@@ -18,6 +18,7 @@
   import { onCollectUpdate } from '../utils/collectEvents';
   import { profileState } from '../stores.svelte';
   import type { ScriptMetricConfig } from './types';
+  import { resolveCollectJob } from './collectJob';
 
   let { config, widgetId, onConfigUpdate }: {
     config: ScriptMetricConfig;
@@ -73,27 +74,18 @@
     try {
       value = await a.RunMetricScript(profile, config.command);
       error = null;
-      const all: any[] = (await (a as any).ListCollectJobs(profile)) ?? [];
-      let existing = widgetId ? all.find(j => j.owner_widget_id === widgetId) : null;
-      if (!existing) {
-        existing = all.find(j => j.name === config.label && j.command === config.command);
-      }
-      if (existing) {
-        resolvedJobId = existing.id;
-        onConfigUpdate?.({ jobId: existing.id });
-        const needsBackfill = !existing.source || (widgetId && existing.owner_widget_id !== widgetId);
-        if (needsBackfill) {
-          try { await (a as any).SaveCollectJob({ ...existing, source: 'widget', owner_widget_id: widgetId ?? '' }); } catch {}
-        }
-      } else {
-        const job = await a.SaveCollectJob({
-          id: '', profile, name: config.label, command: config.command,
-          interval_s: config.interval ?? 60, enabled: true,
-          default_actions: '[]', last_error: '', created_at: 0,
-          source: 'widget', owner_widget_id: widgetId ?? '',
-        } as any);
-        resolvedJobId = job.id;
-        onConfigUpdate?.({ jobId: job.id });
+      // Shared with HttpMetricWidget — see lib/widgets/collectJob.ts for why
+      // the widget→job ownership rule must have exactly one definition.
+      const jobId = await resolveCollectJob({
+        profile,
+        label: config.label,
+        command: config.command,
+        widgetId,
+        intervalS: config.interval,
+      });
+      if (jobId) {
+        resolvedJobId = jobId;
+        onConfigUpdate?.({ jobId });
       }
     } catch (e: any) {
       error = e?.message ?? String(e);
@@ -194,14 +186,6 @@
     -webkit-box-orient: vertical;
   }
 
-  .stat-err {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--color-error);
-    opacity: 0.8;
-    word-break: break-word;
-    white-space: pre-wrap;
-  }
 
   .stat-sub {
     font-family: var(--font-mono);

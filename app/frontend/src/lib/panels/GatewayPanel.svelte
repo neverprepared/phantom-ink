@@ -3,31 +3,34 @@
   import { onMount } from 'svelte';
   import { notifications } from '../notifications.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import { resource, action } from '../stores/resource.svelte';
 
   // MCP gateway server registry (ADR-002 #152). Lists every catalog server with
   // a live enable/disable toggle. Definitions stay in mcp-catalog.json; this
   // toggles which are exposed through the gateway (DB-backed, no restart).
 
   type Server = { name: string; command: string; enabled: boolean };
-  let servers = $state<Server[]>([]);
-  let loading = $state(true);
+
+  // Migrated onto the shared resource primitive. The hand-rolled version
+  // returned early on `!a` without surfacing anything, so when the bindings
+  // were unavailable this panel rendered a confident "No catalog servers" —
+  // telling the operator to go configure a catalog that may well exist.
+  const serversRes = resource<Server[]>(
+    async (api) => ((await api.ListGatewayServers()) ?? []) as Server[],
+    { initial: [], label: 'Failed to load gateway servers', onError: notifications.error },
+  );
+
+  const servers = $derived(serversRes.value);
+  const loading = $derived(serversRes.loading);
+  const loadError = $derived(serversRes.error);
   let toggling = $state<Record<string, boolean>>({});
 
   let enabledCount = $derived(servers.filter((s) => s.enabled).length);
 
   onMount(load);
 
-  async function load() {
-    loading = true;
-    const a = await getApi();
-    if (!a) { loading = false; return; }
-    try {
-      servers = (await a.ListGatewayServers()) ?? [];
-    } catch (err: any) {
-      notifications.error(`Failed to load gateway servers: ${err?.message ?? err}`);
-    } finally {
-      loading = false;
-    }
+  function load() {
+    return serversRes.refresh();
   }
 
   async function toggle(s: Server) {
@@ -61,6 +64,13 @@
 
   {#if loading}
     <p class="hint">loading…</p>
+  {:else if loadError}
+    <!-- A failure is NOT an empty catalog. Saying "no catalog servers" when
+         the request failed sends the operator to fix the wrong thing. -->
+    <EmptyState
+      title="Couldn't load the gateway catalog"
+      message={loadError}
+    />
   {:else if servers.length === 0}
     <EmptyState
       title="No catalog servers"
