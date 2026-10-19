@@ -153,7 +153,9 @@ func (a *App) JiraTickets(profile string) (JiraTicketsResult, error) {
 
 	// The pull requests are whatever the Code tab would show for this profile.
 	var prs []provider.Item
-	if ov, err := a.CodeOverview(profile); err == nil {
+	// Reuse the memo: this is a read of what the Code tab would already show,
+	// so it must not trigger a second full provider fan-out.
+	if ov, err := a.CodeOverview(profile, false); err == nil {
 		prs = ov.PullRequests
 	}
 	var manual map[string][]string

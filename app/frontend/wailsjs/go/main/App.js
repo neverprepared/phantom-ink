@@ -66,8 +66,8 @@ export function ClearProfileServerOverride(arg1, arg2) {
   return window['go']['main']['App']['ClearProfileServerOverride'](arg1, arg2);
 }
 
-export function CodeOverview(arg1) {
-  return window['go']['main']['App']['CodeOverview'](arg1);
+export function CodeOverview(arg1, arg2) {
+  return window['go']['main']['App']['CodeOverview'](arg1, arg2);
 }
 
 export function CopyVaultRecord(arg1, arg2, arg3, arg4) {
@@ -500,6 +500,10 @@ export function ImportEnvFile() {
 
 export function InitBrainProfile(arg1) {
   return window['go']['main']['App']['InitBrainProfile'](arg1);
+}
+
+export function InvalidateCodeOverview(arg1) {
+  return window['go']['main']['App']['InvalidateCodeOverview'](arg1);
 }
 
 export function JiraGloballyEnabled() {

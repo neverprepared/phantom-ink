@@ -199,6 +199,11 @@ func (a *App) SetActiveProfile(name string) error {
 	a.mu.Lock()
 	a.config.ActiveProfile = name
 	a.mu.Unlock()
+	// Drop every profile's memoised launchpad. The cache is profile-keyed, so
+	// it cannot serve the wrong profile's rows -- but clearing on switch keeps
+	// the stronger property the Code panel header promises: after a switch,
+	// nothing on screen predates it.
+	a.InvalidateCodeOverview("")
 	if a.db != nil {
 		return a.db.SetSetting(settingActiveProfile, name)
 	}
