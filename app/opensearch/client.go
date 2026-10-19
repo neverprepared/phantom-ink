@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -220,12 +221,35 @@ func (c *Client) hasWorkspaceData(ctx context.Context, workspace string) (bool, 
 
 // LogEntry is a single row rendered in the Stream panel's Live tab.
 type LogEntry struct {
-	Time       string `json:"time"`
-	Body       string `json:"body"` // event name (e.g. claude_code.api_request)
-	Session    string `json:"session,omitempty"`
-	Workspace  string `json:"workspace,omitempty"`
-	Model      string `json:"model,omitempty"`
-	DurationMs int64  `json:"duration_ms,omitempty"`
+	Time      string `json:"time"`
+	Body      string `json:"body"` // event name (e.g. claude_code.api_request)
+	Session   string `json:"session,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
+	Model     string `json:"model,omitempty"`
+	// DurationMs is normalised across the several spellings emitters use:
+	// duration_ms (api_request, tool_result) and total_duration_ms (hook
+	// events). Before this, hook events rendered with no duration at all
+	// because only the first spelling was read.
+	DurationMs int64 `json:"duration_ms,omitempty"`
+
+	// Severity is severityText. Currently empty on every claude-code record,
+	// which is why log levels cannot be filtered on; carried anyway so our own
+	// emitters (which do set it) are usable the day they start shipping.
+	Severity string `json:"severity,omitempty"`
+	// Service is resource.attributes.service@name — the only thing separating
+	// claude-code's own telemetry from a platform service's.
+	Service string `json:"service,omitempty"`
+	// Event is log.attributes.event@name, e.g. "hook_execution_complete".
+	// Preferred over parsing Body, which is a text field with no keyword
+	// subfield and so cannot be aggregated on.
+	Event string `json:"event,omitempty"`
+
+	// Attrs carries the remaining event-specific attributes, keyed without the
+	// "log.attributes." prefix (hook_name, tool_name, num_success, success,
+	// error_type, …). These are what make a line meaningful, and the previous
+	// _source allowlist never fetched them: a failed tool_result rendered
+	// identically to a successful one.
+	Attrs map[string]any `json:"attrs,omitempty"`
 }
 
 // TailLogs returns the most-recent `limit` log entries, newest first, optionally
@@ -243,12 +267,27 @@ func (c *Client) TailLogs(ctx context.Context, workspace string, limit int) ([]L
 		"size":  limit,
 		"sort":  []any{map[string]any{"time": map[string]any{"order": "desc"}}},
 		"query": map[string]any{"bool": map[string]any{"must": must}},
-		"_source": []string{
-			"time", "body",
-			"log.attributes.session@id",
-			"resource.attributes.workspace",
-			"log.attributes.model",
-			"log.attributes.duration_ms",
+		// Take every event attribute rather than an allowlist. The previous
+		// list named six fields, so the attributes that carry the actual
+		// meaning (hook_name, tool_name, success, error_type, the num_* counts)
+		// were never fetched and a line could only ever render its event name.
+		// Documents are small and the query is capped at 1000.
+		//
+		// user@* and organization@* are excluded: they are identical on every
+		// record from a given machine, so they are pure noise in a tail, and
+		// there is no reason to pull an email address into the UI to render a
+		// log line.
+		"_source": map[string]any{
+			"includes": []string{
+				"time", "body", "severityText",
+				"resource.attributes.workspace",
+				"resource.attributes.service@name",
+				"log.attributes.*",
+			},
+			"excludes": []string{
+				"log.attributes.user@*",
+				"log.attributes.organization@*",
+			},
 		},
 	}
 	var resp struct {
@@ -263,17 +302,69 @@ func (c *Client) TailLogs(ctx context.Context, workspace string, limit int) ([]L
 	}
 	out := make([]LogEntry, 0, len(resp.Hits.Hits))
 	for _, h := range resp.Hits.Hits {
-		s := h.Source
-		out = append(out, LogEntry{
-			Time:       strOf(s["time"]),
-			Body:       strOf(s["body"]),
-			Session:    strOf(s["log.attributes.session@id"]),
-			Workspace:  strOf(s["resource.attributes.workspace"]),
-			Model:      strOf(s["log.attributes.model"]),
-			DurationMs: intOf(s["log.attributes.duration_ms"]),
-		})
+		out = append(out, projectLogEntry(h.Source))
 	}
 	return out, nil
+}
+
+// logAttrPrefix is how Data Prepper flattens OTEL log attributes: the document
+// key is the literal dotted string "log.attributes.hook_name", not a nested
+// object. Reading it as nested yields nothing, which is how these records got
+// mistaken for attribute-free.
+const logAttrPrefix = "log.attributes."
+
+// promotedAttrs are lifted into typed LogEntry fields, so they are not repeated
+// in Attrs.
+var promotedAttrs = map[string]bool{
+	"session@id":        true,
+	"event@name":        true,
+	"model":             true,
+	"duration_ms":       true,
+	"total_duration_ms": true,
+}
+
+// isIdentityAttr reports attributes that identify the human or org rather than
+// the event. They are already excluded by the query's _source, but a tail must
+// never render an email address just to draw a log line, and an exclude list in
+// a query body is easy to edit away by accident — so the projection refuses
+// them too.
+func isIdentityAttr(name string) bool {
+	return strings.HasPrefix(name, "user@") || strings.HasPrefix(name, "organization@")
+}
+
+// projectLogEntry turns one OpenSearch _source into a LogEntry, promoting the
+// common envelope into typed fields and keeping the event-specific remainder in
+// Attrs for the caller to render.
+func projectLogEntry(s map[string]any) LogEntry {
+	e := LogEntry{
+		Time:      strOf(s["time"]),
+		Body:      strOf(s["body"]),
+		Severity:  strOf(s["severityText"]),
+		Session:   strOf(s[logAttrPrefix+"session@id"]),
+		Workspace: strOf(s["resource.attributes.workspace"]),
+		Service:   strOf(s["resource.attributes.service@name"]),
+		Model:     strOf(s[logAttrPrefix+"model"]),
+		Event:     strOf(s[logAttrPrefix+"event@name"]),
+	}
+
+	// Emitters disagree on the spelling; take whichever is present.
+	if d := intOf(s[logAttrPrefix+"duration_ms"]); d > 0 {
+		e.DurationMs = d
+	} else {
+		e.DurationMs = intOf(s[logAttrPrefix+"total_duration_ms"])
+	}
+
+	for k, v := range s {
+		name, ok := strings.CutPrefix(k, logAttrPrefix)
+		if !ok || promotedAttrs[name] || v == nil || isIdentityAttr(name) {
+			continue
+		}
+		if e.Attrs == nil {
+			e.Attrs = make(map[string]any, 8)
+		}
+		e.Attrs[name] = v
+	}
+	return e
 }
 
 func strOf(v any) string {
@@ -283,12 +374,40 @@ func strOf(v any) string {
 	return ""
 }
 
+// intOf coerces a numeric attribute regardless of how OpenSearch typed it.
+//
+// The same field name arrives as different JSON types depending on the event,
+// because these indices are dynamically mapped and whichever document landed
+// first in an index decided the type: duration_ms is a string on tool_result
+// but a float64 on api_request, and every num_* on a hook event is a string.
+// Reading only the numeric forms silently yielded 0 — a duration that renders
+// as absent rather than wrong, which is the harder kind of bug to notice.
 func intOf(v any) int64 {
 	switch x := v.(type) {
 	case float64:
 		return int64(x)
 	case int64:
 		return x
+	case int:
+		return int64(x)
+	case json.Number:
+		if n, err := x.Int64(); err == nil {
+			return n
+		}
+		if f, err := x.Float64(); err == nil {
+			return int64(f)
+		}
+	case string:
+		s := strings.TrimSpace(x)
+		if s == "" {
+			return 0
+		}
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return n
+		}
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return int64(f)
+		}
 	}
 	return 0
 }
