@@ -43,6 +43,7 @@ from common import (
     load_config,
     log,
     read_pending,
+    status_entry,
 )
 from drive import Drive, open_drive
 from extract import extract
@@ -189,12 +190,12 @@ def main(argv: list[str] | None = None) -> int:
         cfg = load_config(args.profile)
     except ConfigError as exc:
         log(f"config error: {exc}")
-        emit([])
+        emit([status_entry("apply", ok=False, summary=f"config error: {exc}"[:120])])
         return 1
 
     records = read_pending(cfg, limit=max(args.cap, 1))
     if not records:
-        emit([])
+        emit([status_entry("apply", ok=True, summary="idle")])
         return 0
 
     # Content-addressed replay guard: a spool record for already-applied content
@@ -208,7 +209,13 @@ def main(argv: list[str] | None = None) -> int:
         else:
             fresh.append(rec)
     if not fresh:
-        emit([])
+        emit(
+            [
+                status_entry(
+                    "apply", ok=True, summary="idle", counts={"replays dropped": len(records)}
+                )
+            ]
+        )
         return 0
 
     drive: Drive | None = None
@@ -219,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
             # Without Drive we cannot dispose of anything, and applying would
             # leave items that re-drain later. Stop rather than half-work.
             log(f"drive unavailable, not applying this run: {exc}")
-            emit([])
+            emit([status_entry("apply", ok=False, summary=f"drive unavailable: {exc}"[:120])])
             return 1
 
     try:
@@ -227,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         log(f"extract stage crashed: {exc}")
         log(traceback.format_exc())
-        emit([])
+        emit([status_entry("apply", ok=False, summary=f"extract crashed: {exc}"[:120])])
         return 1
 
     by_id = {r.item_id: r for r in fresh}
@@ -245,7 +252,10 @@ def main(argv: list[str] | None = None) -> int:
         emit([])
         return 0
 
+    counts = {"filed": 0, "quarantined": 0, "retrying": 0}
+
     for item_id, reason in quarantined.items():
+        counts["quarantined"] += 1
         entries.append(quarantine_item(drive, cfg, by_id[item_id], reason))
 
     # One MCP session for every reminder in the run: starting the Swift server
@@ -268,6 +278,23 @@ def main(argv: list[str] | None = None) -> int:
         if reminders is not None:
             reminders.close()
 
+    for e in entries:
+        if e.get("kind") == "inbox_applied":
+            counts["filed"] += 1
+        elif e.get("kind") == "inbox_retry":
+            counts["retrying"] += 1
+
+    summary = f"filed {counts['filed']}" if counts["filed"] else "idle"
+    entries.insert(
+        0,
+        status_entry(
+            "apply",
+            ok=True,
+            summary=summary,
+            counts=counts,
+            attention=bool(counts["quarantined"] or counts["retrying"]),
+        ),
+    )
     emit(entries)
     return 0
 

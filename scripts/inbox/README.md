@@ -103,6 +103,10 @@ just inbox-lint
 Useful flags: `--dry-run` on either stage, `--cap N` for the per-run limit,
 `--hard-delete` to permanently delete instead of trashing.
 
+When triggering by hand (or via the Collectors panel's play button), run
+**drain before apply**: apply only files what drain has already staged, so
+running it first looks like a no-op.
+
 In normal operation two collect jobs do this on a 10-minute interval. They are
 separate jobs on purpose: collect jobs are killed at 60 seconds
 (`app/collect.go:793`), so no single run may span both stages.
@@ -144,6 +148,17 @@ store (`~/.google_workspace_mcp/credentials/`), so there is no second auth flow.
 
 ## Operational notes
 
+- **The scheduler only runs while the app does.** It is a goroutine inside the
+  Wails app, not a daemon or a LaunchAgent. Close the app — or let `wails dev`
+  restart it — and nothing drains; captures simply sit in `inbox/` until it is
+  running again. This is a deliberate trade (the jobs stay manageable in the
+  Collectors panel, with a per-job play button) and not a bug, but it does mean
+  the inbox is not a background service.
+- **Each stage writes one status row per run** (`kind: inbox_run`, a stable
+  `entry_id`, upserted). Check it to tell "ran, nothing to do" from "never
+  ran" — a successful job that emits no items is otherwise completely silent,
+  because stdout is parsed and discarded and stderr only reaches `last_error`
+  on a non-zero exit.
 - **Prime the EventKit grant once** by running `macos-mcp` from a terminal before
   registering the apply job. Launched as a subprocess of the Wails app the TCC
   prompt may not be attributable, and Stage C will fail.

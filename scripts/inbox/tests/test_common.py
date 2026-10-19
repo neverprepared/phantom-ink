@@ -7,6 +7,10 @@ import json
 import pytest
 
 from common import (
+    STATUS_DONE,
+    STATUS_ENTRY_PREFIX,
+    STATUS_FAILED,
+    STATUS_NEEDS_ACTION,
     Config,
     ConfigError,
     SpoolRecord,
@@ -22,6 +26,7 @@ from common import (
     read_pending,
     scan_secrets,
     split_frontmatter,
+    status_entry,
     write_spool,
 )
 
@@ -322,3 +327,66 @@ def test_no_declaration_returns_empty():
 def test_frontmatter_accepts_a_type_key():
     fm, _ = split_frontmatter("---\ntype: idea\ntitle: X\n---\nbody\n")
     assert fm["type"] == "idea"
+
+
+# -- run status row -------------------------------------------------------------
+
+# A successful collect job that emits no items is otherwise invisible: stdout is
+# parsed and discarded, and stderr only reaches last_error on a non-zero exit.
+# These rows make "ran, nothing to do" distinguishable from "never ran".
+
+
+def test_status_entry_uses_a_stable_id_so_it_upserts():
+    """collected_entries is PRIMARY KEY (job_id, entry_id) and upserts, so a
+    stable id gives one current row per job instead of 96 a day."""
+    a = status_entry("drain", ok=True, summary="idle")
+    b = status_entry("drain", ok=True, summary="spooled 3", counts={"spooled": 3})
+    assert a["id"] == b["id"] == f"{STATUS_ENTRY_PREFIX}-drain"
+
+
+def test_status_entry_ids_differ_per_stage():
+    assert (
+        status_entry("drain", ok=True, summary="x")["id"]
+        != (status_entry("apply", ok=True, summary="x")["id"])
+    )
+
+
+def test_idle_run_is_done_not_attention_worthy():
+    e = status_entry("drain", ok=True, summary="idle")
+    assert e["status"] == STATUS_DONE
+    assert "nothing to do" in e["description"]
+
+
+def test_counts_appear_in_the_description():
+    e = status_entry("drain", ok=True, summary="spooled 2", counts={"spooled": 2, "rejected": 1})
+    assert "spooled: 2" in e["description"]
+    assert "rejected: 1" in e["description"]
+
+
+def test_zero_counts_are_omitted():
+    e = status_entry("drain", ok=True, summary="idle", counts={"spooled": 0, "rejected": 0})
+    assert "spooled" not in e["description"]
+    assert "nothing to do" in e["description"]
+
+
+def test_attention_run_needs_action():
+    """A rejected or quarantined item should surface without scanning the list."""
+    e = status_entry("drain", ok=True, summary="spooled 1", counts={"rejected": 2}, attention=True)
+    assert e["status"] == STATUS_NEEDS_ACTION
+
+
+def test_failed_run_is_failed():
+    e = status_entry("drain", ok=False, summary="drive unavailable")
+    assert e["status"] == STATUS_FAILED
+    assert "drive unavailable" in e["title"]
+
+
+def test_status_entry_records_the_run_time():
+    assert "last run " in status_entry("apply", ok=True, summary="idle")["description"]
+
+
+def test_status_entry_metadata_carries_stage_and_ok():
+    e = status_entry("apply", ok=True, summary="filed 3", counts={"filed": 3})
+    assert e["metadata"]["stage"] == "apply"
+    assert e["metadata"]["ok"] is True
+    assert e["metadata"]["filed"] == 3

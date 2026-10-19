@@ -144,6 +144,21 @@ rather than by hoping a model behaves.
   kind as well as the fields. Relative-date parsing is the hard part. A
   mis-typed item is cheap to fix and the overrides exist for the cases that
   recur; if the rate is high the fix is marker-first habits, not `allow_paid`.
+- **The schedule lives in the app, and that is accepted rather than solved.**
+  The collect scheduler is a goroutine started from `app.go`, so capture stops
+  whenever the app is closed or restarting; both jobs were observed ~10 minutes
+  overdue after a `wails dev` rebuild. A per-profile LaunchAgent owning the
+  schedule (the pattern `pbrainctl mart` already uses) with the app reduced to a
+  status viewer was considered and rejected: it would take the jobs out of the
+  Collectors panel and with them the per-job play button. The inbox is
+  therefore not a background service.
+- A successful collect job that emits no items is invisible — stdout is parsed
+  and discarded, stderr only reaches `last_error` on a non-zero exit. Each
+  stage therefore emits one `inbox_run` status row with a stable `entry_id`,
+  which upserts (`PRIMARY KEY (job_id, entry_id)`, `app/collect.go:504`) into a
+  single always-current row rather than 96 a day. Without it, "ran, nothing to
+  do" and "never ran" are indistinguishable — a confusion that produced two
+  misdiagnoses while this was being built.
 - Removing `done/` removed the visible proof that an item was processed. The
   local ledger is now the only such record, which is why disposal is trash
   rather than delete, and why the content-hash replay guard matters more.

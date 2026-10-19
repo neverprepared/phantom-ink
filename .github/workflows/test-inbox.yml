@@ -1,0 +1,43 @@
+name: Test inbox
+on:
+  push:
+    paths: ['scripts/inbox/**', '.github/workflows/test-inbox.yml']
+  pull_request:
+    paths: ['scripts/inbox/**', '.github/workflows/test-inbox.yml']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scripts/inbox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # The whole suite is offline: Drive, the router/Ollama call and the
+      # macos-mcp server are all stubbed, so this needs no credentials and no
+      # macOS runner. test_contract.py does read the committed
+      # app/internal/contract/timeline-entry.schema.json, which is why the
+      # checkout must not be sparse.
+      - name: Run tests
+        run: |
+          uv run --with pytest --with pyyaml \
+                 --with google-api-python-client --with google-auth \
+                 python -m pytest tests/ -q
+
+      - name: Lint
+        run: uvx ruff check .
+
+      - name: Format check
+        run: uvx ruff format --check .
+
+      # The stage scripts carry PEP-723 inline dependency metadata and are run
+      # with `uv run --script`. A syntax error or a bad dependency spec would
+      # otherwise only surface on a scheduled run, where a non-zero exit just
+      # lands silently in the job's last_error.
+      - name: Scripts are runnable
+        run: |
+          uv run --script drive_drain.py --help > /dev/null
+          uv run --script extract_apply.py --help > /dev/null
