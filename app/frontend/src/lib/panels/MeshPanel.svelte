@@ -3,6 +3,7 @@
   // single unauthenticated GET {url}/admin/mesh/status via the Go bridge
   // (GetMeshStatus), against the "phantom-brain-mesh" integration URL (default
   // http://127.0.0.1:9998 — a DIFFERENT backend than the brainbox API).
+  import { confirmAsk } from '../confirm.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { getApi } from '../utils/api';
   import { timeAgo } from '../utils/format';
@@ -253,9 +254,10 @@
 
   async function resetCursor(id: string, groupKey: string) {
     if (
-      !window.confirm(
+      !(await confirmAsk(
         `Reset the sync cursor for ${id}?\n\nThe next pull re-reads its whole op-log. Costs bandwidth; cannot lose data.`,
-      )
+        { title: 'Reset sync cursor', confirmLabel: 'Reset', danger: false },
+      ))
     )
       return;
     const a = await getApi();

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import AppShell from './lib/layout/AppShell.svelte';
   import CommandPalette from './lib/components/CommandPalette.svelte';
+  import ConfirmHost from './lib/components/ConfirmHost.svelte';
   import Notifications from './lib/components/Notifications.svelte';
   import { commandPalette, currentPanel, profileState, profileColorStore, featureFlags, refreshTick } from './lib/stores.svelte';
   import { panels } from './lib/panels';
@@ -21,7 +22,22 @@
   import './styles/buttons.css';
   import './styles/components.css';
 
-  onMount(async () => {
+  // NOT async -- Svelte only honours a cleanup returned synchronously from
+  // onMount, so this teardown used to be discarded along with the Promise.
+  onMount(() => {
+    let cleanup: (() => void) | undefined;
+    let keydownHandler: ((e: KeyboardEvent) => void) | undefined;
+    let disposed = false;
+
+    void init();
+
+    return () => {
+      disposed = true;
+      cleanup?.();
+      if (keydownHandler) window.removeEventListener('keydown', keydownHandler);
+    };
+
+    async function init() {
     // Detect platform and load profiles at startup.
     try {
       const mod = await import('../wailsjs/go/main/App');
@@ -69,7 +85,8 @@
       document.documentElement.dataset.platform = 'darwin';
     }
 
-    const cleanup = startEventListener();
+    if (disposed) return;
+    cleanup = startEventListener();
 
     function handleKeydown(e: KeyboardEvent) {
       const meta = e.metaKey || e.ctrlKey;
@@ -101,12 +118,9 @@
       }
     }
 
+    keydownHandler = handleKeydown;
     window.addEventListener('keydown', handleKeydown);
-
-    return () => {
-      cleanup();
-      window.removeEventListener('keydown', handleKeydown);
-    };
+    }
   });
 
   $effect(() => {
@@ -128,3 +142,4 @@
 <AppShell />
 <CommandPalette />
 <Notifications />
+<ConfirmHost />

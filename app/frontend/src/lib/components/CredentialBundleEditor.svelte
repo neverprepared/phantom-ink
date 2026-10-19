@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { confirmAsk } from '../confirm.svelte';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
   import CardExpander from './CardExpander.svelte';
@@ -123,7 +124,13 @@
   }
 
   async function removeBundle() {
-    if (!window.confirm(`Delete the stored credential bundle for ${profile}?`)) return;
+    if (
+      !(await confirmAsk(`Delete the stored credential bundle for ${profile}?`, {
+        title: 'Delete bundle',
+        confirmLabel: 'Delete',
+      }))
+    )
+      return;
     const a = await getApi();
     if (!a) return;
     try {
