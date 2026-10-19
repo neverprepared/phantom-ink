@@ -12,6 +12,15 @@ import (
 	"time"
 )
 
+// maxSSELineBytes caps a single SSE line for EVERY reader in this package.
+//
+// bufio's 64KB default is too small: a finalized conversation frame or a large
+// bus envelope exceeds it, and the scanner then fails the whole stream with
+// "token too long" rather than skipping the line. Both readers must use this --
+// they were set independently once, and the one left at the default turned a
+// single oversized event into a reconnect loop that backed off to 30s.
+const maxSSELineBytes = 1024 * 1024
+
 // SSEListener connects to /api/events and forwards events via a callback.
 type SSEListener struct {
 	client     *Client
@@ -133,6 +142,11 @@ func (s *SSEListener) connect(ctx context.Context) error {
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
+	// Match the conversation stream's cap. bufio's 64KB default makes any
+	// larger envelope return "token too long", which reads as a disconnect and
+	// reconnects into the same failure until the backoff hits its 30s ceiling
+	// -- one big event was enough to wedge this listener.
+	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELineBytes)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
