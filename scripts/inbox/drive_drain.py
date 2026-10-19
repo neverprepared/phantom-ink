@@ -4,6 +4,8 @@
 #   "google-api-python-client>=2.140",
 #   "google-auth>=2.33",
 #   "pyyaml>=6.0",
+#   "opentelemetry-sdk>=1.45",
+#   "opentelemetry-exporter-otlp-proto-grpc>=1.45",
 # ]
 # ///
 """Stage A -- drain the Drive inbox into the local spool.
@@ -29,9 +31,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 import traceback
 from typing import Any
 
+import obslog
 from common import (
     ALLOWED_MIMES,
     DRAIN_CAP,
@@ -196,6 +200,7 @@ def drain(
     cap: int,
     hard_delete: bool = False,
 ) -> list[dict[str, Any]]:
+    started = time.monotonic()
     folders = drive.resolve()
     entries: list[dict[str, Any]] = []
     counts = {"spooled": 0, "rejected": 0, "already filed": 0, "errors": 0, "skipped": 0}
@@ -295,6 +300,17 @@ def drain(
             counts=counts,
             attention=bool(counts["rejected"] or counts["errors"]),
         ),
+    )
+
+    # ADR-007: one record per run, counts folded in rather than one per item.
+    # The status row above is current state; this is the history behind it.
+    obslog.emit_run(
+        workspace=cfg.profile,
+        event_name="inbox.drain.run",
+        stage="drain",
+        counts=counts,
+        duration_ms=int((time.monotonic() - started) * 1000),
+        attributes={"dry": dry},
     )
     return entries
 

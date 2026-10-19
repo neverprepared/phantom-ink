@@ -137,6 +137,7 @@ inbox-lint:
 inbox-test:
     cd scripts/inbox && uv run --with pytest --with pyyaml \
         --with google-api-python-client --with google-auth \
+        --with opentelemetry-sdk \
         python -m pytest tests/ -q
 
 # === Cross-cutting ===
