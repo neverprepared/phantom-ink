@@ -222,3 +222,22 @@ def test_an_outcome_upgraded_record_ships_even_if_undeclared():
     ship(None, "info", _record("router.something_new", level="info", **{"event.outcome": "error"}))
 
     assert len(sent) == 1
+
+
+def test_none_valued_attributes_are_omitted_not_blanked():
+    """task.job_id is None for a root task. Shipping it as "" makes a field that
+    is sometimes absent and sometimes empty — the same inconsistency rule 1 is
+    about, and it puts a meaningless value in the index. Seen in the live store
+    as log.attributes.job@id: ''."""
+    sent = []
+    ship = obslog.processor(send=sent.append, allow={"router.task_completed"})
+
+    ship(
+        None,
+        "info",
+        _record("router.task_completed", **{"task.id": "t-1", "job.id": None}),
+    )
+
+    attrs = sent[0]["attributes"]
+    assert attrs["task.id"] == "t-1"
+    assert "job.id" not in attrs

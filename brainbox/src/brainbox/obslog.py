@@ -135,6 +135,12 @@ def processor(*, send, allow):
                 if _is_banned(str(key)):
                     dropped.append(str(key))
                     continue
+                # Omit None rather than blanking it. task.job_id is None for a
+                # root task; shipping "" makes a field that is sometimes absent
+                # and sometimes empty, which is the inconsistency rule 1 is
+                # about, and puts a meaningless value in the index.
+                if value is None:
+                    continue
                 attributes[str(key)] = value
             if dropped:
                 # Named, not counted: "which attribute did I lose" is the
