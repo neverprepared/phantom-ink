@@ -106,11 +106,44 @@ opensearch-status:
 tier0-opencode profile="" *args="":
     tier0/opencode-launch.sh {{ if profile != "" { "-p " + profile } else { "" } }} {{args}}
 
+# === Drive inbox queues (capture pipeline) ===
+#
+# A Drive folder is the capture front door; two scheduled collect jobs drain it.
+# Stage A (drain) is deterministic and holds no credentials. Stage B (extract)
+# reads untrusted content but has no tools. Stage C (apply) acts only on a
+# validated verdict. See docs/architecture/ADR-006-drive-inbox-queues.md.
+
+# Create the Drive folder tree for a profile (idempotent).
+inbox-init profile:
+    uv run --script scripts/inbox/drive_drain.py --profile {{profile}} --init
+
+# Stage A: drain Drive inbox/ into the local spool. No model, no vault writes.
+inbox-drain profile *args="":
+    uv run --script scripts/inbox/drive_drain.py --profile {{profile}} {{args}}
+
+# Stages B+C: extract fields locally, then apply to Reminders and the vaults.
+inbox-apply profile *args="":
+    uv run --script scripts/inbox/extract_apply.py --profile {{profile}} {{args}}
+
+# Recover items stranded in processing/ by a crash; the ledger decides.
+inbox-requeue profile:
+    uv run --script scripts/inbox/drive_drain.py --profile {{profile}} --requeue-stale
+
+# Lint + format-check the inbox pipeline.
+inbox-lint:
+    cd scripts/inbox && uvx ruff check . && uvx ruff format --check .
+
+# Offline unit tests for the inbox pipeline (gates, verdict validation, spool).
+inbox-test:
+    cd scripts/inbox && uv run --with pytest --with pyyaml \
+        --with google-api-python-client --with google-auth \
+        python -m pytest tests/ -q
+
 # === Cross-cutting ===
 
-test-all: bb-test sp-test
+test-all: bb-test sp-test inbox-test
 
-lint-all: bb-lint sp-lint
+lint-all: bb-lint sp-lint inbox-lint
 
 # Validate a collection script's output against the timeline entry contract.
 # The item shape comes from the SAME schema the Go codegen fetches
