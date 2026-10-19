@@ -1,0 +1,15 @@
+# Test-only dependencies for the inbox suite, declared ONCE.
+#
+# This list used to live in two places -- the `inbox-test` Justfile recipe and
+# the "Run tests" step of .github/workflows/test-inbox.yml -- which meant adding
+# a dependency locally left CI installing the old set. That is exactly how it
+# failed: the suite passed under `just inbox-test` and died in CI with
+# ModuleNotFoundError. Both call sites now read this file.
+#
+# The stage scripts' own runtime dependencies stay in their PEP-723 headers;
+# these are only what the tests need on top.
+pytest
+pyyaml
+google-api-python-client
+google-auth
+opentelemetry-sdk
