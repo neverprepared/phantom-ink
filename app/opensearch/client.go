@@ -219,9 +219,26 @@ func (c *Client) hasWorkspaceData(ctx context.Context, workspace string) (bool, 
 }
 
 // LogEntry is a single row rendered in the Stream panel's Live tab.
+//
+// Two classes of document land in this index and they populate different
+// halves of this struct. A claude-code record carries Model and Session but an
+// empty Severity -- severityText is unset on every one of ~18k documents a day.
+// An ADR-007 record from one of our own services carries Severity, EventName,
+// Outcome and RunID but neither Model nor Session. Service is what tells them
+// apart; without it an inbox row renders as bare time + body, indistinguishable
+// from a claude-code row that happens to be missing its tags.
 type LogEntry struct {
-	Time       string `json:"time"`
-	Body       string `json:"body"` // event name (e.g. claude_code.api_request)
+	Time string `json:"time"`
+	// Body is a human sentence for ADR-007 records and the event name for
+	// claude-code's. It is NOT the event name in general -- EventName is, and
+	// conflating the two loses the log group on our own records.
+	Body      string `json:"body"`
+	Severity  string `json:"severity,omitempty"`
+	Service   string `json:"service,omitempty"`
+	EventName string `json:"event_name,omitempty"`
+	Outcome   string `json:"outcome,omitempty"`
+	RunID     string `json:"run_id,omitempty"`
+
 	Session    string `json:"session,omitempty"`
 	Workspace  string `json:"workspace,omitempty"`
 	Model      string `json:"model,omitempty"`
@@ -245,6 +262,13 @@ func (c *Client) TailLogs(ctx context.Context, workspace string, limit int) ([]L
 		"query": map[string]any{"bool": map[string]any{"must": must}},
 		"_source": []string{
 			"time", "body",
+			// severityText is the filter ADR-007 rule 2 exists to make possible;
+			// serviceName is what distinguishes our records from claude-code's.
+			"severityText",
+			"serviceName",
+			"log.attributes.event@name",
+			"log.attributes.event@outcome",
+			"log.attributes.run@id",
 			"log.attributes.session@id",
 			"resource.attributes.workspace",
 			"log.attributes.model",
@@ -265,8 +289,17 @@ func (c *Client) TailLogs(ctx context.Context, workspace string, limit int) ([]L
 	for _, h := range resp.Hits.Hits {
 		s := h.Source
 		out = append(out, LogEntry{
-			Time:       strOf(s["time"]),
-			Body:       strOf(s["body"]),
+			Time: strOf(s["time"]),
+			Body: strOf(s["body"]),
+			// Deliberately NOT defaulted to INFO when absent. ADR-007 says an
+			// unset level is indistinguishable from INFO for a WRITER; for a
+			// reader, painting claude-code's blank as INFO invents data and
+			// makes a severity filter lie about most of the corpus.
+			Severity:   strOf(s["severityText"]),
+			Service:    strOf(s["serviceName"]),
+			EventName:  strOf(s["log.attributes.event@name"]),
+			Outcome:    strOf(s["log.attributes.event@outcome"]),
+			RunID:      strOf(s["log.attributes.run@id"]),
 			Session:    strOf(s["log.attributes.session@id"]),
 			Workspace:  strOf(s["resource.attributes.workspace"]),
 			Model:      strOf(s["log.attributes.model"]),

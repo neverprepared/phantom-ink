@@ -1,10 +1,13 @@
 <script lang="ts">
   /**
    * Live-logs tab body for the Stream panel — renders the OpenSearch telemetry
-   * tail (time / body / model / workspace / session / duration) with the sort
-   * chip and footer. Display-only: the parent owns fetching, sorting, and the
-   * feature flag; this component just renders `displayLogs` and signals the two
-   * actions (clear sort, view-more) back up.
+   * tail (time / severity / body / event / service / model / workspace /
+   * session / duration) with the sort chip and footer. Display-only: the parent
+   * owns fetching, sorting, and the feature flag; this component just renders
+   * `displayLogs` and signals the two actions (clear sort, view-more) back up.
+   *
+   * Severity and event name arrived with ADR-007, when our own services started
+   * emitting here. Before that every row came from claude-code and had neither.
    */
   import { formatClock } from '../utils/format';
   import EmptyState from './EmptyState.svelte';
@@ -12,6 +15,11 @@
   interface LogEntry {
     time: string;
     body: string;
+    severity?: string;
+    service?: string;
+    event_name?: string;
+    outcome?: string;
+    run_id?: string;
     session?: string;
     workspace?: string;
     model?: string;
@@ -65,7 +73,9 @@
   {:else if logs.length === 0 && !logsLoading}
     <EmptyState
       title="No logs in the last 24h"
-      message="Start a Claude Code session or widen your workspace filter." />
+      message="Nothing emitted in this window. Claude Code writes here whenever a
+               session runs; our own services write one record per run. Widen the
+               workspace filter if you expected rows." />
   {:else}
     {#if logsSortBy}
       <div class="log-sort-chip">
@@ -77,7 +87,22 @@
       {#each displayLogs as l, i (l.time + ':' + i)}
         <li class="log-row">
           <span class="log-time">{fmtTime(l.time)}</span>
+          <!-- Unset severity renders as a dash, never as INFO. Every claude-code
+               document has an empty severityText, and defaulting it would make
+               this column claim a level the record does not carry. -->
+          <span class="log-sev" class:sev-unset={!l.severity}
+                data-sev={(l.severity || '').toLowerCase()}
+                title={l.severity ? l.severity : 'no severity on this record'}
+          >{l.severity || '—'}</span>
           <span class="log-body">{l.body}</span>
+          <!-- Only when it adds something. claude-code's body IS its event name
+               (body "claude_code.tool_result", event_name "tool_result"), so
+               showing both doubles every one of those rows; an ADR-007 body is a
+               human sentence and the event name is genuinely extra. -->
+          {#if l.event_name && !l.body?.endsWith(l.event_name)}
+            <span class="log-tag tag-event">{l.event_name}</span>
+          {/if}
+          {#if l.service}<span class="log-tag tag-svc">{l.service}</span>{/if}
           {#if l.model}<span class="log-tag">{l.model}</span>{/if}
           {#if l.workspace}<span class="log-tag tag-ws">{l.workspace}</span>{/if}
           {#if l.session}<span class="log-tag tag-sess">{sessionShort(l.session)}</span>{/if}
@@ -123,6 +148,27 @@
   }
   .tag-ws   { color: var(--accent, var(--color-accent)); }
   .tag-sess { font-family: var(--font-mono, ui-monospace, monospace); }
+  /* The emitting service, and the ADR-007 event name (this store's log group).
+     Both are what make a row attributable now that more than one service
+     writes here. */
+  .tag-svc   { font-weight: 600; }
+  .tag-event { font-family: var(--font-mono, ui-monospace, monospace); }
+
+  .log-sev {
+    flex: 0 0 auto;
+    min-width: 42px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+  /* Only levels we actually emit get a colour. An unset level is deliberately
+     the faintest thing in the row: it is the absence of information, not a
+     state, and it is the majority of rows. */
+  .log-sev[data-sev='error'] { color: var(--color-status-error-text, crimson); }
+  .log-sev[data-sev='warn']  { color: var(--color-status-warning-text, darkorange); }
+  .log-sev[data-sev='info']  { color: var(--text-muted, var(--color-text-secondary)); }
+  .sev-unset { color: var(--text-faint, var(--color-text-tertiary)); font-weight: 400; }
   .log-dur  { color: var(--text-faint, var(--color-text-tertiary)); margin-left: auto; }
 
   .log-sort-chip {
