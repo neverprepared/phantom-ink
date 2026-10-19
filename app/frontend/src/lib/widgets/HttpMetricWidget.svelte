@@ -30,11 +30,25 @@
   const isString = $derived(config.valueType === 'string');
   const profile  = $derived(profileState.active?.name ?? '');
 
-  // Build a synthetic shell command so HTTP metrics can also be scheduled
-  const syntheticCommand = $derived(
-    `op run -- curl -sf${config.header ? ` -H "${config.header}"` : ''} "${config.url}"` +
-    (config.path ? ` | jq -r '.${config.path}'` : '')
-  );
+  // The synthetic shell command this metric is scheduled as. Built by GO
+  // (HTTPMetricCommand) rather than here: the Go scheduler executes this
+  // string, and it was previously assembled in two separate frontend files,
+  // so any drift would make the dashboard stop recognising its own jobs.
+  let syntheticCommand = $state('');
+  $effect(() => {
+    const url = config.url;
+    const header = config.header ?? '';
+    const path = config.path ?? '';
+    void (async () => {
+      const a = await getApi();
+      if (!a) return;
+      try {
+        syntheticCommand = await a.HTTPMetricCommand(url, header, path);
+      } catch {
+        /* leave empty: registration below waits for a real command */
+      }
+    })();
+  });
 
   // Resolved collect-job id for THIS instance — cached locally so later ticks
   // read from the store instead of re-registering (which spawned dup jobs).
@@ -63,6 +77,9 @@
 
     // Live fetch + register once (guarded; server dedupes per owner too).
     if (registering) { loading = false; return; }
+    // Without the Go-derived command we would register a job whose
+    // fingerprint can never match, so wait for the next tick instead.
+    if (!syntheticCommand) { loading = false; return; }
     registering = true;
     try {
       value = await a.FetchMetricUrl(profile, config.url, config.path ?? '', config.header ?? '');

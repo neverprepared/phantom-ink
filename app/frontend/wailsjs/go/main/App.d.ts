@@ -221,7 +221,9 @@ export function GetProfileServers(arg1:string):Promise<Array<brainbox.ProfileSer
 
 export function GetRegistrySettings():Promise<Record<string, string>>;
 
-export function GetRemoteProfileImageStatus(arg1:string):Promise<any>;
+export function GetRemoteProfileImageStatus(arg1:string):Promise<main.ProfileImageStatusView>;
+
+export function GetRemoteProfileImageStatuses(arg1:Array<string>):Promise<Record<string, main.ProfileImageStatusView>>;
 
 export function GetRule(arg1:string):Promise<brainbox.Rule>;
 
@@ -248,6 +250,8 @@ export function GetVaultProfiles(arg1:string):Promise<Array<string>>;
 export function GetVaultRecords(arg1:string,arg2:string):Promise<Array<main.VaultRecord>>;
 
 export function GetWidgetCount(arg1:string,arg2:string):Promise<number>;
+
+export function HTTPMetricCommand(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function HeadArtifactObject(arg1:string,arg2:string):Promise<brainbox.ArtifactObjectHead>;
 
@@ -392,6 +396,8 @@ export function PutLoopTemplate(arg1:string,arg2:string,arg3:boolean):Promise<br
 export function ReadProfileHostEnv(arg1:string):Promise<string>;
 
 export function RebuildBaseImage(arg1:main.BaseImageBuildRequest):Promise<void>;
+
+export function ReconcileCollectJobs(arg1:string,arg2:Array<main.WidgetJobOwner>):Promise<number>;
 
 export function ReconcileIntegrations():Promise<Array<string>>;
 

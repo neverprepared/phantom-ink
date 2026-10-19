@@ -480,45 +480,47 @@
     markDirty();
   }
 
+  // Hand the widget ownership claims to Go and let it reconcile in one
+  // transaction. This used to build the owner maps here, list the jobs, and
+  // issue a DeleteCollectJob per orphan with every error swallowed — which
+  // meant a dashboard that rendered before its widget config loaded presented
+  // an EMPTY widget set and the prune then deleted live jobs. It also rebuilt
+  // the Go-side command string in TypeScript to fingerprint legacy jobs, a
+  // second copy of a format free to drift. Go owns both now.
   async function pruneDuplicateMetricJobs(widgets: WidgetInstance[]): Promise<void> {
     const a = await getApi();
     if (!a) return;
     const profile = profileState.active?.name ?? '';
-    // Build a map of widgetId → kept jobId for every metric widget on
-    // this dashboard. Also collect legacy (name, command) fingerprints
-    // so we can still match older jobs that have no owner_widget_id.
-    const byWidget = new Map<string, string>();         // widgetId → keepJobId
-    const byFingerprint = new Map<string, string>();    // key → keepJobId
-    for (const w of widgets) {
-      if (w.kind !== 'script-metric' && w.kind !== 'http-metric') continue;
-      const cfg = w.config as any;
-      const jobId = cfg?.jobId as string | undefined;
-      if (!jobId) continue;
-      byWidget.set(w.id, jobId);
-      let command = cfg.command as string | undefined;
-      if (w.kind === 'http-metric') {
-        command = `op run -- curl -sf${cfg.header ? ` -H "${cfg.header}"` : ''} "${cfg.url}"` +
-          (cfg.path ? ` | jq -r '.${cfg.path}'` : '');
-      }
-      if (command) byFingerprint.set(`${cfg.label}::${command}`, jobId);
-    }
-    if (byWidget.size === 0 && byFingerprint.size === 0) return;
-    let jobs: any[] = [];
-    try { jobs = (await (a as any).ListCollectJobs(profile)) ?? []; } catch { return; }
-    for (const job of jobs) {
-      // Prefer the direct id link.
-      if (job.owner_widget_id) {
-        const keepId = byWidget.get(job.owner_widget_id);
-        if (keepId && job.id !== keepId) {
-          try { await (a as any).DeleteCollectJob(job.id); } catch {}
-        }
-        continue;
-      }
-      // Legacy fingerprint match — same widget's keep id wins.
-      const keepId = byFingerprint.get(`${job.name}::${job.command}`);
-      if (keepId && job.id !== keepId) {
-        try { await (a as any).DeleteCollectJob(job.id); } catch {}
-      }
+    if (!profile) return;
+
+    const owners = widgets
+      .filter(w => w.kind === 'script-metric' || w.kind === 'http-metric')
+      .map(w => {
+        const cfg = w.config as any;
+        return {
+          widget_id: w.id,
+          keep_job_id: (cfg?.jobId as string) ?? '',
+          label: (cfg?.label as string) ?? '',
+          // Only script widgets carry a literal command. The http-metric
+          // command is DERIVED, and Go derives it — see collectJobCommandFor.
+          command: w.kind === 'script-metric' ? ((cfg?.command as string) ?? '') : '',
+          http: w.kind === 'http-metric',
+          url: (cfg?.url as string) ?? '',
+          header: (cfg?.header as string) ?? '',
+          path: (cfg?.path as string) ?? '',
+        };
+      })
+      .filter(o => o.keep_job_id !== '');
+
+    // An empty claim set is NOT a licence to delete everything — Go refuses it
+    // too, but not sending it saves a round trip.
+    if (owners.length === 0) return;
+
+    try {
+      await a.ReconcileCollectJobs(profile, owners as any);
+    } catch (err) {
+      // Reconciliation is housekeeping; a failure must not break the load.
+      console.warn('[dashboard] collect-job reconcile failed:', err);
     }
   }
 
