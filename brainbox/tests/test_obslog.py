@@ -14,7 +14,32 @@ blanket shipper from being a liability:
 
 from __future__ import annotations
 
+import pytest
+import structlog
+
 from brainbox import obslog
+
+
+@pytest.fixture(autouse=True)
+def _restore_structlog_config():
+    """Undo global structlog configuration after every test in this module.
+
+    setup_logging() calls structlog.configure(), which is PROCESS-global. Two
+    tests here exercise it, and without this they leave a shipper installed --
+    one whose sink is a list owned by a test that has already finished -- for
+    every later test in the session.
+
+    No observed failure is attributed to this; it is prevention. (It was
+    briefly blamed for a failure in tests/test_conversation_orchestrator.py,
+    wrongly: pytest collects that file at position ~152 and this one at ~1027,
+    so the leak happens strictly after. That failure is a pre-existing racy
+    assertion on the completion order of concurrent replies, and it reproduces
+    on main.) Keep this anyway -- leaking global logging config out of a test
+    module is a trap whether or not it has sprung yet.
+    """
+    saved = structlog.get_config().copy()
+    yield
+    structlog.configure(**saved)
 
 
 def _record(event: str, level: str = "info", **metadata):
