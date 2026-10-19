@@ -108,3 +108,49 @@ func TestWorkspacesRootFallsBackWhenUnset(t *testing.T) {
 		t.Error("workspacesRoot returned empty; expected the bootstrap fallback")
 	}
 }
+
+// FindClaudeProcesses is a host process scan, and the Sessions panel runs two
+// timers that each want it (a 30s refresh and a 10s metrics tick) — so at every
+// 30s boundary it ran twice within milliseconds. It is cached like the docker
+// reads; this pins the cache rather than the scan itself, which depends on what
+// is running on the machine.
+func TestFindClaudeProcessesIsCached(t *testing.T) {
+	a := &App{}
+
+	resetLocalProcCache()
+	first, err1 := a.FindClaudeProcesses()
+	at := localProcAt
+	if at.IsZero() {
+		t.Fatal("first call did not record a cache timestamp")
+	}
+
+	second, err2 := a.FindClaudeProcesses()
+	if !localProcAt.Equal(at) {
+		t.Error("second call re-ran the scan instead of serving the cache")
+	}
+	if len(first) != len(second) {
+		t.Errorf("cached result differs: %d vs %d", len(first), len(second))
+	}
+	if (err1 == nil) != (err2 == nil) {
+		t.Error("cached error state differs between calls")
+	}
+
+	// Past the TTL it must scan again.
+	localProcMu.Lock()
+	localProcAt = time.Now().Add(-2 * statsCacheTTL)
+	localProcMu.Unlock()
+	if _, err := a.FindClaudeProcesses(); err != nil && err != err1 {
+		t.Logf("post-expiry scan returned %v", err)
+	}
+	if localProcAt.Before(at) {
+		t.Error("an expired entry was not refreshed")
+	}
+}
+
+func resetLocalProcCache() {
+	localProcMu.Lock()
+	localProcAt = time.Time{}
+	localProcVal = nil
+	localProcErr = nil
+	localProcMu.Unlock()
+}

@@ -1,11 +1,18 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 )
+
+// procScanTimeout bounds the host process scan. `ps` is normally instant, but
+// an unbounded exec on a bound method is how a hung child wedges the UI.
+const procScanTimeout = 10 * time.Second
 
 // ttyPattern matches valid TTY paths returned by ps (e.g. "s001", "ttys003", "pts/0").
 // Only alphanumeric characters, dots, forward slashes, and hyphens are permitted.
@@ -29,8 +36,34 @@ type LocalProcess struct {
 // FindClaudeProcesses finds running AI agent processes on the host (Claude, Codex, Ollama),
 // including their workspace profile from the process environment.
 func (a *App) FindClaudeProcesses() ([]LocalProcess, error) {
+	// Served from a short TTL shared by every caller. The Sessions panel runs
+	// two timers that each want this (a 30s refresh and a 10s metrics tick),
+	// so at every 30s boundary a full host process scan ran twice within
+	// milliseconds. Same cache shape as GetContainerDiskUsage.
+	localProcMu.Lock()
+	defer localProcMu.Unlock()
+	if time.Since(localProcAt) < statsCacheTTL && (localProcVal != nil || localProcErr != nil) {
+		return localProcVal, localProcErr
+	}
+	localProcVal, localProcErr = a.findClaudeProcesses()
+	localProcAt = time.Now()
+	return localProcVal, localProcErr
+}
+
+var (
+	localProcMu  sync.Mutex
+	localProcAt  time.Time
+	localProcVal []LocalProcess
+	localProcErr error
+)
+
+// findClaudeProcesses does the real scan.
+func (a *App) findClaudeProcesses() ([]LocalProcess, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), procScanTimeout)
+	defer cancel()
+
 	// First get PID, TTY, CPU, RSS, command
-	cmd := exec.Command("bash", "-c",
+	cmd := exec.CommandContext(ctx, "bash", "-c",
 		`ps -eo pid=,tty=,%cpu=,rss=,comm= | grep -iE 'claude|codex|ollama' | grep -v grep | grep -v 'phantom-ink'`)
 	out, err := cmd.Output()
 	if err != nil {
@@ -196,4 +229,3 @@ return "not_found"`, safeTTY)
 func (a *App) OpenLocalSession(workDir string) error {
 	return openLocalSessionTab(workDir)
 }
-

@@ -26,6 +26,7 @@
    * from the roster, which detaches it without killing its work.
    */
   import { getApi } from '../utils/api';
+  import { onWailsTopic } from '../utils/wailsTopic';
   import { onMount, untrack } from 'svelte';
   import { notifications } from '../notifications.svelte';
   import { profileState, panelFocus } from '../stores.svelte';
@@ -122,19 +123,29 @@
       }
       case 'message.delta': {
         const { id, delta } = data as { id: string; delta: string };
-        messages = messages.map(m =>
-          m.id === id ? { ...m, content: m.content + (delta ?? ''), streaming: true } : m,
-        );
+        // Mutate in place. $state arrays are deeply reactive in Svelte 5, so
+        // the old .map() allocated a new array AND a new object per TOKEN and
+        // invalidated the keyed {#each} over the whole thread -- which is why
+        // streaming visibly stuttered in long rooms and smoothly in short
+        // ones, exactly backwards from what a user expects.
+        const i = messages.findIndex(m => m.id === id);
+        if (i === -1) break;
+        messages[i].content += delta ?? '';
+        messages[i].streaming = true;
         break;
       }
       case 'message.done': {
         const msg = data.message as ConversationMessage | undefined;
         if (!msg) break;
         thinkingAuthor = null;
-        const known = messages.some(m => m.id === msg.id);
-        messages = known
-          ? messages.map(m => (m.id === msg.id ? { ...msg, streaming: false } : m))
-          : [...messages, { ...msg, streaming: false }];
+        const i = messages.findIndex(m => m.id === msg.id);
+        if (i === -1) {
+          messages = [...messages, { ...msg, streaming: false }];
+        } else {
+          // Same reasoning as message.delta: replace the one element rather
+          // than rebuilding the array.
+          messages[i] = { ...msg, streaming: false };
+        }
         break;
       }
       case 'quiet': {
@@ -163,10 +174,11 @@
     // session participants are the PR4 promotion path, not a PR1 roster entry.
     if (panelFocus.consumeConversationSeed().length > 0) showCreateModal = true;
 
-    const rt = (window as any).runtime;
-    rt?.EventsOn?.('conversation:event', handleFrame);
+    // Per-listener subscription: EventsOff(topic) removes every handler for
+    // the topic, not just this component's.
+    const offFrames = onWailsTopic('conversation:event', (payload) => handleFrame(payload as any));
     return () => {
-      rt?.EventsOff?.('conversation:event');
+      offFrames();
       void unsubscribeCurrent();
     };
   });

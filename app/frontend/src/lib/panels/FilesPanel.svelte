@@ -245,22 +245,33 @@
     await refreshListing();
   }
 
+  // Monotonic listing sequence. Two quick clicks into nested folders issue two
+  // listings and whichever resolved LAST won, so the breadcrumb could say
+  // `a/b/` while the rows were `a/`'s, with no error shown. Same guard
+  // EventLogPanel already uses for search.
+  let listingSeq = 0;
+
   async function refreshListing() {
     if (!selectedBucket) return;
+    const mySeq = ++listingSeq;
+    const bucket = selectedBucket.key;
+    const prefix = currentPrefix;
     loading = true;
     listingError = null;
     try {
       const api = await getApi();
       if (!api) return;
-      const listing = await api.ListArtifactsFolder(selectedBucket.key, currentPrefix);
+      const listing = await api.ListArtifactsFolder(bucket, prefix);
+      if (mySeq !== listingSeq) return; // a newer navigation superseded this
       folders = (listing.folders ?? []) as Folder[];
       files = (listing.files ?? []) as File[];
     } catch (err) {
+      if (mySeq !== listingSeq) return;
       listingError = err instanceof Error ? err.message : String(err);
       folders = [];
       files = [];
     } finally {
-      loading = false;
+      if (mySeq === listingSeq) loading = false;
     }
   }
 

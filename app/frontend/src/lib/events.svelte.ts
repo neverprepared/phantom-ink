@@ -2,6 +2,7 @@
 
 import { connectionState } from './stores.svelte';
 import { notifications } from './notifications.svelte';
+import { onWailsTopic } from './utils/wailsTopic';
 
 export interface BrainboxEvent {
   type?: string;
@@ -71,30 +72,22 @@ function handleRaw(raw: string) {
 export function startEventListener(): () => void {
   if (typeof window === 'undefined') return () => {};
 
-  // Wails injects window.runtime at startup
-  const rt = (window as any).runtime;
-  if (!rt?.EventsOn) {
-    // Not running inside Wails yet (browser dev mode). Poll for readiness.
-    let attempts = 0;
-    const timer = setInterval(() => {
-      const r = (window as any).runtime;
-      if (r?.EventsOn) {
-        clearInterval(timer);
-        r.EventsOn('brainbox:event', handleRaw);
-      }
-      if (++attempts > 100) clearInterval(timer); // give up after 10s
-    }, 100);
-    return () => clearInterval(timer);
-  }
-
-  rt.EventsOn('brainbox:event', handleRaw);
-  rt.EventsOn('app:startup-error', (msg: string) => {
-    notifications.error(msg, 0); // persistent — DB failure is not transient
+  // Subscribe through the per-listener fan-out. This used to call
+  // EventsOff('brainbox:event') on teardown, which removes EVERY handler for
+  // that topic — including StreamPanel's — so one unmount silently
+  // unsubscribed another component. wailsTopic also handles waiting for the
+  // Wails runtime to be injected, which this function previously open-coded.
+  const offRaw = onWailsTopic('brainbox:event', (payload) => {
+    if (typeof payload === 'string') handleRaw(payload);
   });
+  const offStartupError = onWailsTopic('app:startup-error', (payload) => {
+    notifications.error(String(payload ?? 'startup error'), 0); // persistent — a DB failure is not transient
+  });
+
   resetHeartbeat(); // start the watchdog; first real event will reset it
   return () => {
     if (_heartbeatTimer) clearTimeout(_heartbeatTimer);
-    (window as any).runtime?.EventsOff?.('brainbox:event');
-    (window as any).runtime?.EventsOff?.('app:startup-error');
+    offRaw();
+    offStartupError();
   };
 }
