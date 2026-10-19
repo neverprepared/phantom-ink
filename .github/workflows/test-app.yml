@@ -38,8 +38,11 @@ jobs:
         working-directory: app/frontend
         run: npm test
 
-      # NOT adding `npm run check` as a gate yet: svelte-check exits 1 on the
-      # 18 pre-existing Go<->TS type-drift errors (hand-written interfaces
-      # shadowing the generated models), so it would fail every PR on debt it
-      # did not introduce. Worth turning on once that drift is cleared --
-      # each panel migrated onto the generated types removes some of it.
+      # Now a GATE. #385 deliberately left this out because svelte-check exited
+      # 1 on 18 pre-existing Go<->TS drift errors and would have failed every
+      # PR on debt it did not introduce. Those are now all fixed, so the drift
+      # that produced them -- a hand-written interface disagreeing with the
+      # generated model -- fails here instead of being discovered months later.
+      - name: Frontend typecheck
+        working-directory: app/frontend
+        run: npm run check

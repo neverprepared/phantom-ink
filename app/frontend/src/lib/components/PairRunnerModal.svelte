@@ -29,7 +29,9 @@
     if (a) {
       try {
         const cfg = await a.GetConfig();
-        let url = cfg.api_url ?? '';
+        // base_url, not api_url: Config has no api_url field, so this was
+        // always '' and the runner was paired against nothing.
+        let url = cfg.base_url ?? '';
         // 0.0.0.0 and 127.0.0.1/localhost are not routable from a remote machine.
         // Replace the host with the machine's LAN IP so the token works remotely.
         const unroutable = /^https?:\/\/(0\.0\.0\.0|127\.0\.0\.1|localhost)(:\d+)?(\/.*)?$/;
