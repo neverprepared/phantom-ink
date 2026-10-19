@@ -127,7 +127,7 @@ func (a *App) GetArtifactPreview(bucketKey, key string) (ArtifactPreview, error)
 }
 
 // SearchArtifactsFiles is the Wails binding for the Files search box.
-// ``prefix`` is the bucket's scope_prefix for the active profile.
+// prefix is the bucket's scope_prefix for the active profile.
 func (a *App) SearchArtifactsFiles(bucketKey, query, prefix string) (interface{}, error) {
 	return a.client.SearchArtifacts(bucketKey, query, prefix)
 }

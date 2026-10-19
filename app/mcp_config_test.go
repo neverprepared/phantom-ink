@@ -164,10 +164,10 @@ func TestUpsertMCPServer_CreatesFileAndMap(t *testing.T) {
 
 func TestBrainHostAPI_DerivesHostOnBrainPort(t *testing.T) {
 	cases := map[string]string{
-		"https://api.neverprepared.com":   "http://api.neverprepared.com:9998",
-		"http://127.0.0.1:9910":           "http://127.0.0.1:9998",
-		"https://api.neverprepared.com/":  "http://api.neverprepared.com:9998",
-		"":                                "http://localhost:9998",
+		"https://api.neverprepared.com":  "http://api.neverprepared.com:9998",
+		"http://127.0.0.1:9910":          "http://127.0.0.1:9998",
+		"https://api.neverprepared.com/": "http://api.neverprepared.com:9998",
+		"":                               "http://localhost:9998",
 	}
 	for in, want := range cases {
 		if got := brainHostAPI(in); got != want {

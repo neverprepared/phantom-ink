@@ -15,12 +15,12 @@ import (
 
 // BundleSourceView is one row in the Credential bundle editor.
 type BundleSourceView struct {
-	Name     string `json:"name"`
-	Label    string `json:"label"`
-	Kind     string `json:"kind"`     // catalog | custom
-	Audience string `json:"audience"` // gateway | session | both
-	Enabled  bool   `json:"enabled"`
-	Detected bool   `json:"detected"`   // any of the source's files exist on this machine
+	Name       string `json:"name"`
+	Label      string `json:"label"`
+	Kind       string `json:"kind"`     // catalog | custom
+	Audience   string `json:"audience"` // gateway | session | both
+	Enabled    bool   `json:"enabled"`
+	Detected   bool   `json:"detected"`   // any of the source's files exist on this machine
 	Definition string `json:"definition"` // custom sources: raw JSON def
 }
 

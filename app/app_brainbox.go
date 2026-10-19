@@ -101,10 +101,10 @@ type HubTask struct {
 	AgentName        string   `json:"agent_name"`
 	Status           string   `json:"status"`
 	RepoURL          string   `json:"repo_url"`
-	CreatedAt        int64    `json:"created_at"`        // epoch ms, 0 if unparseable
-	UpdatedAt        int64    `json:"updated_at"`        // epoch ms, 0 if unparseable
-	Result           string   `json:"result"`            // JSON-encoded passthrough
-	Error            string   `json:"error"`             // flat string
+	CreatedAt        int64    `json:"created_at"` // epoch ms, 0 if unparseable
+	UpdatedAt        int64    `json:"updated_at"` // epoch ms, 0 if unparseable
+	Result           string   `json:"result"`     // JSON-encoded passthrough
+	Error            string   `json:"error"`      // flat string
 	SessionName      string   `json:"session_name"`
 	WorkspaceProfile string   `json:"workspace_profile"`
 	RunnerName       string   `json:"runner_name"`
@@ -372,5 +372,3 @@ func (a *App) GetSessionTraces(sessionName string, limit int) ([]brainbox.Trace,
 func (a *App) GetTraceDetail(traceID string) (brainbox.TraceDetail, error) {
 	return a.client.GetTraceDetail(traceID)
 }
-
-

@@ -4101,6 +4101,30 @@ export namespace main {
 	        this.env_key = source["env_key"];
 	    }
 	}
+	export class ProfileImageStatusView {
+	    profile: string;
+	    state: string;
+	    configured: boolean;
+	    exists: boolean;
+	    tag: string;
+	    digest: string;
+	    detail: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProfileImageStatusView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.state = source["state"];
+	        this.configured = source["configured"];
+	        this.exists = source["exists"];
+	        this.tag = source["tag"];
+	        this.digest = source["digest"];
+	        this.detail = source["detail"];
+	    }
+	}
 	export class RepoDetailResult {
 	    profile: string;
 	    provider: string;
@@ -4391,6 +4415,32 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class WidgetJobOwner {
+	    widget_id: string;
+	    keep_job_id: string;
+	    label: string;
+	    command: string;
+	    http: boolean;
+	    url: string;
+	    header: string;
+	    path: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WidgetJobOwner(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.widget_id = source["widget_id"];
+	        this.keep_job_id = source["keep_job_id"];
+	        this.label = source["label"];
+	        this.command = source["command"];
+	        this.http = source["http"];
+	        this.url = source["url"];
+	        this.header = source["header"];
+	        this.path = source["path"];
+	    }
 	}
 
 }

@@ -13,7 +13,7 @@ import (
 // AgentStateFilter mirrors brainbox.ListAgentStateOptions but in a shape the
 // Wails JS bridge will marshal cleanly.
 type AgentStateFilter struct {
-	Status    string `json:"status"`     // comma-separated; e.g. "failed,blocked"
+	Status    string `json:"status"` // comma-separated; e.g. "failed,blocked"
 	Workspace string `json:"workspace"`
 	Source    string `json:"source"`
 	ParentID  string `json:"parent_id"`
