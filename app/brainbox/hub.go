@@ -18,10 +18,10 @@ type Task struct {
 	Error            interface{} `json:"error"`
 	SessionName      string      `json:"session_name"`
 	WorkspaceProfile string      `json:"workspace_profile"`
-	RunnerName       string      `json:"runner_name"`      // machine the task was dispatched to ("" = in-process/auto)
-	Backend          string      `json:"backend"`          // execution backend (docker | utm | ssh)
-	DockerHost       string      `json:"docker_host"`      // remote Docker daemon over SSH, if any
-	SSHHost          string      `json:"ssh_host"`         // bare-metal SSH host, if any
+	RunnerName       string      `json:"runner_name"` // machine the task was dispatched to ("" = in-process/auto)
+	Backend          string      `json:"backend"`     // execution backend (docker | utm | ssh)
+	DockerHost       string      `json:"docker_host"` // remote Docker daemon over SSH, if any
+	SSHHost          string      `json:"ssh_host"`    // bare-metal SSH host, if any
 	JobID            string      `json:"job_id"`
 	SpawnedBy        string      `json:"spawned_by"`       // task ID of the parent that spawned this one
 	ChildTaskIDs     []string    `json:"child_task_ids"`   // task IDs of children spawned by this task
@@ -290,7 +290,7 @@ type WaitForTaskRequest struct {
 // WaitForTaskResponse is the result from SubmitTaskAndWait.
 type WaitForTaskResponse struct {
 	TaskID string         `json:"task_id"`
-	Status string         `json:"status"`           // "completed" | "failed" | "timeout"
+	Status string         `json:"status"` // "completed" | "failed" | "timeout"
 	Result map[string]any `json:"result,omitempty"`
 	Error  string         `json:"error,omitempty"`
 }

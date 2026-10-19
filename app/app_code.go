@@ -1008,58 +1008,14 @@ func repoNameFromURL(repoURL string) string {
 // so the main-package free function used by the local-clone lane agrees with
 // the ado provider client on what counts as a valid ADO clone URL.
 func normalizeADOCloneURL(repoURL string) string {
-	s := strings.TrimSpace(repoURL)
-	s = strings.TrimSuffix(s, "/")
-	if s == "" {
-		return ""
-	}
-	if i := strings.Index(s, "://"); i >= 0 {
-		s = s[i+3:]
-	}
-	if at := strings.Index(s, "@"); at >= 0 {
-		s = s[at+1:]
-	}
-	slash := strings.Index(s, "/")
-	if slash < 0 {
-		return "" // bare host, no path
-	}
-	host, rest := s[:slash], s[slash+1:]
-	var org, tail string
-	switch {
-	case host == "dev.azure.com":
-		i := strings.Index(rest, "/")
-		if i < 0 {
-			return ""
-		}
-		org, tail = rest[:i], rest[i+1:]
-	case strings.HasSuffix(host, ".visualstudio.com"):
-		org, tail = strings.TrimSuffix(host, ".visualstudio.com"), rest
-	default:
-		return ""
-	}
-	segs := strings.Split(tail, "/")
-	if org == "" || len(segs) < 3 || segs[0] == "" || segs[1] != "_git" || segs[2] == "" {
-		return ""
-	}
-	return "https://dev.azure.com/" + org + "/" + segs[0] + "/_git/" + segs[2]
+	return provider.NormalizeADOCloneURL(repoURL)
 }
 
 // isADOCloneHost reports whether repoURL's host looks like Azure DevOps, so
 // normalizeCloneURL knows to route it through normalizeADOCloneURL instead of
 // the GitHub logic below.
 func isADOCloneHost(repoURL string) bool {
-	s := strings.TrimSpace(repoURL)
-	if i := strings.Index(s, "://"); i >= 0 {
-		s = s[i+3:]
-	}
-	if at := strings.Index(s, "@"); at >= 0 {
-		s = s[at+1:]
-	}
-	host := s
-	if slash := strings.Index(host, "/"); slash >= 0 {
-		host = host[:slash]
-	}
-	return host == "dev.azure.com" || strings.HasSuffix(host, ".visualstudio.com")
+	return provider.IsADOCloneHost(repoURL)
 }
 
 // normalizeCloneURL turns any GitHub or Azure DevOps reference to a repo into
@@ -1080,42 +1036,5 @@ func isADOCloneHost(repoURL string) bool {
 // still clones from its own host. Returns "" when no owner/repo pair (or,
 // for ADO, no org/project/_git/repo) can be read out.
 func normalizeCloneURL(repoURL string) string {
-	if isADOCloneHost(repoURL) {
-		return normalizeADOCloneURL(repoURL)
-	}
-
-	s := strings.TrimSpace(repoURL)
-	s = strings.TrimSuffix(s, "/")
-	if s == "" {
-		return ""
-	}
-	// Strip the scheme, then any user@ — leaves host/owner/repo for both
-	// "https://github.com/..." and "ssh://git@github.com/...".
-	if i := strings.Index(s, "://"); i >= 0 {
-		s = s[i+3:]
-	} else if at := strings.Index(s, "@"); at >= 0 {
-		// scp-style ssh (git@github.com:owner/repo.git): the colon separating
-		// host from path is a path separator here, not a port.
-		s = strings.Replace(s[at+1:], ":", "/", 1)
-	}
-	if at := strings.Index(s, "@"); at >= 0 {
-		s = s[at+1:]
-	}
-
-	segs := strings.Split(s, "/")
-	if len(segs) < 3 {
-		return ""
-	}
-	host, segs := segs[0], segs[1:]
-	if host == "api.github.com" && segs[0] == "repos" {
-		host, segs = "github.com", segs[1:]
-	}
-	if len(segs) < 2 {
-		return ""
-	}
-	owner, repo := segs[0], strings.TrimSuffix(segs[1], ".git")
-	if host == "" || owner == "" || repo == "" {
-		return ""
-	}
-	return "https://" + host + "/" + owner + "/" + repo + ".git"
+	return provider.NormalizeCloneURL(repoURL)
 }

@@ -5,9 +5,7 @@ package brainbox
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -54,23 +52,7 @@ func (c *Client) doRaw(method, path, contentType string, body []byte, headers ma
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read response: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		capped := respBody
-		if len(capped) > 500 {
-			capped = append(capped[:500], []byte("…")...)
-		}
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(capped))
-	}
-	if result != nil {
-		if err := json.Unmarshal(respBody, result); err != nil {
-			return fmt.Errorf("unmarshal response: %w", err)
-		}
-	}
-	return nil
+	return finishJSON(resp, result)
 }
 
 // PutProfileBundle uploads a plaintext bundle tar.gz for a profile; the

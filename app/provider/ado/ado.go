@@ -532,40 +532,7 @@ func (c *Client) RepoIssues(ctx context.Context, ref provider.RepoRef) ([]provid
 // {org}.visualstudio.com. Returns "" when it can't parse a full
 // {org}/{project}/_git/{repo}.
 func (c *Client) NormalizeCloneURL(repoURL string) string {
-	s := strings.TrimSpace(repoURL)
-	s = strings.TrimSuffix(s, "/")
-	if s == "" {
-		return ""
-	}
-	if i := strings.Index(s, "://"); i >= 0 {
-		s = s[i+3:]
-	}
-	if at := strings.Index(s, "@"); at >= 0 {
-		s = s[at+1:]
-	}
-	slash := strings.Index(s, "/")
-	if slash < 0 {
-		return "" // bare host, no path
-	}
-	host, rest := s[:slash], s[slash+1:]
-	var org, tail string
-	switch {
-	case host == "dev.azure.com":
-		i := strings.Index(rest, "/")
-		if i < 0 {
-			return ""
-		}
-		org, tail = rest[:i], rest[i+1:]
-	case strings.HasSuffix(host, ".visualstudio.com"):
-		org, tail = strings.TrimSuffix(host, ".visualstudio.com"), rest
-	default:
-		return ""
-	}
-	segs := strings.Split(tail, "/")
-	if org == "" || len(segs) < 3 || segs[0] == "" || segs[1] != "_git" || segs[2] == "" {
-		return ""
-	}
-	return "https://dev.azure.com/" + org + "/" + segs[0] + "/_git/" + segs[2]
+	return provider.NormalizeADOCloneURL(repoURL)
 }
 
 // sortItems orders rows most-recently-updated first (RFC3339 string compare).
@@ -669,14 +636,7 @@ func (c *Client) ListMergedPRs(ctx context.Context, ref provider.RepoRef, since 
 // surfaces as data to inspect rather than as a silently shorter history. A zero
 // cutoff (never synced) admits everything.
 func isAtOrAfter(ts string, cutoff time.Time) bool {
-	if cutoff.IsZero() {
-		return true
-	}
-	t, err := time.Parse(time.RFC3339, ts)
-	if err != nil {
-		return true
-	}
-	return !t.Before(cutoff)
+	return provider.IsAtOrAfter(ts, cutoff)
 }
 
 var _ provider.Client = (*Client)(nil)

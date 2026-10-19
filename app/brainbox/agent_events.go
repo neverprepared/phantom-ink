@@ -90,25 +90,35 @@ type agentEventsResp struct {
 	Count  int               `json:"count"`
 }
 
+// queryString builds an escaped "?a=b&c=d" from non-empty pairs.
+//
+// Two call sites in this file used to hand-roll `q += k + "=" + v` over
+// data-derived values -- envelope ids, workspace names, parent ids -- so a
+// value containing &, = or a space either broke the query or injected a
+// parameter. SearchAgentEvents in this same file already used url.Values
+// correctly, which is how the divergence went unnoticed.
+func queryString(pairs map[string]string) string {
+	q := url.Values{}
+	for k, v := range pairs {
+		if v != "" {
+			q.Set(k, v)
+		}
+	}
+	if len(q) == 0 {
+		return ""
+	}
+	return "?" + q.Encode()
+}
+
 // ListAgentEvents fetches the audit log filtered by envelope id and/or
 // parent_id. Pass empty strings to skip a filter. Returns events ordered by
 // seq ascending (oldest first), matching the brainbox query contract.
 func (c *Client) ListAgentEvents(envelopeID, parentID string, limit int) ([]AgentEventEntry, error) {
-	q := "?"
-	add := func(k, v string) {
-		if v == "" {
-			return
-		}
-		if len(q) > 1 {
-			q += "&"
-		}
-		q += k + "=" + v
-	}
-	add("id", envelopeID)
-	add("parent_id", parentID)
+	pairs := map[string]string{"id": envelopeID, "parent_id": parentID}
 	if limit > 0 {
-		add("limit", fmt.Sprintf("%d", limit))
+		pairs["limit"] = fmt.Sprintf("%d", limit)
 	}
+	q := queryString(pairs)
 	var resp agentEventsResp
 	if err := c.get("/api/agent_events"+q, &resp); err != nil {
 		return nil, fmt.Errorf("list agent events: %w", err)
@@ -147,24 +157,16 @@ func contains404(s string) bool {
 
 // ListAgentState fetches current-state envelopes from brainbox, filtered.
 func (c *Client) ListAgentState(opts ListAgentStateOptions) ([]AgentStateItem, error) {
-	q := "?"
-	add := func(k, v string) {
-		if v == "" {
-			return
-		}
-		if len(q) > 1 {
-			q += "&"
-		}
-		q += k + "=" + v
+	pairs := map[string]string{
+		"status":    opts.Status,
+		"workspace": opts.Workspace,
+		"source":    opts.Source,
+		"parent_id": opts.ParentID,
 	}
-	add("status", opts.Status)
-	add("workspace", opts.Workspace)
-	add("source", opts.Source)
-	add("parent_id", opts.ParentID)
 	if opts.Limit > 0 {
-		add("limit", fmt.Sprintf("%d", opts.Limit))
+		pairs["limit"] = fmt.Sprintf("%d", opts.Limit)
 	}
-	path := "/api/agent_state" + q
+	path := "/api/agent_state" + queryString(pairs)
 	var resp agentStateResp
 	if err := c.get(path, &resp); err != nil {
 		return nil, fmt.Errorf("list agent state: %w", err)

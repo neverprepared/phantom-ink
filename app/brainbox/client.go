@@ -98,6 +98,16 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, body inter
 	}
 	defer resp.Body.Close()
 
+	return finishJSON(resp, result)
+}
+
+// finishJSON turns a response into either an error or a decoded result.
+//
+// Shared because bundle.go had its own copy of this — the status check, the
+// 500-byte cap on error bodies, and the unmarshal — and a second copy of
+// "what counts as a failed response" is exactly how the two SSE readers
+// drifted apart on their line cap.
+func finishJSON(resp *http.Response, result interface{}) error {
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("read response: %w", err)

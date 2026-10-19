@@ -31,7 +31,7 @@ type ProfileTokenInfo struct {
 	Capabilities     []string `json:"capabilities"`
 	Scope            []string `json:"scope"`
 	Label            string   `json:"label"`
-	Issued           int64    `json:"issued"`    // epoch ms
+	Issued           int64    `json:"issued"` // epoch ms
 	Revoked          bool     `json:"revoked"`
 	RevokedAt        int64    `json:"revoked_at"` // epoch ms, 0 if live
 	LastUsed         int64    `json:"last_used"`  // epoch ms, 0 if never used

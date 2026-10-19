@@ -374,40 +374,7 @@ func subjectBrowserURL(subjectURL, repoFullName string) string {
 // GitHub Enterprise remote still clones from its own host. Returns "" when no
 // owner/repo pair can be read out.
 func (c *Client) NormalizeCloneURL(repoURL string) string {
-	s := strings.TrimSpace(repoURL)
-	s = strings.TrimSuffix(s, "/")
-	if s == "" {
-		return ""
-	}
-	// Strip the scheme, then any user@ — leaves host/owner/repo for both
-	// "https://github.com/..." and "ssh://git@github.com/...".
-	if i := strings.Index(s, "://"); i >= 0 {
-		s = s[i+3:]
-	} else if at := strings.Index(s, "@"); at >= 0 {
-		// scp-style ssh (git@github.com:owner/repo.git): the colon separating
-		// host from path is a path separator here, not a port.
-		s = strings.Replace(s[at+1:], ":", "/", 1)
-	}
-	if at := strings.Index(s, "@"); at >= 0 {
-		s = s[at+1:]
-	}
-
-	segs := strings.Split(s, "/")
-	if len(segs) < 3 {
-		return ""
-	}
-	host, segs := segs[0], segs[1:]
-	if host == "api.github.com" && segs[0] == "repos" {
-		host, segs = "github.com", segs[1:]
-	}
-	if len(segs) < 2 {
-		return ""
-	}
-	owner, repo := segs[0], strings.TrimSuffix(segs[1], ".git")
-	if host == "" || owner == "" || repo == "" {
-		return ""
-	}
-	return "https://" + host + "/" + owner + "/" + repo + ".git"
+	return provider.NormalizeGitHubCloneURL(repoURL)
 }
 
 // --- Repository detail ------------------------------------------------------
@@ -673,12 +640,5 @@ func (c *Client) ListMergedPRs(ctx context.Context, ref provider.RepoRef, since 
 // shows up as data to inspect rather than as a silently shorter history. A zero
 // cutoff (never synced) admits everything.
 func isAtOrAfter(ts string, cutoff time.Time) bool {
-	if cutoff.IsZero() {
-		return true
-	}
-	t, err := time.Parse(time.RFC3339, ts)
-	if err != nil {
-		return true
-	}
-	return !t.Before(cutoff)
+	return provider.IsAtOrAfter(ts, cutoff)
 }
