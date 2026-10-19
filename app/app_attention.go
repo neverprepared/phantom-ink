@@ -302,4 +302,3 @@ func hasActions(raw json.RawMessage) bool {
 	}
 	return len(arr) > 0
 }
-

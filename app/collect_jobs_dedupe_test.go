@@ -105,7 +105,7 @@ func TestPruneOrphanWidgetJobs_DropsJobsNotInLayout(t *testing.T) {
 		`{"version":1,"widgets":[{"id":"live","kind":"script-metric"}]}`); err != nil {
 		t.Fatal(err)
 	}
-	insertJob(t, db, "keep", "gsa", "JIRA", "live", 100)   // owner in layout
+	insertJob(t, db, "keep", "gsa", "JIRA", "live", 100)    // owner in layout
 	insertJob(t, db, "orph1", "gsa", "JIRA", "ghost1", 200) // orphan
 	insertJob(t, db, "orph2", "gsa", "JIRA", "ghost2", 300) // orphan
 	// A profile with NO saved layout must be left untouched.
