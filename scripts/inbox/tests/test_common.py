@@ -10,12 +10,15 @@ from common import (
     Config,
     ConfigError,
     SpoolRecord,
+    declared_kind,
     drop_spool,
     entry,
     item_id_for,
+    kind_from_filename,
     ledger_append,
     ledger_ids,
     load_config,
+    normalise_kind,
     read_pending,
     scan_secrets,
     split_frontmatter,
@@ -36,11 +39,11 @@ def cfg(tmp_path) -> Config:
     )
 
 
-def rec(item_id="aaaa0000", queue="todo", body="hello") -> SpoolRecord:
+def rec(item_id="aaaa0000", declared="", body="hello") -> SpoolRecord:
     return SpoolRecord(
         item_id=item_id,
         profile="personal",
-        queue=queue,
+        declared_kind=declared,
         drive_file_id="fid",
         drive_name="note.md",
         mime="text/markdown",
@@ -91,7 +94,7 @@ def test_spool_roundtrip(cfg):
     got = read_pending(cfg)
     assert len(got) == 1
     assert got[0].body == "buy milk"
-    assert got[0].queue == "todo"
+    assert got[0].declared_kind == ""
 
 
 def test_spool_write_is_atomic_leaving_no_temp_files(cfg):
@@ -238,3 +241,84 @@ def test_entry_truncates_long_text():
 def test_entry_omits_empty_optionals():
     e = entry("id1", "k", "t")
     assert "tags" not in e and "url" not in e and "metadata" not in e
+
+
+# -- kind markers ---------------------------------------------------------------
+
+# The filename marker exists because frontmatter is awkward from a phone
+# share-sheet, where the filename is often the only thing you get to type.
+
+
+@pytest.mark.parametrize(
+    "name,kind,rest",
+    [
+        ("r: call the accountant", "reminder", "call the accountant"),
+        ("reminder - renew the domain", "reminder", "renew the domain"),
+        ("t: ship the PR.md", "todo", "ship the PR"),
+        ("i: what if we", "idea", "what if we"),
+        ("idea - nightly rollup.md", "idea", "nightly rollup"),
+        ("IDEA: shouting works", "idea", "shouting works"),
+        ("  todo : leading space", "todo", "leading space"),
+        ("t:no space after colon", "todo", "no space after colon"),
+    ],
+)
+def test_filename_markers_are_parsed(name, kind, rest):
+    assert kind_from_filename(name) == (kind, rest)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "call-accountant.md",
+        "rotate the prod key",
+        "notes.txt",
+        "random: thoughts",
+        "ideas-are-great.md",
+        "idea-nightly-rollup.md",
+        "todo_fix the build",
+        "reminders_list.md",
+        "t-shirt sizing.md",
+    ],
+)
+def test_unmarked_filenames_leave_the_kind_to_the_model(name):
+    kind, _ = kind_from_filename(name)
+    assert kind == ""
+
+
+def test_filename_marker_strips_the_extension():
+    assert kind_from_filename("todo: ship it.markdown")[1] == "ship it"
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("reminder", "reminder"),
+        ("Reminders", "reminder"),
+        ("TASK", "todo"),
+        ("note", "idea"),
+        ("#idea", "idea"),
+        ("projekt", ""),
+        ("", ""),
+        (None, ""),
+        (7, ""),
+    ],
+)
+def test_normalise_kind(value, expected):
+    assert normalise_kind(value) == expected
+
+
+def test_frontmatter_type_beats_the_filename():
+    assert declared_kind({"type": "idea"}, "r: call them") == "idea"
+
+
+def test_filename_is_used_when_frontmatter_is_silent():
+    assert declared_kind({}, "r: call them") == "reminder"
+
+
+def test_no_declaration_returns_empty():
+    assert declared_kind({}, "call-accountant.md") == ""
+
+
+def test_frontmatter_accepts_a_type_key():
+    fm, _ = split_frontmatter("---\ntype: idea\ntitle: X\n---\nbody\n")
+    assert fm["type"] == "idea"

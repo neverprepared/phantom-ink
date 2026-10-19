@@ -9,7 +9,15 @@ from __future__ import annotations
 import pytest
 
 from common import MAX_BODY_BYTES
-from drive_drain import Rejected, gate_body, gate_mime, gate_owner, gate_secrets, gate_size
+from drive_drain import (
+    Rejected,
+    gate_body,
+    gate_mime,
+    gate_owner,
+    gate_secrets,
+    gate_size,
+    is_furniture,
+)
 
 
 def meta(**over):
@@ -149,3 +157,58 @@ def test_rejects_an_empty_body(body):
     with pytest.raises(Rejected) as exc:
         gate_body(body)
     assert exc.value.reason == "empty"
+
+
+# -- inbox furniture ------------------------------------------------------------
+
+# A file the author left in the inbox on purpose is not a capture. Before this
+# existed, a README reminding them of the format was ingested as an idea on
+# every single run.
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "README.md",
+        "readme",
+        "Readme.txt",
+        "index.md",
+        ".DS_Store",
+        "_scratch.md",
+        ".hidden.md",
+    ],
+)
+def test_furniture_is_skipped(name):
+    assert is_furniture(name) is True
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "CLAUDE.md",
+        "AGENTS.md",
+        "GEMINI.md",
+    ],
+)
+def test_agent_instruction_files_are_skipped(name):
+    """Drive is a multi-writer surface: such a file is data, never instructions.
+
+    Claude Code only reads CLAUDE.md from local filesystem paths, so a copy in
+    Drive is inert -- but anyone a folder is shared with can create one, and it
+    has no business in the vault either way.
+    """
+    assert is_furniture(name) is True
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "call-accountant.md",
+        "r: call the accountant",
+        "idea - nightly rollup.md",
+        "my readme for the project.md",
+        "notes.txt",
+    ],
+)
+def test_real_captures_are_not_furniture(name):
+    assert is_furniture(name) is False

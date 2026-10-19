@@ -26,13 +26,37 @@ from typing import Any
 
 # ── Shape of a queue ───────────────────────────────────────────────────────────
 
-QUEUES = ("reminders", "todo", "ideas")
+KIND_REMINDER = "reminder"
+KIND_TODO = "todo"
+KIND_IDEA = "idea"
 
-# Identical lifecycle under every queue. `rejected` and `quarantine` are
-# deliberately distinct: the first means the FILE was unacceptable (stage A
-# mechanical gate), the second that its CONTENT could not be parsed into a
-# valid record (stage B). Different causes, different fixes.
-LIFECYCLE = ("inbox", "processing", "done", "quarantine", "rejected")
+# What an item IS, not where it lives. There is one flat inbox; the kind is
+# detected during extraction (or declared explicitly, see declared_kind below)
+# rather than encoded in a folder path, so capture needs no taxonomy.
+KINDS = (KIND_REMINDER, KIND_TODO, KIND_IDEA)
+
+# Accepted spellings for an explicit override, mapped onto the canonical kind.
+KIND_ALIASES = {
+    "reminder": KIND_REMINDER,
+    "reminders": KIND_REMINDER,
+    "r": KIND_REMINDER,
+    "todo": KIND_TODO,
+    "todos": KIND_TODO,
+    "task": KIND_TODO,
+    "t": KIND_TODO,
+    "idea": KIND_IDEA,
+    "ideas": KIND_IDEA,
+    "note": KIND_IDEA,
+    "i": KIND_IDEA,
+}
+
+# One flat tree per profile. A filed item is TRASHED, not archived, so there is
+# no `done`: Drive is transit, not storage. `rejected` and `quarantine` remain
+# real folders and are never deleted -- a refused capture that got deleted
+# would simply be lost. They are distinct because the fixes differ: `rejected`
+# means the FILE was unacceptable (a stage-A mechanical gate), `quarantine`
+# that its CONTENT could not be parsed into a valid item (stage B).
+LIFECYCLE = ("inbox", "processing", "quarantine", "rejected")
 
 SCHEMA_VERSION = 1
 
@@ -148,7 +172,42 @@ _FM_RE = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n?", re.DOTALL)
 
 # Only these are honoured. Frontmatter the human wrote is TRUSTED and wins over
 # anything the model extracts, so the accepted set is closed on purpose.
-TRUSTED_FM_KEYS = frozenset({"title", "due", "priority", "tags", "actionable"})
+TRUSTED_FM_KEYS = frozenset({"title", "due", "priority", "tags", "actionable", "type"})
+
+# A filename may declare the kind: "r: call the accountant" or
+# "idea - nightly rollup". This exists because frontmatter is awkward from a
+# phone share-sheet, where the filename is often the only thing you get to type.
+#
+# The separator must be a colon, or a hyphen with spaces around it. A bare
+# hyphen or underscore is far too permissive: it turns the ordinary filename
+# "ideas-are-great.md" into kind=idea plus the title "are-great".
+_ALIAS_ALT = "|".join(sorted(KIND_ALIASES, key=len, reverse=True))
+_FILENAME_KIND_RE = re.compile(rf"^\s*({_ALIAS_ALT})\s*(?::|\s-\s)\s*", re.IGNORECASE)
+
+
+def normalise_kind(value: Any) -> str:
+    """Map a declared kind onto a canonical one, or "" if unrecognised."""
+    if not isinstance(value, str):
+        return ""
+    return KIND_ALIASES.get(value.strip().lower().lstrip("#"), "")
+
+
+def kind_from_filename(name: str) -> tuple[str, str]:
+    """Split a leading kind marker off a filename.
+
+    Returns (kind, remaining-name). An unmarked filename yields ("", name), so
+    the model decides -- which is the common case.
+    """
+    stem = re.sub(r"\.(md|markdown|txt)$", "", name, flags=re.IGNORECASE)
+    m = _FILENAME_KIND_RE.match(stem)
+    if not m:
+        return "", stem.strip()
+    return normalise_kind(m.group(1)), stem[m.end() :].strip()
+
+
+def declared_kind(frontmatter: dict[str, Any], filename: str) -> str:
+    """The kind the human declared, if any. Frontmatter beats the filename."""
+    return normalise_kind(frontmatter.get("type")) or kind_from_filename(filename)[0]
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -192,7 +251,10 @@ def item_id_for(body: str) -> str:
 class SpoolRecord:
     item_id: str
     profile: str
-    queue: str
+    # The kind the human DECLARED, via frontmatter `type:` or a filename
+    # marker. Empty is the normal case: there is no folder to read it from any
+    # more, so an unmarked item's kind is settled during extraction.
+    declared_kind: str
     drive_file_id: str
     drive_name: str
     mime: str

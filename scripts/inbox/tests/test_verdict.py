@@ -10,7 +10,7 @@ from verdict import (
     MAX_SUMMARY,
     MAX_TAGS,
     ValidationError,
-    from_frontmatter,
+    from_declared,
     needs_model,
     parse_due,
     validate,
@@ -24,6 +24,7 @@ IDS = {"abc123", "def456"}
 def ok(**over):
     base = {
         "item_id": "abc123",
+        "kind": "reminder",
         "title": "Call the accountant",
         "due_at": SOON,
         "priority": "high",
@@ -35,10 +36,10 @@ def ok(**over):
     return base
 
 
-def val(raw, queue="todo", **kw):
+def val(raw, **kw):
     kw.setdefault("allowed_ids", IDS)
     kw.setdefault("now", NOW)
-    return validate(raw, queue=queue, **kw)
+    return validate(raw, **kw)
 
 
 # -- item_id --------------------------------------------------------------------
@@ -117,10 +118,17 @@ def test_null_due_is_allowed_for_todo():
     assert val(ok(due_at=None)).due_at is None
 
 
-def test_reminders_require_a_due_date():
-    """A reminder with no time is not a reminder; quarantine beats a dateless one."""
-    with pytest.raises(ValidationError, match="require a due date"):
-        val(ok(due_at=None), queue="reminders")
+def test_a_declared_reminder_without_a_date_is_quarantined():
+    """The author said reminder and gave no time -- a contradiction worth surfacing."""
+    with pytest.raises(ValidationError, match="no due date"):
+        val(ok(due_at=None), filename="r: call them")
+
+
+def test_a_guessed_reminder_without_a_date_is_demoted_to_a_todo():
+    """The model merely guessed, so repair it rather than losing the capture."""
+    v = val(ok(kind="reminder", due_at=None))
+    assert v.kind == "todo"
+    assert v.due_at is None
 
 
 # -- priority -------------------------------------------------------------------
@@ -225,36 +233,61 @@ def test_invalid_frontmatter_still_fails_closed():
 # -- the model-bypass path ------------------------------------------------------
 
 
+def test_needs_model_without_a_declared_kind():
+    """With one flat inbox the kind is part of what must be settled."""
+    assert needs_model({"title": "x"}) is True
+    assert needs_model({"title": "x", "type": "todo"}) is False
+
+
 def test_needs_model_without_a_title():
-    assert needs_model("todo", {}) is True
-    assert needs_model("todo", {"title": "x"}) is False
+    assert needs_model({"type": "todo"}) is True
 
 
-def test_reminders_need_a_model_without_a_due_date():
-    assert needs_model("reminders", {"title": "x"}) is True
-    assert needs_model("reminders", {"title": "x", "due": SOON}) is False
+def test_a_filename_marker_can_supply_the_kind():
+    assert needs_model({"title": "x"}, "todo: ship it") is False
 
 
-def test_from_frontmatter_builds_a_verdict_with_no_model():
-    v = from_frontmatter(
+def test_a_declared_reminder_still_needs_a_date_to_skip_the_model():
+    assert needs_model({"title": "x", "type": "reminder"}) is True
+    assert needs_model({"title": "x", "type": "reminder", "due": SOON}) is False
+
+
+def test_from_declared_builds_a_verdict_with_no_model():
+    v = from_declared(
         "abc123",
-        "reminders",
-        {"title": "Pay rent", "due": SOON, "priority": "high", "tags": ["home"]},
+        {
+            "type": "reminder",
+            "title": "Pay rent",
+            "due": SOON,
+            "priority": "high",
+            "tags": ["home"],
+        },
         now=NOW,
     )
+    assert v.kind == "reminder"
     assert v.title == "Pay rent"
     assert v.due_at is not None
     assert v.tags == ["home"]
 
 
-def test_from_frontmatter_rejects_a_dateless_reminder():
-    with pytest.raises(ValidationError, match="require a due date"):
-        from_frontmatter("abc123", "reminders", {"title": "Pay rent"}, now=NOW)
+def test_from_declared_reads_the_kind_from_a_filename():
+    v = from_declared("abc123", {"title": "A thought"}, "idea - nightly rollup", now=NOW)
+    assert v.kind == "idea"
 
 
-def test_from_frontmatter_defaults_actionable_false():
+def test_from_declared_rejects_a_dateless_reminder():
+    with pytest.raises(ValidationError, match="needs a due date"):
+        from_declared("abc123", {"type": "reminder", "title": "Pay rent"}, now=NOW)
+
+
+def test_from_declared_requires_a_kind():
+    with pytest.raises(ValidationError, match="no kind declared"):
+        from_declared("abc123", {"title": "A thought"}, now=NOW)
+
+
+def test_from_declared_defaults_actionable_false():
     """Nothing is promoted to a todo unless the item says so."""
-    v = from_frontmatter("abc123", "ideas", {"title": "A thought"}, now=NOW)
+    v = from_declared("abc123", {"type": "idea", "title": "A thought"}, now=NOW)
     assert v.actionable is False
 
 
@@ -321,3 +354,53 @@ def test_a_bare_date_defaults_to_nine_am(monkeypatch):
     monkeypatch.setattr(vd, "local_zone", lambda: ZoneInfo("America/Denver"))
     parsed = vd.parse_due(dt.date(2026, 11, 20), now=NOW)
     assert parsed is not None and parsed.hour == 9
+
+
+# -- kind detection -------------------------------------------------------------
+
+
+@pytest.mark.parametrize("kind", ["reminder", "todo", "idea"])
+def test_model_kind_is_accepted(kind):
+    assert val(ok(kind=kind, due_at=None if kind != "reminder" else SOON)).kind == kind
+
+
+@pytest.mark.parametrize(
+    "spelling,expected",
+    [
+        ("reminders", "reminder"),
+        ("REMINDER", "reminder"),
+        ("todos", "todo"),
+        ("task", "todo"),
+        ("ideas", "idea"),
+        ("note", "idea"),
+    ],
+)
+def test_model_kind_spellings_are_normalised(spelling, expected):
+    assert val(ok(kind=spelling)).kind == expected
+
+
+@pytest.mark.parametrize("bad", ["reminderz", "project", "", None, 7, ["todo"]])
+def test_rejects_an_unknown_kind(bad):
+    with pytest.raises(ValidationError, match="is not one of"):
+        val(ok(kind=bad))
+
+
+def test_frontmatter_type_overrides_the_model():
+    v = val(ok(kind="reminder", due_at=SOON), frontmatter={"type": "idea"})
+    assert v.kind == "idea"
+
+
+def test_filename_marker_overrides_the_model():
+    v = val(ok(kind="todo"), filename="idea: what if we")
+    assert v.kind == "idea"
+
+
+def test_frontmatter_type_beats_the_filename_marker():
+    v = val(ok(kind="todo"), frontmatter={"type": "idea"}, filename="r: call them")
+    assert v.kind == "idea"
+
+
+def test_an_unrecognised_override_falls_back_to_the_model():
+    """A typo'd type must not silently become some other kind."""
+    v = val(ok(kind="idea"), frontmatter={"type": "projekt"})
+    assert v.kind == "idea"

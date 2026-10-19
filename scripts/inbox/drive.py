@@ -22,10 +22,8 @@ from typing import Any
 from common import (
     LIFECYCLE,
     MIME_DOC,
-    QUEUES,
     Config,
     ConfigError,
-    month_bucket,
 )
 
 CRED_DIR = Path.home() / ".google_workspace_mcp" / "credentials"
@@ -95,10 +93,10 @@ def q_escape(value: str) -> str:
 
 
 @dataclass
-class QueueFolders:
-    """Resolved folder ids for one queue's lifecycle."""
+class InboxFolders:
+    """Resolved folder ids for one profile's inbox lifecycle."""
 
-    queue: str
+    profile: str
     ids: dict[str, str]
 
     def __getitem__(self, stage: str) -> str:
@@ -159,24 +157,25 @@ class Drive:
             )
         return found
 
-    def resolve_queue(self, queue: str, *, create: bool = False) -> QueueFolders:
-        """Resolve <root>/<profile>/<queue>/{lifecycle} folder ids."""
-        if queue not in QUEUES:
-            raise ConfigError(f"unknown queue {queue!r}")
+    def resolve(self, *, create: bool = False) -> InboxFolders:
+        """Resolve <root>/<profile>/{inbox,processing,quarantine,rejected}.
+
+        Cached per Drive instance via the folder cache, so the repeated calls
+        the stages make cost one round-trip each per run.
+        """
         get = self.ensure_folder if create else self._require_folder
         root = get("root", self.root_name)
         prof = get(root, self.profile)
-        qroot = get(prof, queue)
-        ids = {stage: get(qroot, stage) for stage in LIFECYCLE}
-        ids["_queue_root"] = qroot
-        return QueueFolders(queue=queue, ids=ids)
+        ids = {stage: get(prof, stage) for stage in LIFECYCLE}
+        ids["_root"] = prof
+        return InboxFolders(profile=self.profile, ids=ids)
 
-    def init_tree(self) -> dict[str, QueueFolders]:
-        return {q: self.resolve_queue(q, create=True) for q in QUEUES}
+    def init_tree(self) -> InboxFolders:
+        return self.resolve(create=True)
 
     # -- files -----------------------------------------------------------------
 
-    def list_inbox(self, folders: QueueFolders, cap: int) -> list[dict[str, Any]]:
+    def list_inbox(self, folders: InboxFolders, cap: int) -> list[dict[str, Any]]:
         """Oldest-first children of inbox/, carrying the fields the gates need."""
         resp = (
             self.svc.files()
@@ -219,10 +218,29 @@ class Drive:
             fileId=file_id, addParents=to, removeParents=from_, fields="id"
         ).execute(num_retries=DRIVE_RETRIES)
 
-    def move_to_done(self, folders: QueueFolders, file_id: str) -> None:
-        """Move into done/<YYYY-MM>, which keeps the archive listable."""
-        bucket = self.ensure_folder(folders["done"], month_bucket())
-        self.move(file_id, to=bucket, from_=folders["processing"])
+    def trash(self, file_id: str) -> None:
+        """Send a filed item to Drive trash.
+
+        Trash rather than files.delete: the item leaves the inbox immediately,
+        which is the point, but a mis-extracted capture is still recoverable
+        for ~30 days. The authoritative copy is now the vault note or the
+        reminder, and this is the only remaining safety net for the original
+        wording.
+        """
+        self.svc.files().update(fileId=file_id, body={"trashed": True}).execute(
+            num_retries=DRIVE_RETRIES
+        )
+
+    def delete_forever(self, file_id: str) -> None:
+        """Permanently delete a filed item (opt-in via --hard-delete)."""
+        self.svc.files().delete(fileId=file_id).execute(num_retries=DRIVE_RETRIES)
+
+    def dispose(self, file_id: str, *, hard_delete: bool = False) -> None:
+        """Get a filed item out of the inbox for good."""
+        if hard_delete:
+            self.delete_forever(file_id)
+        else:
+            self.trash(file_id)
 
     def write_note(self, parent: str, name: str, text: str) -> None:
         """Drop a small plain-text note beside a rejected/quarantined file."""
@@ -235,7 +253,7 @@ class Drive:
             body={"name": name, "parents": [parent]}, media_body=media, fields="id"
         ).execute(num_retries=DRIVE_RETRIES)
 
-    def stale_processing(self, folders: QueueFolders, older_than_s: int) -> list[dict[str, Any]]:
+    def stale_processing(self, folders: InboxFolders, older_than_s: int) -> list[dict[str, Any]]:
         """Files stuck in processing/ longer than older_than_s."""
         resp = (
             self.svc.files()

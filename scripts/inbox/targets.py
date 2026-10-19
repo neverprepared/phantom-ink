@@ -17,7 +17,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Self
 
-from common import Config, SpoolRecord, log
+from common import KIND_IDEA, KIND_REMINDER, KIND_TODO, Config, SpoolRecord, log
 from mcp_stdio import McpError, McpStdioClient, find_server
 from verdict import Verdict
 
@@ -106,7 +106,7 @@ def _note_body(rec: SpoolRecord, v: Verdict) -> str:
         lines.append(f"due: {v.due_iso()}")
     if v.priority:
         lines.append(f"priority: {v.priority}")
-    lines.append(f"source: gdrive inbox/{rec.queue} ({rec.drive_name})")
+    lines.append(f"source: gdrive inbox ({rec.drive_name})")
     lines.append(f"drive_file_id: {rec.drive_file_id}")
     return "\n".join(lines) + "\n"
 
@@ -255,7 +255,7 @@ def apply_idea(cfg: Config, rec: SpoolRecord, v: Verdict) -> Applied:
             "---",
             f"idea note: {sha}",
             f"recall: pbrainctl client fetch {sha}",
-            f"source: gdrive inbox/ideas ({rec.drive_name})",
+            f"source: gdrive inbox ({rec.drive_name})",
         ]
     )
     try:
@@ -274,24 +274,28 @@ def apply_idea(cfg: Config, rec: SpoolRecord, v: Verdict) -> Applied:
 
 
 APPLIERS = {
-    "todo": apply_todo,
-    "ideas": apply_idea,
+    KIND_TODO: apply_todo,
+    KIND_IDEA: apply_idea,
 }
 
 
 def apply(
     cfg: Config, rec: SpoolRecord, v: Verdict, *, reminders: Reminders | None = None
 ) -> Applied:
-    """Dispatch a verdict to its queue's target.
+    """Dispatch a verdict to the target for its KIND.
+
+    The kind comes from the verdict, not from where the file sat: there is one
+    flat inbox, and the kind was settled during extraction (or declared by the
+    author) and validated against the closed set.
 
     `reminders` lets the caller share one MCP session across a run; without it,
     a reminder gets its own short-lived session.
     """
-    if rec.queue == "reminders":
+    if v.kind == KIND_REMINDER:
         if reminders is not None:
             return reminders.add(rec, v)
         return apply_reminder(cfg, rec, v)
-    fn = APPLIERS.get(rec.queue)
+    fn = APPLIERS.get(v.kind)
     if fn is None:
-        raise ApplyError(f"no applier for queue {rec.queue!r}")
+        raise ApplyError(f"no applier for kind {v.kind!r}")
     return fn(cfg, rec, v)

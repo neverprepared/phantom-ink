@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from common import (
     ENTRY_STATUSES,
     STATUS_BLOCKED,
@@ -74,7 +75,7 @@ def test_no_source_file_emits_a_literal_status():
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue
-            if "status=\"" in stripped or "status='" in stripped:
+            if 'status="' in stripped or "status='" in stripped:
                 offenders.append(f"{path.name}:{n}: {stripped}")
     assert not offenders, "use the STATUS_* constants:\n" + "\n".join(offenders)
 

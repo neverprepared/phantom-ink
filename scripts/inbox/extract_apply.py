@@ -28,6 +28,7 @@ from typing import Any
 
 from common import (
     APPLY_CAP,
+    KIND_REMINDER,
     STATUS_BLOCKED,
     STATUS_DONE,
     STATUS_NEEDS_ACTION,
@@ -57,15 +58,17 @@ def quarantine_item(
     The Drive file moves out of processing/ so it stops being retried, and the
     reason is written beside it so the fix is obvious from the folder alone.
     """
-    log(f"{rec.item_id} [{rec.queue}] quarantine: {reason}")
+    log(f"{rec.item_id} quarantine: {reason}")
     if drive is not None:
         try:
-            folders = drive.resolve_queue(rec.queue)
+            folders = drive.resolve()
             drive.move(rec.drive_file_id, to=folders["quarantine"], from_=folders["processing"])
             drive.write_note(
                 folders["quarantine"],
                 f"{rec.drive_name}.quarantine.txt",
-                f"item_id: {rec.item_id}\nqueue: {rec.queue}\nreason: {reason}\n",
+                f"item_id: {rec.item_id}\n"
+                f"declared_kind: {rec.declared_kind or 'none'}\n"
+                f"reason: {reason}\n",
             )
         # Visibility matters more than tidiness: the item is already
         # quarantined in the spool even if the Drive move fails.
@@ -75,10 +78,10 @@ def quarantine_item(
     return entry(
         rec.item_id,
         "inbox_quarantined",
-        f"{rec.queue}: {rec.drive_name}",
+        rec.drive_name,
         description=reason[:500],
         status=STATUS_NEEDS_ACTION,
-        tags=["inbox", rec.queue, "quarantined"],
+        tags=["inbox", "quarantined"],
         url=drive_url(rec.drive_file_id),
     )
 
@@ -90,34 +93,36 @@ def apply_item(
     v: Verdict,
     *,
     reminders: Reminders | None = None,
+    hard_delete: bool = False,
 ) -> dict[str, Any]:
-    """Apply one verdict, then archive its Drive file."""
+    """Apply one verdict, then dispose of its Drive file."""
     try:
         result: Applied = apply(cfg, rec, v, reminders=reminders)
     except ApplyError as exc:
         # Leave the spool record and the Drive file in place: a target that is
         # down (EventKit not granted, brain daemon restarting) should be retried
         # on the next tick, not quarantined as if the item were bad.
-        log(f"{rec.item_id} [{rec.queue}] apply failed, will retry: {exc}")
+        log(f"{rec.item_id} [{v.kind}] apply failed, will retry: {exc}")
         return entry(
             rec.item_id,
             "inbox_retry",
-            f"{rec.queue}: {v.title}",
+            v.title,
             description=f"apply failed, will retry: {exc}"[:500],
             status=STATUS_BLOCKED,
-            tags=["inbox", rec.queue, "retry"],
+            tags=["inbox", v.kind, "retry"],
             url=drive_url(rec.drive_file_id),
         )
 
-    # Ledger BEFORE the Drive move. A kill between the two leaves the file in
-    # processing/ already applied, which --requeue-stale resolves by archiving
-    # it. The reverse order would double-apply on the next run.
+    # Ledger BEFORE disposing of the file. A kill between the two leaves the
+    # file in processing/ already applied, which --requeue-stale resolves by
+    # disposing of it. The reverse order would double-apply on the next run.
     ledger_append(
         cfg,
         {
             "item_id": rec.item_id,
             "profile": cfg.profile,
-            "queue": rec.queue,
+            "kind": v.kind,
+            "declared_kind": rec.declared_kind,
             "drive_file_id": rec.drive_file_id,
             "target": result.target,
             "result": result.result,
@@ -129,25 +134,26 @@ def apply_item(
 
     if drive is not None:
         try:
-            folders = drive.resolve_queue(rec.queue)
-            drive.move_to_done(folders, rec.drive_file_id)
+            drive.dispose(rec.drive_file_id, hard_delete=hard_delete)
         except Exception as exc:
-            # Already applied and ledgered; a stuck file is recoverable.
-            log(f"{rec.item_id}: archive failed (already applied): {exc}")
+            # Already applied and ledgered; a file left in processing/ is
+            # recoverable by --requeue-stale, which consults the ledger.
+            log(f"{rec.item_id}: disposal failed (already applied): {exc}")
 
     detail = f"{result.target} {result.result}"
     if result.extra:
         detail += f" ({result.extra})"
-    log(f"{rec.item_id} [{rec.queue}] applied -> {detail}")
+    log(f"{rec.item_id} [{v.kind}] applied -> {detail}")
     return entry(
         rec.item_id,
         "inbox_applied",
-        f"{rec.queue}: {v.title}",
+        v.title,
         description=detail[:500],
         status=STATUS_DONE,
-        tags=["inbox", rec.queue, "applied", *v.tags],
+        tags=["inbox", v.kind, "applied", *v.tags],
         url=drive_url(rec.drive_file_id),
         metadata={
+            "kind": v.kind,
             "target": result.target,
             "result": result.result,
             "due_at": v.due_iso() or "",
@@ -171,6 +177,11 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run",
         action="store_true",
         help="extract and print verdicts without applying or moving anything",
+    )
+    ap.add_argument(
+        "--hard-delete",
+        action="store_true",
+        help="permanently delete filed items instead of trashing them (not recoverable)",
     )
     args = ap.parse_args(argv)
 
@@ -205,8 +216,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             drive = open_drive(cfg)
         except Exception as exc:
-            # Without Drive we cannot archive, and applying would leave items
-            # that re-drain later. Stop rather than half-work.
+            # Without Drive we cannot dispose of anything, and applying would
+            # leave items that re-drain later. Stop rather than half-work.
             log(f"drive unavailable, not applying this run: {exc}")
             emit([])
             return 1
@@ -225,12 +236,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         for item_id, v in verdicts.items():
             log(
-                f"{item_id} [{by_id[item_id].queue}] would apply: title={v.title!r} "
+                f"{item_id} [{v.kind}] would apply: title={v.title!r} "
                 f"due={v.due_iso()} priority={v.priority} tags={v.tags} "
                 f"actionable={v.actionable}"
             )
         for item_id, reason in quarantined.items():
-            log(f"{item_id} [{by_id[item_id].queue}] would quarantine: {reason}")
+            log(f"{item_id} would quarantine: {reason}")
         emit([])
         return 0
 
@@ -239,11 +250,20 @@ def main(argv: list[str] | None = None) -> int:
 
     # One MCP session for every reminder in the run: starting the Swift server
     # costs seconds, and this job runs under a 60s timeout.
-    want_reminders = any(by_id[i].queue == "reminders" for i in verdicts)
+    want_reminders = any(v.kind == KIND_REMINDER for v in verdicts.values())
     reminders = Reminders(cfg) if want_reminders else None
     try:
         for item_id, v in verdicts.items():
-            entries.append(apply_item(drive, cfg, by_id[item_id], v, reminders=reminders))
+            entries.append(
+                apply_item(
+                    drive,
+                    cfg,
+                    by_id[item_id],
+                    v,
+                    reminders=reminders,
+                    hard_delete=args.hard_delete,
+                )
+            )
     finally:
         if reminders is not None:
             reminders.close()

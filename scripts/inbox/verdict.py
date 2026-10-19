@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from common import KIND_REMINDER, KIND_TODO, KINDS, declared_kind, normalise_kind
+
 MAX_TITLE = 200
 MAX_SUMMARY = 500
 MAX_TAGS = 8
@@ -73,6 +75,7 @@ def local_zone() -> dt.tzinfo:
 @dataclass
 class Verdict:
     item_id: str
+    kind: str
     title: str
     due_at: dt.datetime | None = None
     priority: str | None = None
@@ -199,33 +202,54 @@ def parse_due(value: Any, *, now: dt.datetime | None = None) -> dt.datetime | No
 # -- assembly ------------------------------------------------------------------
 
 
-def needs_model(queue: str, frontmatter: dict[str, Any]) -> bool:
-    """True when frontmatter alone cannot produce a valid verdict.
+def _as_kind(value: Any) -> str:
+    """Validate a model-supplied kind against the closed set."""
+    kind = normalise_kind(value)
+    if not kind:
+        raise ValidationError(f"kind {value!r} is not one of {KINDS}")
+    return kind
 
-    Keeping this honest is what lets a disciplined capture ("due:" written by
-    hand) bypass the model and its failure modes entirely.
+
+def needs_model(frontmatter: dict[str, Any], filename: str = "") -> bool:
+    """True when the declared fields alone cannot produce a valid verdict.
+
+    With one flat inbox the KIND is now part of what must be settled, so an
+    item bypasses the model only when it declares both a kind and a title (and
+    a due date, if it declares itself a reminder). That is a deliberately high
+    bar: it keeps the fast path honest rather than guessing on half a header.
     """
+    kind = declared_kind(frontmatter, filename)
+    if not kind:
+        return True
     if not frontmatter.get("title"):
         return True
-    return bool(queue == "reminders" and not frontmatter.get("due"))
+    return bool(kind == KIND_REMINDER and not frontmatter.get("due"))
 
 
-def from_frontmatter(
-    item_id: str, queue: str, frontmatter: dict[str, Any], *, now: dt.datetime | None = None
+def from_declared(
+    item_id: str,
+    frontmatter: dict[str, Any],
+    filename: str = "",
+    *,
+    now: dt.datetime | None = None,
 ) -> Verdict:
-    """Build a verdict from trusted frontmatter only. No model involved."""
+    """Build a verdict from the human's own declarations. No model involved."""
+    kind = declared_kind(frontmatter, filename)
+    if not kind:
+        raise ValidationError("no kind declared")
     due = parse_due(frontmatter.get("due"), now=now)
-    if queue == "reminders" and due is None:
-        raise ValidationError("reminders require a due date")
+    if kind == KIND_REMINDER and due is None:
+        raise ValidationError("a reminder needs a due date")
     return Verdict(
         item_id=item_id,
+        kind=kind,
         title=_as_title(frontmatter.get("title")),
         due_at=due,
         priority=_as_priority(frontmatter.get("priority")),
         tags=_as_tags(frontmatter.get("tags")),
-        # An explicitly captured idea with frontmatter is taken at its word;
-        # absent the key, default to not-actionable so nothing is promoted to a
-        # todo by accident.
+        # An explicitly captured item is taken at its word; absent the key,
+        # default to not-actionable so nothing is promoted to a todo by
+        # accident.
         actionable=_as_bool(frontmatter.get("actionable"), field_name="actionable"),
         summary="",
     )
@@ -234,9 +258,9 @@ def from_frontmatter(
 def validate(
     raw: Any,
     *,
-    queue: str,
     allowed_ids: set[str],
     frontmatter: dict[str, Any] | None = None,
+    filename: str = "",
     now: dt.datetime | None = None,
 ) -> Verdict:
     """Validate one model-produced verdict against a pending item.
@@ -254,7 +278,9 @@ def validate(
 
     fm = frontmatter or {}
 
-    # Frontmatter wins, field by field.
+    # Frontmatter and filename markers win, field by field.
+    override = declared_kind(fm, filename)
+    kind = override or _as_kind(raw.get("kind"))
     title = _as_title(fm["title"]) if fm.get("title") else _as_title(raw.get("title"))
     due_src = fm.get("due") if fm.get("due") else raw.get("due_at")
     due = parse_due(due_src, now=now)
@@ -265,13 +291,19 @@ def validate(
         field_name="actionable",
     )
 
-    if queue == "reminders" and due is None:
-        # A reminder with no time is not a reminder. Quarantine rather than
-        # creating a dateless one that will never surface.
-        raise ValidationError("reminders require a due date; none supplied or parseable")
+    if kind == KIND_REMINDER and due is None:
+        # A reminder with no time is not a reminder. When the human DECLARED it
+        # a reminder, that is a contradiction worth quarantining. When the model
+        # merely guessed, demote it to a todo instead: the capture is still
+        # perfectly good work, and losing it to a quarantine folder over a
+        # missing date the author never wrote would be the worse failure.
+        if override:
+            raise ValidationError("declared a reminder but no due date is parseable")
+        kind = KIND_TODO
 
     return Verdict(
         item_id=item_id,
+        kind=kind,
         title=title,
         due_at=due,
         priority=priority,

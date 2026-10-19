@@ -26,11 +26,11 @@ def cfg(tmp_path) -> Config:
     )
 
 
-def rec(item_id="aaaa0000", queue="todo", body="buy milk", fm=None) -> SpoolRecord:
+def rec(item_id="aaaa0000", declared="", body="buy milk", fm=None) -> SpoolRecord:
     return SpoolRecord(
         item_id=item_id,
         profile="personal",
-        queue=queue,
+        declared_kind=declared,
         drive_file_id=f"fid-{item_id}",
         drive_name=f"{item_id}.md",
         mime="text/markdown",
@@ -44,6 +44,7 @@ def rec(item_id="aaaa0000", queue="todo", body="buy milk", fm=None) -> SpoolReco
 def verdict_for(r: SpoolRecord, **over):
     base = {
         "item_id": r.item_id,
+        "kind": "todo",
         "title": "Buy milk",
         "due_at": None,
         "priority": None,
@@ -183,7 +184,7 @@ def test_frontmatter_only_item_never_calls_the_model(cfg, monkeypatch):
         raise AssertionError("the model must not be called for a complete frontmatter item")
 
     monkeypatch.setattr(ex, "call_llm", explode)
-    r = rec("id1", queue="todo", fm={"title": "Already titled"})
+    r = rec("id1", fm={"title": "Already titled", "type": "todo"})
     verdicts, quarantined = ex.extract(cfg, [r])
     assert quarantined == {}
     assert verdicts["id1"].title == "Already titled"
@@ -197,7 +198,7 @@ def test_mixed_batch_only_sends_the_items_that_need_a_model(cfg, monkeypatch):
         return json.dumps([verdict_for(rec("needs"), title="Extracted")])
 
     monkeypatch.setattr(ex, "call_llm", capture)
-    complete = rec("done", fm={"title": "Has a title"})
+    complete = rec("done", fm={"title": "Has a title", "type": "todo"})
     incomplete = rec("needs")
     verdicts, _ = ex.extract(cfg, [complete, incomplete])
 
@@ -210,10 +211,10 @@ def test_mixed_batch_only_sends_the_items_that_need_a_model(cfg, monkeypatch):
 
 def test_quarantines_an_item_whose_frontmatter_is_invalid(cfg, monkeypatch):
     monkeypatch.setattr(ex, "call_llm", lambda *_: json.dumps([]))
-    r = rec("id1", queue="reminders", fm={"title": "x", "due": "not-a-date"})
+    r = rec("id1", fm={"title": "x", "type": "reminder", "due": "not-a-date"})
     verdicts, quarantined = ex.extract(cfg, [r])
     assert verdicts == {}
-    assert "frontmatter invalid" in quarantined["id1"]
+    assert "declared fields invalid" in quarantined["id1"]
 
 
 # -- injection resistance -------------------------------------------------------
@@ -230,7 +231,15 @@ def test_injected_text_cannot_produce_an_action_for_another_item(cfg, monkeypatc
     r = rec("id1", body=INJECTION)
     stub_llm(
         monkeypatch,
-        [{"item_id": "victim-item", "title": "pwned", "actionable": True, "tags": []}],
+        [
+            {
+                "item_id": "victim-item",
+                "kind": "todo",
+                "title": "pwned",
+                "actionable": True,
+                "tags": [],
+            }
+        ],
     )
     verdicts, quarantined = ex.extract(cfg, [r])
     assert verdicts == {}

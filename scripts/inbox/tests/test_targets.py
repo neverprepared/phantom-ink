@@ -23,11 +23,11 @@ def cfg(tmp_path) -> Config:
     )
 
 
-def rec(queue="reminders") -> SpoolRecord:
+def rec(declared="") -> SpoolRecord:
     return SpoolRecord(
         item_id="aaaa0000",
         profile="personal",
-        queue=queue,
+        declared_kind=declared,
         drive_file_id="fid",
         drive_name="note.md",
         mime="text/markdown",
@@ -40,6 +40,7 @@ def rec(queue="reminders") -> SpoolRecord:
 def verdict(**over) -> Verdict:
     base = {
         "item_id": "aaaa0000",
+        "kind": "reminder",
         "title": "Do the thing",
         "due_at": dt.datetime(2026, 11, 14, 9, 0, tzinfo=dt.UTC),
         "priority": "high",
@@ -184,7 +185,7 @@ def stub_learn(monkeypatch, shas: list[str]):
 
 def test_todo_writes_the_todo_vault(cfg, monkeypatch):
     seen = stub_learn(monkeypatch, ["a" * 64])
-    out = tg.apply_todo(cfg, rec("todo"), verdict())
+    out = tg.apply_todo(cfg, rec(), verdict(kind="todo"))
     assert out.target == "todo"
     assert seen[0]["token"] == "todo-token"
     assert "inbox" in seen[0]["tags"]
@@ -193,13 +194,13 @@ def test_todo_writes_the_todo_vault(cfg, monkeypatch):
 def test_todo_body_carries_the_due_date_the_vault_cannot_hold(cfg, monkeypatch):
     """The todo vault has no due-date field, so it goes in the body, not nowhere."""
     seen = stub_learn(monkeypatch, ["a" * 64])
-    tg.apply_todo(cfg, rec("todo"), verdict())
+    tg.apply_todo(cfg, rec(), verdict(kind="todo"))
     assert "due: 2026-11-14T09:00" in seen[0]["body"]
 
 
 def test_idea_writes_memory_then_a_pointer_when_actionable(cfg, monkeypatch):
     seen = stub_learn(monkeypatch, ["a" * 64, "b" * 64])
-    out = tg.apply_idea(cfg, rec("ideas"), verdict(actionable=True))
+    out = tg.apply_idea(cfg, rec(), verdict(kind="idea", actionable=True))
     assert len(seen) == 2
     assert seen[0]["token"] == "brain-token"
     assert seen[1]["token"] == "todo-token"
@@ -212,7 +213,7 @@ def test_idea_writes_memory_then_a_pointer_when_actionable(cfg, monkeypatch):
 def test_idea_writes_no_pointer_when_not_actionable(cfg, monkeypatch):
     """Un-actionable ideas must not accumulate in the todo list."""
     seen = stub_learn(monkeypatch, ["a" * 64])
-    out = tg.apply_idea(cfg, rec("ideas"), verdict(actionable=False))
+    out = tg.apply_idea(cfg, rec(), verdict(kind="idea", actionable=False))
     assert len(seen) == 1
     assert seen[0]["token"] == "brain-token"
     assert out.extra == ""
@@ -229,14 +230,14 @@ def test_idea_survives_a_failed_pointer(cfg, monkeypatch):
         raise tg.ApplyError("daemon down")
 
     monkeypatch.setattr(tg, "pbrain_learn", fake)
-    out = tg.apply_idea(cfg, rec("ideas"), verdict(actionable=True))
+    out = tg.apply_idea(cfg, rec(), verdict(kind="idea", actionable=True))
     assert out.result == "a" * 64
     assert "pointer failed" in out.extra
 
 
 def test_idea_is_tagged_idea_and_inbox(cfg, monkeypatch):
     seen = stub_learn(monkeypatch, ["a" * 64])
-    tg.apply_idea(cfg, rec("ideas"), verdict(actionable=False))
+    tg.apply_idea(cfg, rec(), verdict(kind="idea", actionable=False))
     assert "idea" in seen[0]["tags"] and "inbox" in seen[0]["tags"]
 
 
@@ -246,24 +247,23 @@ def test_learn_requires_a_token(cfg, monkeypatch):
         tg.pbrain_learn(cfg, token="", title="t", body="b", tags=[])
 
 
-def test_apply_routes_by_queue(cfg, monkeypatch):
+def test_apply_routes_by_verdict_kind(cfg, monkeypatch):
+    """Dispatch follows the verdict, not where the file sat."""
     stub_learn(monkeypatch, ["a" * 64])
-    assert tg.apply(cfg, rec("todo"), verdict()).target == "todo"
+    assert tg.apply(cfg, rec(), verdict(kind="todo")).target == "todo"
 
 
-def test_apply_rejects_an_unknown_queue(cfg):
-    bad = rec("todo")
-    bad.queue = "nonsense"
-    with pytest.raises(tg.ApplyError, match="no applier"):
-        tg.apply(cfg, bad, verdict())
+def test_apply_rejects_an_unknown_kind(cfg):
+    with pytest.raises(tg.ApplyError, match="no applier for kind"):
+        tg.apply(cfg, rec(), verdict(kind="nonsense"))
 
 
 def test_apply_uses_a_shared_reminders_session(cfg, monkeypatch):
     client = FakeClient(lists="• phantom-personal\n")
     wire(monkeypatch, client)
     shared = tg.Reminders(cfg)
-    tg.apply(cfg, rec("reminders"), verdict(), reminders=shared)
-    tg.apply(cfg, rec("reminders"), verdict(title="Second"), reminders=shared)
+    tg.apply(cfg, rec(), verdict(), reminders=shared)
+    tg.apply(cfg, rec(), verdict(title="Second"), reminders=shared)
     assert client.tools_called().count("reminders_list_lists") == 1
 
 
