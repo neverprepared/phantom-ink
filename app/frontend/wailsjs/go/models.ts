@@ -4502,6 +4502,10 @@ export namespace opensearch {
 	    workspace?: string;
 	    model?: string;
 	    duration_ms?: number;
+	    severity?: string;
+	    service?: string;
+	    event?: string;
+	    attrs?: Record<string, any>;
 	
 	    static createFrom(source: any = {}) {
 	        return new LogEntry(source);
@@ -4515,6 +4519,10 @@ export namespace opensearch {
 	        this.workspace = source["workspace"];
 	        this.model = source["model"];
 	        this.duration_ms = source["duration_ms"];
+	        this.severity = source["severity"];
+	        this.service = source["service"];
+	        this.event = source["event"];
+	        this.attrs = source["attrs"];
 	    }
 	}
 	export class Overview {

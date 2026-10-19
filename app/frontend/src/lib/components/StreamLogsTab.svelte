@@ -1,22 +1,18 @@
 <script lang="ts">
   /**
    * Live-logs tab body for the Stream panel — renders the OpenSearch telemetry
-   * tail (time / body / model / workspace / session / duration) with the sort
-   * chip and footer. Display-only: the parent owns fetching, sorting, and the
-   * feature flag; this component just renders `displayLogs` and signals the two
-   * actions (clear sort, view-more) back up.
+   * tail with the sort chip and footer. Display-only: the parent owns fetching,
+   * sorting, and the feature flag; this component just renders `displayLogs`
+   * and signals the two actions (clear sort, view-more) back up.
+   *
+   * Each row leads with a summary built from the event's own attributes
+   * (logSummary), not the raw `body`. Rendering `body` alone meant every hook
+   * row read "claude_code.hook_execution_complete" and said nothing about
+   * which hook ran or how it went.
    */
   import { formatClock } from '../utils/format';
+  import { fmtDuration, isFailure, logSummary, type LogEntry } from '../logSummary';
   import EmptyState from './EmptyState.svelte';
-
-  interface LogEntry {
-    time: string;
-    body: string;
-    session?: string;
-    workspace?: string;
-    model?: string;
-    duration_ms?: number;
-  }
 
   let {
     opensearchActive,
@@ -42,11 +38,6 @@
     if (!iso) return '';
     try { return formatClock(new Date(iso).getTime(), { seconds: true }); }
     catch { return iso; }
-  }
-
-  function fmtDur(ms?: number): string {
-    if (!ms) return '';
-    return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(2)}s`;
   }
 
   function sessionShort(id?: string): string {
@@ -75,13 +66,15 @@
     {/if}
     <ol class="log-list">
       {#each displayLogs as l, i (l.time + ':' + i)}
-        <li class="log-row">
+        <li class="log-row" class:is-failure={isFailure(l)}>
           <span class="log-time">{fmtTime(l.time)}</span>
-          <span class="log-body">{l.body}</span>
-          {#if l.model}<span class="log-tag">{l.model}</span>{/if}
+          <span class="log-body" title={l.body}>{logSummary(l)}</span>
+          {#if l.service && l.service !== 'claude-code'}
+            <span class="log-tag tag-svc">{l.service}</span>
+          {/if}
           {#if l.workspace}<span class="log-tag tag-ws">{l.workspace}</span>{/if}
           {#if l.session}<span class="log-tag tag-sess">{sessionShort(l.session)}</span>{/if}
-          {#if l.duration_ms}<span class="log-dur">{fmtDur(l.duration_ms)}</span>{/if}
+          {#if l.duration_ms}<span class="log-dur">{fmtDuration(l.duration_ms)}</span>{/if}
         </li>
       {/each}
     </ol>
@@ -112,6 +105,10 @@
     overflow: hidden;
   }
   .log-row:hover { background: var(--bg-hover, var(--color-surface-hover)); }
+  /* A failed row has to be findable while scrolling a thousand lines, hence a
+     left marker rather than only a colour change. */
+  .log-row.is-failure { border-left: 2px solid var(--color-danger, #e5534b); }
+  .log-row.is-failure .log-body { color: var(--color-danger, #e5534b); }
   .log-time { color: var(--text-faint, var(--color-text-tertiary)); flex-shrink: 0; }
   .log-body { color: var(--text, var(--color-text-primary)); font-weight: 600; }
   .log-tag {
@@ -122,6 +119,10 @@
     font-size: 11px;
   }
   .tag-ws   { color: var(--accent, var(--color-accent)); }
+  /* Only shown for non-claude-code services, so it should stand out: today
+     every record is claude-code, and a row from one of our own services is
+     the interesting exception. */
+  .tag-svc  { color: var(--color-accent-secondary, var(--color-accent)); font-weight: 600; }
   .tag-sess { font-family: var(--font-mono, ui-monospace, monospace); }
   .log-dur  { color: var(--text-faint, var(--color-text-tertiary)); margin-left: auto; }
 

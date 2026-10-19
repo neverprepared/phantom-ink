@@ -9,6 +9,7 @@
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import ContextMenu from '../components/ContextMenu.svelte';
+  import type { LogEntry } from '../logSummary';
   import StreamLogsTab from '../components/StreamLogsTab.svelte';
   import EnvelopeHistory from '../components/EnvelopeHistory.svelte';
   import TimelinePanel from './TimelinePanel.svelte';
@@ -45,14 +46,6 @@
     ref: string;
   }
 
-  interface LogEntry {
-    time: string;
-    body: string;
-    session?: string;
-    workspace?: string;
-    model?: string;
-    duration_ms?: number;
-  }
 
   type Tab = 'live' | 'attention' | 'logs' | 'timeline';
 
