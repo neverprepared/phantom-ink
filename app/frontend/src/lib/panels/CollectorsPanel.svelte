@@ -7,6 +7,7 @@
   import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import { collectJobsRes } from '../stores/collectors.svelte';
 
   // ── Types ──────────────────────────────────────────────────────────────
 
@@ -35,9 +36,14 @@
 
   const profile = $derived(profileState.active?.name ?? '');
 
-  let jobs         = $state<CollectJob[]>([]);
-  let loading      = $state(false);
-  let loadError    = $state<string | null>(null); // set when the jobs fetch fails, so the panel shows an error not a false "no jobs"
+  // Module-scope store, so returning to this panel renders the retained rows
+  // rather than reloading from scratch (stores/collectors.svelte.ts). The
+  // failed-vs-empty distinction this panel already made correctly is now the
+  // resource's own `error`, available to every migrated panel.
+  const jobs = $derived(collectJobsRes.value);
+  const loading = $derived(collectJobsRes.loading);
+  const refreshing = $derived(collectJobsRes.refreshing);
+  const loadError = $derived(collectJobsRes.error);
   let saving       = $state(false); // in-flight guard for save() — prevents double-submit
   let editingId    = $state<string | null>(null); // null=none, 'new'=create, id=edit
   let runningId    = $state<string | null>(null);
@@ -72,20 +78,8 @@
 
   // ── Data loading ───────────────────────────────────────────────────────
 
-  async function load() {
-    const a = await getApi();
-    if (!a) { loadError = 'API bindings unavailable'; loading = false; return; }
-    loading = true;
-    try {
-      const j = await (a.ListCollectJobs as any)('');
-      jobs = (j ?? []) as CollectJob[];
-      loadError = null;
-    } catch (err: any) {
-      loadError = `${err?.message ?? err}`;
-      jobs = [];
-    } finally {
-      loading = false;
-    }
+  function load() {
+    return collectJobsRes.refresh();
   }
 
   // ── CRUD ───────────────────────────────────────────────────────────────

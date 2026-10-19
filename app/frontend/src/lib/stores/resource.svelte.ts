@@ -41,6 +41,20 @@ export interface ResourceOptions<T> {
   /** Human label used in error messages and logs. */
   label: string;
   /**
+   * Scope key, read at request time and re-read when the response lands. A
+   * response whose key no longer matches is DISCARDED.
+   *
+   * This exists for profile scoping, which is the invariant this codebase
+   * cares most about: every panel is profile-scoped, and a fetch that resolves
+   * after the user switches profile would otherwise paint one profile's rows
+   * under another profile's header. A sequence guard alone does not catch it —
+   * the response is the newest, it is just for the wrong tenant.
+   *
+   * Changing the key also clears the retained value, so stale-while-revalidate
+   * never shows profile A's data while profile B is loading.
+   */
+  key?: () => string;
+  /**
    * Called when a load fails. Omit to stay quiet (the error is still readable
    * on the resource) — pass notifications.error to surface a toast.
    */
@@ -89,9 +103,21 @@ export function resource<T>(
   // profile's rows render under another profile's header.
   let seq = 0;
   let inFlight: Promise<void> | null = null;
+  // The key the currently-held value belongs to.
+  let valueKey: string | null = null;
 
   async function run(): Promise<void> {
     const mySeq = ++seq;
+    const myKey = options.key?.() ?? null;
+
+    // A key change invalidates the retained value: showing the previous
+    // scope's rows while the new one loads is exactly the leak this guards.
+    if (myKey !== valueKey && loaded) {
+      value = options.initial;
+      loaded = false;
+      error = null;
+    }
+
     if (loaded) {
       refreshing = true;
     } else {
@@ -106,7 +132,10 @@ export function resource<T>(
       }
       const next = await fetcher(api);
       if (mySeq !== seq) return; // superseded
+      // Re-read the key: the scope may have changed while this was in flight.
+      if ((options.key?.() ?? null) !== myKey) return;
       value = next;
+      valueKey = myKey;
       error = null;
       loaded = true;
     } catch (e) {
@@ -149,6 +178,7 @@ export function resource<T>(
     reset() {
       seq++; // invalidate anything in flight
       value = options.initial;
+      valueKey = null;
       loaded = false;
       error = null;
       loading = false;

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
+  import { tokensRes, tokenCapabilitiesRes, tokenProfilesRes, loadTokensPanel } from '../stores/tokens.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import type { brainbox } from '../../../wailsjs/go/models';
 
@@ -12,10 +13,14 @@
   // bindings (MintProfileToken / ListProfileTokens / RevokeProfileToken +
   // the two catalog helpers) which delegate to the on-disk API key.
 
-  let tokens = $state<brainbox.ProfileTokenInfo[]>([]);
-  let capabilities = $state<string[]>([]);
-  let profiles = $state<string[]>([]);
-  let loading = $state(true);
+  // Module-scope store, so returning to this panel renders the token list
+  // immediately instead of blanking to a spinner (stores/tokens.svelte.ts).
+  const tokens = $derived(tokensRes.value);
+  const capabilities = $derived(tokenCapabilitiesRes.value);
+  const profiles = $derived(tokenProfilesRes.value);
+  const loading = $derived(tokensRes.loading);
+  const refreshing = $derived(tokensRes.refreshing);
+  const loadError = $derived(tokensRes.error);
 
   // Profile filter. '' == "All profiles" (default). The known-profiles set is the
   // union of the fetched catalog and the distinct workspace_profile values on the
@@ -48,26 +53,12 @@
   let minted = $state<brainbox.ProfileToken | null>(null);
   let copied = $state(false);
 
-  onMount(async () => {
-    const a = await getApi();
-    if (!a) { loading = false; return; }
-    // Catalog + profiles are best-effort — a failure there shouldn't blank the
-    // page (free-text profile + no capabilities still mints).
-    try { capabilities = (await a.ProfileTokenCapabilities()) ?? []; } catch { /* leave empty */ }
-    try { profiles = (await a.ProfileTokenProfiles()) ?? []; } catch { /* free-text still works */ }
-    await refresh();
+  onMount(() => {
+    void loadTokensPanel();
   });
 
-  async function refresh() {
-    const a = await getApi();
-    if (!a) { loading = false; return; }
-    try {
-      tokens = (await a.ListProfileTokens()) ?? [];
-    } catch (err: any) {
-      notifications.error(`Failed to load tokens: ${err?.message ?? err}`);
-    } finally {
-      loading = false;
-    }
+  function refresh() {
+    return tokensRes.refresh();
   }
 
   function toggleCap(cap: string) {
@@ -150,7 +141,8 @@
       </p>
     </div>
     <div class="header-actions">
-      <button class="btn" onclick={refresh} disabled={loading}>refresh</button>
+      <button class="btn" onclick={refresh} disabled={loading || refreshing}>refresh</button>
+      {#if refreshing}<span class="muted" title="refreshing">·</span>{/if}
     </div>
   </header>
 
@@ -243,6 +235,10 @@
 
   {#if loading}
     <p class="hint">loading…</p>
+  {:else if loadError}
+    <!-- A failed load is not an empty list. Saying "no tokens minted yet"
+         when the request failed invites the operator to mint a duplicate. -->
+    <EmptyState title="Couldn't load tokens" message={loadError} />
   {:else if filteredTokens.length === 0}
     <EmptyState
       title={selectedProfile ? `No tokens for ${selectedProfile}` : 'No tokens minted yet'}
