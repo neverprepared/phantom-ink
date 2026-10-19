@@ -20,6 +20,7 @@ A macOS desktop app (built with [Wails](https://wails.io)) for managing workspac
 app/            Wails desktop app (Go backend + Svelte/TS frontend)
 shell-profiler/ CLI tool for workspace profile management
 brainbox/       Brainbox API server source
+scripts/inbox/  Drive inbox — capture connector (see scripts/inbox/README.md)
 docker/         Docker Compose stacks for local services
 docs/           Architecture docs and Brainbox API reference
 Formula/        Homebrew formulae
