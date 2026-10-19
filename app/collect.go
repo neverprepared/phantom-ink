@@ -247,6 +247,169 @@ func (db *DB) DedupeWidgetJobs() (int, error) {
 	return int(n), nil
 }
 
+// ── Widget-owned job reconciliation ────────────────────────────────────────
+
+// WidgetJobOwner is one metric widget's claim on a collect job: the job it
+// intends to keep, plus the legacy fingerprint used to match jobs predating
+// owner_widget_id.
+type WidgetJobOwner struct {
+	WidgetID  string `json:"widget_id"`
+	KeepJobID string `json:"keep_job_id"`
+	// Fingerprint is "<label>::<command>", the pre-owner_widget_id identity.
+	// Built in GO (see widgetJobFingerprint) so the producer and the matcher
+	// cannot disagree about its shape.
+	Label   string `json:"label"`
+	Command string `json:"command"`
+
+	// HTTP metric widgets have no literal command -- theirs is derived. The
+	// caller sends the config and Go derives it, so the fingerprint cannot
+	// drift from what the widget actually registered.
+	HTTP   bool   `json:"http"`
+	URL    string `json:"url"`
+	Header string `json:"header"`
+	Path   string `json:"path"`
+}
+
+// command returns the owner's effective job command.
+func (o WidgetJobOwner) command() string {
+	if o.HTTP {
+		return httpMetricCommand(o.URL, o.Header, o.Path)
+	}
+	return o.Command
+}
+
+// widgetJobFingerprint is the legacy identity of a widget-owned job.
+func widgetJobFingerprint(label, command string) string {
+	return label + "::" + command
+}
+
+// HTTPMetricCommand builds the synthetic shell command an http-metric widget
+// is scheduled as.
+//
+// This is the SINGLE source of that string. It previously existed only in the
+// frontend -- once in HttpMetricWidget.svelte, which creates the job, and again
+// in DashboardPanel.svelte, which rebuilt it to fingerprint legacy jobs. Two
+// copies of a format that the Go scheduler then executes: if either drifted,
+// the panel would stop recognising its own jobs and prune live ones.
+//
+// Bound so the widget uses it too, rather than keeping a third copy.
+func (a *App) HTTPMetricCommand(url, header, path string) string {
+	return httpMetricCommand(url, header, path)
+}
+
+func httpMetricCommand(url, header, path string) string {
+	cmd := "op run -- curl -sf"
+	if header != "" {
+		cmd += ` -H "` + header + `"`
+	}
+	cmd += ` "` + url + `"`
+	if path != "" {
+		cmd += ` | jq -r '.` + path + `'`
+	}
+	return cmd
+}
+
+// ReconcileCollectJobs removes a profile's duplicate widget-owned collect jobs
+// in ONE transaction, keeping the job each widget declares.
+//
+// This logic used to live in DashboardPanel.svelte, which built the owner maps
+// from whatever widgets the client happened to hold, called ListCollectJobs,
+// and then issued a DeleteCollectJob per orphan with every error swallowed by
+// `catch {}`. Two things were wrong with that beyond the N round trips: a
+// dashboard that rendered before its widget config loaded presented an EMPTY
+// widget set, and the prune then deleted live jobs; and the client
+// reconstructed the Go-side command string in TypeScript to fingerprint legacy
+// jobs, a second copy of a format that was free to drift.
+//
+// Refuses to prune on an empty owner set, because "no widgets" is
+// indistinguishable from "widgets not loaded yet" and the destructive reading
+// of that ambiguity is the wrong one.
+func (a *App) ReconcileCollectJobs(profile string, owners []WidgetJobOwner) (int, error) {
+	if a.db == nil {
+		return 0, errNoDB
+	}
+	profile = strings.TrimSpace(profile)
+	if profile == "" {
+		return 0, fmt.Errorf("no profile specified")
+	}
+	if len(owners) == 0 {
+		// Not an error: nothing claimed, so nothing is orphaned by definition.
+		return 0, nil
+	}
+	return a.db.reconcileWidgetJobs(profile, owners)
+}
+
+// reconcileWidgetJobs does the match-and-delete inside a single transaction, so
+// a failure halfway cannot leave a partially pruned profile.
+func (db *DB) reconcileWidgetJobs(profile string, owners []WidgetJobOwner) (int, error) {
+	byWidget := make(map[string]string, len(owners))
+	byFingerprint := make(map[string]string, len(owners))
+	for _, o := range owners {
+		if o.KeepJobID == "" {
+			continue
+		}
+		if o.WidgetID != "" {
+			byWidget[o.WidgetID] = o.KeepJobID
+		}
+		if cmd := o.command(); cmd != "" {
+			byFingerprint[widgetJobFingerprint(o.Label, cmd)] = o.KeepJobID
+		}
+	}
+	if len(byWidget) == 0 && len(byFingerprint) == 0 {
+		return 0, nil
+	}
+
+	jobs, err := db.ListCollectJobs(profile)
+	if err != nil {
+		return 0, err
+	}
+
+	var doomed []string
+	for _, j := range jobs {
+		// Prefer the direct id link.
+		if j.OwnerWidgetID != "" {
+			if keep, ok := byWidget[j.OwnerWidgetID]; ok && j.ID != keep {
+				doomed = append(doomed, j.ID)
+			}
+			continue
+		}
+		// Legacy fingerprint match — the same widget's keep id wins.
+		if keep, ok := byFingerprint[widgetJobFingerprint(j.Name, j.Command)]; ok && j.ID != keep {
+			doomed = append(doomed, j.ID)
+		}
+	}
+	if len(doomed) == 0 {
+		return 0, nil
+	}
+
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(`DELETE FROM collect_jobs WHERE id = ? AND profile = ?`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	removed := 0
+	for _, id := range doomed {
+		res, err := stmt.Exec(id, profile)
+		if err != nil {
+			return 0, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			removed += int(n)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return removed, nil
+}
+
 // PruneOrphanWidgetJobs deletes widget-owned collect jobs whose owning widget
 // no longer exists in that profile's saved dashboard layout. Rebuilding a
 // dashboard (and the earlier cross-profile layout clone) left jobs bound to

@@ -16,20 +16,24 @@
   import CardExpander from '../components/CardExpander.svelte';
 
   // --- Profile image state ---
-  type ImageStatus = { configured: boolean; exists: boolean; tag: string; digest: string; error?: string; built_at?: string };
+  // Mirrors Go's ProfileImageStatusView. `state` is the field to branch on:
+  // the old shape could not distinguish a registry 401 from "no image", so
+  // both rendered as "no image" — the recorded registry-auth gotcha.
+  //
+  // `built_at` is deliberately absent: the frontend type used to declare it,
+  // but the Go status carries no such field, so the "· built X" suffix it
+  // guarded could never render.
+  type ImageState = 'unconfigured' | 'unauthorized' | 'unreachable' | 'missing' | 'present';
+  type ImageStatus = {
+    profile: string;
+    state: ImageState;
+    configured: boolean;
+    exists: boolean;
+    tag: string;
+    digest: string;
+    detail?: string;
+  };
 
-  function fmtBuiltAt(iso: string | undefined): string {
-    if (!iso) return '';
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return '';
-    const now = Date.now();
-    const diff = Math.floor((now - d.getTime()) / 1000);
-    if (diff < 60) return 'just now';
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    if (diff < 7 * 86400) return `${Math.floor(diff / 86400)}d ago`;
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-  }
   let imageStatuses = $state<Record<string, ImageStatus>>({});
   let imageBuilding = $state<Record<string, boolean>>({});
   let imageLogs = $state<Record<string, string[]>>({});
@@ -78,9 +82,9 @@
 
   onMount(async () => {
     await Promise.all([refreshProfiles(), loadBackups(), refreshDisk(), loadProfileColors(), loadGatewayInfo()]);
-    for (const p of profileState.profiles) {
-      checkImageStatus(p.name);
-    }
+    // One batched call. This was a bare loop firing an un-awaited remote
+    // registry hit per profile — 5 + N round trips per panel load, unordered.
+    await refreshAllImageStatuses();
   });
 
   async function loadGatewayInfo() {
@@ -269,14 +273,39 @@
   // NFS exports
   // --- Profile image functions ---
 
+  async function refreshAllImageStatuses() {
+    const a = await getApi();
+    if (!a) return;
+    const names = profileState.profiles.map(p => p.name).filter(Boolean);
+    if (names.length === 0) return;
+    try {
+      const all = await a.GetRemoteProfileImageStatuses(names);
+      for (const [name, st] of Object.entries(all ?? {})) {
+        imageStatuses[name] = st as ImageStatus;
+      }
+    } catch (err) {
+      // A transport failure is itself a state, not a reason to claim every
+      // profile is unconfigured — which is what the old per-profile catch did.
+      for (const name of names) {
+        imageStatuses[name] = {
+          profile: name, state: 'unreachable', configured: false,
+          exists: false, tag: '', digest: '',
+          detail: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }
+  }
+
   async function checkImageStatus(profile: string) {
     const a = await getApi();
     if (!a) return;
     try {
-      const s = await a.GetRemoteProfileImageStatus(profile);
-      imageStatuses[profile] = s;
-    } catch {
-      imageStatuses[profile] = { configured: false, exists: false, tag: '', digest: '' };
+      imageStatuses[profile] = (await a.GetRemoteProfileImageStatus(profile)) as ImageStatus;
+    } catch (err) {
+      imageStatuses[profile] = {
+        profile, state: 'unreachable', configured: false, exists: false,
+        tag: '', digest: '', detail: err instanceof Error ? err.message : String(err),
+      };
     }
   }
 
@@ -465,15 +494,21 @@
               {/if}
               {#if !status}
                 <span class="image-badge checking">checking…</span>
-              {:else if !status.configured}
+              {:else if status.state === 'unconfigured'}
                 <span class="image-badge unconfigured">no registry</span>
-              {:else if status.exists}
-                <span class="image-badge ok" title={status.built_at ? new Date(status.built_at).toLocaleString() : ''}>
+              {:else if status.state === 'unauthorized'}
+                <!-- Distinct from "no image": the registry rejected our
+                     credential, so the fix is REGISTRY_PASSWORD, not a build. -->
+                <span class="image-badge unauthorized" title={status.detail ?? ''}>auth failed ⚠</span>
+              {:else if status.state === 'unreachable'}
+                <span class="image-badge unreachable" title={status.detail ?? ''}>registry unreachable</span>
+              {:else if status.state === 'present'}
+                <span class="image-badge ok">
                   <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-                  image ready{status.built_at ? ` · ${fmtBuiltAt(status.built_at)}` : ''}
+                  image ready
                 </span>
               {:else}
-                <span class="image-badge missing" title={status?.error ?? ''}>no image{status?.error ? ' ⚠' : ''}</span>
+                <span class="image-badge missing" title={status.detail ?? ''}>no image</span>
               {/if}
             </span>
           </div>
@@ -941,6 +976,18 @@
     background: rgba(148, 163, 184, 0.05);
     border: 1px solid rgba(148, 163, 184, 0.12);
     color: var(--color-text-tertiary);
+  }
+  /* Actionable and NOT the same as "no image" — the credential was rejected,
+     so the fix is REGISTRY_PASSWORD rather than running a build. */
+  .image-badge.unauthorized {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    color: #f87171;
+  }
+  .image-badge.unreachable {
+    background: rgba(148, 163, 184, 0.06);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    color: var(--color-text-secondary);
   }
 
   .btn-build {

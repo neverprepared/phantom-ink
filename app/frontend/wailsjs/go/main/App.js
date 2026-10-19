@@ -434,6 +434,10 @@ export function GetRemoteProfileImageStatus(arg1) {
   return window['go']['main']['App']['GetRemoteProfileImageStatus'](arg1);
 }
 
+export function GetRemoteProfileImageStatuses(arg1) {
+  return window['go']['main']['App']['GetRemoteProfileImageStatuses'](arg1);
+}
+
 export function GetRule(arg1) {
   return window['go']['main']['App']['GetRule'](arg1);
 }
@@ -484,6 +488,10 @@ export function GetVaultRecords(arg1, arg2) {
 
 export function GetWidgetCount(arg1, arg2) {
   return window['go']['main']['App']['GetWidgetCount'](arg1, arg2);
+}
+
+export function HTTPMetricCommand(arg1, arg2, arg3) {
+  return window['go']['main']['App']['HTTPMetricCommand'](arg1, arg2, arg3);
 }
 
 export function HeadArtifactObject(arg1, arg2) {
@@ -772,6 +780,10 @@ export function ReadProfileHostEnv(arg1) {
 
 export function RebuildBaseImage(arg1) {
   return window['go']['main']['App']['RebuildBaseImage'](arg1);
+}
+
+export function ReconcileCollectJobs(arg1, arg2) {
+  return window['go']['main']['App']['ReconcileCollectJobs'](arg1, arg2);
 }
 
 export function ReconcileIntegrations() {
