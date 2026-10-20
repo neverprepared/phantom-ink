@@ -1,12 +1,20 @@
 <script lang="ts">
-  import { getApi, openInBrowser, safe } from '../utils/api';
+  import { getApi, openInBrowser } from '../utils/api';
   import { formatBytes as fmtBytes } from '../utils/format';
   import { onMount, onDestroy } from 'svelte';
   import { brainboxEvents } from '../events.svelte';
   import { notifications } from '../notifications.svelte';
   import { combinedHistory as combinedHistoryStore, localHistory as localHistoryStore, diskHistory as diskHistoryStore } from '../metricsHistory.svelte';
   import { profileState, profileColorStore, featureFlags, panelFocus, refreshTick } from '../stores.svelte';
-  import { sessionsRes, localProcsRes, containerDiskRes, refreshFleet } from '../stores/fleet.svelte';
+  import {
+    sessionsRes,
+    localProcsRes,
+    containerDiskRes,
+    diskBreakdownRes,
+    localRunnerRes,
+    refreshFleet,
+  } from '../stores/fleet.svelte';
+  import { agentRoleNames, ensureAgentRoles, agentRolesRes } from '../stores/catalog.svelte';
   import { getProfileColor, profileColorStyle } from '../utils/profileColors';
   import EmptyState from '../components/EmptyState.svelte';
   import Badge from '../components/Badge.svelte';
@@ -25,7 +33,7 @@
   // round-trip every visit.
   let tasks = $state<any[]>([]);
   let agents = $state<any[]>([]);
-  let diskBreakdown = $state<any | null>(null);
+
   let sessionHistory = $state<Record<string, any[]>>({});
   let history = $state<any[]>([]);
   let pastSessions = $state<any[]>([]);
@@ -77,27 +85,21 @@
     }
   });
 
-  // Available agent roles (loaded dynamically)
-  let availableRoles = $state<string[]>(['assistant']);
+  // Available agent roles, from the shared catalog. Five call sites used to
+  // fetch this list and map it identically; the catalog changes when someone
+  // authors a role, not per interaction.
+  let availableRoles = $derived(agentRoleNames(['assistant']));
 
-  async function loadRoles() {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const agentDefs = await a.ListAgentRoles();
-      availableRoles = (agentDefs ?? []).map((ag: any) => ag.name);
-    } catch {
-      availableRoles = ['assistant'];
-    }
-  }
-
-  // Local runner
-  let localRunnerName = $state('');
-  let localRunnerActive = $state(false);
+  // Local runner, from the shared store: the Settings panel reads it too (and
+  // writes it, via start/stop), so holding a second copy here would let the
+  // two disagree.
+  let localRunnerName = $derived(localRunnerRes.value?.name ?? 'local-mac');
+  let localRunnerActive = $derived(localRunnerRes.value?.running ?? false);
 
   let activeProfile = $derived(profileState.active);
 
   let allSessions = $derived(sessionsRes.for(activeProfile?.name ?? '').value);
+  let diskBreakdown = $derived(diskBreakdownRes.value);
   let localProcesses = $derived(localProcsRes.value);
   /** container name -> writable size, derived from the shared disk read. */
   let diskUsageMap = $derived.by(() => {
@@ -181,15 +183,14 @@
       // processes and container disk come from the shared store, and the
       // resources collapse concurrent reads -- so this running alongside
       // StatusBar's poll or refreshMetrics costs one request, not two.
-      const [hubState, diskBk] = await Promise.all([
+      const [hubState] = await Promise.all([
         a.GetHubState(),
-        safe(a.GetDiskBreakdown(), null, 'GetDiskBreakdown'),
         refreshFleet(profileState.active?.name ?? ''),
         containerDiskRes.refresh(),
+        diskBreakdownRes.refresh(),
       ]);
       tasks = hubState?.tasks ?? [];
       agents = hubState?.agents ?? [];
-      diskBreakdown = diskBk;
     } catch (err: any) {
       notifications.error(`Failed to load sessions: ${err?.message ?? err}`);
     } finally {
@@ -290,7 +291,9 @@
   onMount(async () => {
     refresh();
     refreshMetrics();
-    loadRoles();
+    // `ensure`, not a fetch: the role catalog is shared and near-static, so a
+    // remount reuses it instead of re-reading it.
+    void ensureAgentRoles();
     metricsTimer = setInterval(refreshMetrics, 10_000);
 
     // Bus-driven refresh. agent:event is the typed envelope stream app.go emits
@@ -303,14 +306,7 @@
         scheduleRefresh();
       }
     }) ?? null;
-    const a = await getApi();
-    if (a) {
-      try {
-        const rs = await a.GetLocalRunnerStatus();
-        localRunnerName = rs?.name ?? 'local-mac';
-        localRunnerActive = rs?.running ?? false;
-      } catch {}
-    }
+    void localRunnerRes.refresh();
   });
 
   onDestroy(() => {
@@ -333,7 +329,9 @@
     }
     const action = (ev.data as any)?.action ?? '';
     if (action === 'agent.created' || action === 'agent.updated' || action === 'agent.deleted') {
-      loadRoles();
+      // The catalog actually changed, so this is the one place that must
+      // bypass the "already loaded" check.
+      void agentRolesRes.refresh({ force: true });
     }
   });
 

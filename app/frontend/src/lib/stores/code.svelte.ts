@@ -24,6 +24,7 @@
 import { getApi } from '../utils/api';
 import { notifications } from '../notifications.svelte';
 import { keyedResource, type Resource } from './resource.svelte';
+import { agentRoleNames, ensureAgentRoles } from './catalog.svelte';
 
 export interface Repo {
   provider: 'github' | 'ado';
@@ -450,7 +451,8 @@ class CodeStore {
   dispatchPrompt = $state('');
   dispatchAgent = $state(DEFAULT_AGENT);
   dispatching = $state(false);
-  agents = $state<string[]>([DEFAULT_AGENT]);
+  /** Role names for the picker; falls back to the dispatch lane's default. */
+  agents = $derived(agentRoleNames([DEFAULT_AGENT]));
   /** Task id of the last successful dispatch — the panel links it to Jobs. */
   lastTaskID = $state('');
 
@@ -564,15 +566,9 @@ class CodeStore {
 
   /** Load the hub's agent role catalog for the modal's picker. */
   async loadAgents(): Promise<void> {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const roles = (await a.ListAgentRoles()) ?? [];
-      const names = roles.map((r: any) => r.name).filter(Boolean);
-      if (names.length) this.agents = names;
-    } catch {
-      /* fleet may be down — the picker falls back to ['worker'] */
-    }
+    // Shared catalog: five call sites used to fetch this and map it
+    // identically. `ensure` means a remount reuses what is already held.
+    await ensureAgentRoles();
   }
 
   /**
