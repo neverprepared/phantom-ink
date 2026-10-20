@@ -75,10 +75,16 @@
     cost_usd?: number;
     input_tokens?: number;
     output_tokens?: number;
-    prompt?: string;
-    response?: string;
-    // Length-only when content logging is off, so a redacted turn still
-    // reports its size rather than looking empty.
+    // Content is the prompt OR the response -- the exporter sets only one per
+    // document, and `kind` says which. Named to match opensearch.SessionEvent;
+    // this interface previously declared `prompt`/`response`, which the payload
+    // has never carried, so every content read silently missed.
+    content?: string;
+    // Emitted even when the text is not, so a redacted turn can report its
+    // size rather than looking empty.
+    content_length?: number;
+    // The exporter wrote the "<REDACTED>" sentinel instead of text, i.e. the
+    // content flags were off for this run.
     redacted?: boolean;
   }
 
@@ -92,6 +98,15 @@
     // Surfaced rather than swallowed: a drill-down that silently drops events
     // is worse than one that says it did.
     warning?: string;
+    // True when at least one event carried real text. False WITH events is the
+    // actionable state -- the content flags were off -- and is distinct from a
+    // session where nothing happened. This is the signal the empty-content
+    // notice gates on; do not re-derive it by testing the events.
+    content_available?: boolean;
+    // The same signal for tool inputs, governed by a SEPARATE flag that
+    // carries no prompt text. Reported independently because an operator may
+    // want one and not the other.
+    tool_details_available?: boolean;
   }
 
   interface Point {
@@ -155,8 +170,9 @@
   // parent/child observation tree, and OpenSearch gives a flat event stream
   // keyed by turn_id. Rebuilding them means deriving a turn -> events hierarchy
   // first, which is a design question rather than a port, so the drill-down is
-  // a turn-grouped list for now. SessionTree.svelte is left in the tree for
-  // whoever takes that on.
+  // a turn-grouped list. The components that drew them were deleted with the
+  // rest of the dead surface; whoever takes this on starts from the design doc,
+  // not from a half-wired component.
 
   // Tab order puts logs first: it is the broadest surface and the one the
   // Dashboard's metric widgets drill into.
@@ -558,12 +574,24 @@
     return t.toLocaleTimeString([], { hour12: false });
   }
 
-  // Observation types, mapped onto the Badge VARIANTS this codebase already
-  // defines (Badge takes text + variant props, not slot children).
+  // Event kinds, mapped onto the Badge VARIANTS this codebase already defines
+  // (Badge takes text + variant props, not slot children). The kinds are the
+  // event@name values opensearch.SessionEvent reports: these matched nothing
+  // until 2026-10-20, so every badge rendered 'default'.
   function typeVariant(t: string): string {
-    if (t === 'GENERATION') return 'completed';
-    if (t === 'TOOL') return 'worker';
+    if (t === 'assistant_response') return 'completed';
+    if (t === 'tool_result') return 'worker';
+    if (t === 'user_prompt') return 'active';
+    if (t === 'api_request') return 'pending';
     return 'default';
+  }
+
+  // `content` is the prompt OR the response -- one per document -- so the
+  // label comes from the kind rather than from a second field.
+  function contentLabel(kind: string): string {
+    if (kind === 'user_prompt') return 'prompt';
+    if (kind === 'assistant_response') return 'response';
+    return 'content';
   }
 
   // success is TRI-STATE: absent on events that have no outcome (a user_prompt,
@@ -823,22 +851,25 @@ counting delegated subagent and auxiliary work as well as the main thread."
           </div>
         {/if}
 
-        {#if timeline.events.length > 0 && timeline.events.every((e) => e.redacted || (!e.prompt && !e.response))}
+        {#if timeline.events.length > 0 && !timeline.content_available}
           <div class="notice">
             <strong>No prompt or completion text in this session.</strong>
             <p>
-              Its observations came from native OTLP spans, which carry metadata
-              only — timings, models, tool names — and no message text. Content
-              arrives via the transcript hook, which captures conversations but
-              misses most delegated subagent work.
+              Content capture is governed by the exporter's own flags:
+              <code>OTEL_LOG_USER_PROMPTS</code> and
+              <code>OTEL_LOG_ASSISTANT_RESPONSES</code>. With them off, every
+              event still records its metadata — timings, models, tool names,
+              cost and token counts — and the message text is replaced by a
+              redaction sentinel. Turn them on to capture text for future runs;
+              it cannot be backfilled for work that has already happened.
             </p>
           </div>
         {/if}
 
         <!-- Turn-grouped event list. OpenSearch gives a FLAT event stream
              keyed by turn_id (prompt@id), not a parent/child observation tree,
-             so SessionTree and the radial view have nothing to draw and their
-             toggles are hidden above. In exchange `agent` carries query_source,
+             so there is no tree or radial view to toggle between — this list is
+             the whole drill-down. In exchange `agent` carries query_source,
              so a model call made by a subagent is distinguishable from the main
              thread. -->
         <ol class="turns">
@@ -892,22 +923,15 @@ counting delegated subagent and auxiliary work as well as the main thread."
               {#if pinnedObs.cost_usd}<span class="muted">{usd(pinnedObs.cost_usd)}</span>{/if}
               <button class="linkish" onclick={() => (pinnedObsId = null)}>clear</button>
             </div>
-            {#if pinnedObs.prompt}
+            {#if pinnedObs.content}
               <div class="io">
-                <span class="io-label">prompt</span>
-                <pre>{pinnedObs.prompt}</pre>
+                <span class="io-label">{contentLabel(pinnedObs.kind)}</span>
+                <pre>{pinnedObs.content}</pre>
               </div>
-            {/if}
-            {#if pinnedObs.response}
-              <div class="io">
-                <span class="io-label">response</span>
-                <pre>{pinnedObs.response}</pre>
-              </div>
-            {/if}
-            {#if !pinnedObs.prompt && !pinnedObs.response}
+            {:else}
               <p class="muted">
                 {pinnedObs.redacted
-                  ? 'Text redacted — content logging was off when this ran.'
+                  ? `Text redacted — content logging was off when this ran${pinnedObs.content_length ? ` (${compact(pinnedObs.content_length)} characters)` : ''}.`
                   : 'This event carries no message text; tool calls and model requests record metadata only.'}
               </p>
             {/if}
