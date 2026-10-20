@@ -21,6 +21,17 @@
     display: flex;
     flex-direction: column;
     gap: var(--spacing-md);
-    min-height: 100%;
+
+    /* This IS the scroll region. StreamPanel embeds this panel in a
+       `.tab-embed` cell inside a `.panel { overflow: hidden }`, and its
+       comment there says this panel "brings its own header and scroll
+       region" -- but it never did: it was `min-height: 100%` with no
+       `overflow`, so a tall RuleForm grew past the clipped cell and the
+       bottom of the form (its save/cancel buttons) was unreachable.
+       `flex: 1; min-height: 0` is the same idiom EventLogPanel's `.log`
+       uses for the same reason. */
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
   }
 </style>
