@@ -328,8 +328,6 @@ def get_metrics() -> list[dict[str, Any]]:
       mem_limit (int): Container memory limit in bytes.
       mem_limit_human (str): Human-readable memory limit.
       uptime_seconds (int): Seconds since the container was started.
-      trace_count (int): Always 0; retained for payload compatibility.
-      error_count (int): Always 0; retained for payload compatibility.
     """
     return _request("GET", "/api/metrics/containers")
 

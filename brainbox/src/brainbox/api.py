@@ -2868,8 +2868,6 @@ def _get_container_metrics() -> list[dict[str, Any]]:
                     "mem_limit": mem_limit,
                     "mem_limit_human": _human_bytes(mem_limit),
                     "uptime_seconds": round(uptime_seconds),
-                    "trace_count": 0,
-                    "error_count": 0,
                 }
             except Exception as exc:
                 log.debug("metrics.container_stat_failed", metadata={"container": c.name, "reason": str(exc)})
@@ -2920,9 +2918,6 @@ async def api_container_metrics():
     - ``mem_limit`` (int): Container memory limit in **bytes**.
     - ``mem_limit_human`` (str): Human-readable memory limit.
     - ``uptime_seconds`` (int): Seconds since the container was started.
-    - ``trace_count`` (int): Always ``0``; retained for payload compatibility
-      now that per-session trace counts are no longer collected here.
-    - ``error_count`` (int): Always ``0``; retained for payload compatibility.
     """
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _get_container_metrics)

@@ -67,8 +67,6 @@
           <th>CPU</th>
           <th>Memory</th>
           <th>Uptime</th>
-          <th>Traces</th>
-          <th>Errors</th>
         </tr>
       </thead>
       <tbody>
@@ -81,8 +79,6 @@
             <td class="num">{(m.cpu_percent ?? 0).toFixed(1)}%</td>
             <td class="num">{m.mem_usage_human} / {m.mem_limit_human}</td>
             <td class="num">{formatUptime(m.uptime_seconds)}</td>
-            <td class="num">{m.trace_count ?? 0}</td>
-            <td class="num" class:error-count={m.error_count > 0}>{m.error_count ?? 0}</td>
           </tr>
         {/each}
       </tbody>
@@ -140,7 +136,6 @@
   .llm-cell { padding: 10px var(--spacing-md); }
   .profile-cell { padding: 10px var(--spacing-md); }
   .empty-cell { color: #374151; }
-  .error-count { color: var(--color-error); font-weight: 600; }
   .spinner {
     display: inline-block;
     width: 12px;

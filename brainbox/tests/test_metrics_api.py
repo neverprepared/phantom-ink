@@ -1,9 +1,8 @@
 """Tests for the container metrics endpoint.
 
 Preserves the pass-through coverage that used to live with the retired
-trace-backend tests. The route itself outlived that integration; only the
-source of ``trace_count`` / ``error_count`` went away, so both are now
-always ``0`` and kept only for payload compatibility.
+trace-backend tests. The route itself outlived that integration; the
+per-session trace and error counts it used to carry were dropped with it.
 """
 
 from __future__ import annotations
@@ -32,8 +31,6 @@ class TestContainerMetrics:
                     "mem_limit": 2000,
                     "mem_limit_human": "2.0 KB",
                     "uptime_seconds": 300,
-                    "trace_count": 0,
-                    "error_count": 0,
                 }
             ],
         ):
@@ -45,6 +42,6 @@ class TestContainerMetrics:
         assert data[0]["name"] == "developer-test"
         assert data[0]["cpu_percent"] == 5.0
         assert data[0]["uptime_seconds"] == 300
-        # Retained for payload compatibility, no longer populated.
-        assert data[0]["trace_count"] == 0
-        assert data[0]["error_count"] == 0
+        # Dropped with the trace backend rather than left pinned at zero.
+        assert "trace_count" not in data[0]
+        assert "error_count" not in data[0]
