@@ -965,21 +965,14 @@ counting delegated subagent and auxiliary work as well as the main thread."
     {:else if chartsLoading && !charts}
       <p class="muted"><Spinner /> Loading charts…</p>
     {:else if charts}
-      <!-- One tab, read top to bottom: the aggregate over time, then what it
-           is made of. This was two tabs ('trends' and 'breakdown') over ONE
+      <!-- The breakdowns lead; the series below is context for them.
+           Where the money went is the question people open this tab with, and
+           the pies answer it at a glance -- so they get the top, and the
+           trend line is shorter than them on purpose.
+
+           This was two tabs ('trends' and 'breakdown') over ONE
            GetAgentWorkCharts call sharing one loading state, so the split cost
-           a click and bought nothing -- and 'trends' held this single card. -->
-      <div class="charts charts-wide">
-        <div class="chart-card">
-          <MetricsChart
-            data={charts.cost_series ?? []}
-            label={`cost per ${charts.granularity}`}
-            current={usd(costTotal)}
-            formatY={(v: number) => (v >= 1 ? `$${v.toFixed(0)}` : `$${v.toFixed(2)}`)}
-            height={150}
-          />
-        </div>
-      </div>
+           a click and bought nothing -- and 'trends' held only that line. -->
       <div class="charts">
         <div class="chart-card">
           <h3>cost by model</h3>
@@ -1014,6 +1007,17 @@ counting delegated subagent and auxiliary work as well as the main thread."
           {:else}
             <p class="muted">No priced calls in this window.</p>
           {/if}
+        </div>
+      </div>
+      <div class="charts charts-wide">
+        <div class="chart-card">
+          <MetricsChart
+            data={charts.cost_series ?? []}
+            label={`cost per ${charts.granularity}`}
+            current={usd(costTotal)}
+            formatY={(v: number) => (v >= 1 ? `$${v.toFixed(0)}` : `$${v.toFixed(2)}`)}
+            height={100}
+          />
         </div>
       </div>
     {/if}
@@ -1251,10 +1255,10 @@ counting delegated subagent and auxiliary work as well as the main thread."
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: var(--spacing-md);
   }
-  /* The cost-over-time series reads as the aggregate for the whole window, so
-     it spans rather than sitting in a column beside one of its own
-     breakdowns. The auto-fit grid above would otherwise put it next to a pie
-     at wide widths and imply they are peers. */
+  /* The cost-over-time series spans instead of taking a column, so the
+     auto-fit grid above cannot strand it beside an empty half at wide widths.
+     It sits BELOW the breakdowns and is deliberately shorter than them: the
+     pies answer "where did it go", the line is context for that answer. */
   .charts-wide {
     grid-template-columns: 1fr;
   }
