@@ -7,6 +7,7 @@
     attentionStore,
     outboxStore,
     dashboardDataStore,
+    eventsState,
   } from '../stores.svelte';
   import { brainboxEvents } from '../events.svelte';
   import { getApi, safe } from '../utils/api';
@@ -85,7 +86,7 @@
   {/if}
 
   {#if attention > 0}
-    <button class="chip clickable warn" onclick={() => focus('stream')} title="Items need attention — click to open Stream">
+    <button class="chip clickable warn" onclick={() => focus('stream')} title="Items need attention — click to open Events">
       <span class="dot warn-dot"></span>
       {attention} attention
     </button>
@@ -103,7 +104,7 @@
       class="chip clickable"
       class:warn={outboxStuck || !!outboxError}
       class:err={!!outboxError && outboxPending > 0}
-      onclick={() => focus('event-log')}
+      onclick={() => eventsState.open('raw')}
       title={outboxError
         ? `Outbox error: ${outboxError}`
         : outboxStuck

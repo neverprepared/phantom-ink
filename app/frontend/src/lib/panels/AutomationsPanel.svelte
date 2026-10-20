@@ -9,7 +9,7 @@
 
 <div class="automations">
   <div class="panel-header" style="margin-bottom:var(--spacing-sm);">
-    <h1 class="page-title">automations</h1>
+    <h1 class="page-title">rules</h1>
   </div>
 
   <ServerRulesTab />

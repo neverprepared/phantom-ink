@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { dashboardDataStore, profileState, streamFocus } from '../stores.svelte';
+  import { dashboardDataStore, profileState, telemetryState } from '../stores.svelte';
   import type { OpenSearchMetricConfig } from './types';
 
   let { config }: { config: OpenSearchMetricConfig } = $props();
@@ -12,7 +12,7 @@
   };
 
   function drill() {
-    streamFocus.focus({ tab: 'logs', sortBy: SORT_BY[config.metric] });
+    telemetryState.open('logs', SORT_BY[config.metric]);
   }
 
   let data = $derived(dashboardDataStore.value);
@@ -52,7 +52,7 @@
 <div class="drag-strip widget-drag-handle" aria-hidden="true"></div>
 
 {#if overview && !workspaceMissing}
-  <button class="stat-card clickable" onclick={drill} title="Open Stream → Logs">
+  <button class="stat-card clickable" onclick={drill} title="Open Telemetry → Logs">
     <span class="stat-label">» {label}</span>
     <span class="stat-value {colorClass}">{value}</span>
   </button>

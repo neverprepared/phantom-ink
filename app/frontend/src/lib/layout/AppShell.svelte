@@ -2,7 +2,7 @@
   import TitleBar from './TitleBar.svelte';
   import Sidebar from './Sidebar.svelte';
   import StatusBar from './StatusBar.svelte';
-  import { currentPanel, attentionStore, profileState, integrationState, settingsState, SETTINGS_TAB_PANELS, jobsState, JOBS_TAB_PANELS, streamFocus } from '../stores.svelte';
+  import { currentPanel, attentionStore, profileState, integrationState, settingsState, SETTINGS_TAB_PANELS, jobsState, JOBS_TAB_PANELS, eventsState, EVENTS_TAB_PANELS } from '../stores.svelte';
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
 
@@ -17,7 +17,6 @@
   import SettingsPanel from '../panels/SettingsPanel.svelte';
   import DashboardPanel from '../panels/DashboardPanel.svelte';
   import StreamPanel from '../panels/StreamPanel.svelte';
-  import EventLogPanel from '../panels/EventLogPanel.svelte';
   import FilesPanel from '../panels/FilesPanel.svelte';
   import AgentWorkPanel from '../panels/AgentWorkPanel.svelte';
   import DoctorPanel from '../panels/DoctorPanel.svelte';
@@ -72,12 +71,15 @@
     }
   });
 
-  // Timeline is now a tab under the Stream panel. Redirect stale navigation to
-  // Stream with the Timeline tab active (via the existing streamFocus signal,
-  // which StreamPanel consumes on mount/effect).
+  // Rules ('automations') and the raw bus view ('event-log') are now tabs of
+  // the Events panel. Redirect stale navigation and legacy #hash deep-links
+  // to the hub with the matching tab active. Converges immediately: once on
+  // 'stream' the map misses.
   $effect(() => {
-    if (currentPanel.value === 'timeline') {
-      streamFocus.focus({ tab: 'timeline' });
+    const et = EVENTS_TAB_PANELS[currentPanel.value];
+    if (et) {
+      eventsState.tab = et;
+      currentPanel.value = 'stream';
     }
   });
 
@@ -120,8 +122,6 @@
         <MemoryGraphPanel />
       {:else if currentPanel.value === 'settings'}
         <SettingsPanel />
-      {:else if currentPanel.value === 'event-log'}
-        <EventLogPanel />
       {:else if currentPanel.value === 'files'}
         <FilesPanel />
       {:else if currentPanel.value === 'agent-work'}
