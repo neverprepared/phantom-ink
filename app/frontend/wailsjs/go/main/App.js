@@ -838,8 +838,8 @@ export function RunPreflightChecks() {
   return window['go']['main']['App']['RunPreflightChecks']();
 }
 
-export function RunnerMetrics(arg1) {
-  return window['go']['main']['App']['RunnerMetrics'](arg1);
+export function RunnerMetrics() {
+  return window['go']['main']['App']['RunnerMetrics']();
 }
 
 export function SaveCollectJob(arg1) {

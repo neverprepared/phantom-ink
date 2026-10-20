@@ -584,14 +584,12 @@ func toDoraFailures(rows []FailureEventRow) []dora.FailureEvent {
 
 // RunnerMetrics is the runner section of the Delivery tab.
 type RunnerMetrics struct {
-	Profile string `json:"profile"`
 	// Available is false when no runners are registered or the hub could not
-	// be reached. The tab hides the section entirely rather than rendering an
+	// be reached. Callers hide the section entirely rather than rendering an
 	// empty table, which would read as "the fleet is idle".
 	Available bool        `json:"available"`
 	Runners   []RunnerRow `json:"runners"`
-	// Unreachable explains a hub that did not answer. DORA metrics still
-	// render from local state, so this is a note, not a failure.
+	// Unreachable explains a hub that did not answer.
 	Unreachable string `json:"unreachable"`
 }
 
@@ -624,8 +622,8 @@ type RunnerRow struct {
 // RunnerMetrics returns the fleet's live health and derived throughput for one
 // profile. A hub that cannot be reached is reported, never returned as an
 // error: the DORA half of the page reads local state and must still render.
-func (a *App) RunnerMetrics(profile string) (RunnerMetrics, error) {
-	out := RunnerMetrics{Profile: profile}
+func (a *App) RunnerMetrics() (RunnerMetrics, error) {
+	out := RunnerMetrics{}
 	if a.client == nil {
 		out.Unreachable = "no brainbox client configured"
 		return out, nil
@@ -635,8 +633,18 @@ func (a *App) RunnerMetrics(profile string) (RunnerMetrics, error) {
 		out.Unreachable = err.Error()
 		return out, nil
 	}
-	// Tasks are scoped to the profile, like everything else on this page.
-	tasks, err := a.client.ListTasks("", profile)
+	// FLEET-WIDE, deliberately: no profile filter on the task history.
+	//
+	// This used to take a profile and pass it here, which silently made each
+	// row half one scope and half another: queue depth, in flight and max
+	// concurrent come off ListRunners and are totals across every profile,
+	// while completed / failed / stranded / mean came only from the named
+	// profile's tasks. Side by side in one table they read as comparable, so a
+	// runner busy with another profile's work showed "queue 5, in flight 5,
+	// done 0" under yours. A runner is fleet infrastructure; both halves are
+	// now the same scope. Per-profile attribution, if it is ever wanted, is an
+	// explicit filter the operator chooses -- not an implicit half of a row.
+	tasks, err := a.client.ListTasks("", "")
 	if err != nil {
 		// Live state without history is still worth showing; say so rather
 		// than dropping the section.

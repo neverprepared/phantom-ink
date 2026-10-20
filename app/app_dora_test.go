@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -587,5 +590,74 @@ func TestRunnerMetricsRowsAreSortedByName(t *testing.T) {
 	rows := computeRunnerRows(runners, nil, now)
 	if len(rows) != 2 || rows[0].Name != "alpha" || rows[1].Name != "zeta" {
 		t.Fatalf("rows must be stably ordered for the UI: %+v", rows)
+	}
+}
+
+// RunnerMetrics is FLEET-WIDE. It used to take a profile and pass it to
+// ListTasks, which made each row half one scope and half another: queue depth
+// and in-flight come off ListRunners and are totals across every profile,
+// while completed / failed / stranded came only from the named profile's
+// tasks. Adjacent in one table they read as comparable, so a runner busy with
+// another profile's work showed "queue 5, in flight 5, done 0" under yours.
+func TestRunnerMetricsCountsTasksFromEveryProfile(t *testing.T) {
+	var gotProfile string
+	var gotCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/runners"):
+			_, _ = w.Write([]byte(`[{"name":"m3","host":"m3.local","queue_depth":2,"in_flight":1,"max_concurrent":4}]`))
+		case strings.HasPrefix(r.URL.Path, "/api/hub/tasks"):
+			gotCalls++
+			gotProfile = r.URL.Query().Get("workspace_profile")
+			// Two terminal tasks on the same runner, from DIFFERENT profiles.
+			_, _ = w.Write([]byte(`[
+				{"id":"1","runner_name":"m3","status":"completed","workspace_profile":"work","started_at":"2026-10-20T12:00:00Z","finished_at":"2026-10-20T12:00:10Z"},
+				{"id":"2","runner_name":"m3","status":"completed","workspace_profile":"personal","started_at":"2026-10-20T12:00:00Z","finished_at":"2026-10-20T12:00:10Z"}
+			]`))
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	app := &App{client: brainbox.NewClient(srv.URL, ""), ctx: context.Background()}
+	out, err := app.RunnerMetrics()
+	if err != nil {
+		t.Fatalf("RunnerMetrics: %v", err)
+	}
+
+	if gotCalls == 0 {
+		t.Fatal("task history was never requested")
+	}
+	if gotProfile != "" {
+		t.Errorf("workspace_profile = %q; the task query must not be profile-scoped", gotProfile)
+	}
+	if len(out.Runners) != 1 {
+		t.Fatalf("got %d runner rows, want 1", len(out.Runners))
+	}
+	row := out.Runners[0]
+	// Both profiles' tasks count, so this agrees with the fleet-wide queue
+	// and in-flight numbers sitting beside it.
+	if row.Completed != 2 {
+		t.Errorf("Completed = %d, want 2 (one task per profile)", row.Completed)
+	}
+	if row.QueueDepth != 2 || row.InFlight != 1 {
+		t.Errorf("QueueDepth/InFlight = %d/%d, want 2/1", row.QueueDepth, row.InFlight)
+	}
+}
+
+// A hub that cannot be reached is a note, not a failure: the caller still
+// renders the live rows it has.
+func TestRunnerMetricsUnreachableHubIsNotAnError(t *testing.T) {
+	app := &App{ctx: context.Background()} // no client at all
+	out, err := app.RunnerMetrics()
+	if err != nil {
+		t.Fatalf("RunnerMetrics returned an error for an unreachable hub: %v", err)
+	}
+	if out.Unreachable == "" {
+		t.Error("Unreachable is empty; the caller cannot say why the columns are blank")
+	}
+	if out.Available {
+		t.Error("Available should be false with no runners")
 	}
 }

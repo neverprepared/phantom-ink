@@ -114,47 +114,19 @@ describe('metrics cache', () => {
 });
 
 describe('runner health', () => {
-  it('is re-fetched on every view rather than served from a cache', async () => {
-    await doraState.refresh('work');
-    expect(RunnerMetrics).toHaveBeenCalledTimes(1);
-
-    // Same profile, same window: the metrics are cached but health is not.
-    await doraState.refresh('work');
-    expect(RunnerMetrics).toHaveBeenCalledTimes(2);
+  // Runner health used to be a second section of this tab, cached under its
+  // own policy. It moved to Settings -> runners: a runner is fleet
+  // infrastructure, not one profile's delivery work, and that table mixed
+  // fleet-wide queue depth with profile-scoped task counts in one row.
+  it('is no longer part of this store', () => {
+    expect('runners' in doraState).toBe(false);
+    expect('runnersLoading' in doraState).toBe(false);
   });
 
-  it('is cleared on a profile switch rather than carried over', async () => {
-    RunnerMetrics.mockImplementation(async (profile: string) => ({
-      profile,
-      runners: [{ name: `${profile}-runner`, online: true }],
-      unreachable: '',
-    }));
+  it('is not fetched by a delivery refresh', async () => {
     await doraState.refresh('work');
-    expect(doraState.runners?.runners[0].name).toBe('work-runner');
-
-    // Mid-switch there must be no stale liveness claim on screen.
-    let settle!: (v: unknown) => void;
-    const pending = new Promise((r) => (settle = r));
-    RunnerMetrics.mockImplementation((profile: string) =>
-      profile === 'personal' ? pending : Promise.resolve({ profile, runners: [] }),
-    );
-
-    const p = doraState.refresh('personal');
-    expect(doraState.runners).toBeNull();
-    expect(doraState.runnersLoading).toBe(true);
-
-    settle({ profile: 'personal', runners: [{ name: 'personal-runner', online: true }] });
-    await p;
-    expect(doraState.runners?.runners[0].name).toBe('personal-runner');
-  });
-
-  it('a hub outage costs runner health but not the metrics', async () => {
-    RunnerMetrics.mockRejectedValue(new Error('hub unreachable'));
-    await doraState.refresh('work');
-
-    expect(doraState.runners).toBeNull();
-    expect(doraState.perRepo[0][0]).toBe('work/r');
-    expect(doraState.loadError).toBeNull();
+    expect(DORAOverview).toHaveBeenCalled();
+    expect(RunnerMetrics).not.toHaveBeenCalled();
   });
 });
 

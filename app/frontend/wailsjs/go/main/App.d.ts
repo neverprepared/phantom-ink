@@ -424,7 +424,7 @@ export function RunMetricScript(arg1:string,arg2:string):Promise<string>;
 
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
 
-export function RunnerMetrics(arg1:string):Promise<main.RunnerMetrics>;
+export function RunnerMetrics():Promise<main.RunnerMetrics>;
 
 export function SaveCollectJob(arg1:main.CollectJob):Promise<main.CollectJob>;
 

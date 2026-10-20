@@ -4029,7 +4029,6 @@ export namespace main {
 	    }
 	}
 	export class RunnerMetrics {
-	    profile: string;
 	    available: boolean;
 	    runners: RunnerRow[];
 	    unreachable: string;
@@ -4040,7 +4039,6 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.profile = source["profile"];
 	        this.available = source["available"];
 	        this.runners = this.convertValues(source["runners"], RunnerRow);
 	        this.unreachable = source["unreachable"];
