@@ -98,11 +98,16 @@
     // Surfaced rather than swallowed: a drill-down that silently drops events
     // is worse than one that says it did.
     warning?: string;
-    // True when at least one event carried real text. False WITH events is the
-    // actionable state -- the content flags were off -- and is distinct from a
-    // session where nothing happened. This is the signal the empty-content
-    // notice gates on; do not re-derive it by testing the events.
-    content_available?: boolean;
+    // True when at least one RETURNED event carried real text. Go always emits
+    // this, so it is required here on purpose: optional would make the notice
+    // guard read `!undefined === true`, the same fail-open shape as the
+    // `prompt`/`response` mismatch this guard was built to replace.
+    //
+    // It is accumulated over the returned page only, so `false` has three
+    // causes -- the content flags were off, the window held only events that
+    // never carry text (tool_result, api_request), or the text fell outside a
+    // truncated page. The notice hedges, and is suppressed when `truncated`.
+    content_available: boolean;
     // The same signal for tool inputs, governed by a SEPARATE flag that
     // carries no prompt text. Reported independently because an operator may
     // want one and not the other.
@@ -575,14 +580,16 @@
   }
 
   // Event kinds, mapped onto the Badge VARIANTS this codebase already defines
-  // (Badge takes text + variant props, not slot children). The kinds are the
-  // event@name values opensearch.SessionEvent reports: these matched nothing
-  // until 2026-10-20, so every badge rendered 'default'.
+  // (Badge takes text + variant props, not slot children). The arms are all
+  // five event@name values in opensearch's activityEvents, which is what the
+  // timeline query filters on -- so nothing it returns falls through. These
+  // matched nothing until 2026-10-20, when every badge rendered 'default'.
   function typeVariant(t: string): string {
     if (t === 'assistant_response') return 'completed';
     if (t === 'tool_result') return 'worker';
     if (t === 'user_prompt') return 'active';
     if (t === 'api_request') return 'pending';
+    if (t === 'subagent_completed') return 'supervisor';
     return 'default';
   }
 
@@ -851,17 +858,25 @@ counting delegated subagent and auxiliary work as well as the main thread."
           </div>
         {/if}
 
-        {#if timeline.events.length > 0 && !timeline.content_available}
+        <!-- Suppressed when the page is truncated: content_available is
+             accumulated over the RETURNED events only, so a session whose
+             prompts fell outside the newest-500 window reports false, and
+             claiming the flags were off would contradict the truncation notice
+             directly above. A session that is both flags-off and truncated
+             loses its explanation — the better of the two failures. -->
+        {#if timeline.events.length > 0 && !timeline.content_available && !timeline.truncated}
           <div class="notice">
             <strong>No prompt or completion text in this session.</strong>
             <p>
-              Content capture is governed by the exporter's own flags:
+              Most often the exporter's content flags were off:
               <code>OTEL_LOG_USER_PROMPTS</code> and
               <code>OTEL_LOG_ASSISTANT_RESPONSES</code>. With them off, every
               event still records its metadata — timings, models, tool names,
               cost and token counts — and the message text is replaced by a
-              redaction sentinel. Turn them on to capture text for future runs;
-              it cannot be backfilled for work that has already happened.
+              redaction sentinel. Turning them on captures text for future runs;
+              it cannot be backfilled for work that has already happened. A
+              window holding only tool results and model requests will also show
+              nothing here, since neither kind ever carries message text.
             </p>
           </div>
         {/if}
