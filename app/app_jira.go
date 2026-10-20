@@ -57,7 +57,13 @@ func (a *App) SetJiraEnabled(enabled bool) error {
 	row.Name = jiraIntegrationName
 	row.Enabled = enabled
 	row.Remote = true // saas: never a placed compose stack
-	return a.db.UpsertIntegration(row)
+	if err := a.db.UpsertIntegration(row); err != nil {
+		return err
+	}
+	// The global switch gates every profile's tickets, so every profile's memo
+	// is now describing a surface that may no longer exist.
+	a.InvalidateJiraTickets("")
+	return nil
 }
 
 // JiraGloballyEnabled is the Wails-bound read of the global switch.
@@ -85,7 +91,12 @@ func (a *App) SetJiraEnabledForProfile(profile string, enabled bool) error {
 	if enabled {
 		v = "true"
 	}
-	return a.db.SetSetting(settingJiraProfilePrefix+profile, v)
+	if err := a.db.SetSetting(settingJiraProfilePrefix+profile, v); err != nil {
+		return err
+	}
+	// Opting in or out changes what this profile may see at all.
+	a.InvalidateJiraTickets(profile)
+	return nil
 }
 
 // jiraClientForEnv applies all three gates. Returns nil when this profile must

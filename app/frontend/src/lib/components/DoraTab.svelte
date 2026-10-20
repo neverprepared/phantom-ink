@@ -1,11 +1,19 @@
 <script lang="ts">
   // The Delivery tab: DORA metrics for this profile, plus fleet runner health.
   //
-  // Two different data shapes on purpose. The metrics come from local SQLite
-  // (DORAOverview), so the 30/90-day toggle is instant and the tab works with
-  // the providers unreachable; Sync is the only button that talks to a host.
-  // Runner health is live from the hub and is hidden outright when there are no
-  // runners — an empty table would read as "the fleet is idle".
+  // Two different data shapes, and two different CACHING policies, on purpose.
+  //
+  // Metrics are mostly local SQLite (DORAOverview), though not purely: it also
+  // makes a broker round-trip for the token banner, which is why the 30/90-day
+  // toggle was never actually free. They are cached per profile AND per
+  // window, so a window you have already seen paints immediately. Sync is the
+  // only button that writes.
+  //
+  // Runner health is NEVER cached. Everything else here is history, so showing
+  // it a minute old is honest; runner health is a liveness claim, and a cached
+  // table would say a runner is online after it had died. It is re-fetched on
+  // every view, and hidden outright when there are no runners — an empty table
+  // would read as "the fleet is idle".
   //
   // Every number here is a PROXY. The caveats block below is not decoration:
   // it is the design's requirement that the limitations travel with the
@@ -13,54 +21,40 @@
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
   import { profileState, settingsState } from '../stores.svelte';
+  import { doraState } from '../stores/dora.svelte';
+  import { timeAgo } from '../utils/format';
   import type { main } from '../../../wailsjs/go/models';
 
   const WINDOWS = [30, 90] as const;
 
-  let windowDays = $state<number>(30);
-  let loading = $state(false);
+  // Sync result is component-local: it describes one button press, not the
+  // profile. Everything that describes the profile lives in doraState so it
+  // survives this component being destroyed on every tab and profile switch.
   let syncing = $state(false);
-  let overview = $state<main.DORAOverview | null>(null);
-  let runners = $state<main.RunnerMetrics | null>(null);
   let lastSync = $state<main.DORASyncResult | null>(null);
 
   let profile = $derived(profileState.active?.name ?? '');
-  let metrics = $derived(overview?.metrics ?? null);
-  let bands = $derived(overview?.metrics?.bands ?? {});
-  // Sorted so the table does not reshuffle between loads.
-  let perRepo = $derived(
-    Object.entries(overview?.metrics?.per_repo ?? {}).sort((a, b) => a[0].localeCompare(b[0])),
-  );
+  let windowDays = $derived(doraState.windowDays);
+  let metrics = $derived(doraState.metrics);
+  let bands = $derived(doraState.bands);
+  let perRepo = $derived(doraState.perRepo);
+  let runners = $derived(doraState.runners);
+  let loading = $derived(doraState.loading);
   let repoErrors = $derived(Object.entries(lastSync?.repo_errors ?? {}));
 
-  async function load() {
-    if (!profile) return;
-    loading = true;
-    const a = await getApi();
-    if (!a) { loading = false; return; }
-    const forProfile = profile;
-    try {
-      const ov = await a.DORAOverview(forProfile, windowDays);
-      // A reply that lands after a profile switch belongs to the old profile;
-      // rendering it would show one profile's delivery data under another's
-      // name. The echoed profile is what makes that detectable.
-      if (ov.profile !== profile) return;
-      overview = ov;
-    } catch (e: any) {
-      notifications.error(`Delivery metrics: ${e?.message ?? e}`);
-      overview = null;
-    } finally {
-      loading = false;
-    }
-    try {
-      const rm = await a.RunnerMetrics(forProfile);
-      if (rm.profile !== profile) return;
-      runners = rm;
-    } catch {
-      // The hub being down costs the runner section, never the metrics above.
-      runners = null;
-    }
+  async function load(force = false) {
+    await doraState.refresh(profile, force);
   }
+
+  // Live age for the freshness label; one tick a minute while mounted.
+  let now = $state(Date.now());
+  $effect(() => {
+    const t = setInterval(() => (now = Date.now()), 60_000);
+    return () => clearInterval(t);
+  });
+  const fetchedAgo = $derived(
+    doraState.fetchedAt ? timeAgo(Date.parse(doraState.fetchedAt), now) : ''
+  );
 
   async function sync() {
     if (!profile || syncing) return;
@@ -76,6 +70,9 @@
       } else {
         notifications.success(`Synced ${res.repos_synced} repos`);
       }
+      // A sync rewrites the deploy/revert rows, so EVERY window's cached
+      // metrics for this profile are now wrong -- not just the visible one.
+      doraState.invalidate(profile);
       await load();
     } catch (e: any) {
       notifications.error(`Sync: ${e?.message ?? e}`);
@@ -84,13 +81,16 @@
     }
   }
 
-  // Reload on profile or window change — metrics are per profile, like
-  // everything else in this hub.
+  // Re-read on mount and on every profile change. Cached metrics stay on
+  // screen while this revalidates behind them; runner health is always live.
   $effect(() => {
-    void profile;
-    void windowDays;
     if (profile) void load();
   });
+
+  /** Window toggle. A window already seen for this profile paints instantly. */
+  function pickWindow(days: number) {
+    void doraState.setWindow(profile, days);
+  }
 
   function openProfiles() {
     settingsState.open('profiles');
@@ -158,31 +158,52 @@
             class="win"
             class:active={windowDays === w}
             aria-pressed={windowDays === w}
-            onclick={() => (windowDays = w)}
+            onclick={() => pickWindow(w)}
           >{w}d</button>
         {/each}
       </div>
-      <span class="synced">synced {formatSyncedAt(overview?.last_synced_at ?? '')}</span>
+      <span class="synced">synced {formatSyncedAt(doraState.lastSyncedAt)}</span>
       <button class="btn ghost sm" onclick={sync} disabled={syncing || !profile}>
         {syncing ? 'syncing…' : 'sync'}
       </button>
-      <button class="btn ghost sm" onclick={load} disabled={loading}>refresh</button>
+      <!-- Disabled only on a cold load: during a background check the metrics
+           are on screen, so asking again is reasonable. -->
+      <button
+        class="btn ghost sm"
+        onclick={() => load(true)}
+        disabled={loading}
+      >{loading || doraState.backgroundBusy ? 'refreshing…' : 'refresh'}</button>
     </div>
   </div>
 
+  <!-- Same freshness affordance as the code and jira tabs. Metrics kept across
+       a tab, profile or window switch must not read as live. Runner health is
+       excluded on purpose: it is never cached, so it is always current. -->
+  {#if profile && (fetchedAgo || doraState.backgroundBusy)}
+    <p class="freshness" aria-live="polite">
+      {#if doraState.backgroundBusy}
+        <span class="dot" aria-hidden="true"></span>
+        <span>Checking for updates…</span>
+        {#if fetchedAgo}<span class="sep">·</span><span>showing metrics from {fetchedAgo}</span>{/if}
+      {:else}
+        <span>Updated {fetchedAgo}</span>
+      {/if}
+    </p>
+  {/if}
+
   {#if !profile}
     <p class="muted-note">Select a profile to see its delivery metrics.</p>
-  {:else if overview?.token_missing || overview?.token_invalid}
+  {:else if doraState.tokenMissing || doraState.tokenInvalid}
     <!-- Provider state is actionable, not an error: point at where it is edited. -->
     <div class="banner">
       <div>
         <strong>
-          {overview?.token_invalid
+          {doraState.tokenInvalid
             ? 'This profile’s git credential was rejected'
             : 'No git provider for this profile'}
         </strong>
         <p>
-          {overview?.token_invalid
+          {doraState.tokenInvalid
             ? 'The stored credential is expired or wrong. Re-curate it, then sync to bring this page back.'
             : 'Curate a GITHUB_TOKEN or ADO_ORG for this profile and its delivery metrics appear here.'}
         </p>
@@ -190,8 +211,8 @@
       <button class="banner-action" onclick={openProfiles}>Open Profiles</button>
     </div>
   {:else}
-    {#if overview?.sync_error}
-      <p class="section-error">{overview.sync_error}</p>
+    {#if doraState.syncError}
+      <p class="section-error">{doraState.syncError}</p>
     {/if}
 
     {#if lastSync && (lastSync.truncated ?? []).length > 0}
@@ -219,7 +240,7 @@
             {/if}
           </div>
           <div class="card-value">{formatFrequency(metrics.deploys_per_day)}</div>
-          <div class="card-sub">{metrics.deploy_count} merges in {overview?.window_days}d</div>
+          <div class="card-sub">{metrics.deploy_count} merges in {doraState.windowOf}d</div>
           <div class="card-caveat">merge counted as deploy — can overcount</div>
         </div>
 
@@ -264,20 +285,20 @@
         </div>
       </div>
 
-      {#if (overview?.caveats ?? []).length > 0}
+      {#if doraState.caveats.length > 0}
         <!-- The authoritative wording from the approved design, rendered in
              full rather than hidden behind a tooltip. -->
         <div class="caveats">
           <span class="caveats-label">how to read these</span>
           <ul>
-            {#each overview?.caveats ?? [] as c (c)}<li>{c}</li>{/each}
+            {#each doraState.caveats as c (c)}<li>{c}</li>{/each}
           </ul>
         </div>
       {/if}
 
       {#if metrics.deploy_count === 0}
         <p class="muted-note">
-          No merges to a default branch in the last {overview?.window_days} days. Either nothing
+          No merges to a default branch in the last {doraState.windowOf} days. Either nothing
           shipped, or this profile has not synced yet — try sync, or widen the window.
         </p>
       {:else if perRepo.length > 0}
@@ -315,7 +336,12 @@
 
     <!-- Runners render ONLY when some are registered: absent, not
          present-and-empty. -->
-    {#if runners?.available}
+    {#if doraState.runnersLoading && !runners}
+      <h2 class="section-title">runners</h2>
+      <!-- Runner health is never cached (a stale "online" is a lie), so this
+           section genuinely has nothing to show until the hub answers. -->
+      <p class="muted-note">checking runner health…</p>
+    {:else if runners?.available}
       <h2 class="section-title">runners</h2>
       {#if runners.unreachable}
         <p class="warn-note">task history unavailable: {runners.unreachable}</p>
@@ -372,6 +398,24 @@
   .dora-tab { padding: var(--panel-padding); display: flex; flex-direction: column; gap: var(--spacing-sm); }
   .panel-header { gap: var(--spacing-md); flex-wrap: wrap; }
   .head-actions { display: flex; gap: 8px; align-items: center; }
+  /* Freshness line — quieter than any content, matching the other tabs'. */
+  .freshness {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin: 0; font-size: 0.75rem; color: var(--color-text-muted);
+  }
+  .freshness .sep { opacity: 0.5; }
+  .freshness .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--color-accent, var(--color-text-secondary));
+    animation: fresh-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes fresh-pulse {
+    0%, 100% { opacity: 0.25; }
+    50% { opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .freshness .dot { animation: none; opacity: 0.8; }
+  }
   .synced { font-size: 10px; color: var(--color-text-tertiary); font-family: var(--font-mono); }
 
   .window-toggle { display: flex; border: 1px solid var(--color-border-secondary); border-radius: var(--radius-sm); overflow: hidden; }

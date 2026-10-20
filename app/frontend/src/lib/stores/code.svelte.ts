@@ -23,7 +23,7 @@
  */
 import { getApi } from '../utils/api';
 import { notifications } from '../notifications.svelte';
-import { resource, type Resource } from './resource.svelte';
+import { keyedResource, type Resource } from './resource.svelte';
 
 export interface Repo {
   provider: 'github' | 'ado';
@@ -330,7 +330,7 @@ class CodeStore {
    * first frame, so a field that lagged until the revalidate landed named the
    * PREVIOUS profile while showing the new one's notifications. An optimistic
    * mark-read in that window wrote to the wrong account. The rows come from
-   * `resourceFor(requested)`, so `requested` is their owner by construction.
+   * `overviews.for(requested)`, so `requested` is their owner by construction.
    */
   get profile() {
     return this.requested;
@@ -345,47 +345,19 @@ class CodeStore {
   private forceNext = new Map<string, boolean>();
 
   /**
-   * ONE RESOURCE PER PROFILE, created on first visit and kept.
-   *
-   * A single keyed resource holds a single value, so a key change clears it —
-   * which meant switching profiles threw both profiles' rows away and
-   * switching back re-ran the whole provider fan-out. Giving each profile its
-   * own resource means no key ever changes, so nothing is ever cleared, and
-   * `loading` / `refreshing` / `error` become per-profile for free: a cold
-   * profile B shows its spinner while A's rows stay cached behind it.
-   *
-   * Isolation is stronger here, not weaker: reads go through `current`, which
-   * resolves the resource FOR `requested`. There is no code path that can hand
-   * back a different profile's value, and each resource still carries its own
-   * profile as its key so a late response is discarded.
-   *
-   * Unbounded on purpose — an operator has a handful of profiles and a payload
-   * is a few hundred rows. `hardReset()` clears the lot.
+   * One resource per profile — see `keyedResource`, which this was the first
+   * caller of. Switching profile keeps each profile's rows, so switching back
+   * paints instantly, and loading state is per profile.
    */
-  private resources = new Map<string, Resource<CodeOverview | null>>();
-
-  private resourceFor(profile: string): Resource<CodeOverview | null> {
-    let r = this.resources.get(profile);
-    if (!r) {
-      r = resource<CodeOverview | null>(
-        (api) =>
-          api.CodeOverview(profile, this.forceNext.get(profile) ?? false) as Promise<CodeOverview>,
-        {
-          initial: null,
-          label: `Code overview (${profile})`,
-          // Constant by construction. Kept so the resource still discards a
-          // response that somehow arrives for the wrong scope.
-          key: () => profile,
-        },
-      );
-      this.resources.set(profile, r);
-    }
-    return r;
-  }
+  private overviews = keyedResource<CodeOverview | null>(
+    (profile) => (api) =>
+      api.CodeOverview(profile, this.forceNext.get(profile) ?? false) as Promise<CodeOverview>,
+    { initial: null, label: (profile) => `Code overview (${profile})` },
+  );
 
   /** The resource backing whatever profile is on screen, or null before one is. */
   private get current(): Resource<CodeOverview | null> | null {
-    return this.requested ? this.resourceFor(this.requested) : null;
+    return this.requested ? this.overviews.for(this.requested) : null;
   }
 
   /** True only while there is nothing to show yet — the full-panel spinner. */
@@ -573,7 +545,7 @@ class CodeStore {
     // resource, so switching away keeps them and switching back paints them.
     if (profile !== this.requested) this.reset();
     this.requested = profile;
-    const r = this.resourceFor(profile);
+    const r = this.overviews.for(profile);
     // force=true bypasses the Go-side per-profile memo; plain navigation
     // reuses it, which is what stops every panel visit re-issuing the whole
     // provider fan-out. A profile switch is NOT a force: the new profile's
@@ -644,8 +616,7 @@ class CodeStore {
   /** reset() plus EVERY profile's rows — for "no profile at all" and for tests. */
   hardReset(): void {
     this.reset();
-    for (const r of this.resources.values()) r.reset();
-    this.resources.clear();
+    this.overviews.clear();
     this.forceNext.clear();
     this.requested = '';
   }

@@ -16,7 +16,7 @@ vi.mock('../utils/api', () => ({
   getApi: () => mockGetApi(),
 }));
 
-const { resource, action } = await import('./resource.svelte');
+const { resource, action, keyedResource } = await import('./resource.svelte');
 
 /** A fake bindings object — the fetcher only ever receives this. */
 const API = {} as any;
@@ -313,5 +313,109 @@ describe('action', () => {
     await a.run('abc', true);
 
     expect(fn).toHaveBeenCalledWith(API, 'abc', true);
+  });
+});
+
+describe('keyedResource', () => {
+  it('keeps one resource per key, so returning to a key is instant', async () => {
+    const seen: string[] = [];
+    const kr = keyedResource<string>(
+      (key) => async () => {
+        seen.push(key);
+        return `value-${key}`;
+      },
+      { initial: '', label: 'thing' },
+    );
+
+    await kr.for('a').refresh();
+    await kr.for('b').refresh();
+    expect(kr.for('a').value).toBe('value-a');
+    expect(kr.for('b').value).toBe('value-b');
+
+    // Coming back to 'a' still has its value BEFORE any refetch.
+    expect(kr.for('a').value).toBe('value-a');
+    expect(kr.for('a').loaded).toBe(true);
+    expect(seen).toEqual(['a', 'b']);
+  });
+
+  it('returns the same resource instance for a key', () => {
+    const kr = keyedResource<string>(
+      () => async () => 'x',
+      { initial: '', label: 'thing' },
+    );
+    expect(kr.for('a')).toBe(kr.for('a'));
+    expect(kr.for('a')).not.toBe(kr.for('b'));
+  });
+
+  it('isolates loading state per key', async () => {
+    const { promise, resolve } = deferred<string>();
+    const kr = keyedResource<string>(
+      (key) => () => (key === 'slow' ? promise : Promise.resolve(`value-${key}`)),
+      { initial: '', label: 'thing' },
+    );
+
+    await kr.for('fast').refresh();
+    const pending = kr.for('slow').refresh();
+
+    expect(kr.for('slow').loading).toBe(true);
+    // The cached key must not report the other key's spinner.
+    expect(kr.for('fast').loading).toBe(false);
+    expect(kr.for('fast').value).toBe('value-fast');
+
+    resolve('value-slow');
+    await pending;
+    expect(kr.for('slow').value).toBe('value-slow');
+  });
+
+  it('a second refresh on a key refreshes rather than cold-loads', async () => {
+    const kr = keyedResource<string>(
+      (key) => async () => `value-${key}`,
+      { initial: '', label: 'thing' },
+    );
+    await kr.for('a').refresh();
+
+    const p = kr.for('a').refresh({ force: true });
+    expect(kr.for('a').refreshing).toBe(true);
+    expect(kr.for('a').loading).toBe(false);
+    await p;
+  });
+
+  it('drop forgets one key and leaves the rest', async () => {
+    const kr = keyedResource<string>(
+      (key) => async () => `value-${key}`,
+      { initial: '', label: 'thing' },
+    );
+    await kr.for('a').refresh();
+    await kr.for('b').refresh();
+
+    kr.drop('a');
+    expect(kr.keys()).toEqual(['b']);
+    expect(kr.for('a').loaded).toBe(false);
+    expect(kr.for('b').value).toBe('value-b');
+  });
+
+  it('clear forgets everything', async () => {
+    const kr = keyedResource<string>(
+      (key) => async () => `value-${key}`,
+      { initial: '', label: 'thing' },
+    );
+    await kr.for('a').refresh();
+    await kr.for('b').refresh();
+
+    kr.clear();
+    expect(kr.keys()).toEqual([]);
+    expect(kr.for('a').loaded).toBe(false);
+  });
+
+  it('labels errors per key when given a label function', async () => {
+    const onError = vi.fn();
+    const kr = keyedResource<string>(
+      () => async () => {
+        throw new Error('boom');
+      },
+      { initial: '', label: (key) => `thing (${key})`, onError },
+    );
+    await kr.for('a').refresh();
+    expect(onError).toHaveBeenCalledWith('thing (a): boom');
   });
 });

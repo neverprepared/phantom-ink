@@ -3478,6 +3478,8 @@ export namespace main {
 	    jql: string;
 	    tickets: JiraTicket[];
 	    error: string;
+	    fetched_at: string;
+	    stale: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new JiraTicketsResult(source);
@@ -3489,6 +3491,8 @@ export namespace main {
 	        this.jql = source["jql"];
 	        this.tickets = this.convertValues(source["tickets"], JiraTicket);
 	        this.error = source["error"];
+	        this.fetched_at = source["fetched_at"];
+	        this.stale = source["stale"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

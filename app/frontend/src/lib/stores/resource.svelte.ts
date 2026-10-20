@@ -247,3 +247,88 @@ export function action<Args extends unknown[]>(
     },
   };
 }
+
+export interface KeyedResource<T> {
+  /** The resource for `key`, created on first ask and retained after. */
+  for: (key: string) => Resource<T>;
+  /** The keys that currently hold a resource — for diagnostics and eviction. */
+  keys: () => string[];
+  /** Reset and forget every key. */
+  clear: () => void;
+  /** Reset and forget one key, e.g. when its upstream data was invalidated. */
+  drop: (key: string) => void;
+}
+
+/**
+ * A resource PER KEY, rather than one resource whose key changes.
+ *
+ * ## Why this exists
+ *
+ * A single `resource()` holds a single value, so changing its key clears the
+ * retained value — correct for preventing a cross-tenant paint, but it means
+ * switching profile A -> B -> A throws both profiles' data away and refetches
+ * from scratch. Panels are destroyed on every navigation here (AppShell renders
+ * them under `{#if}`), so that showed up as a spinner on every switch back.
+ *
+ * Giving each key its own resource means no key ever changes, so nothing is
+ * ever cleared, and `loading` / `refreshing` / `error` become per-key for
+ * free: a cold profile shows its own spinner while another's rows stay cached.
+ *
+ * Isolation is stronger than the single-resource form, not weaker. A caller
+ * reads `for(key)`, so there is no code path that can return a different key's
+ * value, and each underlying resource still carries its own key so a late
+ * response is discarded.
+ *
+ * ## Keys
+ *
+ * A key is whatever scopes the data. Usually a profile; where a second
+ * dimension matters (a window size, a page) join them — `` `${profile}|${days}` ``
+ * — so toggling back to a previous combination is instant too.
+ *
+ * ## Bounds
+ *
+ * Unbounded on purpose: the key spaces here are small (a handful of profiles,
+ * two window sizes) and a payload is a few hundred rows. Call `clear()` when
+ * the whole scope goes away. If a key space ever becomes unbounded, that is
+ * the point to add eviction — not before.
+ */
+export function keyedResource<T>(
+  fetcherFor: (key: string) => (api: Api) => Promise<T>,
+  // `label` is widened to accept a per-key function, so it must be omitted
+  // from the base options rather than intersected -- intersecting would
+  // collapse it to `string & ((key: string) => string)`, which nothing
+  // satisfies.
+  options: Omit<ResourceOptions<T>, 'key' | 'label'> & {
+    label: string | ((key: string) => string);
+  },
+): KeyedResource<T> {
+  const held = new Map<string, Resource<T>>();
+
+  return {
+    for(key: string): Resource<T> {
+      let r = held.get(key);
+      if (!r) {
+        r = resource<T>(fetcherFor(key), {
+          ...options,
+          label: typeof options.label === 'function' ? options.label(key) : options.label,
+          // Constant by construction. Kept so the underlying resource still
+          // discards a response that somehow arrives for the wrong scope.
+          key: () => key,
+        });
+        held.set(key, r);
+      }
+      return r;
+    },
+    keys(): string[] {
+      return [...held.keys()];
+    },
+    clear(): void {
+      for (const r of held.values()) r.reset();
+      held.clear();
+    },
+    drop(key: string): void {
+      held.get(key)?.reset();
+      held.delete(key);
+    },
+  };
+}

@@ -298,15 +298,10 @@ func (a *App) profileAzureConfigDir(profile string) string {
 // long enough that panel-switching stops re-issuing the whole fan-out.
 const codeOverviewTTL = 45 * time.Second
 
-type codeOverviewEntry struct {
-	overview CodeOverview
-	at       time.Time
-}
-
-var (
-	codeOverviewMu    sync.Mutex
-	codeOverviewCache = map[string]codeOverviewEntry{}
-)
+// The launchpad memo. Serve-stale, single-flight and profile keying all live
+// in profileMemo -- see profile_memo.go for why those three are shared with
+// the Jira tab rather than written twice.
+var codeOverviewMemo = newProfileMemo[CodeOverview](codeOverviewTTL)
 
 // InvalidateCodeOverview drops a profile's cached launchpad, or every profile's
 // when profile is empty.
@@ -316,72 +311,24 @@ var (
 // on a profile switch: the memo is profile-keyed, so each profile keeps its own
 // rows and switching back paints instantly.
 func (a *App) InvalidateCodeOverview(profile string) {
-	codeOverviewMu.Lock()
-	defer codeOverviewMu.Unlock()
-	if strings.TrimSpace(profile) == "" {
-		codeOverviewCache = map[string]codeOverviewEntry{}
-		return
-	}
-	delete(codeOverviewCache, profile)
+	codeOverviewMemo.invalidate(profile)
 }
 
 // cachedCodeOverview returns profile's memoised entry and whether it is still
-// within the TTL. A stale entry is RETURNED, not withheld: it is exactly what
-// the operator was already looking at, so painting it immediately and
-// refreshing behind it beats holding the panel empty for a provider fan-out.
-// ok=false means nothing is cached at all — the only case that must block.
-func cachedCodeOverview(profile string) (ov CodeOverview, fresh bool, ok bool) {
-	codeOverviewMu.Lock()
-	defer codeOverviewMu.Unlock()
-	e, ok := codeOverviewCache[profile]
-	if !ok {
-		return CodeOverview{}, false, false
-	}
-	return e.overview, time.Since(e.at) < codeOverviewTTL, true
+// within the TTL. A stale entry is returned rather than withheld; ok=false
+// means nothing is cached at all.
+func cachedCodeOverview(profile string) (CodeOverview, bool, bool) {
+	return codeOverviewMemo.get(profile)
 }
 
 // storeCodeOverview memoises a successful read for profile. FetchedAt is
 // stamped here so every served copy carries the age of the data itself.
 func storeCodeOverview(profile string, ov CodeOverview) {
-	now := time.Now()
 	ov.Stale = false
 	if ov.FetchedAt == "" {
-		ov.FetchedAt = now.UTC().Format(time.RFC3339)
+		ov.FetchedAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	codeOverviewMu.Lock()
-	defer codeOverviewMu.Unlock()
-	codeOverviewCache[profile] = codeOverviewEntry{overview: ov, at: now}
-}
-
-// codeOverviewRevalidating tracks which profiles have a background refresh in
-// flight. Mounting the panel while a tab switch is still revalidating would
-// otherwise fan the whole provider set out twice; this collapses them.
-var codeOverviewRevalidating = map[string]bool{}
-
-// revalidateCodeOverview refreshes profile behind the caller, at most one
-// refresh per profile at a time. Errors are dropped on purpose: the caller
-// already has rows on screen, and replacing them with an error banner because
-// a background poll failed would be worse than showing slightly old data. The
-// next explicit refresh surfaces the failure.
-func (a *App) revalidateCodeOverview(profile string) {
-	codeOverviewMu.Lock()
-	if codeOverviewRevalidating[profile] {
-		codeOverviewMu.Unlock()
-		return
-	}
-	codeOverviewRevalidating[profile] = true
-	codeOverviewMu.Unlock()
-
-	go func() {
-		defer func() {
-			codeOverviewMu.Lock()
-			delete(codeOverviewRevalidating, profile)
-			codeOverviewMu.Unlock()
-		}()
-		// codeOverviewUncached stores on success, so there is nothing to do
-		// with the result here beyond discarding it.
-		_, _ = a.codeOverviewUncached(profile)
-	}()
+	codeOverviewMemo.store(profile, ov)
 }
 
 // CodeOverview fetches a profile's launchpad across every configured provider
@@ -397,7 +344,7 @@ func (a *App) CodeOverview(profile string, force bool) (CodeOverview, error) {
 			}
 			// Stale but displayable: hand it back now, refresh behind it.
 			ov.Stale = true
-			a.revalidateCodeOverview(profile)
+			codeOverviewMemo.revalidate(profile, a.codeOverviewUncached)
 			return ov, nil
 		}
 	}
