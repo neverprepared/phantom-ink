@@ -25,15 +25,24 @@ tool calls / $309.05 against OpenSearch's 1786 / $416.26 for the same session)
 because its Claude Code capture is a Stop hook that misses delegated subagent
 work.
 
-## Scope correction
+## Scope, as directed
 
-An earlier read of this task reported "the IaC is already clean". That is only
-half true and the plan must not inherit it:
+Three operator directives shape this beyond the Langfuse removal itself:
 
-- `neverprepared-iac` — genuinely clean, **zero** Langfuse references. No work.
-- `phantom-router/ansible/` — **not** clean. Carries Langfuse in
-  `inventory/group_vars/all.yml` and `roles/mcp-servers/tasks/python.yml`.
-  This is IaC living inside a service repo, and it is in scope.
+1. **`reflex/` goes away entirely** — not merely its Langfuse parts. It has
+   been deprecated for a long time. See *Deleting reflex* below.
+2. **Stale docs get updated**, including ones an earlier draft of this spec
+   proposed leaving alone.
+3. **IaC is out of scope for now.** So the Langfuse entries in
+   `phantom-router/ansible/` (`inventory/group_vars/all.yml`,
+   `roles/mcp-servers/tasks/python.yml`) and in
+   `phantom-ink/brainbox/ansible/inventory/group_vars/all.yml` are
+   **deliberately left in place**. `neverprepared-iac` is already clean
+   (zero references), so nothing was pending there anyway.
+
+Consequence worth stating: because the ansible trees are skipped, the final
+`grep -rli langfuse` will legitimately still hit them. That is expected, not a
+miss, and the verification step accounts for it.
 
 ## Ordering
 
@@ -54,7 +63,10 @@ instrumentation that goes through the Langfuse SDK) and leave `llm/otel.py`'s
 OTel-native span path as the only one. Merge that, so the LLM-plane span
 export survives the removal instead of being thrown away with it.
 
-### 2. Strip Langfuse from `phantom-router` (16 files on `main`)
+### 2. Strip Langfuse from `phantom-router` (14 of the 16 files on `main`)
+
+Langfuse appears in 16 files on `main`; two of them are under `ansible/` and
+are skipped per the IaC directive, leaving 14.
 
 Code: `src/phantom_router/langfuse_client.py` (delete), the `/api/langfuse/*`
 routes in `api.py`, the Langfuse MCP tools in `mcp_server.py`,
@@ -70,8 +82,10 @@ still provision.
 Dashboard: the Langfuse portions of `dashboard/src/lib/ObservabilityPanel.svelte`
 and `dashboard/src/lib/api.js`.
 
-IaC: the Langfuse entries in `ansible/inventory/group_vars/all.yml` and
-`ansible/roles/mcp-servers/tasks/python.yml`.
+IaC: **skipped** — `ansible/inventory/group_vars/all.yml` and
+`ansible/roles/mcp-servers/tasks/python.yml` keep their Langfuse entries for
+now, per directive. They are inert once the code that reads them is gone, but
+they remain as the one deliberate loose end.
 
 Tests: delete `tests/test_langfuse_api.py` and `tests/test_langfuse_client.py`.
 Remove the Langfuse cases from `tests/test_executor.py`,
@@ -129,9 +143,10 @@ how a deleted method keeps appearing to exist.
 `/api/langfuse/*` routes and `_langfuse_op` in `api.py`, the four Langfuse MCP
 tools in `src/brainbox/mcp_server.py`, the settings in `config.py`, the
 credential entries in `secrets.py`, the env injection in
-`backends/configure.py`, the Langfuse bits of `dashboard/src/lib/api.js` and
-`dashboard/src/lib/ObservabilityPanel.svelte`, and the Langfuse entries in
-`ansible/inventory/group_vars/all.yml`.
+`backends/configure.py`, and the Langfuse bits of `dashboard/src/lib/api.js`
+and `dashboard/src/lib/ObservabilityPanel.svelte`.
+`brainbox/ansible/inventory/group_vars/all.yml` is **skipped** per the IaC
+directive.
 
 Tests: delete `tests/test_langfuse_api.py` and `tests/test_langfuse_client.py`;
 strip the Langfuse cases from `test_executor.py`, `test_secrets.py` and
@@ -148,23 +163,37 @@ Plus the `reflex-langfuse` recipe in the root `Justfile`, and the Langfuse env
 in `docker/brainbox/Dockerfile`, `Dockerfile.researcher`,
 `hooks-requirements.txt`, and the three `setup/**/settings.json` files.
 
-**The `reflex/` subtree is in scope.** It is deprecated and no longer loads,
-but it lives in this repo and shipping a `/langfuse` slash command plus live
-hook wiring would contradict the goal. Delete
-`reflex/plugins/reflex/commands/langfuse.md` and the three scripts
-(`langfuse-trace.py`, `langfuse-hook.sh`, `langfuse-drainer.sh`), and remove
-the Langfuse entries from `reflex/plugins/reflex/hooks/hooks.json`. Prose
-mentions in the reflex READMEs/CHANGELOG are updated, not rewritten.
+**`reflex/` is deleted wholesale** — see *Deleting reflex* below. Its Langfuse
+command, hook scripts and `hooks.json` entries go with it, so they need no
+separate treatment.
 
-**Docs — update the live ones:** `README.md`, `CLAUDE.md` (its MCP tool list
-names all four Langfuse tools), `docker/README.md`, `docs/brainbox/*.md`
-(`api-reference`, `dashboard`, `lifecycle`, `observability`, `README`),
-`docs/codex-integration.md`, `docs/profile-container-flow.md`.
+**Docs.** Per directive, stale docs get updated rather than left:
 
-**Docs — leave alone.** These are dated historical records, and editing
-Langfuse out of them would falsify the record rather than clean the codebase:
-- `docs/IMPROVEMENTS_IMPLEMENTED_2026-02-14.md`
-- `docs/persona_agentic/REFLEX/*.md` (4 files)
+- `README.md`, `CLAUDE.md`, `docker/README.md`, `docs/brainbox/*.md`
+  (`api-reference`, `dashboard`, `lifecycle`, `observability`, `README`) —
+  drop Langfuse. `CLAUDE.md` additionally loses the `reflex/` row from its
+  monorepo table, the two `just reflex-*` commands, the `test-reflex` mention
+  in its CI notes, and all four Langfuse MCP tools from its tool list.
+- `docs/profile-container-flow.md` — the most stale doc in the tree. It
+  documents `/reflex:brainbox create` as *the* provisioning flow, including a
+  mermaid subgraph labelled "Reflex Plugin". With reflex deleted that
+  describes a path that no longer exists, so it is rewritten around the
+  current flow, not patched.
+- `docs/codex-integration.md` — drop the `reflex:codex-exec` section and the
+  Langfuse references.
+- `docs/persona_agentic/REFLEX/*.md` (4 files) — **deleted.** They are gap
+  analyses and coverage reports of a subsystem being removed; there is nothing
+  left for them to describe.
+- `docs/architecture/ADR-002-mcp-gateway.md:64` — cites
+  `reflex/plugins/reflex/mcp-catalog.json` as the catalog source. ADRs record
+  a decision as it was taken, so the prose is **not** rewritten; a dated
+  amendment note is appended recording that the catalog now lives at
+  `phantom-platform/config/mcp-catalog.json` and that reflex was removed on
+  2026-10-20. Editing the original text would misrepresent what was decided.
+- `docs/IMPROVEMENTS_IMPLEMENTED_2026-02-14.md` — a dated as-built log.
+  Treated the same way as the ADR: a header note marking it historical, body
+  left intact. If it is simply dead weight, deleting it outright is also
+  defensible — but silently rewriting a dated record is not.
 
 Comment-only mentions in `app/opensearch/agentcharts.go`,
 `app/app_mindwalk_test.go` and `app/opensearch/agentcharts_test.go` are
@@ -200,6 +229,46 @@ reappears later, the mechanism is eleven lines to restore.
 One stale comment at `docker-compose.yml:137`. No Langfuse service is deployed
 from this repo and nothing else references it.
 
+## Deleting reflex
+
+Per directive, phantom-ink's `reflex/` subtree is removed entirely: 171 files,
+3.8 MB, the Claude Code plugin marketplace. It has been deprecated for a long
+time and no longer loads.
+
+**Verified safe for the live MCP gateway.** `reflex/plugins/reflex/mcp-catalog.json`
+looks load-bearing — `brainbox/gateway_catalog.py` and the router both describe
+their catalog as "reflex's mcp-catalog.json", and ADR-002 says the gateway
+reuses it. It is not. `catalog_path` defaults to `""` ("Empty = no downstream
+servers") in both services, and the deployed stack mounts a *different* copy:
+`phantom-platform/docker-compose.yml` sets
+`CL_GATEWAY__CATALOG_PATH: /config/mcp-catalog.json` from
+`./config/mcp-catalog.json`. That file exists in phantom-platform and its
+contents differ from the reflex one, confirming the platform copy is the live
+source. Deleting the subtree does not touch it.
+
+This must be re-confirmed at implementation time rather than taken on trust
+from this document, because it is the one way the deletion could break a
+running system.
+
+**What goes with the subtree:**
+- `.github/workflows/test-reflex.yml` and `.github/workflows/release-reflex.yml`
+- the `reflex-dev` and `reflex-langfuse` recipes in the root `Justfile`
+- the `reflex/` row and `just reflex-*` entries in `CLAUDE.md`
+
+**Consequence to state in the PR, not discover later:** `release-reflex.yml`
+packages the plugin (`pkg-root/opt/reflex/share/reflex`), so deleting it ends
+that release line. Anyone who installed the packaged plugin keeps what they
+have and gets no further updates. That is the intent of deprecation, but it is
+a published-artifact removal and belongs in the PR body.
+
+**Left alone deliberately:** `shell-profiler/internal/commands/update.go:413`
+sets `CODEX_PLUGIN_DIR` to `"${WORKSPACE_HOME:-$HOME}/.codex-plugins/reflex"`.
+That is a path in the operator's *workspace*, not this repo's subtree, so
+deleting `reflex/` does not break it and removing it is a separate decision
+about profile scaffolding. Comment-level mentions in `app/preflight.go:96` and
+`app/profileimage/builder.go` (which already says "Replaces the retired reflex
+plugin skill tree") are updated in place.
+
 ## The rationale comments
 
 `AgentWorkPanel.svelte` and `stores.svelte.ts` carry roughly twenty lines
@@ -230,8 +299,11 @@ not something the implementation should do unattended.
 
 Named explicitly so nobody sweeps them in:
 
+- **All IaC**, per directive: `phantom-router/ansible/`,
+  `phantom-ink/brainbox/ansible/`, and `neverprepared-iac` (already clean).
 - `reflex` as a **standalone repo** (distinct from phantom-ink's `reflex/`
-  subtree) — deprecated, last commit three months ago.
+  subtree, which IS deleted here) — deprecated, last commit three months ago.
+  Worth a follow-up now that the subtree is going.
 - `maint` — a mirror of phantom-ink, not a live repo. Its 124 hits are copies.
 - `phantom-ink-p2p`, `phantom-ink-pre-migration`, `ink-bunny` — snapshots and
   forks.
@@ -245,9 +317,15 @@ mechanical deletion:
 
 1. `phantom-router` — finish and merge `feat/llm-langfuse-tracing`.
 2. `phantom-router` — the Langfuse removal, on top of (1).
-3. `phantom-ink` — the bulk of the work; independent of (1) and (2) and can
-   proceed in parallel.
-4. `phantom-platform` — one comment; can ride with whichever lands last.
+3. `phantom-ink` — the Langfuse removal. Independent of (1) and (2); can run
+   in parallel.
+4. `phantom-ink` — **delete `reflex/`**, as its own PR. It is a different
+   change from removing Langfuse: 171 files, two CI workflows, and the end of
+   a published release line. Keeping it separate means review can judge it on
+   its merits and a revert does not drag Langfuse back in. Order relative to
+   (3) does not matter, but doing (3) first keeps its diff free of the 3.8 MB
+   deletion.
+5. `phantom-platform` — one comment; rides with whichever lands last.
 
 Each must be independently green. The only hard sequence is (1) before (2),
 since they touch the same files.
@@ -259,8 +337,16 @@ Per repo, on the merged result:
 - **phantom-ink:** `cd app && go test ./... -race`; `cd app/frontend && npm run check && npm test`. The contract codegen gate and `app_conformance_test.go` both still apply. `just app-build` must produce a working app, since deleting bound methods is exactly what a stale binding hides.
 - **phantom-router:** `pytest` and `ruff check src/`. Plus one manual check that a session still provisions, because `backends/configure.py` changed live behaviour.
 - **phantom-ink/brainbox:** `just bb-test` and `just bb-lint`.
-- **Across all three:** `grep -rli langfuse` returns only the dated historical
-  docs listed above. Anything else is a miss.
+- **reflex deletion:** before deleting, re-confirm the gateway catalog finding
+  above — that no deployed service resolves `catalog_path` into the subtree.
+  After deleting, `just` must still list every remaining recipe, and the two
+  reflex workflows must be gone from `.github/workflows/`.
+- **Across all three:** `grep -rli langfuse` returns **only** (a) the ansible
+  trees, skipped by directive, and (b) the ADR and the dated as-built log,
+  which keep their original prose plus an amendment note. Anything else is a
+  miss. `grep -rli reflex` in phantom-ink returns only the deliberate
+  leave-alones: `shell-profiler`'s `CODEX_PLUGIN_DIR`, the ADR-002 amendment,
+  and `.claude/settings.local.json` (machine-local, uncommitted).
 
 CI is path-filtered in phantom-ink, so the brainbox and app subtrees each
 trigger their own workflow; a docs-only commit triggers none.
