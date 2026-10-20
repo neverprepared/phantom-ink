@@ -3,7 +3,6 @@
 import {brainbox} from '../models';
 import {main} from '../models';
 import {opensearch} from '../models';
-import {langfuse} from '../models';
 import {provider} from '../models';
 import {doctor} from '../models';
 
@@ -105,8 +104,6 @@ export function EnableLocalRunner(arg1:string):Promise<void>;
 
 export function ExportBrainVault(arg1:string,arg2:string):Promise<string>;
 
-export function ExportSecretsTemplate(arg1:string):Promise<string>;
-
 export function FetchMetricUrl(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function FindClaudeProcesses():Promise<Array<main.LocalProcess>>;
@@ -130,10 +127,6 @@ export function GetAgentSessionTimeline(arg1:string,arg2:string,arg3:number):Pro
 export function GetAgentState(arg1:string):Promise<brainbox.AgentStateItem>;
 
 export function GetAgentWorkCharts(arg1:string,arg2:string):Promise<main.AgentWorkCharts>;
-
-export function GetAgentWorkFreshness(arg1:string):Promise<main.AgentWorkFreshness>;
-
-export function GetAgentWorkTimeline(arg1:string,arg2:string,arg3:number):Promise<langfuse.SessionTimeline>;
 
 export function GetAppLogs():Promise<Array<string>>;
 
@@ -172,8 +165,6 @@ export function GetHubState():Promise<main.HubStateView>;
 export function GetJiraJQL(arg1:string):Promise<string>;
 
 export function GetLANIP():Promise<string>;
-
-export function GetLangfuseHealth():Promise<brainbox.HealthStatus>;
 
 export function GetLatestCollectedEntry(arg1:string,arg2:string):Promise<main.CollectedEntry>;
 
@@ -215,8 +206,6 @@ export function GetProfileColors():Promise<Record<string, string>>;
 
 export function GetProfileImageInfo(arg1:string):Promise<main.ProfileImageRow|boolean>;
 
-export function GetProfileSecrets(arg1:string):Promise<Array<main.SecretKeyStatus>>;
-
 export function GetProfileServers(arg1:string):Promise<Array<brainbox.ProfileServerState>>;
 
 export function GetRegistrySettings():Promise<Record<string, string>>;
@@ -231,8 +220,6 @@ export function GetRulesStatus():Promise<brainbox.RulesStatus>;
 
 export function GetSessionHistory(arg1:number,arg2:number):Promise<Array<brainbox.SessionHistoryEntry>>;
 
-export function GetSessionTraces(arg1:string,arg2:number):Promise<Array<brainbox.Trace>>;
-
 export function GetSessions(arg1:string):Promise<Array<brainbox.Session>>;
 
 export function GetSessionsMetricsHistory():Promise<Record<string, Array<brainbox.SessionMetricsSample>>>;
@@ -240,8 +227,6 @@ export function GetSessionsMetricsHistory():Promise<Record<string, Array<brainbo
 export function GetSystemInfo():Promise<main.SystemInfo>;
 
 export function GetTaskLineage(arg1:string):Promise<Array<main.HubTask>>;
-
-export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;
 
 export function GetTrust(arg1:string):Promise<brainbox.TrustConfig>;
 
@@ -286,8 +271,6 @@ export function ListAgentRoles():Promise<Array<brainbox.AgentDefinition>>;
 export function ListAgentSessions(arg1:string,arg2:string,arg3:number):Promise<Array<opensearch.AgentSession>>;
 
 export function ListAgentState(arg1:main.AgentStateFilter):Promise<Array<brainbox.AgentStateItem>>;
-
-export function ListAgentWork(arg1:string,arg2:string,arg3:number):Promise<Array<main.AgentWorkRow>>;
 
 export function ListAgents():Promise<Array<main.DetectedAgent>>;
 

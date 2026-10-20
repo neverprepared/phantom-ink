@@ -93,7 +93,7 @@ func checkDockerFileSharing() []PreflightCheck {
 
 	// Paths that need to be shared
 	required := map[string]string{
-		"/opt/homebrew":                   "Homebrew (required for reflex plugin mount)",
+		"/opt/homebrew":                   "Homebrew (required for host tool mounts)",
 		filepath.Join(home, "workspaces"): "Workspaces (required for profile mounts)",
 	}
 

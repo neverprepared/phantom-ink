@@ -1,6 +1,11 @@
 # Code Review Findings
 Generated: 2026-02-23
 
+> **Historical, 2026-02-23.** Describes the state at that date. Langfuse and the `reflex/`
+> plugin subtree, referenced below, were removed on 2026-10-20 — see
+> `docs/superpowers/specs/2026-10-20-remove-langfuse-design.md`. Left intact rather than edited,
+> because rewriting a dated record misrepresents it.
+
 ---
 
 ## Critical — Security

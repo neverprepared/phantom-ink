@@ -62,3 +62,11 @@ We evaluated the field directly (mcp-proxy, IBM ContextForge, Docker MCP Gateway
 ## Cross-links
 - ADR-001 (A2A façade + ModelTarget) — same thin-façade philosophy; the gateway's token model extends the same hub `Token`/`require_capability` substrate.
 - Reuses `reflex/plugins/reflex/mcp-catalog.json`, per-profile creds, the OllamaPool capability-pool pattern.
+
+## Amendment — 2026-10-20
+
+`reflex/` was deleted from this repo. The curated MCP catalog this ADR refers
+to as `reflex/plugins/reflex/mcp-catalog.json` now lives at
+`phantom-platform/config/mcp-catalog.json`, which is what the deployed gateway
+mounts (`CL_GATEWAY__CATALOG_PATH=/config/mcp-catalog.json`). The decision
+recorded above is unchanged; only the file's location is.

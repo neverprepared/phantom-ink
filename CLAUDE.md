@@ -11,13 +11,12 @@ Guidance for Claude Code (and other agents) working in this repository.
 | `app/` | **phantom-ink** — the Wails 2 macOS desktop app (command center) | Go 1.25 + Svelte 5 / TS |
 | `brainbox/` | **Brainbox** — FastAPI orchestration server, MCP server, MCP gateway, agent hub | Python 3.11+ |
 | `shell-profiler/` | CLI for direnv-backed workspace profiles | Go 1.25 |
-| `reflex/` | Claude Code plugin marketplace (skills, commands, agents, hooks) | Markdown + Python |
 | `packages/brainbox-mcp/` | Guest-side MCP helper shipped **into** a session container | Python |
 | `packages/brainbox/` | Homebrew/packaged brainbox launcher (`brainbox.sh`, compose) | Shell |
 | `tier0/` | opencode + local ollama harness wired to the MCP gateway | Shell/JSON |
 | `scripts/inbox/` | **Drive inbox** — capture connector: a Drive folder is drained, typed and filed into Reminders / the todo + memory vaults ([README](scripts/inbox/README.md), [ADR-006](docs/architecture/ADR-006-drive-inbox-queues.md)) | Python |
 | `contracts/` | Collection-output JSON Schema (array framing over the timeline-entry contract) | JSON |
-| `docker/` | Compose stacks for local services (langfuse, minio, opensearch, brainbox) | YAML |
+| `docker/` | Compose stacks for local services (minio, opensearch, brainbox) | YAML |
 | `Formula/` | Homebrew formulae | Ruby |
 | `docs/` | Architecture docs + ADRs | Markdown |
 
@@ -97,12 +96,8 @@ just inbox-apply <profile> # stages B+C: extract locally, then file
 just inbox-requeue <profile>  # recover items stranded in processing/
 just inbox-test / inbox-lint
 
-# Reflex plugin
-just reflex-dev            # claude --plugin-dir reflex
-
 # Local service stacks
 just opensearch-start|stop|logs|status
-just reflex-langfuse
 ```
 
 `brainbox` CLI subcommands (`python -m brainbox <cmd>`): `provision`, `run`, `recycle`,
@@ -121,9 +116,8 @@ Three distinct MCP things live here — do not conflate them:
    `stop_session`, `delete_session`, `get_session`, `push_config`, `exec_session`,
    `query_session`, `refresh_secrets`, `get_metrics`, `submit_task`, `get_task`,
    `list_tasks`, `cancel_task`, `get_hub_state`, `get_message_log`, `list_agents`,
-   `get_agent`, `list_tokens`, `api_info`, `multiclaude_status`, `get_langfuse_health`,
-   `get_qdrant_health`, `get_langfuse_session_traces`, `get_langfuse_session_summary`,
-   `get_langfuse_trace_detail`, `channel_read`, `channel_send`, `channel_complete`,
+   `get_agent`, `list_tokens`, `api_info`, `multiclaude_status`,
+   `get_qdrant_health`, `channel_read`, `channel_send`, `channel_complete`,
    `channel_join`, `get_event_schema`. Resource: `contract://events/timeline-entry`.
    The four `channel_*` tools keep their historical names but talk to the
    **conversation** engine (`/api/conversations/...`) — the in-memory channels
@@ -154,10 +148,9 @@ Three distinct MCP things live here — do not conflate them:
   `github.com/neverprepared/shell-profile-manager`.
 - **Secrets never land in git**: `.gitignore` excludes `docker/**/.env`, `.env.secrets`,
   `.env.local`, and `docker/volumes/`. Compose `.env` files carry bootstrap credentials.
-- **CI is path-filtered** (`.github/workflows/`): `test-app`, `test-brainbox`,
-  `test-reflex`, `test-shell-profiler` only run when their subtree changes, so a
-  root-only or docs-only change triggers **no** checks. Build/release workflows are
-  tag- or path-triggered (app, containers, brainbox pkg, brainbox-mcp pkg,
-  shell-profiler, reflex).
+- **CI is path-filtered** (`.github/workflows/`): `test-app`, `test-brainbox`, and
+  `test-shell-profiler` only run when their subtree changes, so a root-only or
+  docs-only change triggers **no** checks. Build/release workflows are tag- or
+  path-triggered (app, containers, brainbox pkg, brainbox-mcp pkg, shell-profiler).
 - **CLAUDE.md is excluded by a global gitignore** in this environment — commit it with
   `git add -f CLAUDE.md`.

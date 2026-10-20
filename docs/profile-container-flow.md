@@ -4,7 +4,7 @@ How workspace profiles, environment variables, and volume mounts flow from the h
 
 ## End-to-End Flow
 
-Each workspace profile is a self-contained directory with its own `.envrc`, `.env` template, `.ssh/`, `.gitconfig`, and a dedicated 1Password vault. The flow is identical for every profile — `cd` into it, direnv activates, and `/reflex:brainbox create` provisions a container scoped to that profile.
+Each workspace profile is a self-contained directory with its own `.envrc`, `.env` template, `.ssh/`, `.gitconfig`, and a dedicated 1Password vault. The flow is identical for every profile — `cd` into it, direnv activates, and a session request (the app's **Sessions** panel, or `prouterctl session-create`) provisions a container scoped to that profile. Either entry point resolves the active profile from the caller's environment and POSTs to the Brainbox session API; nothing profile-specific is hardcoded in the client.
 
 ```mermaid
 graph TB
@@ -29,7 +29,7 @@ graph TB
         Load["dotenv_if_exists<br/><i>all vars available in shell</i>"]
     end
 
-    subgraph Reflex["Reflex Plugin — /reflex:brainbox create"]
+    subgraph Request["Session Request — app Sessions panel / prouterctl session-create"]
         DetectProfile["Auto-detect from env<br/>WORKSPACE_PROFILE<br/>WORKSPACE_HOME"]
         APICall["POST /api/create<br/>{name, workspace_profile,<br/>workspace_home}"]
     end
@@ -63,7 +63,7 @@ graph TB
         end
 
         subgraph Secrets["/run/secrets/ or ~/.env"]
-            APIKeys["ANTHROPIC_AUTH_TOKEN<br/>LANGFUSE_*, etc."]
+            APIKeys["ANTHROPIC_AUTH_TOKEN<br/><i>+ the profile's API keys</i>"]
             AgentToken["agent-token"]
         end
 
@@ -83,7 +83,7 @@ graph TB
     Direnv --> Merge
     Merge --> Load
 
-    %% Trigger container creation
+    %% Trigger container creation (session request)
     Load --> DetectProfile
     DetectProfile --> |"reads $WORKSPACE_PROFILE,<br/>$WORKSPACE_HOME"| APICall
 
@@ -118,7 +118,7 @@ graph TB
     classDef cache fill:#9B59B6,stroke:#7D3C98,color:#fff
     classDef creds fill:#708090,stroke:#556B7F,color:#fff
     classDef activate fill:#2ECC71,stroke:#27AE60,color:#fff
-    classDef reflex fill:#7B68EE,stroke:#5B4ACE,color:#fff
+    classDef request fill:#7B68EE,stroke:#5B4ACE,color:#fff
     classDef brainbox fill:#E8913A,stroke:#C67A2E,color:#fff
     classDef mount fill:#50C878,stroke:#3AA35E,color:#fff
     classDef env fill:#20B2AA,stroke:#178F87,color:#fff
@@ -130,7 +130,7 @@ graph TB
     class CachedEnv cache
     class SSOCache creds
     class Direnv,Merge,Load activate
-    class DetectProfile,APICall reflex
+    class DetectProfile,APICall request
     class Provision,ResolveMounts,ResolveEnv,Configure,Start brainbox
     class CtrAWS,CtrAzure,CtrKube,CtrSSH,CtrGit,CtrSSO mount
     class WP,WH,Cloud,BashRC env
@@ -211,7 +211,7 @@ sequenceDiagram
     D->>D: dotenv_if_exists $cache/.env
     Note over D: Shell now has all profile vars
 
-    Note over BB: /reflex:brainbox create
+    Note over BB: session create<br/>(app Sessions panel / prouterctl session-create)
     BB->>BB: Read WORKSPACE_PROFILE + WORKSPACE_HOME from caller env
     BB->>VC: Read $TMPDIR/sp-profiles/{profile}/.env
     BB->>BB: Filter _HOST_ONLY_VARS<br/>(HOME, PATH, SSH_AUTH_SOCK,<br/>CLAUDE_CONFIG_DIR, ...)

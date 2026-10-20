@@ -249,8 +249,9 @@ export const eventsState = {
 
 // ---------------------------------------------------------------------------
 // "Telemetry" hub sub-tabs — the telemetry plane. Everything here reads
-// OpenSearch: service logs, agent traces (the turn/prompt drill-down that
-// replaced Langfuse), and cost/token metrics. Panel id stays 'agent-work'.
+// OpenSearch: service logs, agent traces (the turn/prompt drill-down; the
+// system of record for agent work), and cost/token metrics. Panel id stays
+// 'agent-work'.
 //
 // `sortBy` is a presentation intent a caller can hand in with the tab — the
 // Dashboard's OpenSearch metric widgets drill into Logs pre-sorted by the

@@ -7,24 +7,23 @@ This directory contains Docker images and Compose configurations for the phantom
 | Directory | Service | Purpose |
 |-----------|---------|---------|
 | `brainbox/` | Brainbox | Container image for sandboxed Claude Code sessions |
-| `langfuse/` | LangFuse | LLM observability and tracing |
 | `minio/` | MinIO | S3-compatible object storage for artifacts |
+| `opensearch/` | OpenSearch | Observability — logs, metrics and traces |
 
 ## Quick Start
 
-### LangFuse (Optional — for observability)
+### OpenSearch (observability)
 
 ```bash
-cd langfuse
-cp .env.example .env
-# Edit .env and generate secrets (see comments in file)
+cd opensearch
 docker compose up -d
 ```
 
-Web UI: http://localhost:3000
+Or from the repo root: `just opensearch-start`.
 
 ## Notes
 
-- Each service has its own `.env.example` file - copy to `.env` before starting
+- Some services ship a `.env.example` - where one exists, copy it to `.env` before
+  starting. OpenSearch needs no `.env`; its compose file is self-contained.
 - Never commit `.env` files (they contain secrets)
 - Data is persisted in Docker volumes

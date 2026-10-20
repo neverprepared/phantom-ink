@@ -133,10 +133,6 @@ export async function deleteRepo(name) {
   });
 }
 
-export async function fetchLangfuseHealth() {
-  return fetchJSON('/api/langfuse/health');
-}
-
 export async function fetchQdrantHealth() {
   return fetchJSON('/api/qdrant/health');
 }

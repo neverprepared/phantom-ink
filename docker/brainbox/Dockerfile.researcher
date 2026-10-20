@@ -12,18 +12,10 @@ COPY --chown=developer:developer docker/brainbox/setup/researcher/CLAUDE.md /hom
 COPY --chown=developer:developer docker/brainbox/setup/researcher/settings.json /home/developer/.claude/settings.json
 COPY --chown=developer:developer docker/brainbox/setup/network-guardrail.py /home/developer/.claude/hooks/network-guardrail.py
 
-# LangFuse observability hook (traces tool calls when credentials are present)
-COPY --chown=developer:developer reflex/plugins/reflex/scripts/langfuse-hook.sh /home/developer/.claude/hooks/langfuse-hook.sh
-COPY --chown=developer:developer reflex/plugins/reflex/scripts/langfuse-trace.py /home/developer/.claude/hooks/langfuse-trace.py
-
-# Skills — Research + Harvesting
-COPY --chown=developer:developer reflex/plugins/reflex/skills/obsidian-research/SKILL.md /home/developer/.claude/skills/obsidian-research/SKILL.md
-COPY --chown=developer:developer reflex/plugins/reflex/skills/analysis-patterns/SKILL.md /home/developer/.claude/skills/analysis-patterns/SKILL.md
-COPY --chown=developer:developer reflex/plugins/reflex/skills/knowledge-ingestion-patterns/SKILL.md /home/developer/.claude/skills/knowledge-ingestion-patterns/SKILL.md
-COPY --chown=developer:developer reflex/plugins/reflex/skills/github-harvester/SKILL.md /home/developer/.claude/skills/github-harvester/SKILL.md
-COPY --chown=developer:developer reflex/plugins/reflex/skills/pdf-harvester/SKILL.md /home/developer/.claude/skills/pdf-harvester/SKILL.md
-COPY --chown=developer:developer reflex/plugins/reflex/skills/youtube-harvester/SKILL.md /home/developer/.claude/skills/youtube-harvester/SKILL.md
-COPY --chown=developer:developer reflex/plugins/reflex/skills/site-crawler/SKILL.md /home/developer/.claude/skills/site-crawler/SKILL.md
+# Skills are injected per-profile at image build (see profileimage/builder.go
+# injectClaudeSkills) — the research + harvesting skills (obsidian-research,
+# analysis-patterns, knowledge-ingestion-patterns, github/pdf/youtube-harvester,
+# site-crawler) live in the brain skills vault and are no longer baked here.
 
 # MCP servers (research-focused: second brain, Brave Search, Memory)
 # obsidian-second-brain is already pre-installed via npm in the base brainbox image;

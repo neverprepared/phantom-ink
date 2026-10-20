@@ -198,10 +198,6 @@ export function ExportBrainVault(arg1, arg2) {
   return window['go']['main']['App']['ExportBrainVault'](arg1, arg2);
 }
 
-export function ExportSecretsTemplate(arg1) {
-  return window['go']['main']['App']['ExportSecretsTemplate'](arg1);
-}
-
 export function FetchMetricUrl(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['FetchMetricUrl'](arg1, arg2, arg3, arg4);
 }
@@ -248,14 +244,6 @@ export function GetAgentState(arg1) {
 
 export function GetAgentWorkCharts(arg1, arg2) {
   return window['go']['main']['App']['GetAgentWorkCharts'](arg1, arg2);
-}
-
-export function GetAgentWorkFreshness(arg1) {
-  return window['go']['main']['App']['GetAgentWorkFreshness'](arg1);
-}
-
-export function GetAgentWorkTimeline(arg1, arg2, arg3) {
-  return window['go']['main']['App']['GetAgentWorkTimeline'](arg1, arg2, arg3);
 }
 
 export function GetAppLogs() {
@@ -332,10 +320,6 @@ export function GetJiraJQL(arg1) {
 
 export function GetLANIP() {
   return window['go']['main']['App']['GetLANIP']();
-}
-
-export function GetLangfuseHealth() {
-  return window['go']['main']['App']['GetLangfuseHealth']();
 }
 
 export function GetLatestCollectedEntry(arg1, arg2) {
@@ -418,10 +402,6 @@ export function GetProfileImageInfo(arg1) {
   return window['go']['main']['App']['GetProfileImageInfo'](arg1);
 }
 
-export function GetProfileSecrets(arg1) {
-  return window['go']['main']['App']['GetProfileSecrets'](arg1);
-}
-
 export function GetProfileServers(arg1) {
   return window['go']['main']['App']['GetProfileServers'](arg1);
 }
@@ -450,10 +430,6 @@ export function GetSessionHistory(arg1, arg2) {
   return window['go']['main']['App']['GetSessionHistory'](arg1, arg2);
 }
 
-export function GetSessionTraces(arg1, arg2) {
-  return window['go']['main']['App']['GetSessionTraces'](arg1, arg2);
-}
-
 export function GetSessions(arg1) {
   return window['go']['main']['App']['GetSessions'](arg1);
 }
@@ -468,10 +444,6 @@ export function GetSystemInfo() {
 
 export function GetTaskLineage(arg1) {
   return window['go']['main']['App']['GetTaskLineage'](arg1);
-}
-
-export function GetTraceDetail(arg1) {
-  return window['go']['main']['App']['GetTraceDetail'](arg1);
 }
 
 export function GetTrust(arg1) {
@@ -560,10 +532,6 @@ export function ListAgentSessions(arg1, arg2, arg3) {
 
 export function ListAgentState(arg1) {
   return window['go']['main']['App']['ListAgentState'](arg1);
-}
-
-export function ListAgentWork(arg1, arg2, arg3) {
-  return window['go']['main']['App']['ListAgentWork'](arg1, arg2, arg3);
 }
 
 export function ListAgents() {

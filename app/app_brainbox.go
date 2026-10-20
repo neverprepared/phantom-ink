@@ -349,10 +349,6 @@ func (a *App) SubmitTaskAndWait(req brainbox.WaitForTaskRequest) (brainbox.WaitF
 // Observability
 // ---------------------------------------------------------------------------
 
-func (a *App) GetLangfuseHealth() (brainbox.HealthStatus, error) {
-	return a.client.GetLangfuseHealth()
-}
-
 func (a *App) GetContainerMetrics() ([]brainbox.ContainerMetrics, error) {
 	return a.client.GetContainerMetrics()
 }
@@ -363,12 +359,4 @@ func (a *App) GetMetricsHistory() ([]brainbox.MetricsSample, error) {
 
 func (a *App) GetSessionsMetricsHistory() (map[string][]brainbox.SessionMetricsSample, error) {
 	return a.client.GetSessionsMetricsHistory()
-}
-
-func (a *App) GetSessionTraces(sessionName string, limit int) ([]brainbox.Trace, error) {
-	return a.client.GetSessionTraces(sessionName, limit)
-}
-
-func (a *App) GetTraceDetail(traceID string) (brainbox.TraceDetail, error) {
-	return a.client.GetTraceDetail(traceID)
 }

@@ -46,7 +46,7 @@ graph TD
     end
 
     subgraph Observability["Observability"]
-        lf[langfuse_client.py<br/>trace queries]
+        os[os_sink.py<br/>OpenSearch event sink]
         art[artifacts.py<br/>MinIO S3 store]
     end
 
@@ -58,7 +58,7 @@ graph TD
 
     api --> lc
     api --> hub
-    api --> lf
+    api --> os
     api --> art
     api --> rate
     api --> val
@@ -78,7 +78,7 @@ graph TD
     msg --> pol
     router --> lc
 
-    cfg -.-> api & lc & hub & lf & art & mon
+    cfg -.-> api & lc & hub & os & art & mon
     models -.-> lc & hub & router & reg & msg
     logmod -.-> api & lc & hub & router & reg & msg & mon
 
@@ -92,7 +92,7 @@ graph TD
     class api,mcp,rate,val,models_api apiStyle
     class lc,cosign,hard,secrets,mon lcStyle
     class hub,reg,router,msg,pol hubStyle
-    class lf,art obsStyle
+    class os,art obsStyle
     class cfg,models,logmod coreStyle
     class be_init,docker_be,utm_be beStyle
 ```
@@ -120,7 +120,7 @@ mindmap
       Multi-repo hub
       State persistence
     Observability
-      LangFuse traces
+      OpenSearch event search
       Qdrant vector DB
       Container metrics
       Health monitoring
@@ -164,7 +164,7 @@ mindmap
 | `router.py` | Task submit, complete, fail, cancel, check running, repo management, role-aware recovery | [hub.md](hub.md) |
 | `messages.py` | Message routing with pending queue and audit log | [hub.md](hub.md) |
 | `policy.py` | Task assignment, message, and capability authorization | [hub.md](hub.md) |
-| `langfuse_client.py` | LangFuse trace/observation queries via HTTP | [observability.md](observability.md) |
+| `os_sink.py` | Indexes the agent event stream into OpenSearch for history/search | [observability.md](observability.md) |
 | `artifacts.py` | MinIO S3 artifact upload/download/list/delete | [observability.md](observability.md) |
 | `config.py` | Pydantic settings from `CL_*` env vars | [lifecycle.md](lifecycle.md) |
 | `models.py` | Domain models (AgentRole, AgentDefinition, Repository, Session, Task, Token, Message) | [hub.md](hub.md) |
@@ -176,5 +176,5 @@ mindmap
 1. **[lifecycle.md](lifecycle.md)** — Container lifecycle pipeline, backends, cosign, hardening, volume mounts
 2. **[hub.md](hub.md)** — Hub orchestration: agents, tokens, tasks, messages, policy
 3. **[api-reference.md](api-reference.md)** — REST API endpoints, MCP server, rate limits
-4. **[observability.md](observability.md)** — Monitoring, metrics, LangFuse, artifacts, secrets, SSE
+4. **[observability.md](observability.md)** — Monitoring, metrics, OpenSearch, artifacts, secrets, SSE
 5. **[dashboard.md](dashboard.md)** — Svelte 5 dashboard components, state, data flow

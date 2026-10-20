@@ -142,9 +142,9 @@ func Build(opts BuildOptions) (BuildResult, error) {
 	}
 
 	// 6b. Inject the profile's skills (the phantom-* CLI routers + others).
-	// Replaces the retired reflex plugin skill tree: these are the thin
-	// accessors this profile actually uses, wired to pbrainctl/prouterctl
-	// (installed in the base image) and the vault tokens baked above.
+	// These are the thin accessors this profile actually uses, wired to
+	// pbrainctl/prouterctl (installed in the base image) and the vault tokens
+	// baked above. Nothing skill-related is baked into the image itself.
 	opts.progress("Injecting profile skills…")
 	if err := injectClaudeSkills(containerName, opts); err != nil {
 		return BuildResult{}, fmt.Errorf("inject skills: %w", err)
@@ -324,8 +324,8 @@ func rewriteLoopbackForContainer(line string) string {
 
 // injectClaudeSkills copies the profile's .claude/skills/ tree into the
 // container at /home/developer/.claude/skills/. This is the per-profile skill
-// set (the phantom-* CLI routers + zsh-scripting etc.) that replaces the retired
-// reflex plugin's baked skill tree. Top-level dotfiles (e.g. .brain-skills.json,
+// set (the phantom-* CLI routers + zsh-scripting etc.); skills are injected
+// here rather than baked into the image. Top-level dotfiles (e.g. .brain-skills.json,
 // a host-side cache manifest) are skipped; everything else is copied verbatim
 // with host workspace paths rewritten. Shell/Python helpers are made executable.
 // Skips silently when the profile has no skills dir.

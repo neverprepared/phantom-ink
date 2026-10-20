@@ -265,7 +265,7 @@ class DockerBackend:
                         metadata={"secret": name, "reason": str(exc)},
                     )
         else:
-            await inject_env_file(executor, secrets, ctx.session_name, slog=slog)
+            await inject_env_file(executor, secrets, slog=slog)
 
         if not ctx.hardened and not ctx.profile_image:
             await inject_claude_config(executor, oauth_account, slog=slog)

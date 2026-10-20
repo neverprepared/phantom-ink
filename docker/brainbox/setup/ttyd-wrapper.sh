@@ -219,7 +219,7 @@ else
             fi
             ;;
         *)
-            # Default: Claude Code. The retired reflex plugin is no longer baked;
+            # Default: Claude Code. No plugin tree is baked into the image;
             # the profile's own skills live at ~/.claude/skills/ (injected per
             # profile at image build) and load without --plugin-dir.
             AGENT_CMD="claude --dangerously-skip-permissions"

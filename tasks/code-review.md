@@ -1,5 +1,10 @@
 # Code Review — ink-bunny Monorepo
 
+> **Historical, 2026-03-11.** Describes the state at that date. Langfuse and the
+> `reflex/` plugin subtree, referenced below, were removed on 2026-10-20 — see
+> `docs/superpowers/specs/2026-10-20-remove-langfuse-design.md`. Left intact rather than edited,
+> because rewriting a dated record misrepresents it.
+
 Reviewer: Claude Code (senior-engineer pass)
 Date: 2026-03-11
 Scope: brainbox/, reflex/, docker/, Formula/

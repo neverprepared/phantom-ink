@@ -111,7 +111,7 @@ class TestRealWorldMap:
 
     def test_self_hosted_is_infra_not_public(self):
         m = self._map()
-        assert m.zone_of_target("https://langfuse.neverprepared.com") is TrustZone.INFRA
+        assert m.zone_of_target("https://opensearch.neverprepared.com") is TrustZone.INFRA
         assert m.zone_of_target("http://ollama.neverprepared.com:11435") is TrustZone.INFRA
 
     def test_enterprise_github_trusted_consumer_slack_not(self):

@@ -20,12 +20,12 @@ func TestContainerBrainURL(t *testing.T) {
 
 func TestServiceComposeEnv_NilForOtherServices(t *testing.T) {
 	a := &App{}
-	got, err := a.serviceComposeEnv("langfuse")
+	got, err := a.serviceComposeEnv("opensearch")
 	if err != nil {
-		t.Fatalf("serviceComposeEnv(langfuse) error = %v", err)
+		t.Fatalf("serviceComposeEnv(opensearch) error = %v", err)
 	}
 	if got != nil {
-		t.Errorf("serviceComposeEnv(langfuse) = %v, want nil", got)
+		t.Errorf("serviceComposeEnv(opensearch) = %v, want nil", got)
 	}
 }
 

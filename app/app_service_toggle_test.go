@@ -8,7 +8,7 @@ import "testing"
 func TestServiceToggleAction(t *testing.T) {
 	local := ServiceDef{Name: "mindwalk", Port: 9997}
 	native := ServiceDef{Name: "phantom-brain-mesh", Native: true}
-	platform := ServiceDef{Name: "langfuse", Platform: true}
+	platform := ServiceDef{Name: "minio", Platform: true}
 
 	cases := []struct {
 		name    string

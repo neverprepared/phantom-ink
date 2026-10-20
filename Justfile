@@ -77,14 +77,6 @@ sp-test:
 sp-lint:
     cd shell-profiler && golangci-lint run
 
-# === Reflex (Plugin) ===
-
-reflex-dev:
-    claude --plugin-dir reflex
-
-reflex-langfuse:
-    cd docker/langfuse && docker compose up -d
-
 # === OpenSearch (observability stack) ===
 
 opensearch-start:

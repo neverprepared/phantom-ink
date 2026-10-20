@@ -108,7 +108,7 @@ COPY --chown=developer:developer docker/brainbox/setup/ttyd-wrapper.sh /home/dev
 # PreToolUse hook, which guards stdout). Wired via core.hooksPath below.
 COPY --chown=developer:developer docker/brainbox/setup/git-hooks         /opt/git-hooks
 # Skills are injected per-profile at image build (see profileimage/builder.go
-# injectClaudeSkills) — the retired reflex plugin skill tree is no longer baked.
+# injectClaudeSkills) — no skill tree is baked into this image.
 # brainbox-complete: records the session result via the hub session store
 COPY docker/brainbox/setup/complete.sh /usr/local/bin/brainbox-complete
 RUN chmod 755 /usr/local/bin/brainbox-complete
@@ -218,7 +218,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         @neverprepared/mcp-new-relic' \
     # ---- Python MCP servers + hook deps + brainbox-mcp --------------------
     && uvx --python 3.12 --with-requirements /tmp/hooks-requirements.txt \
-         python -c "import langfuse; print('hook deps ok')" \
+         python -c "import requests; print('hook deps ok')" \
     && uv tool install --python 3.12 'mcp-atlassian==0.13.0' \
     && uv tool install --python 3.12 'mcp-server-git==2025.12.18' \
     && uv tool install --python 3.12 markitdown-mcp \

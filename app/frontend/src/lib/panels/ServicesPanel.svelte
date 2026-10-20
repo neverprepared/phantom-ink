@@ -39,11 +39,6 @@
   let editingService = $state<string | null>(null);
   let editURL = $state('');
 
-  // Secrets status per profile
-  interface SecretKey { key: string; has_value: boolean; source: string; }
-  let secretsProfile = $state<string | null>(null);
-  let secretKeys = $state<SecretKey[]>([]);
-  let loadingSecrets = $state(false);
   let showOpGuide = $state(false);
   let credsExpanded = $state(false);
 
@@ -155,28 +150,6 @@
 
   function cancelEditURL() { editingService = null; }
 
-  async function loadSecrets(profileName: string) {
-    if (secretsProfile === profileName) { secretsProfile = null; return; }
-    loadingSecrets = true;
-    secretsProfile = profileName;
-    const a = await getApi();
-    if (!a) { loadingSecrets = false; return; }
-    try {
-      secretKeys = (await a.GetProfileSecrets(profileName)) ?? [];
-    } catch { secretKeys = []; }
-    finally { loadingSecrets = false; }
-  }
-
-  async function copySecretsTemplate(profileName: string) {
-    const a = await getApi();
-    if (!a) return;
-    try {
-      const tpl = await a.ExportSecretsTemplate(profileName);
-      await (window as any).runtime?.ClipboardSetText(tpl);
-      notifications.success('Secrets template copied to clipboard');
-    } catch (err: any) { notifications.error(`Failed to copy template: ${err}`); }
-  }
-
   // ---------------------------------------------------------------------------
   // Ollama model management
   // ---------------------------------------------------------------------------
@@ -280,46 +253,15 @@
     <div class="secrets-profiles">
       {#each profileState.profiles as p (p.name)}
         <div class="secrets-profile-row">
-          <button class="secrets-profile-btn" class:expanded={secretsProfile === p.name} onclick={() => loadSecrets(p.name)}>
-            <svg class="chevron" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
-            <span class="secrets-profile-name">{p.name}</span>
-            {#if p.secrets_mode === '1password'}
-              <span class="scope-badge info">1Password</span>
-            {:else if p.secrets_mode === 'plaintext'}
-              <span class="scope-badge">plaintext</span>
-            {:else}
-              <span class="scope-badge danger">not configured</span>
-            {/if}
-          </button>
-          <button class="btn-icon" onclick={() => copySecretsTemplate(p.name)} title="Copy secrets template to clipboard" aria-label="Copy secrets template for {p.name}">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-          </button>
+          <span class="secrets-profile-name">{p.name}</span>
+          {#if p.secrets_mode === '1password'}
+            <span class="scope-badge info">1Password</span>
+          {:else if p.secrets_mode === 'plaintext'}
+            <span class="scope-badge">plaintext</span>
+          {:else}
+            <span class="scope-badge danger">not configured</span>
+          {/if}
         </div>
-        {#if secretsProfile === p.name}
-          <div class="secrets-detail">
-            {#if loadingSecrets}
-              <p class="hint">loading...</p>
-            {:else if secretKeys.length === 0}
-              <p class="hint">no keys detected</p>
-            {:else}
-              <div class="secrets-key-list">
-                {#each secretKeys as sk (sk.key)}
-                  <div class="secrets-key-row">
-                    <span class="secrets-key-name">{sk.key}</span>
-                    {#if sk.has_value}
-                      <span class="secrets-key-status ok">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-                        {sk.source}
-                      </span>
-                    {:else}
-                      <span class="secrets-key-status missing">missing</span>
-                    {/if}
-                  </div>
-                {/each}
-              </div>
-            {/if}
-          </div>
-        {/if}
       {/each}
       {#if profileState.profiles.length === 0}
         <p class="hint">no profiles found</p>
@@ -341,7 +283,6 @@
         <p class="op-step-title">Option 1: Manual (no dependencies)</p>
         <p class="op-desc">
           Create <code>.env.secrets</code> in your profile directory and add secrets as <code>KEY=VALUE</code> pairs.
-          Use the copy button above to get a template with all known keys.
         </p>
         <p class="op-step-title">Option 2: 1Password Environments (optional)</p>
         <p class="op-desc">
@@ -351,7 +292,7 @@
           <li>Ensure <code>.env.secrets</code> does <strong>not</strong> exist at the profile path</li>
           <li>Open <strong>1Password</strong> → Developer → Environments</li>
           <li>Create an environment named after the profile</li>
-          <li>Add secret key-value pairs (use the copy template button)</li>
+          <li>Add secret key-value pairs</li>
           <li>Destinations → Configure → <strong>Mount .env file</strong></li>
           <li>Set path to: <code>&lt;workspace_home&gt;/.env.secrets</code></li>
         </ol>
@@ -608,28 +549,12 @@
 
   /* Credentials / secrets */
   .secrets-profiles { display: flex; flex-direction: column; gap: 2px; }
-  .secrets-profile-row { display: flex; align-items: center; gap: 4px; }
-  .secrets-profile-btn {
-    flex: 1; display: flex; align-items: center; gap: 8px;
-    background: transparent; border: none; border-radius: var(--radius-md);
-    padding: 6px 8px; text-align: left; transition: background 0.1s;
+  .secrets-profile-row {
+    display: flex; align-items: center; gap: 8px;
+    border-radius: var(--radius-md); padding: 6px 8px;
   }
-  .secrets-profile-btn:hover { background: rgba(255, 255, 255, 0.03); }
   .chevron { color: var(--color-text-tertiary); transition: transform 0.15s; flex-shrink: 0; }
-  .secrets-profile-btn.expanded .chevron { transform: rotate(90deg); }
   .secrets-profile-name { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
-
-  .secrets-detail { padding: 8px 8px 8px 28px; }
-  .secrets-key-list { display: flex; flex-direction: column; gap: 2px; }
-  .secrets-key-row {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 3px 8px; border-radius: var(--radius-sm); font-size: 12px;
-  }
-  .secrets-key-row:nth-child(odd) { background: rgba(255, 255, 255, 0.015); }
-  .secrets-key-name { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-secondary); }
-  .secrets-key-status { display: flex; align-items: center; gap: 4px; font-size: 10px; }
-  .secrets-key-status.ok { color: var(--color-success); }
-  .secrets-key-status.missing { color: var(--color-error); }
 
   /* 1Password guide */
   .op-toggle {

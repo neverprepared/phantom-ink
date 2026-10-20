@@ -76,13 +76,10 @@ def _escape_powershell_value(value: str) -> str:
 async def inject_env_file(
     executor: GuestExecutor,
     secrets: dict[str, str],
-    session_name: str,
     *,
     slog: Any | None = None,
 ) -> None:
     """Write secrets to ~/.env and ~/.agent-token.
-
-    Also appends LANGFUSE_SESSION_ID to .env.
 
     For Windows guests, uses PowerShell; for Linux/macOS, uses POSIX shell.
     """
@@ -107,11 +104,6 @@ async def inject_env_file(
                         f'powershell -Command "Add-Content -Path $env:USERPROFILE\\.env'
                         f" -Value '{key}={escaped_value}'\""
                     )
-            # LANGFUSE_SESSION_ID
-            await executor.exec_shell(
-                f'powershell -Command "Add-Content -Path $env:USERPROFILE\\.env'
-                f" -Value 'LANGFUSE_SESSION_ID={session_name}'\""
-            )
         else:
             # Linux / macOS — create .env with secure permissions
             env_path = f"{home}/.env"
@@ -133,10 +125,6 @@ async def inject_env_file(
                     await executor.exec_shell(
                         f"echo {shlex.quote(f'export {key}={escaped_value}')} >> {env_path}"
                     )
-
-            # LANGFUSE_SESSION_ID
-            langfuse_line = f"export LANGFUSE_SESSION_ID={session_name}"
-            await executor.exec_shell(f"echo {shlex.quote(langfuse_line)} >> {env_path}")
 
             # Unset host-only vars that may leak in via profile env; container uses defaults.
             await executor.exec_shell(

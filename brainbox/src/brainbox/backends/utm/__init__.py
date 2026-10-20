@@ -1102,7 +1102,7 @@ class UTMBackend:
         )
 
         # --- Inject configuration via shared functions ---
-        await inject_env_file(executor, secrets, ctx.session_name, slog=slog)
+        await inject_env_file(executor, secrets, slog=slog)
 
         # Config bundle
         from ...bundle import build_config_bundle
@@ -1187,7 +1187,7 @@ class UTMBackend:
             guest_os=guest_os,
         )
 
-        await inject_env_file(executor, secrets, ctx.session_name, slog=slog)
+        await inject_env_file(executor, secrets, slog=slog)
 
         # Config bundle
         from ...bundle import build_config_bundle

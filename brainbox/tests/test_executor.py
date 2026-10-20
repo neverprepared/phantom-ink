@@ -57,10 +57,10 @@ def test_recording_executor_satisfies_protocol():
 
 @pytest.mark.asyncio
 async def test_inject_env_file_linux():
-    """inject_env_file should write secrets and LANGFUSE_SESSION_ID on Linux."""
+    """inject_env_file should write secrets to .env on Linux."""
     executor = RecordingExecutor()
     secrets = {"ANTHROPIC_API_KEY": "sk-test-123", "agent-token": "tok-abc"}
-    await configure.inject_env_file(executor, secrets, "my-session")
+    await configure.inject_env_file(executor, secrets)
 
     commands = [c[1]["command"] for c in executor.calls if c[0] == "exec_shell"]
 
@@ -70,8 +70,6 @@ async def test_inject_env_file_linux():
     assert any("ANTHROPIC_API_KEY" in cmd for cmd in commands)
     # Should write agent-token
     assert any(".agent-token" in cmd for cmd in commands)
-    # Should write LANGFUSE_SESSION_ID
-    assert any("LANGFUSE_SESSION_ID=my-session" in cmd for cmd in commands)
 
 
 @pytest.mark.asyncio
@@ -79,7 +77,7 @@ async def test_inject_env_file_windows():
     """inject_env_file should use PowerShell on Windows."""
     executor = RecordingExecutor(guest_os="windows")
     secrets = {"API_KEY": "test"}
-    await configure.inject_env_file(executor, secrets, "session-1")
+    await configure.inject_env_file(executor, secrets)
 
     commands = [c[1]["command"] for c in executor.calls if c[0] == "exec_shell"]
     assert all("powershell" in cmd for cmd in commands)

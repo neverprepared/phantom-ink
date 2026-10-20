@@ -1,6 +1,6 @@
 # Monitoring, Metrics & Infrastructure
 
-Brainbox integrates several infrastructure services for observability and artifact storage. This document covers the health monitoring loop, container metrics collection, LangFuse trace integration, MinIO artifact storage, secret resolution, and SSE event broadcasting.
+Brainbox integrates several infrastructure services for observability and artifact storage. This document covers the health monitoring loop, container metrics collection, the OpenSearch event sink, MinIO artifact storage, secret resolution, and SSE event broadcasting.
 
 ## Infrastructure Service Map
 
@@ -13,7 +13,7 @@ graph TB
     end
 
     subgraph Services["Infrastructure Services"]
-        LF[LangFuse<br/>:3000<br/>HTTP Basic Auth]
+        OS[OpenSearch<br/>:9200<br/>Basic Auth optional]
         QD[Qdrant<br/>:6333<br/>API Key optional]
         MN[MinIO<br/>:9090<br/>Access Key + Secret]
         Docker[Docker Engine<br/>unix socket]
@@ -24,7 +24,7 @@ graph TB
         C2[researcher-analysis<br/>:7682]
     end
 
-    API -->|traces, observations| LF
+    API -->|bulk index, search| OS
     API -->|health check| QD
     API -->|upload, download| MN
     API -->|SDK calls| Docker
@@ -36,16 +36,16 @@ graph TB
     classDef ctrStyle fill:#22c55e,stroke:#16a34a,color:#fff
 
     class API,SSE,Monitor bbStyle
-    class LF,QD,MN,Docker svcStyle
+    class OS,QD,MN,Docker svcStyle
     class C1,C2 ctrStyle
 ```
 
 | Service | Default Port | Protocol | Auth | Config Prefix |
 |---------|-------------|----------|------|--------------|
 | Brainbox API | 9999 | HTTP | None | `CL_API_PORT` |
-| LangFuse | 3000 | HTTP | Basic (public_key:secret_key) | `CL_LANGFUSE__*` |
+| OpenSearch | 9200 | HTTP | Basic (optional) | `CL_OPENSEARCH__*` |
 | Qdrant | 6333 | HTTP | API key (optional) | `CL_QDRANT__*` |
-| MinIO | 9090 | HTTP (S3) | Access key + secret | `CL_ARTIFACT__*` |
+| MinIO | 9090 | HTTP (S3) | Access key + secret | `CL_MINIO__*` |
 | Docker | unix socket | Docker API | — | — |
 
 ## Health Monitor Loop
@@ -246,20 +246,23 @@ graph TB
 - Docker events run in a background thread via `run_in_executor`, reconnecting after a 1s delay on stream death
 - Hub events are forwarded via `on_event()` callback registered during lifespan
 
-## LangFuse Integration
+## OpenSearch Event Sink
 
-The LangFuse client (`langfuse_client.py`) queries traces and observations via the LangFuse public API using HTTP Basic Auth.
+`os_sink.py` is a durable consumer over the `agent_events` table. It bulk-indexes
+every envelope into monthly `{index_prefix}-YYYY.MM` indices so event history is
+searchable, and is enabled purely by configuring `CL_OPENSEARCH__ADDRESSES`.
 
-| Function | API Call | Returns |
-|----------|---------|---------|
-| `health_check()` | `GET /api/public/health` | `bool` |
-| `list_traces(session_id, limit)` | `GET /api/public/traces?sessionId=...` | `list[TraceResult]` |
-| `get_trace(trace_id)` | `GET /api/public/traces/{id}` + `GET /api/public/observations` | `(TraceResult, list[ObservationResult])` |
-| `get_session_traces_summary(session_id)` | `GET traces` + `GET observations` (batch) | `SessionSummary` |
+| Function | Does | Returns |
+|----------|------|---------|
+| `start()` / `stop()` | Run the background sink loop | — |
+| `run_once()` | Index one batch from the cursor | count indexed |
+| `search(...)` | Query `{index_prefix}-*` with the API's event filters | `{items, total}` |
+| `get_sink_status()` | Cursor position, lag and `last_error` | `dict` |
 
-**SessionSummary** aggregates: `total_traces`, `total_observations`, `error_count`, `tool_counts` (tool name → count).
-
-**Caching:** Container metrics endpoint caches trace counts per session with a 60s TTL to reduce LangFuse API load.
+**Never in a hot path:** ingest and the rules engine touch only Postgres. A down
+cluster stalls this cursor and retries on the next tick; `/api/agent_events/search`
+falls back to Postgres filters, and the response says which backend answered.
+`_id = str(seq)` makes at-least-once delivery idempotent.
 
 ## Structured Logging
 

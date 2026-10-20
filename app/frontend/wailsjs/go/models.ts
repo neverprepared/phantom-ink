@@ -920,20 +920,6 @@ export namespace brainbox {
 		    return a;
 		}
 	}
-	export class HealthStatus {
-	    status: string;
-	    message: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new HealthStatus(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.status = source["status"];
-	        this.message = source["message"];
-	    }
-	}
 	export class IntegrationPlacement {
 	    name: string;
 	    node: string;
@@ -2198,50 +2184,6 @@ export namespace brainbox {
 	    }
 	}
 	
-	export class Trace {
-	    id: string;
-	    name: string;
-	    timestamp: string;
-	    model: string;
-	    usage: any;
-	    metadata: any;
-	
-	    static createFrom(source: any = {}) {
-	        return new Trace(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.timestamp = source["timestamp"];
-	        this.model = source["model"];
-	        this.usage = source["usage"];
-	        this.metadata = source["metadata"];
-	    }
-	}
-	export class TraceDetail {
-	    id: string;
-	    name: string;
-	    timestamp: string;
-	    spans: any;
-	    metadata: any;
-	    token_usage: any;
-	
-	    static createFrom(source: any = {}) {
-	        return new TraceDetail(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.timestamp = source["timestamp"];
-	        this.spans = source["spans"];
-	        this.metadata = source["metadata"];
-	        this.token_usage = source["token_usage"];
-	    }
-	}
 	export class TrustRule {
 	    pattern: string;
 	    zone: string;
@@ -2511,89 +2453,6 @@ export namespace jira {
 
 }
 
-export namespace langfuse {
-	
-	export class Observation {
-	    id: string;
-	    parent_id?: string;
-	    depth: number;
-	    name: string;
-	    type: string;
-	    start_time: string;
-	    end_time?: string;
-	    latency_ms?: number;
-	    model?: string;
-	    cost_usd?: number;
-	    level?: string;
-	    status_message?: string;
-	    input?: string;
-	    output?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Observation(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.parent_id = source["parent_id"];
-	        this.depth = source["depth"];
-	        this.name = source["name"];
-	        this.type = source["type"];
-	        this.start_time = source["start_time"];
-	        this.end_time = source["end_time"];
-	        this.latency_ms = source["latency_ms"];
-	        this.model = source["model"];
-	        this.cost_usd = source["cost_usd"];
-	        this.level = source["level"];
-	        this.status_message = source["status_message"];
-	        this.input = source["input"];
-	        this.output = source["output"];
-	    }
-	}
-	export class SessionTimeline {
-	    session_id: string;
-	    workspace: string;
-	    observations: Observation[];
-	    total: number;
-	    truncated: boolean;
-	    content_available: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new SessionTimeline(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.session_id = source["session_id"];
-	        this.workspace = source["workspace"];
-	        this.observations = this.convertValues(source["observations"], Observation);
-	        this.total = source["total"];
-	        this.truncated = source["truncated"];
-	        this.content_available = source["content_available"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-
-}
-
 export namespace main {
 	
 	export class ADOConnectionStatus {
@@ -2817,60 +2676,6 @@ export namespace main {
 		    }
 		    return a;
 		}
-	}
-	export class AgentWorkFreshness {
-	    newest_iso?: string;
-	    age_ms: number;
-	    has_data: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new AgentWorkFreshness(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.newest_iso = source["newest_iso"];
-	        this.age_ms = source["age_ms"];
-	        this.has_data = source["has_data"];
-	    }
-	}
-	export class AgentWorkRow {
-	    session_id: string;
-	    workspace: string;
-	    first_seen: string;
-	    last_seen: string;
-	    observations: number;
-	    generations: number;
-	    tool_calls: number;
-	    tokens: number;
-	    models: string[];
-	    cost_usd: number;
-	    liveness?: string;
-	    last_activity_ms?: number;
-	    last_heartbeat_ms?: number;
-	    liveness_available: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new AgentWorkRow(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.session_id = source["session_id"];
-	        this.workspace = source["workspace"];
-	        this.first_seen = source["first_seen"];
-	        this.last_seen = source["last_seen"];
-	        this.observations = source["observations"];
-	        this.generations = source["generations"];
-	        this.tool_calls = source["tool_calls"];
-	        this.tokens = source["tokens"];
-	        this.models = source["models"];
-	        this.cost_usd = source["cost_usd"];
-	        this.liveness = source["liveness"];
-	        this.last_activity_ms = source["last_activity_ms"];
-	        this.last_heartbeat_ms = source["last_heartbeat_ms"];
-	        this.liveness_available = source["liveness_available"];
-	    }
 	}
 	export class ArtifactPreview {
 	    kind: string;
@@ -4252,22 +4057,6 @@ export namespace main {
 		}
 	}
 	
-	export class SecretKeyStatus {
-	    key: string;
-	    has_value: boolean;
-	    source: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new SecretKeyStatus(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.key = source["key"];
-	        this.has_value = source["has_value"];
-	        this.source = source["source"];
-	    }
-	}
 	export class ServiceStatus {
 	    name: string;
 	    label: string;

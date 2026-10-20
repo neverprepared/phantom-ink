@@ -1,5 +1,10 @@
 # Session Handoff
 
+> **Historical, 2026-04-05.** Describes the state at that date. Langfuse and the `reflex/`
+> plugin subtree, referenced below, were removed on 2026-10-20 — see
+> `docs/superpowers/specs/2026-10-20-remove-langfuse-design.md`. Left intact rather than edited,
+> because rewriting a dated record misrepresents it.
+
 **Generated:** 2026-04-05T02:15:00Z
 **Project:** ink-bunny (monorepo: brainbox, reflex, shell-profiler, docs)
 
