@@ -7,6 +7,7 @@
    * expand/collapse gate; this only renders the fetched sequence.
    */
   import { formatClock } from '../utils/format';
+  import EnvelopePayload from './EnvelopePayload.svelte';
 
   interface AgentEventEntry {
     seq: number;
@@ -24,6 +25,13 @@
     loading: boolean;
   } = $props();
 
+  // Each audit row is a SNAPSHOT of the envelope at that transition, and the
+  // store keeps the whole thing -- so expanding a row answers "what did the
+  // data look like when it entered this state", which neither the row summary
+  // (type + status + outcome) nor the card's current payload can show.
+  let expandedSeq = $state<number | null>(null);
+  function toggle(seq: number) { expandedSeq = expandedSeq === seq ? null : seq; }
+
   function statusLabel(s: string): string { return s ? s.replace('_', ' ') : ''; }
   function fmtMs(ms: number): string {
     if (!ms) return '';
@@ -40,7 +48,9 @@
   {:else}
     <ol class="history-list">
       {#each entries as ev (ev.seq)}
-        <li class="history-row">
+        <li>
+        <button type="button" class="history-row clickable" onclick={() => toggle(ev.seq)}>
+          <span class="history-disclosure">{expandedSeq === ev.seq ? '▾' : '▸'}</span>
           <span class="history-time">{fmtMs(ev.ts)}</span>
           <span class="history-type">{ev.type}</span>
           {#if ev.status}<span class="history-status status-{ev.status}">{statusLabel(ev.status)}</span>{/if}
@@ -50,13 +60,22 @@
               {ev.envelope.outcome.duration_ms ? ' · ' + ev.envelope.outcome.duration_ms + 'ms' : ''}
             </span>
           {/if}
+        </button>
         </li>
+        {#if expandedSeq === ev.seq}
+          <li class="history-payload"><EnvelopePayload payload={ev.envelope} /></li>
+        {/if}
       {/each}
     </ol>
   {/if}
 </div>
 
 <style>
+  .history-row.clickable { cursor: pointer; }
+  .history-row.clickable:hover { color: var(--color-text-primary); }
+  .history-disclosure { color: var(--color-accent); }
+  .history-payload { padding: 4px 0 6px 0; list-style: none; }
+
   .history-box {
     margin-top: 6px;
     padding: 8px 10px;
@@ -80,6 +99,14 @@
     gap: 3px;
   }
   .history-row {
+    /* The row is a <button> so it is keyboard-activatable natively; strip the
+       button chrome so it still reads as a log line. */
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    text-align: left;
+    width: 100%;
     display: flex;
     gap: 10px;
     align-items: baseline;
