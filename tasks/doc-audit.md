@@ -1,5 +1,10 @@
 # Documentation Audit
 
+> **Historical, undated (see file history).** Describes the state at that time. Langfuse and
+> the `reflex/` plugin subtree, referenced below, were removed on 2026-10-20 — see
+> `docs/superpowers/specs/2026-10-20-remove-langfuse-design.md`. Left intact rather than edited,
+> because rewriting a dated record misrepresents it.
+
 ## Files Reviewed
 
 - `/home/developer/workspace/ink-bunny/CLAUDE.md`

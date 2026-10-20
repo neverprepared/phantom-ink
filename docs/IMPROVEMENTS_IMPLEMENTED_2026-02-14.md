@@ -1,5 +1,10 @@
 # Security and Usability Improvements - February 14, 2026
 
+> **Historical, 2026-02-14.** Describes the state at that date. Langfuse, referenced below,
+> was removed on 2026-10-20 — see
+> `docs/superpowers/specs/2026-10-20-remove-langfuse-design.md`. Left intact rather than edited,
+> because rewriting a dated record misrepresents it.
+
 ## Summary
 
 Successfully completed all critical/high priority fixes PLUS the three recommended next steps:
