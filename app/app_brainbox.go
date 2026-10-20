@@ -360,7 +360,3 @@ func (a *App) GetMetricsHistory() ([]brainbox.MetricsSample, error) {
 func (a *App) GetSessionsMetricsHistory() (map[string][]brainbox.SessionMetricsSample, error) {
 	return a.client.GetSessionsMetricsHistory()
 }
-
-func (a *App) GetTraceDetail(traceID string) (brainbox.TraceDetail, error) {
-	return a.client.GetTraceDetail(traceID)
-}

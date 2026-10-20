@@ -2184,28 +2184,6 @@ export namespace brainbox {
 	    }
 	}
 	
-	export class TraceDetail {
-	    id: string;
-	    name: string;
-	    timestamp: string;
-	    spans: any;
-	    metadata: any;
-	    token_usage: any;
-	
-	    static createFrom(source: any = {}) {
-	        return new TraceDetail(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.timestamp = source["timestamp"];
-	        this.spans = source["spans"];
-	        this.metadata = source["metadata"];
-	        this.token_usage = source["token_usage"];
-	    }
-	}
 	export class TrustRule {
 	    pattern: string;
 	    zone: string;

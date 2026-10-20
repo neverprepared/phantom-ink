@@ -2,47 +2,10 @@ package main
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"time"
 
 	"phantom-ink/opensearch"
 )
-
-// livenessOverlayTimeout bounds the OpenSearch half of the list.
-//
-// Shorter than agentSessionQueryTimeout on purpose: the overlay is optional, so
-// it should give up well before the panel's own poll interval comes round
-// again. The list is already in hand by the time this starts.
-const livenessOverlayTimeout = 3 * time.Second
-
-// strictProfileHome resolves a profile's workspace home WITHOUT the ambient
-// fallback, and returns "" when it cannot be established for that exact
-// profile.
-//
-// a.profileWorkspaceHome must not be used for credentials. Its last resort is
-// envLookup(profileEnv(name), "WORKSPACE_HOME"), and profileEnv starts from
-// os.Environ() -- so an unknown or mistyped profile silently resolves to
-// whichever workspace launched the app, and this function would then hand back
-// THAT profile's credentials. Caught by a test asking for a profile that does
-// not exist and getting "personal" back.
-//
-// Failing closed is the right direction here: the panel says "not configured"
-// rather than quietly reading another profile's data.
-func (a *App) strictProfileHome(profile string) string {
-	if profile == "" || a.config == nil || a.config.WorkspacesRoot == "" {
-		return ""
-	}
-	// Reject anything that could escape the workspaces root.
-	if profile != filepath.Base(profile) || profile == "." || profile == ".." {
-		return ""
-	}
-	home := filepath.Join(a.config.WorkspacesRoot, profile)
-	if fi, err := os.Stat(home); err != nil || !fi.IsDir() {
-		return ""
-	}
-	return home
-}
 
 // ChartPoint is one sample of a chart time series. TS is unix SECONDS, which
 // is what the frontend's MetricsChart component consumes.

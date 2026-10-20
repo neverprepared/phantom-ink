@@ -454,10 +454,6 @@ export function GetTaskLineage(arg1) {
   return window['go']['main']['App']['GetTaskLineage'](arg1);
 }
 
-export function GetTraceDetail(arg1) {
-  return window['go']['main']['App']['GetTraceDetail'](arg1);
-}
-
 export function GetTrust(arg1) {
   return window['go']['main']['App']['GetTrust'](arg1);
 }

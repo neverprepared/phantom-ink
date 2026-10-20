@@ -1,24 +1,9 @@
 package brainbox
 
-import (
-	"fmt"
-	"net/url"
-)
-
 // HealthStatus is a generic health check response.
 type HealthStatus struct {
 	Status  string `json:"status"`
 	Message string `json:"message"`
-}
-
-// TraceDetail is the full detail of a single trace.
-type TraceDetail struct {
-	ID         string      `json:"id"`
-	Name       string      `json:"name"`
-	Timestamp  string      `json:"timestamp"`
-	Spans      interface{} `json:"spans"`
-	Metadata   interface{} `json:"metadata"`
-	TokenUsage interface{} `json:"token_usage"`
 }
 
 // ContainerMetrics represents CPU/memory/uptime for a container.
@@ -51,26 +36,6 @@ func (c *Client) GetQdrantHealth() (HealthStatus, error) {
 		return h, err
 	}
 	return h, nil
-}
-
-// GetSessionSummary returns a trace count summary for a session.
-func (c *Client) GetSessionSummary(sessionName string) (map[string]interface{}, error) {
-	var summary map[string]interface{}
-	path := fmt.Sprintf("/api/langfuse/sessions/%s/summary", url.PathEscape(sessionName))
-	if err := c.get(path, &summary); err != nil {
-		return nil, err
-	}
-	return summary, nil
-}
-
-// GetTraceDetail returns the full detail of a single trace.
-func (c *Client) GetTraceDetail(traceID string) (TraceDetail, error) {
-	var detail TraceDetail
-	path := fmt.Sprintf("/api/langfuse/traces/%s", url.PathEscape(traceID))
-	if err := c.get(path, &detail); err != nil {
-		return detail, err
-	}
-	return detail, nil
 }
 
 // GetContainerMetrics returns CPU/memory metrics for all containers.

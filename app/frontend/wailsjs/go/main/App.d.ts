@@ -232,8 +232,6 @@ export function GetSystemInfo():Promise<main.SystemInfo>;
 
 export function GetTaskLineage(arg1:string):Promise<Array<main.HubTask>>;
 
-export function GetTraceDetail(arg1:string):Promise<brainbox.TraceDetail>;
-
 export function GetTrust(arg1:string):Promise<brainbox.TrustConfig>;
 
 export function GetVaultProfiles(arg1:string):Promise<Array<string>>;
