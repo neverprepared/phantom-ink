@@ -657,7 +657,7 @@
 
 <div class="agentwork">
   <header class="panel-header">
-    <h1 class="page-title">agent work</h1>
+    <h1 class="page-title">telemetry</h1>
     <div class="head-actions">
       <div class="seg" role="group" aria-label="Time range">
         {#each RANGES as r (r.value)}
