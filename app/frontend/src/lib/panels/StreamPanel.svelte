@@ -2,14 +2,14 @@
   import { onMount, onDestroy } from 'svelte';
   import { timeAgo } from '../utils/format';
   import { getApi, openInBrowser } from '../utils/api';
-  import { profileState, currentPanel, attentionStore, streamFocus, ruleSeed, outboxStore } from '../stores.svelte';
+  import { profileState, currentPanel, attentionStore, eventsState, type EventsTab, ruleSeed, outboxStore } from '../stores.svelte';
   import { onAgentEvent, onWailsTopic } from '../utils/wailsTopic';
   import { streamLive, STATUS_OPTIONS } from '../stores/streamLive.svelte';
   import { notifications } from '../notifications.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import ContextMenu from '../components/ContextMenu.svelte';
   import EnvelopeHistory from '../components/EnvelopeHistory.svelte';
-  import TimelinePanel from './TimelinePanel.svelte';
+  import AutomationsPanel from './AutomationsPanel.svelte';
   import SessionSummaryCard from '../components/SessionSummaryCard.svelte';
 
   interface CtxMenuItem {
@@ -43,11 +43,12 @@
     ref: string;
   }
 
-  type Tab = 'live' | 'attention' | 'logs' | 'timeline';
-
   // ── State ──────────────────────────────────────────────────────────────────
 
-  let tab = $state<Tab>('attention');
+  // The tab lives in eventsState so other panels can land us on a specific
+  // tab without a one-shot signal to consume.
+  let tab = $derived(eventsState.tab);
+  function setTab(t: EventsTab) { eventsState.tab = t; }
   // Attention list is sourced from the singleton attentionStore so the sidebar
   // badge, dashboard ActionItems widget, and this panel always agree without
   // duplicating polls.
@@ -106,15 +107,6 @@
     }
   }
 
-  // If the user clicks an OpenSearch widget while Stream is already mounted,
-  // the streamFocus store fires after onMount — pick it up reactively.
-  $effect(() => {
-    const f = streamFocus.value;
-    if (!f) return;
-    if (f.tab) tab = f.tab;
-    streamFocus.consume();
-  });
-
   // ── Loaders ────────────────────────────────────────────────────────────────
 
   async function refreshAttention() {
@@ -127,11 +119,6 @@
   const outboxPending = $derived(outboxStore.pending);
 
   onMount(() => {
-    // Consume any cross-panel focus signal first so other tabs can land us
-    // here on the right tab.
-    const f = streamFocus.consume();
-    if (f?.tab) tab = f.tab;
-
     void streamLive.refreshLive();
     // outboxStore.start() is idempotent and app-wide; no panel-local poll.
     outboxStore.start();
@@ -270,7 +257,7 @@
 
 <div class="panel">
   <header class="panel-header">
-    <h1 class="page-title">streams</h1>
+    <h1 class="page-title">events</h1>
     <div class="header-actions">
       {#if outboxPending > 0}
         <div class="outbox-indicator" title="Envelopes queued locally awaiting delivery to brainbox">
@@ -288,7 +275,7 @@
     <button
       class="tab"
       class:active={tab === 'live'}
-      onclick={() => (tab = 'live')}>
+      onclick={() => setTab('live')}>
       live
       {#if streamLive.live.length > 0}
         <span class="badge badge-mute">{streamLive.live.length}</span>
@@ -297,7 +284,7 @@
     <button
       class="tab"
       class:active={tab === 'attention'}
-      onclick={() => (tab = 'attention')}>
+      onclick={() => setTab('attention')}>
       attention
       {#if attention.length > 0}
         <span class="badge">{attention.length}</span>
@@ -305,9 +292,9 @@
     </button>
     <button
       class="tab"
-      class:active={tab === 'timeline'}
-      onclick={() => (tab = 'timeline')}>
-      timeline
+      class:active={tab === 'rules'}
+      onclick={() => setTab('rules')}>
+      rules
     </button>
   </div>
 
@@ -507,12 +494,14 @@
         </ul>
       {/if}
     </section>
-  {:else if tab === 'timeline'}
-    <!-- Timeline is folded into Stream as a tab; it brings its own header,
-         controls, and scroll region, so wrap it in a flex cell that fills the
-         remaining panel height. -->
-    <div class="timeline-embed">
-      <TimelinePanel />
+  {:else if tab === 'rules'}
+    <!-- The rules engine matches on the agent bus (event_match.py is
+         EventBridge-shaped), so it lives beside the bus rather than beside
+         the jobs it triggers. AutomationsPanel brings its own header and
+         scroll region, so it gets the same filling flex cell the timeline
+         embed used to. -->
+    <div class="tab-embed">
+      <AutomationsPanel />
     </div>
   {/if}
 </div>
@@ -535,11 +524,11 @@
     overflow: hidden;
   }
 
-  /* Timeline tab: let the embedded TimelinePanel (its own flex column with a
+  /* Rules tab: let the embedded AutomationsPanel (its own flex column with a
      header + scroll region) fill the space below the tab strip. Negative
-     horizontal margin cancels the panel's side padding so the timeline spans
-     full width the way it did as a standalone panel. */
-  .timeline-embed {
+     horizontal margin cancels the panel's side padding so the embedded panel
+     spans full width the way it did as a standalone panel. */
+  .tab-embed {
     flex: 1;
     min-height: 0;
     display: flex;
