@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { agentRoleNames, ensureAgentRoles } from '../stores/catalog.svelte';
   import { onMount } from 'svelte';
   import { getApi, safe } from '../utils/api';
   import RulePatternEditor from './RulePatternEditor.svelte';
@@ -51,17 +52,19 @@
   let patternEditor = $state<RulePatternEditor | null>(null);
 
   // Pickers
-  let agents = $state<string[]>([]);
+  // From the shared role catalog. No fallback here: an empty picker is the
+  // honest state for a rule form when no roles are authored.
+  let agents = $derived(agentRoleNames([]));
   let loopTemplates = $state<string[]>([]);
 
   onMount(async () => {
     const api = await getApi();
     if (!api) return;
-    const [ag, lt] = await Promise.all([
-      safe(api.ListAgentRoles(), [], 'ListAgentRoles'),
+    const [, lt] = await Promise.all([
+      // Shared catalog, not a per-form fetch.
+      ensureAgentRoles(),
       safe(api.ListLoopTemplates(), [], 'ListLoopTemplates'),
     ]);
-    agents = ((ag ?? []) as any[]).map((a) => a.name).filter(Boolean);
     loopTemplates = (lt ?? []) as string[];
   });
 

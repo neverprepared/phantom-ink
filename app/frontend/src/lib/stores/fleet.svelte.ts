@@ -71,6 +71,28 @@ export const containerDiskRes = resource<any[]>(
   { initial: [], label: 'Failed to read container disk usage' },
 );
 
+/**
+ * Whole-disk breakdown behind the Sessions panel's disk card. Host state.
+ *
+ * Only one consumer, so this is not about de-duplication: it is here so the
+ * card survives the panel being destroyed on navigation, like everything else
+ * in this file.
+ */
+export const diskBreakdownRes = resource<any | null>(
+  async (api) => (await api.GetDiskBreakdown()) ?? null,
+  { initial: null, label: 'Failed to read disk breakdown' },
+);
+
+/**
+ * This Mac's local runner. Host state, read by the Sessions and Settings
+ * panels -- Settings also writes it (start/stop), which is why `refresh` is
+ * exported rather than only polled.
+ */
+export const localRunnerRes = resource<any | null>(
+  async (api) => (await api.GetLocalRunnerStatus()) ?? null,
+  { initial: null, label: 'Failed to read local runner status' },
+);
+
 let pollHandle: ReturnType<typeof setInterval> | null = null;
 let pollProfile = '';
 
@@ -116,4 +138,8 @@ export function resetFleet(): void {
   pollProfile = '';
   sessionsRes.clear();
   runnersRes.reset();
+  localProcsRes.reset();
+  containerDiskRes.reset();
+  diskBreakdownRes.reset();
+  localRunnerRes.reset();
 }

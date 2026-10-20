@@ -2,6 +2,7 @@
   // Autonomous agent jobs: fan one agent spec across many machines, walk away,
   // come back to grouped per-target results. Thin surface over the router's
   // /api/hub/jobs helper (SubmitAgentJob / ListAgentJobs / GetAgentJob).
+  import { agentRoleNames, ensureAgentRoles } from '../stores/catalog.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { getApi } from '../utils/api';
   import { profileState } from '../stores.svelte';
@@ -34,7 +35,8 @@
 
   let jobs = $state<JobSummary[]>([]);
   let runners = $state<Runner[]>([]);
-  let agents = $state<string[]>(['worker']);
+  // From the shared role catalog, falling back to this lane's default.
+  let agents = $derived(agentRoleNames(['worker']));
   let loaded = $state(false);
   let loadError = $state<string | null>(null);
 
@@ -102,11 +104,8 @@
       const rs = (await a.ListRunners()) ?? [];
       runners = rs.map((r: any) => ({ name: r.name, tags: r.tags ?? [] }));
     } catch { /* runners optional */ }
-    try {
-      const roles = (await (a as any).ListAgentRoles()) ?? [];
-      const names = roles.map((r: any) => r.name).filter(Boolean);
-      if (names.length) agents = names;
-    } catch { /* fall back to ['worker'] */ }
+    // Shared catalog, not a per-panel fetch — see stores/catalog.svelte.ts.
+    await ensureAgentRoles();
   }
 
   async function refresh() {

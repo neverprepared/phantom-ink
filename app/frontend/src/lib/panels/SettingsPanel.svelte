@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { localRunnerRes } from '../stores/fleet.svelte';
   import { getApi } from '../utils/api';
   import { onMount } from 'svelte';
   import { notifications } from '../notifications.svelte';
@@ -58,7 +59,11 @@
   // Mirrors the Go struct exactly. work_dir used to be declared here and
   // seeded with '', but app_runners.go never sends it and nothing read it.
   type LocalRunnerStatus = { enabled: boolean; running: boolean; name: string };
-  let runnerStatus = $state<LocalRunnerStatus>({ enabled: false, running: false, name: 'local-mac' });
+  // Shared with the Sessions panel, which shows the same runner. Two copies
+  // could disagree -- start it here and Sessions would keep saying stopped
+  // until its own next read.
+  const RUNNER_UNKNOWN: LocalRunnerStatus = { enabled: false, running: false, name: 'local-mac' };
+  let runnerStatus = $derived<LocalRunnerStatus>(localRunnerRes.value ?? RUNNER_UNKNOWN);
   let runnerName = $state('local-mac');
   let savingRunner = $state(false);
 
@@ -72,7 +77,7 @@
     const a = await getApi();
     if (!a) { loaded = true; return; }
     try {
-      const [cfg, plat, reg, olh, rs, mak] = await Promise.all([a.GetConfig(), a.GetPlatform(), a.GetRegistrySettings(), a.GetOTLPHost(), a.GetLocalRunnerStatus(), a.GetMeshAdminKeySet()]);
+      const [cfg, plat, reg, olh, , mak] = await Promise.all([a.GetConfig(), a.GetPlatform(), a.GetRegistrySettings(), a.GetOTLPHost(), localRunnerRes.refresh(), a.GetMeshAdminKeySet()]);
       baseURL = cfg?.base_url ?? 'http://127.0.0.1:9999';
       apiKey = cfg?.api_key ?? '';
       workspacesRoot = cfg?.workspaces_root ?? '';
@@ -82,8 +87,8 @@
       registryUsername = reg?.username ?? '';
       registryPassword = reg?.password ?? '';
       otlpHost = olh ?? '';
-      runnerStatus = rs ?? runnerStatus;
-      runnerName = rs?.name ?? 'local-mac';
+      // The shared read has landed by now (it was awaited above).
+      runnerName = localRunnerRes.value?.name ?? 'local-mac';
       meshAdminKeySet = Boolean(mak);
       applyTheme(theme);
       // Platform node (best-effort — needs a reachable router for the node list).
@@ -215,7 +220,8 @@
     if (!a) { savingRunner = false; return; }
     try {
       await a.EnableLocalRunner(runnerName);
-      runnerStatus = await a.GetLocalRunnerStatus();
+      // Forced: this just changed the thing, so the held value is wrong.
+      await localRunnerRes.refresh({ force: true });
       notifications.success('Local runner started');
     } catch (err: any) {
       notifications.error(`Failed to enable runner: ${err}`);
@@ -230,7 +236,7 @@
     if (!a) { savingRunner = false; return; }
     try {
       await a.DisableLocalRunner();
-      runnerStatus = await a.GetLocalRunnerStatus();
+      await localRunnerRes.refresh({ force: true });
       notifications.success('Local runner stopped');
     } catch (err: any) {
       notifications.error(`Failed to disable runner: ${err}`);

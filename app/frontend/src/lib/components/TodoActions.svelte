@@ -8,6 +8,7 @@
   //     prompt = the todo text): either repeatable (interval / time-of-day) or
   //     one-shot (run_once_at_ms). The Collect scheduler runs in-app.
   // Both "turn into job" paths also forget the todo — it has become a job.
+  import { agentRoleNames, ensureAgentRoles } from '../stores/catalog.svelte';
   import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
   import { notifications } from '../notifications.svelte';
@@ -22,7 +23,8 @@
   const prompt = $derived((record.body?.trim() || record.title || '').trim());
   const jobName = $derived(record.title?.trim() || 'todo');
 
-  let agents = $state<string[]>(['worker']);
+  // From the shared role catalog, falling back to this lane's default.
+  let agents = $derived(agentRoleNames(['worker']));
   let runners = $state<string[]>([]);
 
   // Shared inline options for the hub "run once" job (Collect runner jobs run
@@ -50,10 +52,11 @@
   onMount(async () => {
     const a = await getApi();
     if (!a) return;
-    try {
-      const roles = ((await (a as any).ListAgentRoles()) ?? []).map((r: any) => r.name).filter(Boolean);
-      if (roles.length) { agents = roles; if (!roles.includes(agent)) agent = roles[0]; }
-    } catch { /* fall back to ['worker'] */ }
+    // Shared catalog, not a per-component fetch.
+    await ensureAgentRoles();
+    // Keep the selection valid: a role that no longer exists must not stay
+    // selected just because it was the default.
+    if (agents.length && !agents.includes(agent)) agent = agents[0];
     try {
       runners = ((await (a as any).ListRunners()) ?? []).map((r: any) => r.name).filter(Boolean);
     } catch { /* runners optional */ }
