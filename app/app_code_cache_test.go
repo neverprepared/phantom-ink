@@ -153,9 +153,7 @@ func adoOnlyEnvServer(t *testing.T, calls *atomic.Int64) *httptest.Server {
 }
 
 func resetCodeOverviewCache() {
-	codeOverviewMu.Lock()
-	codeOverviewCache = map[string]codeOverviewEntry{}
-	codeOverviewMu.Unlock()
+	codeOverviewMemo.invalidate("")
 }
 
 // ── Stale-while-revalidate ────────────────────────────────────────────────
@@ -300,11 +298,7 @@ func TestCodeOverviewColdMissFetchesSynchronously(t *testing.T) {
 
 // ageCodeOverview backdates a cached entry so it reads as stale.
 func ageCodeOverview(profile string, by time.Duration) {
-	codeOverviewMu.Lock()
-	defer codeOverviewMu.Unlock()
-	e := codeOverviewCache[profile]
-	e.at = e.at.Add(-by)
-	codeOverviewCache[profile] = e
+	codeOverviewMemo.age(profile, by)
 }
 
 // waitFor polls cond for up to two seconds. The revalidate is deliberately

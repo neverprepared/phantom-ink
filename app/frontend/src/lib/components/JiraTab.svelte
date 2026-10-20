@@ -6,75 +6,84 @@
   import { notifications } from '../notifications.svelte';
   import { profileState } from '../stores.svelte';
   import { codeState } from '../stores/code.svelte';
-  import type { main } from '../../../wailsjs/go/models';
+  import { jiraState } from '../stores/jira.svelte';
+  import { timeAgo } from '../utils/format';
 
-  let loading = $state(false);
-  let result = $state<main.JiraTicketsResult | null>(null);
+  // Editor state, deliberately component-local: the JQL draft and the link
+  // picker describe one visit, not the profile. The TICKETS live in
+  // jiraState, which is module-scoped so they survive this component being
+  // destroyed on every tab and profile switch.
   let jqlDraft = $state('');
   let editingJql = $state(false);
   let linkingKey = $state(''); // ticket currently showing the PR picker
 
   let profile = $derived(profileState.active?.name ?? '');
-  let tickets = $derived(result?.tickets ?? []);
+  let tickets = $derived(jiraState.rows);
 
-  async function load() {
-    if (!profile) return;
-    loading = true;
-    const a = await getApi();
-    if (!a) { loading = false; return; }
-    try {
-      const res = await a.JiraTickets(profile);
-      result = res;
-      if (!editingJql) jqlDraft = res.jql;
-    } catch (e: any) {
-      notifications.error(`Jira: ${e?.message ?? e}`);
-      result = null;
-    } finally {
-      loading = false;
-    }
+  /** Reload, then re-seed the draft unless the operator is mid-edit. */
+  async function load(force = false) {
+    await jiraState.refresh(profile, force);
+    if (!editingJql) jqlDraft = jiraState.jql;
   }
 
-  // Reload when the profile changes — tickets are per profile, like everything
-  // else here.
+  // Re-read on mount and on every profile change. Cached tickets stay on
+  // screen while this revalidates behind them.
   $effect(() => {
     if (profile) void load();
   });
 
-  async function saveJql() {
-    const a = await getApi();
-    if (!a) return;
+  // Live age for the freshness label; one tick a minute while mounted.
+  let now = $state(Date.now());
+  $effect(() => {
+    const t = setInterval(() => (now = Date.now()), 60_000);
+    return () => clearInterval(t);
+  });
+  const fetchedAgo = $derived(
+    jiraState.fetchedAt ? timeAgo(Date.parse(jiraState.fetchedAt), now) : ''
+  );
+
+  /**
+   * Run a write that changes what the query returns, then reload.
+   *
+   * The backend drops its own memo on these, but the frontend cache has to be
+   * dropped too — otherwise the resource keeps serving the value it already
+   * holds and the new link never appears.
+   */
+  async function afterWrite(fn: () => Promise<void>, ok?: string) {
     try {
-      await a.SetJiraJQL(profile, jqlDraft);
-      editingJql = false;
+      await fn();
+      jiraState.invalidate(profile);
+      if (ok) notifications.success(ok);
       await load();
     } catch (e: any) {
       notifications.error(`${e?.message ?? e}`);
     }
+  }
+
+  async function saveJql() {
+    await afterWrite(async () => {
+      const a = await getApi();
+      if (!a) throw new Error('API bindings unavailable');
+      await a.SetJiraJQL(profile, jqlDraft);
+      editingJql = false;
+    });
   }
 
   async function link(issueKey: string, rowKey: string) {
-    const a = await getApi();
-    if (!a) return;
-    try {
+    await afterWrite(async () => {
+      const a = await getApi();
+      if (!a) throw new Error('API bindings unavailable');
       await a.LinkJiraIssue(profile, issueKey, rowKey);
       linkingKey = '';
-      notifications.success(`${issueKey} linked`);
-      await load();
-    } catch (e: any) {
-      notifications.error(`${e?.message ?? e}`);
-    }
+    }, `${issueKey} linked`);
   }
 
   async function unlink(issueKey: string, rowKey: string) {
-    const a = await getApi();
-    if (!a) return;
-    try {
+    await afterWrite(async () => {
+      const a = await getApi();
+      if (!a) throw new Error('API bindings unavailable');
       await a.UnlinkJiraIssue(profile, issueKey, rowKey);
-      notifications.success(`${issueKey} unlinked`);
-      await load();
-    } catch (e: any) {
-      notifications.error(`${e?.message ?? e}`);
-    }
+    }, `${issueKey} unlinked`);
   }
 
   function openInBrowser(url: string) {
@@ -95,27 +104,50 @@
       <button class="btn ghost sm" onclick={() => (editingJql = !editingJql)}>
         {editingJql ? 'cancel' : 'edit query'}
       </button>
-      <button class="btn ghost sm" onclick={load} disabled={loading}>refresh</button>
+      <!-- Disabled only on a cold load: during a background check there ARE
+           tickets on screen, so asking again is reasonable. -->
+      <button
+        class="btn ghost sm"
+        onclick={() => load(true)}
+        disabled={jiraState.loading}
+      >{jiraState.loading || jiraState.backgroundBusy ? 'refreshing…' : 'refresh'}</button>
     </div>
   </div>
+
+  <!-- Same freshness affordance as the code tab: tickets kept across a tab or
+       profile switch must not be mistaken for live ones. -->
+  {#if fetchedAgo || jiraState.backgroundBusy}
+    <p class="freshness" aria-live="polite">
+      {#if jiraState.backgroundBusy}
+        <span class="dot" aria-hidden="true"></span>
+        <span>Checking for updates…</span>
+        {#if fetchedAgo}<span class="sep">·</span><span>showing tickets from {fetchedAgo}</span>{/if}
+      {:else}
+        <span>Updated {fetchedAgo}</span>
+      {/if}
+    </p>
+  {/if}
 
   {#if editingJql}
     <div class="jql-edit">
       <textarea bind:value={jqlDraft} rows="2" spellcheck="false" aria-label="JQL query"></textarea>
       <button class="btn sm" onclick={saveJql}>save</button>
     </div>
-  {:else if result?.jql}
-    <code class="jql-view">{result.jql}</code>
+  {:else if jiraState.jql}
+    <code class="jql-view">{jiraState.jql}</code>
   {/if}
 
-  {#if result?.error}
+  {#if jiraState.jiraError}
     <!-- A JQL typo is a 400. Say so; an empty list would read as "no tickets". -->
-    <p class="section-error">{result.error}</p>
+    <p class="section-error">{jiraState.jiraError}</p>
+  {:else if jiraState.loadError}
+    <!-- Distinct from the above: Jira was never reached at all. -->
+    <p class="section-error">{jiraState.loadError}</p>
   {/if}
 
-  {#if loading && tickets.length === 0}
+  {#if jiraState.loading && tickets.length === 0}
     <p class="muted-note">loading…</p>
-  {:else if !result?.error && tickets.length === 0}
+  {:else if !jiraState.jiraError && tickets.length === 0}
     <p class="muted-note">No tickets match this query.</p>
   {:else}
     <ul class="tickets">
@@ -184,6 +216,25 @@
 <style>
   .jira-tab { padding: var(--panel-padding); display: flex; flex-direction: column; gap: var(--spacing-sm); }
   .head-actions { display: flex; gap: 6px; }
+  /* Freshness line — quieter than any content, matching the code tab's. */
+  .freshness {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin: 0; font-size: 0.75rem; color: var(--color-text-muted);
+  }
+  .freshness .sep { opacity: 0.5; }
+  .freshness .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--color-accent, var(--color-text-secondary));
+    animation: fresh-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes fresh-pulse {
+    0%, 100% { opacity: 0.25; }
+    50% { opacity: 1; }
+  }
+  /* Respect the OS setting: a persistent pulse is what this hurts. */
+  @media (prefers-reduced-motion: reduce) {
+    .freshness .dot { animation: none; opacity: 0.8; }
+  }
   .jql-view { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-tertiary); }
   .jql-edit { display: flex; gap: 6px; align-items: flex-start; }
   .jql-edit textarea {

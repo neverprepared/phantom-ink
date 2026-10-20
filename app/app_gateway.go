@@ -58,6 +58,9 @@ func (a *App) SetGatewayEnv(profile string, env map[string]string) error {
 	// would outlive the fix that resolved it. Only this profile's entry is
 	// dropped; the others' credentials did not change.
 	a.InvalidateCodeOverview(profile)
+	// JIRA_* lives in the same env, and the ticket memo caches its reachability
+	// the same way.
+	a.InvalidateJiraTickets(profile)
 	return nil
 }
 
@@ -69,6 +72,7 @@ func (a *App) DeleteGatewayEnv(profile string) error {
 	// Same reason as SetGatewayEnv: the profile has no credentials now, so its
 	// memoised rows describe a provider it can no longer reach.
 	a.InvalidateCodeOverview(profile)
+	a.InvalidateJiraTickets(profile)
 	return nil
 }
 

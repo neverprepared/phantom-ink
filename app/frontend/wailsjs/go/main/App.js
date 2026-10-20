@@ -486,6 +486,10 @@ export function InvalidateCodeOverview(arg1) {
   return window['go']['main']['App']['InvalidateCodeOverview'](arg1);
 }
 
+export function InvalidateJiraTickets(arg1) {
+  return window['go']['main']['App']['InvalidateJiraTickets'](arg1);
+}
+
 export function JiraGloballyEnabled() {
   return window['go']['main']['App']['JiraGloballyEnabled']();
 }
@@ -498,8 +502,8 @@ export function JiraStatus(arg1) {
   return window['go']['main']['App']['JiraStatus'](arg1);
 }
 
-export function JiraTickets(arg1) {
-  return window['go']['main']['App']['JiraTickets'](arg1);
+export function JiraTickets(arg1, arg2) {
+  return window['go']['main']['App']['JiraTickets'](arg1, arg2);
 }
 
 export function LaunchInteractiveSession(arg1) {

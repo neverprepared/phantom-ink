@@ -248,13 +248,15 @@ export function InitBrainProfile(arg1:string):Promise<brainbox.BrainProfileInitR
 
 export function InvalidateCodeOverview(arg1:string):Promise<void>;
 
+export function InvalidateJiraTickets(arg1:string):Promise<void>;
+
 export function JiraGloballyEnabled():Promise<boolean>;
 
 export function JiraOptedIn(arg1:string):Promise<boolean>;
 
 export function JiraStatus(arg1:string):Promise<main.JiraProfileStatus>;
 
-export function JiraTickets(arg1:string):Promise<main.JiraTicketsResult>;
+export function JiraTickets(arg1:string,arg2:boolean):Promise<main.JiraTicketsResult>;
 
 export function LaunchInteractiveSession(arg1:main.InteractiveSessionRequest):Promise<brainbox.SessionActionResponse>;
 
