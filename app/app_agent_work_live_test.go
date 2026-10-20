@@ -104,14 +104,17 @@ func TestLiveGetAgentWorkCharts(t *testing.T) {
 		for _, p := range c.CostSeries {
 			cost += p.Value
 		}
-		t.Logf("%s granularity=%s in %v: cost pts=%d ($%.2f) obs pts=%d models=%d types=%d",
+		t.Logf("%s granularity=%s in %v: cost pts=%d ($%.2f) models=%d sources=%d",
 			since, c.Granularity, time.Since(start).Round(time.Millisecond),
-			len(c.CostSeries), cost, len(c.ObsSeries), len(c.CostByModel), len(c.ObsByType))
+			len(c.CostSeries), cost, len(c.CostByModel), len(c.CostBySource))
 		if c.DashboardURL == "" {
 			t.Error("no dashboard link resolved")
 		}
-		if !c.CostUnderstated {
-			t.Error("CostUnderstated must be true for this source")
+		// The source split is the point of moving these charts off Langfuse: a
+		// non-trivial window always has at least a "main" bucket, and the
+		// subagent/auxiliary buckets are the spend Langfuse never saw.
+		if len(c.CostBySource) == 0 {
+			t.Error("no cost-by-source buckets; the breakdown is the reason this reads OpenSearch")
 		}
 	}
 }

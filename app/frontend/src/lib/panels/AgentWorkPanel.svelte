@@ -100,13 +100,12 @@
   interface Charts {
     granularity: string;
     cost_series?: Point[] | null;
-    obs_series?: Point[] | null;
     cost_by_model?: Share[] | null;
-    obs_by_type?: Share[] | null;
-    // Always true for this source. Langfuse's Claude Code capture is a Stop
-    // hook that misses delegated subagent work, so its cost is lower than
-    // OpenSearch's for the same sessions. Labelled rather than silently shown.
-    cost_understated: boolean;
+    // main / subagent / auxiliary. Replaced an "observations by type"
+    // breakdown that came from Langfuse: the delegated work its Stop hook
+    // misses is exactly the subagent bucket, so this split was the one thing
+    // it could never show.
+    cost_by_source?: Share[] | null;
     sessions_url?: string;
     traces_url?: string;
     dashboard_url?: string;
@@ -475,11 +474,11 @@
       label: usd(s.value),
     })),
   );
-  const typeSlices = $derived(
-    (charts?.obs_by_type ?? []).map((s) => ({
+  const sourceSlices = $derived(
+    (charts?.cost_by_source ?? []).map((s) => ({
       name: s.name.toLowerCase(),
       value: s.value,
-      label: String(s.value),
+      label: usd(s.value),
     })),
   );
 
@@ -504,9 +503,7 @@
   const costTotal = $derived(
     (charts?.cost_series ?? []).reduce((a, p) => a + p.value, 0),
   );
-  const obsTotal = $derived(
-    (charts?.obs_series ?? []).reduce((a, p) => a + p.value, 0),
-  );
+
 
 </script>
 
@@ -761,15 +758,6 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
     {:else if chartsLoading && !charts}
       <p class="muted"><Spinner /> Loading charts…</p>
     {:else if charts}
-      {#if charts.cost_understated}
-        <p class="note caveat">
-          Cost here is <strong>understated</strong>. Langfuse's Claude Code
-          capture is a Stop hook that misses delegated subagent work — measured
-          on one session, $318.82 here against $515.78 in OpenSearch. Use it for
-          shape and trend, not for a spend figure.
-        </p>
-      {/if}
-
       {#if view === 'trends'}
         <div class="charts">
           <div class="chart-card">
@@ -778,15 +766,6 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
               label={`cost per ${charts.granularity}`}
               current={usd(costTotal)}
               formatY={(v: number) => (v >= 1 ? `$${v.toFixed(0)}` : `$${v.toFixed(2)}`)}
-              height={150}
-            />
-          </div>
-          <div class="chart-card">
-            <MetricsChart
-              data={charts.obs_series ?? []}
-              label={`observations per ${charts.granularity}`}
-              current={compact(obsTotal)}
-              formatY={(v: number) => compact(v)}
               height={150}
             />
           </div>
@@ -809,18 +788,23 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
             {/if}
           </div>
           <div class="chart-card">
-            <h3>observations by type</h3>
-            {#if typeSlices.length}
+            <h3>cost by source</h3>
+            {#if sourceSlices.length}
               <div class="pie-row">
-                <PieChart slices={typeSlices} size={150} />
+                <PieChart slices={sourceSlices} size={150} />
                 <ul class="legend">
-                  {#each typeSlices as s (s.name)}
+                  {#each sourceSlices as s (s.name)}
                     <li><span class="k">{s.name}</span><span class="v">{s.label}</span></li>
                   {/each}
                 </ul>
               </div>
+              <p class="note">
+                Main thread vs delegated subagents vs auxiliary overhead. This is
+                the split the Langfuse-sourced charts could not show — its Stop
+                hook never saw the delegated work.
+              </p>
             {:else}
-              <p class="muted">No observations in this window.</p>
+              <p class="muted">No priced calls in this window.</p>
             {/if}
           </div>
         </div>

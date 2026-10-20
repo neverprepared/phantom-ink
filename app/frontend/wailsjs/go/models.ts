@@ -2785,10 +2785,8 @@ export namespace main {
 	export class AgentWorkCharts {
 	    granularity: string;
 	    cost_series: ChartPoint[];
-	    obs_series: ChartPoint[];
 	    cost_by_model: ChartShare[];
-	    obs_by_type: ChartShare[];
-	    cost_understated: boolean;
+	    cost_by_source: ChartShare[];
 	    sessions_url?: string;
 	    traces_url?: string;
 	    dashboard_url?: string;
@@ -2801,10 +2799,8 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.granularity = source["granularity"];
 	        this.cost_series = this.convertValues(source["cost_series"], ChartPoint);
-	        this.obs_series = this.convertValues(source["obs_series"], ChartPoint);
 	        this.cost_by_model = this.convertValues(source["cost_by_model"], ChartShare);
-	        this.obs_by_type = this.convertValues(source["obs_by_type"], ChartShare);
-	        this.cost_understated = source["cost_understated"];
+	        this.cost_by_source = this.convertValues(source["cost_by_source"], ChartShare);
 	        this.sessions_url = source["sessions_url"];
 	        this.traces_url = source["traces_url"];
 	        this.dashboard_url = source["dashboard_url"];

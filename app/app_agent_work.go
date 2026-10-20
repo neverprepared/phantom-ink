@@ -330,12 +330,14 @@ type ChartShare struct {
 // type-checking. Keeping the binding surface in this package also stops the
 // read layer's types leaking into the frontend contract.
 type AgentWorkCharts struct {
-	Granularity     string       `json:"granularity"`
-	CostSeries      []ChartPoint `json:"cost_series"`
-	ObsSeries       []ChartPoint `json:"obs_series"`
-	CostByModel     []ChartShare `json:"cost_by_model"`
-	ObsByType       []ChartShare `json:"obs_by_type"`
-	CostUnderstated bool         `json:"cost_understated"`
+	Granularity string       `json:"granularity"`
+	CostSeries  []ChartPoint `json:"cost_series"`
+	CostByModel []ChartShare `json:"cost_by_model"`
+	// CostBySource is main / subagent / auxiliary. It replaced an
+	// "observations by type" breakdown that came from Langfuse, and it is the
+	// view Langfuse cannot provide: the delegated work its Stop hook misses is
+	// precisely the subagent bucket.
+	CostBySource []ChartShare `json:"cost_by_source"`
 	// Links are empty when the project id could not be resolved, and the UI
 	// omits the link rather than offering one that 404s.
 	SessionsURL  string `json:"sessions_url,omitempty"`
@@ -349,25 +351,30 @@ const chartsQueryTimeout = 20 * time.Second
 
 // GetAgentWorkCharts returns the trend and breakdown data for the chart tabs.
 //
-// Everything here comes from Langfuse, which is the operator's choice and has a
-// known consequence: its cost is UNDERSTATED, because the Claude Code capture
-// is a Stop hook that misses delegated subagent work. Charts.CostUnderstated
-// carries that so the UI can label it rather than presenting a figure the
-// reader has to silently correct.
+// Sourced from OpenSearch metrics, NOT Langfuse. Langfuse's Claude Code capture
+// is a Stop hook and never sees delegated subagent work: the spec measured 813
+// tool calls / $309.05 there against 1,786 / $416.26 in OpenSearch for the same
+// session. These charts previously carried a CostUnderstated flag so the UI
+// could label a figure that was wrong by roughly half; the figure is now right
+// and the flag is gone.
+//
+// This does NOT move session reading. Langfuse still owns that — it holds the
+// prompt and completion text, which OpenSearch strips by design — so the links
+// below still point there. Aggregates were never Langfuse's job.
 func (a *App) GetAgentWorkCharts(profile, since string) (*AgentWorkCharts, error) {
-	c := a.langfuseClient(profile)
-	if c == nil {
-		return nil, fmt.Errorf("Langfuse is not configured for profile %q", profile)
+	url, err := a.opensearchAPIURL()
+	if err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), chartsQueryTimeout)
 	defer cancel()
 
-	charts, err := c.GetCharts(ctx, a.langfuseEnvironment(profile), since)
+	charts, err := opensearch.NewClient(url).GetAgentCharts(ctx, profile, since)
 	if err != nil {
 		return nil, err
 	}
 
-	pts := func(in []langfuse.Point) []ChartPoint {
+	pts := func(in []opensearch.ChartPoint) []ChartPoint {
 		// Never nil: these marshal as JSON null and the panel iterates them.
 		out := make([]ChartPoint, 0, len(in))
 		for _, p := range in {
@@ -375,29 +382,30 @@ func (a *App) GetAgentWorkCharts(profile, since string) (*AgentWorkCharts, error
 		}
 		return out
 	}
-	shares := func(in []langfuse.Share) []ChartShare {
+	shares := func(in []opensearch.ChartShare) []ChartShare {
 		out := make([]ChartShare, 0, len(in))
-		for _, s := range in {
-			out = append(out, ChartShare{Name: s.Name, Value: s.Value})
+		for _, sh := range in {
+			out = append(out, ChartShare{Name: sh.Name, Value: sh.Value})
 		}
 		return out
 	}
 
 	out := &AgentWorkCharts{
-		Granularity:     charts.Granularity,
-		CostSeries:      pts(charts.CostSeries),
-		ObsSeries:       pts(charts.ObsSeries),
-		CostByModel:     shares(charts.CostByModel),
-		ObsByType:       shares(charts.ObsByType),
-		CostUnderstated: charts.CostUnderstated,
+		Granularity:  charts.Granularity,
+		CostSeries:   pts(charts.CostSeries),
+		CostByModel:  shares(charts.CostByModel),
+		CostBySource: shares(charts.CostBySource),
 	}
 
-	// Links are a convenience: failing to resolve the project must not cost the
+	// Deep links into Langfuse remain a convenience for reading ONE session,
+	// which is still its job. Failing to resolve the project must not cost the
 	// charts, so the error is dropped and the links are simply absent.
-	if id, lerr := c.ProjectID(ctx); lerr == nil {
-		out.SessionsURL = c.UILink(id, "sessions")
-		out.TracesURL = c.UILink(id, "traces")
-		out.DashboardURL = c.UILink(id, "dashboards")
+	if c := a.langfuseClient(profile); c != nil {
+		if id, lerr := c.ProjectID(ctx); lerr == nil {
+			out.SessionsURL = c.UILink(id, "sessions")
+			out.TracesURL = c.UILink(id, "traces")
+			out.DashboardURL = c.UILink(id, "dashboards")
+		}
 	}
 	return out, nil
 }
