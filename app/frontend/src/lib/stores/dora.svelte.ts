@@ -1,23 +1,19 @@
 /**
- * Store for the Work hub's Delivery tab — DORA metrics, plus fleet runner
- * health.
+ * Store for the Work hub's Delivery tab — this profile's DORA metrics.
  *
- * ## Two caching policies on purpose
+ * Cached, keyed by `profile|windowDays`. The hub renders its tabs under
+ * `{#if}`, so a tab switch destroyed this component and re-ran the read; and
+ * the 30/90-day toggle only CLAIMED to be instant (DORAOverview is mostly
+ * local SQLite, but it also makes a broker round-trip for the token banner).
+ * Keying on the window as well as the profile means toggling back to a window
+ * you have already seen paints immediately.
  *
- * **Metrics are cached, keyed by `profile|windowDays`.** The hub renders its
- * tabs under `{#if}`, so a tab switch destroyed this component and re-ran both
- * reads; and the 30/90-day toggle only CLAIMED to be instant (DORAOverview is
- * mostly local SQLite, but it also makes a broker round-trip for the token
- * banner). Keying on the window as well as the profile means toggling back to
- * a window you have already seen paints immediately.
- *
- * **Runner health is NOT cached.** Every other number here is historical, so
- * showing it a minute old is honest. Runner health is a liveness claim: a
- * cached table would say a runner is online after it had died, which is worse
- * than a brief empty section. It is fetched fresh on every view, carries its
- * own loading state, and a hub outage costs that section alone.
+ * Runner health used to live here too. It does not belong on a per-profile
+ * delivery page: a runner is fleet infrastructure, and the table mixed
+ * fleet-wide queue depth with profile-scoped task counts in one row. It now
+ * lives with the rest of the fleet in Settings -> runners.
  */
-import { keyedResource, resource, type Resource } from './resource.svelte';
+import { keyedResource, type Resource } from './resource.svelte';
 import { notifications } from '../notifications.svelte';
 import type { main } from '../../../wailsjs/go/models';
 
@@ -58,24 +54,6 @@ class DoraStore {
       initial: null,
       label: (key) => `Delivery metrics (${key})`,
       onError: (m) => notifications.error(m),
-    },
-  );
-
-  /**
-   * Runner health: ONE resource, deliberately not keyed and so not cached
-   * across profiles. Its value is replaced on every profile's view, which is
-   * the point — a liveness claim must not outlive the look that produced it.
-   */
-  private runnerHealth = resource<main.RunnerMetrics | null>(
-    (api) => api.RunnerMetrics(this.requested) as Promise<main.RunnerMetrics>,
-    {
-      initial: null,
-      label: 'Runner health',
-      // Keyed by profile so a reply landing after a switch is discarded. This
-      // also clears the value on a switch, which is wanted here: stale
-      // liveness is worse than none.
-      key: () => this.requested,
-      // Quiet: the hub being down costs this section, never the metrics above.
     },
   );
 
@@ -127,26 +105,11 @@ class DoraStore {
     Object.entries(this.ov?.metrics?.per_repo ?? {}).sort((a, b) => a[0].localeCompare(b[0])),
   );
 
-  /** Runner health, and whether it is still being fetched. Never cached. */
-  runners = $derived(this.runnerHealth.value);
-  get runnersLoading() {
-    return this.runnerHealth.loading || this.runnerHealth.refreshing;
-  }
-
-  /**
-   * Load the metrics for the current profile/window, and refresh runner health.
-   *
-   * Runner health is always forced: it is the one read here that must not be
-   * served from anything, including the resource's own in-flight collapse.
-   */
+  /** Load the metrics for the current profile and window. */
   async refresh(profile: string, force = false): Promise<void> {
     if (!profile) return;
     this.requested = profile;
-    const key = metricsKey(profile, this.windowDays);
-    await Promise.all([
-      this.loadKey(key),
-      this.runnerHealth.refresh({ force: true }),
-    ]);
+    await this.loadKey(metricsKey(profile, this.windowDays), force);
   }
 
   /** Switch window. A window already seen for this profile paints instantly. */
@@ -183,7 +146,6 @@ class DoraStore {
   hardReset(): void {
     this.overviews.clear();
     this.fetchedAtByKey = {};
-    this.runnerHealth.reset();
     this.requested = '';
     this.windowDays = 30;
   }

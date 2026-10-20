@@ -7,7 +7,14 @@
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import { runnerQueueHistory } from '../metricsHistory.svelte';
-  import { runnersRes, poolsRes, refreshRunners, type Runner, type Pool } from '../stores/runners.svelte';
+  import {
+    runnersRes,
+    poolsRes,
+    runnerThroughputRes,
+    refreshRunners,
+    type Runner,
+    type Pool,
+  } from '../stores/runners.svelte';
   import { action } from '../stores/resource.svelte';
 
   // State lives in a module-scope store, so navigating away and back renders
@@ -17,6 +24,15 @@
   const loaded = $derived(runnersRes.loaded);
   const refreshing = $derived(runnersRes.refreshing);
   const loadError = $derived(runnersRes.error);
+  // Task throughput, keyed by runner name. Moved here from the Work hub's
+  // Delivery tab: a runner is fleet infrastructure, not one profile's delivery
+  // work, and that table mixed fleet-wide queue depth with profile-scoped task
+  // counts in the same row. Layered onto the live rows below, so a hub that
+  // cannot answer costs these four columns and nothing else.
+  const throughput = $derived(runnerThroughputRes.value);
+  const throughputError = $derived(runnerThroughputRes.error);
+  /** True once any runner has history worth a column. */
+  const hasThroughput = $derived(Object.keys(throughput).length > 0);
   let now = $state(Date.now());
   let showingPair = $state(false);
   let confirmRemove: Runner | null = $state(null);
@@ -48,6 +64,21 @@
 
   function refresh() {
     return refreshRunners();
+  }
+
+  /** Coarse duration: two units is all a mean deserves. */
+  function formatDuration(seconds: number): string {
+    if (!seconds || seconds <= 0) return '—';
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+    if (seconds < 86400) {
+      const h = Math.floor(seconds / 3600);
+      const m = Math.round((seconds % 3600) / 60);
+      return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    }
+    const d = Math.floor(seconds / 86400);
+    const h = Math.round((seconds % 86400) / 3600);
+    return h > 0 ? `${d}d ${h}h` : `${d}d`;
   }
 
   // Sparkline paths, recomputed when the SAMPLES change rather than on every
@@ -184,6 +215,14 @@
   {:else if runners.length === 0}
     <EmptyState title="No runners registered yet" message="Click + pair a runner above, then run Brainbox Runner.app on the target Mac and paste the token." />
   {:else}
+    {#if throughputError}
+      <!-- History is a layer, not the subject: say it is missing and still
+           render every live row below. -->
+      <p class="throughput-note">task history unavailable: {throughputError}</p>
+    {/if}
+    <!-- Scrolls: the throughput columns take this past a narrow window, and
+         the page itself must never scroll sideways. -->
+    <div class="table-scroll">
     <table class="runner-table">
       <thead>
         <tr>
@@ -192,6 +231,12 @@
           <th>backends</th>
           <th>tags</th>
           <th>capacity</th>
+          {#if hasThroughput}
+            <th class="num">done</th>
+            <th class="num">failed</th>
+            <th class="num">stranded</th>
+            <th class="num">mean</th>
+          {/if}
           <th>version</th>
           <th>last seen</th>
           <th></th>
@@ -238,6 +283,15 @@
                 </span>
               {/if}
             </td>
+            {#if hasThroughput}
+              {@const tp = throughput[r.name]}
+              <td class="num">{tp?.completed ?? 0}</td>
+              <td class="num">{tp?.failed ?? 0}</td>
+              <!-- Its own column: stranded tasks are a platform gap (no
+                   liveness reconcile), not a verdict on the runner. -->
+              <td class="num" class:bad={(tp?.stranded ?? 0) > 0}>{tp?.stranded ?? 0}</td>
+              <td class="num">{formatDuration(tp?.mean_duration_seconds ?? 0)}</td>
+            {/if}
             <td class="muted">{r.version || '—'}</td>
             <td>{relativeTime(r.last_seen)}</td>
             <td class="remove-cell">
@@ -255,6 +309,13 @@
         {/each}
       </tbody>
     </table>
+    </div>
+    {#if hasThroughput}
+      <p class="throughput-note">
+        stranded = left running by a runner that died or went quiet; excluded from the mean so it
+        cannot inflate it. Counts are fleet-wide, across every profile.
+      </p>
+    {/if}
   {/if}
 
   <section class="pools">
@@ -339,6 +400,14 @@
     border-radius: var(--radius-sm);
   }
 
+  /* The throughput columns take this table past a narrow window; the page
+     itself must never scroll sideways. */
+  .table-scroll { overflow-x: auto; max-width: 100%; }
+  .runner-table td.num, .runner-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .runner-table td.bad { color: var(--color-error); }
+  .throughput-note {
+    margin: 6px 0 0; font-size: 10px; color: var(--color-text-tertiary);
+  }
   .runner-table {
     width: 100%;
     border-collapse: separate;

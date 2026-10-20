@@ -1,19 +1,16 @@
 <script lang="ts">
   // The Delivery tab: DORA metrics for this profile, plus fleet runner health.
   //
-  // Two different data shapes, and two different CACHING policies, on purpose.
-  //
   // Metrics are mostly local SQLite (DORAOverview), though not purely: it also
   // makes a broker round-trip for the token banner, which is why the 30/90-day
   // toggle was never actually free. They are cached per profile AND per
   // window, so a window you have already seen paints immediately. Sync is the
   // only button that writes.
   //
-  // Runner health is NEVER cached. Everything else here is history, so showing
-  // it a minute old is honest; runner health is a liveness claim, and a cached
-  // table would say a runner is online after it had died. It is re-fetched on
-  // every view, and hidden outright when there are no runners — an empty table
-  // would read as "the fleet is idle".
+  // Runner health used to be a second section here. It is gone: a runner is
+  // fleet infrastructure, not this profile's delivery work, and the table
+  // silently mixed fleet-wide queue depth with profile-scoped task counts in
+  // one row. It lives with the rest of the fleet in Settings -> runners.
   //
   // Every number here is a PROXY. The caveats block below is not decoration:
   // it is the design's requirement that the limitations travel with the
@@ -38,7 +35,6 @@
   let metrics = $derived(doraState.metrics);
   let bands = $derived(doraState.bands);
   let perRepo = $derived(doraState.perRepo);
-  let runners = $derived(doraState.runners);
   let loading = $derived(doraState.loading);
   let repoErrors = $derived(Object.entries(lastSync?.repo_errors ?? {}));
 
@@ -138,14 +134,6 @@
     return `${Math.round(hrs / 24)}d ago`;
   }
 
-  function backendSummary(b: Record<string, number> | undefined): string {
-    const entries = Object.entries(b ?? {});
-    if (entries.length === 0) return '—';
-    return entries
-      .sort((x, y) => y[1] - x[1])
-      .map(([name, n]) => `${name} ${n}`)
-      .join(', ');
-  }
 </script>
 
 <div class="dora-tab">
@@ -334,63 +322,6 @@
       {/if}
     {/if}
 
-    <!-- Runners render ONLY when some are registered: absent, not
-         present-and-empty. -->
-    {#if doraState.runnersLoading && !runners}
-      <h2 class="section-title">runners</h2>
-      <!-- Runner health is never cached (a stale "online" is a lie), so this
-           section genuinely has nothing to show until the hub answers. -->
-      <p class="muted-note">checking runner health…</p>
-    {:else if runners?.available}
-      <h2 class="section-title">runners</h2>
-      {#if runners.unreachable}
-        <p class="warn-note">task history unavailable: {runners.unreachable}</p>
-      {/if}
-      <div class="table-scroll">
-        <table class="repo-table">
-          <thead>
-            <tr>
-              <th>runner</th>
-              <th>host</th>
-              <th class="num">queue</th>
-              <th class="num">in flight</th>
-              <th class="num">done</th>
-              <th class="num">failed</th>
-              <th class="num">stranded</th>
-              <th class="num">mean</th>
-              <th>backends</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each runners.runners ?? [] as r (r.name)}
-              <tr>
-                <td>
-                  <span class="dot" class:up={r.online} title={r.online ? 'online' : 'offline'}></span>
-                  <code>{r.name}</code>
-                  {#if r.version}<span class="ver">{r.version}</span>{/if}
-                </td>
-                <td class="dim">{r.host || '—'}</td>
-                <td class="num">{r.queue_depth}</td>
-                <td class="num">{r.in_flight}{r.max_concurrent > 0 ? ` / ${r.max_concurrent}` : ''}</td>
-                <td class="num">{r.completed}</td>
-                <td class="num">{r.failed}</td>
-                <!-- Its own column: stranded tasks are a platform gap (no
-                     liveness reconcile), not a verdict on the runner. -->
-                <td class="num" class:bad={r.stranded > 0}>{r.stranded}</td>
-                <td class="num">{formatDuration(r.mean_duration_seconds)}</td>
-                <td class="dim">{backendSummary(r.backends)}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-      <p class="muted-note small">
-        stranded = left running by a runner that died or went quiet; excluded from the mean so it
-        cannot inflate it
-      </p>
-    {:else if runners?.unreachable}
-      <p class="muted-note">runner health unavailable: {runners.unreachable}</p>
-    {/if}
   {/if}
 </div>
 
@@ -478,11 +409,6 @@
   .repo-table th, .repo-table td { text-align: left; padding: 4px 8px; border-top: 1px solid var(--color-border-primary); white-space: nowrap; }
   .repo-table th { font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-tertiary); font-weight: 600; border-top: none; }
   .repo-table td.num, .repo-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
-  .repo-table td.dim { color: var(--color-text-tertiary); }
-  .repo-table td.bad { color: var(--color-error); font-weight: 600; }
   .repo-table code { font-family: var(--font-mono); font-size: 10px; }
-  .ver { font-size: 9px; color: var(--color-text-tertiary); margin-left: 4px; }
 
-  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--color-error); margin-right: 5px; vertical-align: middle; }
-  .dot.up { background: #3fb950; }
 </style>
