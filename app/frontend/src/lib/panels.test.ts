@@ -44,9 +44,19 @@ describe('panel registry', () => {
     expect(panels.find(p => p.id === 'event-log')).toBeUndefined();
   });
 
-  it('keeps every panel in a known sidebar section', () => {
-    for (const p of panels) {
-      expect(['workspace', 'system']).toContain(p.section);
-    }
+  it('partitions panels into the workspace and system groups the sidebar renders', () => {
+    const section = (id: string) => panels.find(p => p.id === id)?.section;
+    expect(section('dashboard')).toBe('workspace');
+    expect(section('stream')).toBe('workspace');
+    expect(section('agent-work')).toBe('workspace');
+    expect(section('sessions')).toBe('workspace');
+    expect(section('jobs')).toBe('workspace');
+    expect(section('conversations')).toBe('workspace');
+    expect(section('code')).toBe('workspace');
+    expect(section('mesh')).toBe('system');
+    expect(section('memory-graph')).toBe('system');
+    expect(section('files')).toBe('system');
+    expect(section('doctor')).toBe('system');
+    expect(section('settings')).toBe('system');
   });
 });
