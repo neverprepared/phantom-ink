@@ -26,10 +26,9 @@ const chartAggs = `{
 }`
 
 func TestAgentChartsReadsCostFromMetrics(t *testing.T) {
-	// The panel's charts were sourced from Langfuse, whose Claude Code capture
-	// is a Stop hook and therefore misses delegated subagent work -- measured in
-	// the spec at 813 tool calls / $309 against OpenSearch's 1786 / $416 for the
-	// same session. The metrics index has the complete figure.
+	// Cost must come from the metrics index, which prices every model call
+	// including delegated subagent work. Reading it from anywhere that only
+	// sees the main thread understates spend while looking authoritative.
 	c, caps := serveJSON(t, chartAggs)
 
 	got, err := c.GetAgentCharts(context.Background(), "personal", "now-24h")
@@ -65,8 +64,8 @@ func TestAgentChartsSplitsCostByModel(t *testing.T) {
 }
 
 func TestAgentChartsSplitsCostBySource(t *testing.T) {
-	// This is the view Langfuse structurally cannot provide: the delegated work
-	// its hook misses is exactly the subagent bucket.
+	// The subagent bucket is the point of this split: delegated work has to be
+	// attributable separately from the main thread.
 	c, _ := serveJSON(t, chartAggs)
 
 	got, _ := c.GetAgentCharts(context.Background(), "personal", "now-24h")

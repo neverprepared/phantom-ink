@@ -1,29 +1,11 @@
 <script lang="ts">
-  // Telemetry: logs, traces and metrics, all read from OpenSearch.
+  // Telemetry: logs, traces and metrics, all read from OpenSearch, which is the
+  // system of record for agent work. Langfuse was removed on 2026-10-20; the
+  // reasoning, including the one thing that was lost (a parent/child
+  // observation tree — OpenSearch gives flat events grouped by turn_id), is in
+  // docs/superpowers/specs/2026-10-20-remove-langfuse-design.md.
   //
-  // Reads OpenSearch only. It read BOTH stores until 2026-10-19 -- Langfuse for
-  // the sessions and their content, OpenSearch for the activity dot -- because
-  // Langfuse was the only place the conversation existed. That stopped being
-  // true when Claude Code's content-logging flags were switched on: logs-otel
-  // now carries full prompt and assistant text (measured at 46 user prompts and
-  // 201 assistant responses on one session), so the one thing Langfuse was
-  // here for is available from the store that was already fresher and complete.
-  //
-  // The measurements that settled it, all on live data:
-  //   freshness  OpenSearch ~33s behind, Langfuse 725s -- its capture is a Stop
-  //              hook firing once per COMPLETED turn, so a session mid-turn was
-  //              invisible and a short window looked like a broken panel.
-  //   cost       Langfuse understated by roughly half (813 tool calls / $309.05
-  //              against 1,786 / $416.26 for the same session) because that
-  //              same hook misses delegated subagent work.
-  //   attribution  query_source is on the OTEL events, so subagent work is
-  //              distinguishable here. Langfuse could not do it at all.
-  //
-  // What was lost: the parent/child observation tree, and with it the tree and
-  // radial shapes. OpenSearch gives a flat event stream keyed by turn_id, so
-  // the drill-down is turn-grouped instead.
-  //
-  // Scope is the ACTIVE PROFILE, always. It is now enforced by
+  // Scope is the ACTIVE PROFILE, always. It is enforced by
   // resource.attributes.workspace on the events themselves rather than by which
   // project the credentials pointed at -- native stamping, so no inheritance
   // across derived edges and no cross-profile leakage.
@@ -39,11 +21,8 @@
   import StreamLogsTab from '../components/StreamLogsTab.svelte';
   import { openInBrowser } from '../utils/api';
 
-  // opensearch.AgentSession. Replaced a Langfuse-shaped row on 2026-10-19 when
-  // Langfuse was deprecated: this is a strict superset of what that carried,
-  // and its cost is the complete figure rather than the Stop hook's partial
-  // view (813 tool calls / $309.05 there against 1,786 / $416.26 here for the
-  // same session).
+  // opensearch.AgentSession. `cost_usd` here is the complete figure: it counts
+  // delegated subagent work, not just the main thread.
   interface AgentWorkRow {
     session_id: string;
     workspace: string;
@@ -73,9 +52,8 @@
   }
 
   // opensearch.SessionEvent. A FLAT event stream grouped by turn_id, not a
-  // parent/child tree: that is the one structural thing Langfuse had that this
-  // does not. In exchange `agent` carries query_source, so subagent work is
-  // attributable — which Langfuse could not do at all.
+  // parent/child tree. `agent` carries query_source, so subagent work is
+  // attributable.
   interface SessionEvent {
     sequence: number;
     time: string;
@@ -130,10 +108,8 @@
     granularity: string;
     cost_series?: Point[] | null;
     cost_by_model?: Share[] | null;
-    // main / subagent / auxiliary. Replaced an "observations by type"
-    // breakdown that came from Langfuse: the delegated work its Stop hook
-    // misses is exactly the subagent bucket, so this split was the one thing
-    // it could never show.
+    // main / subagent / auxiliary — the split that makes delegated work
+    // attributable, keyed off query_source on the OTEL events.
     cost_by_source?: Share[] | null;
   }
 
@@ -175,12 +151,12 @@
   // on, a tree to audit, a wheel to see scale. Each answers a different
   // question, so all three are kept rather than one being chosen.
 
-  // The tree and radial shapes are GONE with Langfuse, not merely hidden: they
-  // rendered a parent/child observation tree, and OpenSearch gives a flat event
-  // stream keyed by turn_id. Rebuilding them means deriving a turn -> events
-  // hierarchy first, which is a design question rather than a port, so the
-  // drill-down is a turn-grouped list for now. SessionTree.svelte is left in
-  // the tree for whoever takes that on.
+  // The tree and radial shapes are GONE, not merely hidden: they rendered a
+  // parent/child observation tree, and OpenSearch gives a flat event stream
+  // keyed by turn_id. Rebuilding them means deriving a turn -> events hierarchy
+  // first, which is a design question rather than a port, so the drill-down is
+  // a turn-grouped list for now. SessionTree.svelte is left in the tree for
+  // whoever takes that on.
 
   // Tab order puts logs first: it is the broadest surface and the one the
   // Dashboard's metric widgets drill into.
@@ -235,10 +211,9 @@
     { label: '3d', value: 'now-3d' },
   ];
 
-  // Short ranges used to be routinely empty because Langfuse only wrote at the
-  // end of a turn. OpenSearch is event-driven and lags roughly a minute, so a
-  // 15-minute window now reflects a 15-minute reality and these ranges mean
-  // what they say.
+  // OpenSearch is event-driven and lags roughly a minute, so a 15-minute
+  // window reflects a 15-minute reality and these short ranges mean what they
+  // say.
 
   // The tab is a hub-store concern, not panel-local: the Dashboard's OpenSearch
   // metric widgets navigate here by setting it.
@@ -615,12 +590,9 @@
     })),
   );
 
-  // Says WHY the window is empty. The previous version explained Langfuse's
-  // Stop-hook lag -- it wrote once per COMPLETED turn, so a short window was
-  // routinely empty while work was happening, and the panel had to probe how
-  // far behind the store was to say so. OpenSearch is event-driven and lags
-  // roughly 33s, so an empty short window now means genuinely idle rather than
-  // "wait for the turn to end", and no freshness probe is needed.
+  // Says WHY the window is empty. OpenSearch is event-driven and lags roughly
+  // 33s, so an empty short window means genuinely idle and no freshness probe
+  // is needed.
   // Group the flat event stream into turns. turn_id is prompt@id, so one turn
   // is one user prompt and everything it caused — the unit a person actually
   // reads. Events arrive oldest-first, and insertion order preserves that, so
@@ -829,10 +801,9 @@
         {selected.turns} turns · {selected.tool_calls} tool calls ·
         {selected.failures} failed · {compact((selected.tokens_in ?? 0) + (selected.tokens_out ?? 0))} tokens
         ({compact((selected.tokens_cache_in ?? 0) + (selected.tokens_cache_new ?? 0))} cached) ·
-        <span title="Langfuse's own pricing of the generations it captured. The
-OpenSearch figure for the same session is higher, because the Stop hook misses
-delegated work — treat this as Langfuse's view, not authoritative spend."
-          >{usd(selected.cost_usd)} <span class="qual">(Langfuse view)</span></span>
+        <span title="Total spend for this session as priced by OpenSearch,
+counting delegated subagent and auxiliary work as well as the main thread."
+          >{usd(selected.cost_usd)} <span class="qual">(all sources)</span></span>
       </p>
 
       {#if timelineLoading}
@@ -865,12 +836,11 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
         {/if}
 
         <!-- Turn-grouped event list. OpenSearch gives a FLAT event stream
-             keyed by turn_id (prompt@id), not the parent/child observation tree
-             Langfuse produced, so SessionTree and the radial view have nothing
-             to draw and their toggles are hidden above. What is gained: `agent`
-             carries query_source, so a model call made by a subagent is
-             distinguishable from the main thread — which Langfuse could not do
-             at all. -->
+             keyed by turn_id (prompt@id), not a parent/child observation tree,
+             so SessionTree and the radial view have nothing to draw and their
+             toggles are hidden above. In exchange `agent` carries query_source,
+             so a model call made by a subagent is distinguishable from the main
+             thread. -->
         <ol class="turns">
           {#each turnGroups as turn (turn.id)}
             <li class="turn">
@@ -998,9 +968,8 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
                 </ul>
               </div>
               <p class="note">
-                Main thread vs delegated subagents vs auxiliary overhead. This is
-                the split the Langfuse-sourced charts could not show — its Stop
-                hook never saw the delegated work.
+                Main thread vs delegated subagents vs auxiliary overhead, split
+                by the query_source stamped on each OTEL event.
               </p>
             {:else}
               <p class="muted">No priced calls in this window.</p>

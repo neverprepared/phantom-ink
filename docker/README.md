@@ -23,6 +23,7 @@ Or from the repo root: `just opensearch-start`.
 
 ## Notes
 
-- Each service has its own `.env.example` file - copy to `.env` before starting
+- Some services ship a `.env.example` - where one exists, copy it to `.env` before
+  starting. OpenSearch needs no `.env`; its compose file is self-contained.
 - Never commit `.env` files (they contain secrets)
 - Data is persisted in Docker volumes

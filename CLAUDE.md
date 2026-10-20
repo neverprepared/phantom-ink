@@ -17,7 +17,7 @@ Guidance for Claude Code (and other agents) working in this repository.
 | `tier0/` | opencode + local ollama harness wired to the MCP gateway | Shell/JSON |
 | `scripts/inbox/` | **Drive inbox** — capture connector: a Drive folder is drained, typed and filed into Reminders / the todo + memory vaults ([README](scripts/inbox/README.md), [ADR-006](docs/architecture/ADR-006-drive-inbox-queues.md)) | Python |
 | `contracts/` | Collection-output JSON Schema (array framing over the timeline-entry contract) | JSON |
-| `docker/` | Compose stacks for local services (langfuse, minio, opensearch, brainbox) | YAML |
+| `docker/` | Compose stacks for local services (minio, opensearch, brainbox) | YAML |
 | `Formula/` | Homebrew formulae | Ruby |
 | `docs/` | Architecture docs + ADRs | Markdown |
 
@@ -102,7 +102,6 @@ just reflex-dev            # claude --plugin-dir reflex
 
 # Local service stacks
 just opensearch-start|stop|logs|status
-just reflex-langfuse
 ```
 
 `brainbox` CLI subcommands (`python -m brainbox <cmd>`): `provision`, `run`, `recycle`,
@@ -121,9 +120,8 @@ Three distinct MCP things live here — do not conflate them:
    `stop_session`, `delete_session`, `get_session`, `push_config`, `exec_session`,
    `query_session`, `refresh_secrets`, `get_metrics`, `submit_task`, `get_task`,
    `list_tasks`, `cancel_task`, `get_hub_state`, `get_message_log`, `list_agents`,
-   `get_agent`, `list_tokens`, `api_info`, `multiclaude_status`, `get_langfuse_health`,
-   `get_qdrant_health`, `get_langfuse_session_traces`, `get_langfuse_session_summary`,
-   `get_langfuse_trace_detail`, `channel_read`, `channel_send`, `channel_complete`,
+   `get_agent`, `list_tokens`, `api_info`, `multiclaude_status`,
+   `get_qdrant_health`, `channel_read`, `channel_send`, `channel_complete`,
    `channel_join`, `get_event_schema`. Resource: `contract://events/timeline-entry`.
    The four `channel_*` tools keep their historical names but talk to the
    **conversation** engine (`/api/conversations/...`) — the in-memory channels

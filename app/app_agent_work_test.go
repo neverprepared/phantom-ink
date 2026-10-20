@@ -18,17 +18,17 @@ func TestChartsTimeoutExceedsTheListTimeout(t *testing.T) {
 // The chart payload must marshal with empty arrays, never nulls: the panel
 // iterates all three, and a null threw during render once already.
 //
-// Also pins the shape FLAT. Embedding *langfuse.Charts made Wails' TypeScript
-// generator emit a class referencing langfuse.Point and langfuse.Share without
-// defining either, which broke type-checking of the generated models.ts.
+// Also pins the shape FLAT. Embedding a pointer to another package's chart
+// struct makes Wails' TypeScript generator emit a class referencing that
+// package's point and share types without defining either, which breaks
+// type-checking of the generated models.ts. Keep the fields declared here.
 func TestAgentWorkChartsMarshalsWithoutNulls(t *testing.T) {
 	blob, err := json.Marshal(&AgentWorkCharts{Granularity: "day"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// obs_series and obs_by_type were Langfuse concepts and are gone; the
-	// breakdown is now cost_by_source, which is the split Langfuse could not
-	// produce.
+	// These three are the whole payload: two cost trends plus the per-source
+	// breakdown. The panel iterates each by name, so the names are contract.
 	for _, field := range []string{"cost_series", "cost_by_model", "cost_by_source"} {
 		if !strings.Contains(string(blob), `"`+field+`"`) {
 			t.Errorf("%s missing from the payload: %s", field, blob)

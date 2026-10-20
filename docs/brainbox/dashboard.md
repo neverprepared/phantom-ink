@@ -42,9 +42,7 @@ graph TB
     DP --> HA[HubActivity]
     MT --> Badge2[Badge × 3 per row]
 
-    OP --> SC2[StatCard × 5]
-    OP --> TT[TraceTimeline]
-    OP --> TB[ToolBreakdown]
+    OP --> SC2[StatCard]
 
     SG1 --> SC1[StatCard × 4]
     SG2 --> SC3[StatCard × 4]
@@ -54,7 +52,7 @@ graph TB
     classDef layoutStyle fill:#6b7280,stroke:#4b5563,color:#fff
 
     class CP,DP,OP panelStyle
-    class SC,TF,NSM,SIM,ES,MT,HA,TT,TB,Badge,Badge2 compStyle
+    class SC,TF,NSM,SIM,ES,MT,HA,Badge,Badge2 compStyle
     class AS,SB,NF,Router,SG1,SG2,SC1,SC2,SC3,Modal1,Modal2 layoutStyle
 ```
 
@@ -90,9 +88,9 @@ sequenceDiagram
         API-->>Panel: metrics[]
     end
 
-    loop Trace Polling (10s)
-        Panel->>API: GET /api/langfuse/sessions/*/summary
-        API-->>Panel: summaries[]
+    loop Health Polling (30s)
+        Panel->>API: GET /api/qdrant/health
+        API-->>Panel: {healthy, url}
     end
 ```
 
@@ -112,10 +110,7 @@ flowchart LR
         E1["/api/sessions"]
         E2["/api/metrics/containers"]
         E3["/api/hub/state"]
-        E4["/api/langfuse/health"]
         E5["/api/qdrant/health"]
-        E6["/api/langfuse/sessions/*/traces"]
-        E7["/api/langfuse/sessions/*/summary"]
         E8["/api/events (SSE)"]
     end
 
@@ -126,36 +121,27 @@ flowchart LR
     DP -->|connect| E8
 
     OP -->|on mount + SSE| E1
-    OP -->|on mount| E4
-    OP -->|on mount| E5
-    OP -->|10s poll| E6
-    OP -->|on session change| E7
+    OP -->|30s poll| E5
     OP -->|connect| E8
 
     subgraph ChildComponents["Child Components (own polling)"]
         MT2[MetricsTable<br/>5s poll]
         HA2[HubActivity<br/>SSE-triggered]
-        TT2[TraceTimeline<br/>10s poll]
-        TB2[ToolBreakdown<br/>10s poll]
     end
 
     DP --> MT2
     DP --> HA2
-    OP --> TT2
-    OP --> TB2
 
     MT2 -->|5s| E2
     HA2 -->|SSE| E3
-    TT2 -->|10s| E6
-    TB2 -->|10s| E7
 
     classDef panelStyle fill:#ec4899,stroke:#db2777,color:#fff
     classDef endpointStyle fill:#3b82f6,stroke:#2563eb,color:#fff
     classDef childStyle fill:#22c55e,stroke:#16a34a,color:#fff
 
     class CP,DP,OP panelStyle
-    class E1,E2,E3,E4,E5,E6,E7,E8 endpointStyle
-    class MT2,HA2,TT2,TB2 childStyle
+    class E1,E2,E3,E5,E8 endpointStyle
+    class MT2,HA2 childStyle
 ```
 
 | Component | Endpoint | Cadence | Trigger |
@@ -163,9 +149,7 @@ flowchart LR
 | All panels | `/api/sessions` | Event-driven | SSE Docker events |
 | MetricsTable | `/api/metrics/containers` | 5s | Interval |
 | HubActivity | `/api/hub/state` | Event-driven | SSE hub events (shows repo count + persistent agent indicators) |
-| TraceTimeline | `/api/langfuse/sessions/*/traces` | 10s | Interval |
-| ToolBreakdown | `/api/langfuse/sessions/*/summary` | 10s | Interval |
-| ObservabilityPanel | `/api/langfuse/health`, `/api/qdrant/health` | Once | On mount |
+| ObservabilityPanel | `/api/qdrant/health` | 30s | Interval |
 
 ## Panel Extension Pattern
 
@@ -250,12 +234,8 @@ graph LR
 
 | State | Type | Description |
 |-------|------|-------------|
-| `langfuseHealth` | `$state` | `{healthy, mode}` |
 | `qdrantHealth` | `$state` | `{healthy, url}` |
-| `summaries` | `$state` | Per-session LangFuse summaries |
-| `selectedSession` | `$state` | Filter to single session |
-| `totalTraces` | `$derived` | Sum of all trace counts |
-| `totalErrors` | `$derived` | Sum of all error counts |
+| `qdrantLoading` | `$state` | True until the first health poll returns |
 
 ## SSE Connection
 
@@ -277,8 +257,6 @@ Backoff resets on successful message receipt.
 **Dual-tap confirmation:** Stop and delete buttons require two clicks within 3 seconds. First click shows a warning state, second click executes. Timer expiration resets the button.
 
 **Fetch cancellation:** Components use `AbortController` to cancel in-flight requests when new data is needed, preventing race conditions.
-
-**Virtual scrolling:** TraceTimeline uses fixed item height (36px) with a buffer of 5 items. Only renders visible items for traces > 50.
 
 **Modal focus management:** Modals save `document.activeElement` on mount, focus the first interactive element, and restore focus on unmount.
 

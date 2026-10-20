@@ -340,7 +340,7 @@ phantom-ink's architecture (see [`docs/architecture-overview.md`](./architecture
 - **Brainbox** — FastAPI + Svelte session manager that provisions sandboxed Docker containers
 - **Reflex** — Claude Code plugin with skills, slash commands, agents, workflow templates, and hooks
 - **Three container roles** — `developer` (full access), `performer` (restricted execution), `researcher` (read-only)
-- **Supporting infrastructure** — Qdrant vector DB, LangFuse observability, MinIO object storage
+- **Supporting infrastructure** — Qdrant vector DB, OpenSearch observability, MinIO object storage
 
 Below are concrete integration points:
 
@@ -393,15 +393,17 @@ args = ["-y", "@brainbox/mcp-server"]
 env = { BRAINBOX_URL = "http://localhost:8000" }
 ```
 
-### 5. LangFuse observability
+### 5. OpenSearch observability
 
-Codex's built-in OpenTelemetry export can be pointed at LangFuse's OTLP ingest endpoint, unifying LLM observability across Claude Code (Reflex) and Codex CLI sessions:
+Codex's built-in OpenTelemetry export can be pointed at the OpenSearch stack's Data
+Prepper OTLP ingest (`docker/opensearch/`), unifying LLM observability across Claude
+Code and Codex CLI sessions in the same store the Telemetry panel reads:
 
 ```toml
 # ~/.codex/config.toml
 [otel]
-exporter = "otlp-http"
-endpoint = "http://localhost:3000/api/public/otelTraces"
+exporter = "otlp-grpc"
+endpoint = "http://localhost:21890"   # traces; metrics 21891, logs 21892
 ```
 
 ### 6. Shell Profiler integration

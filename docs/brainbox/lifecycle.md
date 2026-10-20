@@ -265,8 +265,6 @@ Two modes controlled by `SessionContext.hardened`:
 | Profile env | `/run/profile` (tmpfs, 0o644, rw) | Inline in `.env` |
 | Web terminal (ttyd) | Not launched — no web access | Launched on port 7681 |
 
-**Note:** `LANGFUSE_SESSION_ID` is written to `~/.env` in both modes (for LangFuse trace correlation), even when other secrets go to `/run/secrets` in hardened mode.
-
 ## Configuration
 
 All settings use the `CL_` env prefix with `__` as nested delimiter.
@@ -289,7 +287,7 @@ All settings use the `CL_` env prefix with `__` as nested delimiter.
 | `hub.enable_teams` | `CL_HUB__ENABLE_TEAMS` | `true` | Inject `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` into containers |
 | `hub.persistent_token_ttl` | `CL_HUB__PERSISTENT_TOKEN_TTL` | `86400` | Token TTL for persistent agents (24h) |
 
-See `config.py` for the full list of nested settings groups: `ResourceSettings`, `HardeningSettings`, `CosignSettings`, `ArtifactSettings`, `LangfuseSettings`, `QdrantSettings`, `ProfileSettings`, `OllamaSettings`, `UTMSettings`, `HubSettings`.
+See `config.py` for the full list of nested settings groups: `ResourceSettings`, `HardeningSettings`, `CosignSettings`, `MinioSettings`, `GatewaySettings`, `OrchestrationSettings`, `QdrantSettings`, `ProfileSettings`, `OllamaSettings`, `CodexSettings`, `UTMSettings`, `HubSettings`, `PipelineSettings`, `DockerSettings`, `RulesSettings`, `SyncSettings`, `OpenSearchSettings`, `LlmSettings`, `ConversationSettings`.
 
 ## Agent-Injected Environment Variables
 

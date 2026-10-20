@@ -139,13 +139,12 @@ Artifact mode (`CL_ARTIFACT__MODE`): `off` (disabled, 503), `warn` (soft fail, r
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/langfuse/health` | LangFuse connectivity |
 | `GET` | `/api/qdrant/health` | Qdrant connectivity |
-| `GET` | `/api/langfuse/sessions/{name}/traces` | List traces for a session |
-| `GET` | `/api/langfuse/sessions/{name}/summary` | Trace count, error count, tool breakdown |
-| `GET` | `/api/langfuse/traces/{trace_id}` | Trace detail with observations |
 
-LangFuse mode (`CL_LANGFUSE__MODE`): `off` (disabled, 503), `warn` (soft fail), `enforce` (hard fail, 502).
+Agent traces, logs and cost/token metrics are not served here — OpenSearch is the
+system of record for them, and the desktop app queries it directly. This API's own
+event history is searchable at `/api/agent_events/search`, which is OpenSearch-backed
+when `CL_OPENSEARCH__ADDRESSES` is configured and falls back to Postgres otherwise.
 
 ### Metrics & Events
 
@@ -220,7 +219,6 @@ graph TB
         hs[get_hub_state]
         qs[query_session]
         la[list_agents]
-        lh[get_langfuse_health]
         qh[get_qdrant_health]
     end
 
@@ -239,7 +237,6 @@ graph TB
         e11[GET /api/hub/state]
         e12[POST /api/sessions/name/query]
         e13[GET /api/hub/agents]
-        e14[GET /api/langfuse/health]
         e15[GET /api/qdrant/health]
     end
 
@@ -256,14 +253,13 @@ graph TB
     hs --> e11
     qs --> e12
     la --> e13
-    lh --> e14
     qh --> e15
 
     classDef mcpStyle fill:#f97316,stroke:#ea580c,color:#fff
     classDef apiStyle fill:#3b82f6,stroke:#2563eb,color:#fff
 
-    class ls,cs,ss,stop,del,met,st,gt,lt,ct,hs,qs,la,lh,qh mcpStyle
-    class e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11,e12,e13,e14,e15 apiStyle
+    class ls,cs,ss,stop,del,met,st,gt,lt,ct,hs,qs,la,qh mcpStyle
+    class e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11,e12,e13,e15 apiStyle
 ```
 
 All MCP tools use a shared `_request(method, path, body)` helper that handles JSON encoding, error extraction, and connection errors.

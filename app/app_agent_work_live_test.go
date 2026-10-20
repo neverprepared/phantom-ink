@@ -32,9 +32,9 @@ func TestLiveGetAgentWorkCharts(t *testing.T) {
 		if len(c.CostSeries) == 0 {
 			t.Error("no cost series; the charts read metrics-otel and a live window should have points")
 		}
-		// The source split is the point of moving these charts off Langfuse: a
-		// non-trivial window always has at least a "main" bucket, and the
-		// subagent/auxiliary buckets are the spend Langfuse never saw.
+		// The source split is the point of these charts: a non-trivial window
+		// always has at least a "main" bucket, and the subagent/auxiliary
+		// buckets are the delegated spend this makes attributable.
 		if len(c.CostBySource) == 0 {
 			t.Error("no cost-by-source buckets; the breakdown is the reason this reads OpenSearch")
 		}

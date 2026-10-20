@@ -7,14 +7,11 @@ import (
 
 // AgentCharts is the trend and breakdown data behind the Agent Work chart tabs.
 //
-// Sourced from metrics-otel rather than Langfuse. Langfuse's Claude Code
-// capture is a Stop hook, so it never sees delegated subagent work: the spec
-// measured 813 tool calls / $309.05 there against 1,786 / $416.26 in OpenSearch
-// for the SAME session. A cost chart that understates by roughly half is worse
-// than no chart, because the figure looks authoritative.
+// Sourced from metrics-otel, which prices every model call including delegated
+// subagent work, so the cost figures are complete rather than main-thread only.
 //
-// The source split is the view Langfuse cannot provide at all — the work its
-// hook misses is precisely the subagent bucket.
+// CostBySource splits that spend by query_source, making the delegated work
+// attributable instead of folded into one total.
 type AgentCharts struct {
 	// Granularity is the histogram interval actually used, so the UI can label
 	// the axis instead of guessing.
