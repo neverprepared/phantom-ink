@@ -27,7 +27,7 @@
  * is fleet infrastructure with no profile, which is the lesson from the
  * RunnerMetrics mixed-scope bug — see app_dora.go.
  */
-import { keyedResource } from './resource.svelte';
+import { keyedResource, resource } from './resource.svelte';
 import { runnersRes } from './runners.svelte';
 
 /** How often the always-on poll re-reads. Matches StatusBar's previous timer. */
@@ -44,6 +44,31 @@ export const FLEET_POLL_MS = 15_000;
 export const sessionsRes = keyedResource<any[]>(
   (profile) => async (api) => ((await api.GetSessions(profile)) ?? []) as any[],
   { initial: [], label: (profile) => `Failed to load sessions (${profile || 'all profiles'})` },
+);
+
+/**
+ * Local `claude` processes on this Mac. Host state, so not profile-keyed.
+ *
+ * Three callers wanted this independently: SessionsPanel's refresh AND its
+ * refreshMetrics (so twice per mount, from the same onMount), plus
+ * DashboardPanel's load. As a resource the concurrent-call collapse makes
+ * those one request instead of three.
+ */
+export const localProcsRes = resource<any[]>(
+  async (api) => ((await api.FindClaudeProcesses()) ?? []) as any[],
+  { initial: [], label: 'Failed to scan local processes' },
+);
+
+/**
+ * Per-container writable size. Host state, so not profile-keyed.
+ *
+ * Same story: SessionsPanel fetched this from both refresh and refreshMetrics,
+ * both fired from onMount, so every visit made the same Docker round-trip
+ * twice.
+ */
+export const containerDiskRes = resource<any[]>(
+  async (api) => ((await api.GetContainerDiskUsage()) ?? []) as any[],
+  { initial: [], label: 'Failed to read container disk usage' },
 );
 
 let pollHandle: ReturnType<typeof setInterval> | null = null;

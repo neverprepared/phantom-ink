@@ -14,8 +14,16 @@ vi.mock('../metricsHistory.svelte', () => ({
   runnerQueueHistory: { value: {}, update: vi.fn(), pruneKeys: vi.fn() },
 }));
 
-const { sessionsRes, refreshFleet, startFleetPolling, stopFleetPolling, resetFleet, FLEET_POLL_MS } =
-  await import('./fleet.svelte');
+const {
+  sessionsRes,
+  localProcsRes,
+  containerDiskRes,
+  refreshFleet,
+  startFleetPolling,
+  stopFleetPolling,
+  resetFleet,
+  FLEET_POLL_MS,
+} = await import('./fleet.svelte');
 const { runnersRes } = await import('./runners.svelte');
 
 let GetSessions: ReturnType<typeof vi.fn>;
@@ -148,5 +156,53 @@ describe('the single poll', () => {
     GetSessions.mockClear();
     await vi.advanceTimersByTimeAsync(FLEET_POLL_MS * 3);
     expect(GetSessions).not.toHaveBeenCalled();
+  });
+});
+
+describe('host reads shared across panels', () => {
+  // SessionsPanel fetched BOTH of these from refresh() and from
+  // refreshMetrics(), and fires both from onMount -- so each was a duplicate
+  // round-trip on every visit. DashboardPanel wanted the process scan too.
+  // The resource's concurrent-call collapse is what makes three askers one
+  // request.
+  it('collapse concurrent asks into a single request', async () => {
+    const FindClaudeProcesses = vi.fn(async () => [{ pid: 1, tty: 's000' }]);
+    const GetContainerDiskUsage = vi.fn(async () => [
+      { name: 'c1', writable_size: '2 MB', writable_size_bytes: 2_000_000 },
+    ]);
+    mockGetApi.mockResolvedValue({
+      GetSessions,
+      ListRunners,
+      FindClaudeProcesses,
+      GetContainerDiskUsage,
+    });
+    localProcsRes.reset();
+    containerDiskRes.reset();
+
+    // Three simultaneous askers, as a mount with two loaders plus a poll.
+    await Promise.all([
+      localProcsRes.refresh(),
+      localProcsRes.refresh(),
+      localProcsRes.refresh(),
+      containerDiskRes.refresh(),
+      containerDiskRes.refresh(),
+    ]);
+
+    expect(FindClaudeProcesses).toHaveBeenCalledTimes(1);
+    expect(GetContainerDiskUsage).toHaveBeenCalledTimes(1);
+    expect(localProcsRes.value).toHaveLength(1);
+    expect(containerDiskRes.value[0].name).toBe('c1');
+  });
+
+  it('are not profile-keyed, because they are host state', async () => {
+    const FindClaudeProcesses = vi.fn(async () => [{ pid: 1 }]);
+    mockGetApi.mockResolvedValue({ GetSessions, ListRunners, FindClaudeProcesses });
+    localProcsRes.reset();
+
+    await localProcsRes.refresh();
+    const first = localProcsRes.value;
+    // A profile switch must not clear a host-level read.
+    await refreshFleet('other');
+    expect(localProcsRes.value).toBe(first);
   });
 });
