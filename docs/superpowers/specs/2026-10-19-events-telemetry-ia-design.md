@@ -111,22 +111,34 @@ mechanical:
 - `panels/EventLogPanel.svelte` — becomes the Events `Raw` tab, gated on
   `debugState.showEventLog` exactly as its sidebar entry is today.
 
-### Composition: hub panels, with one deliberate exception
+### Composition: neither panel becomes a thin hub
 
 `JobsHubPanel` (Automations) and `WorkHubPanel` (Work) are thin hubs that
-render a component per tab. Telemetry should follow that idiom:
-`AgentWorkPanel` is 1155 lines and adding Logs inline would push it past 1400,
-so its three existing views become components (`TracesTab`, `TrendsTab`,
-`BreakdownTab`) alongside the relocated `StreamLogsTab`, leaving a thin hub.
+render a component per tab. Neither Events nor Telemetry becomes one here, and
+the reason is the same for both.
 
-Events does **not** get the same treatment for `live` and `attention`. Those
-two share CSS and state inside `StreamPanel` (1036 lines), and a prior lesson
-in this repo is explicit that siblings sharing CSS should have state lifted
-into a rune store rather than be split into components — splitting them would
-duplicate styles for no gain. So the Events panel keeps `live` + `attention`
-inline and renders `ServerRulesTab` / `EventLogPanel` as components. Net
-`StreamPanel` size falls, because it sheds the logs state machine and the
-timeline embed.
+An earlier draft of this spec called for decomposing `AgentWorkPanel`'s three
+views into `TracesTab` / `TrendsTab` / `BreakdownTab` on the grounds that the
+file is 1155 lines. Inspection killed it: `trends` and `breakdown` are two
+branches inside a **single** `{#if view !== 'sessions'}` block. They share one
+data source (`loadCharts()`), one loading/error notice pair, and the
+`.charts`, `.chart-card`, `.pie-row` and `ul.legend` rules. Extracting them as
+siblings would duplicate all of that — which is precisely the trap a prior
+lesson in this repo documents: siblings sharing CSS want state lifted into a
+rune store, not a component split. So Telemetry renders the relocated
+`StreamLogsTab` as a component (it already is one) and keeps `traces`,
+`trends` and `breakdown` inline.
+
+The file-size concern is real but is not addressed by a split that duplicates
+styles. `AgentWorkPanel` growing past 1400 lines is worth revisiting on its own
+terms, with a store-based decomposition, as separate work.
+
+Events is not decomposed either, for the same reason. `live` and `attention`
+share CSS and state inside `StreamPanel` (1036 lines), so splitting them would
+duplicate styles for no gain. The Events panel keeps `live` + `attention`
+inline and renders `AutomationsPanel` (the rules UI) and `EventLogPanel` as
+components, because both already are ones. Net `StreamPanel` size falls, since
+it sheds the logs state machine and the timeline embed.
 
 ## Navigation and store changes
 
