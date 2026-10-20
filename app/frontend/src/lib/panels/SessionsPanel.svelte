@@ -6,6 +6,7 @@
   import { notifications } from '../notifications.svelte';
   import { combinedHistory as combinedHistoryStore, localHistory as localHistoryStore, diskHistory as diskHistoryStore } from '../metricsHistory.svelte';
   import { profileState, profileColorStore, featureFlags, panelFocus, refreshTick } from '../stores.svelte';
+  import { sessionsRes, localProcsRes, containerDiskRes, refreshFleet } from '../stores/fleet.svelte';
   import { getProfileColor, profileColorStyle } from '../utils/profileColors';
   import EmptyState from '../components/EmptyState.svelte';
   import Badge from '../components/Badge.svelte';
@@ -15,17 +16,25 @@
   import SessionCreateModal from '../components/SessionCreateModal.svelte';
   import Spinner from '../components/Spinner.svelte';
 
-  let allSessions = $state<any[]>([]);
+  // Sessions, local processes and container disk come from the SHARED fleet
+  // store. StatusBar owns their poll (it is the only always-mounted consumer),
+  // so this panel no longer re-fetches them on every mount -- which is what
+  // blanked it to a spinner on each visit. The duplicates went with them:
+  // refresh() and refreshMetrics() BOTH fetched FindClaudeProcesses and
+  // GetContainerDiskUsage, and both fire from onMount, so each was a wasted
+  // round-trip every visit.
   let tasks = $state<any[]>([]);
   let agents = $state<any[]>([]);
-  let localProcesses = $state<any[]>([]);
-  let diskUsageMap = $state<Record<string, string>>({}); // container name → writable size
   let diskBreakdown = $state<any | null>(null);
   let sessionHistory = $state<Record<string, any[]>>({});
   let history = $state<any[]>([]);
   let pastSessions = $state<any[]>([]);
   let showPastSessions = $state(false);
-  let loading = $state(true);
+  // Starts false, not true. It used to start true, so the first frame of every
+  // visit was a spinner -- which is the whole symptom now that the rows are
+  // retained across mounts. `refresh` only raises it when there is genuinely
+  // nothing cached to paint.
+  let loading = $state(false);
   let showNewModal = $state(false);
   let terminalSession = $state<any | null>(null);
   let terminalUrl = $state('');
@@ -86,15 +95,25 @@
   let localRunnerName = $state('');
   let localRunnerActive = $state(false);
 
+  let activeProfile = $derived(profileState.active);
+
+  let allSessions = $derived(sessionsRes.for(activeProfile?.name ?? '').value);
+  let localProcesses = $derived(localProcsRes.value);
+  /** container name -> writable size, derived from the shared disk read. */
+  let diskUsageMap = $derived.by(() => {
+    const out: Record<string, string> = {};
+    for (const d of containerDiskRes.value) out[d.name] = d.writable_size;
+    return out;
+  });
+
   // Continue-from: seed the task with a prior session's stored handoff
   // (session-store handoff.md — cross-machine session handoff). Candidates
-  // = active sessions + history, both already loaded by refresh().
+  // = active sessions + history.
   const handoffCandidates = $derived([...new Set([
     ...allSessions.map((s: any) => s.session_name ?? s.name),
     ...pastSessions.map((h: any) => h.session_name),
   ].filter(Boolean))] as string[]);
 
-  let activeProfile = $derived(profileState.active);
   let profiles = $derived(profileState.profiles);
 
   const DOCKER_EVENTS = ['create', 'start', 'stop', 'die', 'destroy'];
@@ -123,14 +142,11 @@
     }, 250);
   }
 
-  // Filter by active TitleBar profile
-  let filtered = $derived.by(() => {
-    if (!activeProfile) return allSessions;
-    return allSessions.filter(s => {
-      const sp = (s.workspace_profile ?? '').toLowerCase();
-      return sp === activeProfile.name.toLowerCase();
-    });
-  });
+  // No client-side re-filter: GetSessions already filters on an exact
+  // workspace_profile match server-side (app_brainbox.go), so the
+  // case-insensitive filter that used to live here was a no-op implying a
+  // looser rule than the one actually in force.
+  let filtered = $derived(allSessions);
 
   let showStopped = $state(false);
   let activeSessions = $derived(filtered.filter(s => s.active));
@@ -158,24 +174,22 @@
   async function refresh(silent = false) {
     const a = await getApi();
     if (!a) { if (!silent) loading = false; return; }
+    // A cold frame only when nothing is cached for this profile.
+    if (!silent && allSessions.length === 0) loading = true;
     try {
-      const [sess, hubState, procs, diskStats, diskBk] = await Promise.all([
-        a.GetSessions(profileState.active?.name ?? ''),
+      // Only what this panel alone wants is fetched here. Sessions, local
+      // processes and container disk come from the shared store, and the
+      // resources collapse concurrent reads -- so this running alongside
+      // StatusBar's poll or refreshMetrics costs one request, not two.
+      const [hubState, diskBk] = await Promise.all([
         a.GetHubState(),
-        a.FindClaudeProcesses(),
-        safe(a.GetContainerDiskUsage(), [], 'GetContainerDiskUsage'),
         safe(a.GetDiskBreakdown(), null, 'GetDiskBreakdown'),
+        refreshFleet(profileState.active?.name ?? ''),
+        containerDiskRes.refresh(),
       ]);
-      allSessions = sess ?? [];
       tasks = hubState?.tasks ?? [];
       agents = hubState?.agents ?? [];
-      localProcesses = procs ?? [];
       diskBreakdown = diskBk;
-      const dm: Record<string, string> = {};
-      for (const d of (diskStats ?? [])) {
-        dm[d.name] = d.writable_size;
-      }
-      diskUsageMap = dm;
     } catch (err: any) {
       notifications.error(`Failed to load sessions: ${err?.message ?? err}`);
     } finally {
@@ -189,18 +203,18 @@
 
     // Metrics fetch — must not be blocked by local process scan
     try {
-      const [sh, hist, diskStats] = await Promise.all([
+      const [sh, hist] = await Promise.all([
         a.GetSessionsMetricsHistory(),
         a.GetMetricsHistory(),
-        safe(a.GetContainerDiskUsage(), [], 'GetContainerDiskUsage'),
+        containerDiskRes.refresh(),
       ]);
       sessionHistory = sh ?? {};
       history = hist ?? [];
 
-      // Per-container disk history
+      // Per-container disk history, off the shared read above.
       const diskNow = Date.now();
       const diskKeys = new Set<string>();
-      for (const d of (diskStats ?? [])) {
+      for (const d of containerDiskRes.value) {
         diskKeys.add(d.name);
         diskHistoryStore.update(d.name, { ts: diskNow, bytes: d.writable_size_bytes ?? 0 });
       }
@@ -209,7 +223,8 @@
 
     // Local process history + combined aggregate — isolated so failures don't affect metrics
     try {
-      const procs = await a.FindClaudeProcesses();
+      await localProcsRes.refresh();
+      const procs = localProcsRes.value;
       const now = Date.now();
 
       // Per-process history (for local agent cards)

@@ -7,6 +7,8 @@
   import { brainboxEvents } from '../events.svelte';
   import { profileState, dashboardState, dashboardDataStore, attentionStore, currentPanel } from '../stores.svelte';
   import { runnerQueueHistory } from '../metricsHistory.svelte';
+  import { sessionsRes, localProcsRes, refreshFleet } from '../stores/fleet.svelte';
+  import { runnersRes } from '../stores/runners.svelte';
   import { DEFAULT_LAYOUT } from '../widgets/defaultLayout';
   import type { WidgetInstance, WidgetKind, ActionItem, OpenSearchOverview } from '../widgets/types';
 
@@ -27,14 +29,26 @@
 
 
   // --- Data state ---
-  let sessions    = $state<any[]>([]);
+  // Sessions and runners come from the SHARED fleet store, not from here.
+  // StatusBar owns that poll (it is the only always-mounted consumer), so this
+  // panel no longer re-fetches them on every mount -- which is what made the
+  // dashboard blank to a spinner on each visit.
   let hubTasks    = $state<any[]>([]);
   let dockerStats = $state<any[]>([]);
-  let localProcs  = $state<any[]>([]);
-  let runners     = $state<any[]>([]);
+
+
   let systemInfo  = $state<{ cpu_cores: number; mem_total_gib: number }>({ cpu_cores: 0, mem_total_gib: 0 });
-  let loading     = $state(true);
+  // Starts false: `load` raises it only when there is nothing cached, so
+  // returning to the dashboard paints the retained widgets immediately
+  // instead of flashing a cold frame.
+  let loading     = $state(false);
   let refreshing  = $state(false);
+
+  let activeProfile = $derived(profileState.active);
+
+  let sessions = $derived(sessionsRes.for(activeProfile?.name ?? '').value);
+  let runners = $derived(runnersRes.value);
+  let localProcs = $derived(localProcsRes.value);
 
   // Runners are global (not profile-scoped). Threshold matches the server's
   // dispatcher eligibility window so the count matches what brainbox routes.
@@ -48,23 +62,21 @@
   );
 
   // Peak queue depth observed across all runners in the last hour. Source is
-  // runnerQueueHistory which is populated by RunnersPanel's 5s poll; we also
-  // top it up here whenever DashboardPanel reloads so the card stays warm
-  // when the user hasn't visited Runners.
+  // runnerQueueHistory, which runnersRes records a sample into on every read —
+  // so the shared poll keeps this warm whether or not Runners has been
+  // visited. This panel used to top it up itself, a second writer to the same
+  // history.
   let peakQueue1h = $derived.by(() => {
     void nowMs; // recompute on the 10s tick so 1h window stays current
     void runners; // and whenever the runner list changes
     return runnerQueueHistory.peakAll(60 * 60_000);
   });
 
-  let activeProfile = $derived(profileState.active);
-
-  let filteredSessions = $derived.by(() => {
-    if (!activeProfile) return sessions;
-    return sessions.filter((s: any) =>
-      (s.workspace_profile ?? '').toLowerCase() === activeProfile!.name.toLowerCase()
-    );
-  });
+  // No client-side re-filter: GetSessions already filters on an exact
+  // workspace_profile match server-side (app_brainbox.go), so the
+  // case-insensitive filter that used to live here was a no-op implying a
+  // looser rule than the one in force.
+  let filteredSessions = $derived(sessions);
 
   let filteredTasks = $derived.by(() => {
     if (!activeProfile) return hubTasks;
@@ -596,36 +608,34 @@
   }
 
   // --- Data loading ---
+  //
+  // Sessions and runners are NOT fetched here: they come from the shared
+  // fleet store, whose single poll StatusBar owns. What remains is what only
+  // this panel wants -- profile-scoped hub tasks, Docker stats and the local
+  // process scan.
+  //
+  // The runner queue-history feed went with the runners fetch: runnersRes
+  // already records a sample on every read, so doing it here too was a second
+  // writer to the same history.
   async function load(silent = false): Promise<void> {
     const a = await getApi();
     if (!a) return;
-    if (!silent) loading = true; else refreshing = true;
+    // A cold frame only when there is genuinely nothing to show. Returning to
+    // the dashboard with cached sessions must not blank it.
+    if (!silent && sessions.length === 0) loading = true;
+    else refreshing = true;
     try {
-      const [s, tasks, ds, procs, rs] = await Promise.all([
-        safe(a.GetSessions(profileState.active?.name ?? '') as Promise<any>, [], 'GetSessions'),
-        safe(a.ListHubTasks('', profileState.active?.name ?? '') as Promise<any>, [], 'ListHubTasks'),
+      const profile = profileState.active?.name ?? '';
+      const [tasks, ds] = await Promise.all([
+        safe(a.ListHubTasks('', profile) as Promise<any>, [], 'ListHubTasks'),
         safe(a.GetDockerStats() as Promise<any>, [], 'GetDockerStats'),
-        safe(a.FindClaudeProcesses() as Promise<any>, [], 'FindClaudeProcesses'),
-        safe(a.ListRunners() as Promise<any>, [], 'ListRunners'),
+        // These share the in-flight read when StatusBar's poll or the
+        // Sessions panel is already asking for the same thing.
+        refreshFleet(profile),
+        localProcsRes.refresh(),
       ]);
-      sessions    = s ?? [];
       hubTasks    = tasks ?? [];
       dockerStats = ds ?? [];
-      localProcs  = procs ?? [];
-      runners     = rs ?? [];
-      // Feed runner queue history from here too — keeps the peak-1h card
-      // current even when the user hasn't opened Runners.
-      const ts2 = Date.now();
-      const active = new Set<string>();
-      for (const r of runners) {
-        active.add(r.name);
-        runnerQueueHistory.update(r.name, {
-          ts: ts2,
-          depth: r.queue_depth || 0,
-          inflight: r.in_flight || 0,
-        });
-      }
-      runnerQueueHistory.pruneKeys(active);
     } finally {
       loading    = false;
       refreshing = false;
