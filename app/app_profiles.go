@@ -199,11 +199,15 @@ func (a *App) SetActiveProfile(name string) error {
 	a.mu.Lock()
 	a.config.ActiveProfile = name
 	a.mu.Unlock()
-	// Drop every profile's memoised launchpad. The cache is profile-keyed, so
-	// it cannot serve the wrong profile's rows -- but clearing on switch keeps
-	// the stronger property the Code panel header promises: after a switch,
-	// nothing on screen predates it.
-	a.InvalidateCodeOverview("")
+	// Deliberately NOT invalidating the memoised launchpads here.
+	//
+	// This used to drop every profile's, for the cosmetic property that
+	// nothing on screen predates a switch. The cache is profile-keyed, so it
+	// cannot serve the wrong profile's rows either way -- and the wipe cost
+	// the thing operators actually notice: bouncing between two profiles
+	// re-ran the whole provider fan-out in both directions, every time.
+	// Each profile now keeps its own rows, and the TTL decides when they are
+	// refreshed behind whoever is looking at them.
 	if a.db != nil {
 		return a.db.SetSetting(settingActiveProfile, name)
 	}

@@ -50,12 +50,26 @@ func (a *App) SetGatewayEnv(profile string, env map[string]string) error {
 	for k := range brainEndpointVars {
 		delete(env, k)
 	}
-	return a.client.SetGatewayProfileEnv(profile, env)
+	if err := a.client.SetGatewayProfileEnv(profile, env); err != nil {
+		return err
+	}
+	// GITHUB_TOKEN and ADO_PAT are curated here, and the launchpad memo caches
+	// the CREDENTIAL VERDICT alongside the rows -- so a memoised token_invalid
+	// would outlive the fix that resolved it. Only this profile's entry is
+	// dropped; the others' credentials did not change.
+	a.InvalidateCodeOverview(profile)
+	return nil
 }
 
 // DeleteGatewayEnv removes a profile's stored env file entirely.
 func (a *App) DeleteGatewayEnv(profile string) error {
-	return a.client.DeleteGatewayProfileEnv(profile)
+	if err := a.client.DeleteGatewayProfileEnv(profile); err != nil {
+		return err
+	}
+	// Same reason as SetGatewayEnv: the profile has no credentials now, so its
+	// memoised rows describe a provider it can no longer reach.
+	a.InvalidateCodeOverview(profile)
+	return nil
 }
 
 // MintGatewayToken mints a Tier-0 token for a profile. `scope` is a list of
