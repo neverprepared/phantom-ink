@@ -328,8 +328,8 @@ def get_metrics() -> list[dict[str, Any]]:
       mem_limit (int): Container memory limit in bytes.
       mem_limit_human (str): Human-readable memory limit.
       uptime_seconds (int): Seconds since the container was started.
-      trace_count (int): LangFuse traces recorded for this session (cached 60 s).
-      error_count (int): Error-level LangFuse traces for this session.
+      trace_count (int): Always 0; retained for payload compatibility.
+      error_count (int): Always 0; retained for payload compatibility.
     """
     return _request("GET", "/api/metrics/containers")
 
@@ -466,22 +466,6 @@ def cancel_task(task_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def get_langfuse_health() -> dict[str, Any]:
-    """Check LangFuse observability service health and connectivity.
-
-    Pings the LangFuse ``/api/public/health`` endpoint using the configured
-    base URL and credentials (``LANGFUSE_BASE_URL``, ``LANGFUSE_PUBLIC_KEY``,
-    ``LANGFUSE_SECRET_KEY``).
-
-    Returns a dict with:
-      healthy (bool): True if LangFuse responded with HTTP 200.
-      url (str): The LangFuse base URL that was probed.
-      error (str, optional): Error message if the probe failed.
-    """
-    return _request("GET", "/api/langfuse/health")
-
-
-@mcp.tool()
 def get_qdrant_health() -> dict[str, Any]:
     """Check Qdrant vector database health and connectivity."""
     return _request("GET", "/api/qdrant/health")
@@ -525,95 +509,6 @@ def api_info() -> dict[str, Any]:
     return _request("GET", "/api/info")
 
 
-# ---------------------------------------------------------------------------
-# LangFuse trace tools
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool()
-def get_langfuse_session_traces(session_name: str, limit: int = 50) -> list[dict[str, Any]]:
-    """List LangFuse traces recorded for a container session.
-
-    Queries LangFuse for all traces whose ``sessionId`` matches the brainbox
-    session name.  Traces represent individual Claude Code invocations or
-    tool-use sequences.
-
-    Each element in the returned list includes:
-      id (str): LangFuse trace ID.
-      name (str): Trace name (typically the Claude Code command).
-      session_id (str): LangFuse session ID (matches session_name).
-      timestamp (str): ISO 8601 creation timestamp.
-      status (str): "ok" or "error" (derived from the trace level field).
-      input (str): Truncated trace input (prompt text).
-      output (str): Truncated trace output (assistant response).
-
-    Args:
-        session_name: Brainbox session name (e.g. "test-1"). Used as the
-                      LangFuse sessionId filter.
-        limit: Maximum number of traces to return, most recent first
-               (default: 50).
-    """
-    return _request("GET", f"/api/langfuse/sessions/{session_name}/traces?limit={limit}")
-
-
-@mcp.tool()
-def get_langfuse_session_summary(session_name: str) -> dict[str, Any]:
-    """Get aggregated observability statistics for a session from LangFuse.
-
-    Batch-fetches all observations for the session and computes counts in a
-    single API round-trip.  Use this for a quick health snapshot before
-    drilling into individual traces with get_langfuse_session_traces.
-
-    Returns a dict with:
-      session_id (str): The session name used as the LangFuse session ID.
-      total_traces (int): Total number of traces recorded for this session.
-      total_observations (int): Total number of observations (spans, generations,
-          events) across all traces.
-      error_count (int): Number of observations at ERROR level.
-      tool_counts (dict[str, int]): Map of tool/observation name → call count,
-          showing which Claude tools were used most.
-
-    Args:
-        session_name: Brainbox session name (e.g. "test-1").
-    """
-    return _request("GET", f"/api/langfuse/sessions/{session_name}/summary")
-
-
-@mcp.tool()
-def get_langfuse_trace_detail(trace_id: str) -> dict[str, Any]:
-    """Get full detail for a single LangFuse trace, including all observations.
-
-    Fetches the trace record and all its child observations (spans, generations,
-    events) in two API calls, then returns them together.  Use this to inspect
-    what Claude did inside a specific invocation — which tools it called, in
-    what order, and whether any errored.
-
-    Returns a dict with:
-      trace (dict): The trace record:
-        id (str): LangFuse trace ID.
-        name (str): Trace name.
-        session_id (str): LangFuse session ID.
-        timestamp (str): ISO 8601 creation timestamp.
-        status (str): "ok" or "error".
-        input (str): Truncated prompt input.
-        output (str): Truncated assistant output.
-      observations (list[dict]): Child observations, each with:
-        id (str): Observation ID.
-        trace_id (str): Parent trace ID.
-        name (str): Tool or span name.
-        type (str): "SPAN", "GENERATION", or "EVENT".
-        start_time (str): ISO 8601 start timestamp.
-        end_time (str): ISO 8601 end timestamp (empty if still running).
-        status (str): "ok" or "error".
-        level (str): Severity — "DEFAULT", "DEBUG", "WARNING", or "ERROR".
-
-    Args:
-        trace_id: LangFuse trace ID, as returned by get_langfuse_session_traces.
-    """
-    return _request("GET", f"/api/langfuse/traces/{trace_id}")
-
-
-# ---------------------------------------------------------------------------
 @mcp.tool()
 def get_message_log(limit: int = 50) -> list[dict[str, Any]]:
     """Return the hub inter-agent message audit log.

@@ -4,7 +4,7 @@ Two strategies:
 1. 1Password — when a Service Account token is available, discover all items
    in the SA's accessible vault(s) via ``op item list`` / ``op item get`` and
    derive environment variable names automatically from item titles and field
-   labels (e.g. ``langfuse-api`` + ``public-key`` → ``LANGFUSE_API_PUBLIC_KEY``).
+   labels (e.g. ``github-api`` + ``public-key`` → ``GITHUB_API_PUBLIC_KEY``).
 2. Plaintext files — legacy fallback, reads individual files from secrets_dir.
 
 The host resolves secrets; containers never see the SA token or ``op`` CLI.
@@ -70,7 +70,7 @@ def _to_env_name(item_title: str, field_label: str) -> str:
     """Derive an environment variable name from item title and field label.
 
     Examples:
-        langfuse-api + public-key  → LANGFUSE_API_PUBLIC_KEY
+        github-api + public-key    → GITHUB_API_PUBLIC_KEY
         uptime-kuma  + password    → UPTIME_KUMA_PASSWORD
         claude-code  + oauth-token → CLAUDE_CODE_OAUTH_TOKEN
     """

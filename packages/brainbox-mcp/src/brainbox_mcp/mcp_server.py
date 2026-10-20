@@ -350,12 +350,6 @@ def cancel_task(task_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def get_langfuse_health() -> dict[str, Any]:
-    """Check LangFuse observability service health and connectivity."""
-    return _request("GET", "/api/langfuse/health")
-
-
-@mcp.tool()
 def get_qdrant_health() -> dict[str, Any]:
     """Check Qdrant vector database health and connectivity."""
     return _request("GET", "/api/qdrant/health")
@@ -454,42 +448,6 @@ def delete_artifact(key: str) -> dict[str, Any]:
         key: Storage key / path (e.g. "myproject/report.md")
     """
     return _request("DELETE", f"/api/artifacts/{key}")
-
-
-# ---------------------------------------------------------------------------
-# LangFuse trace tools
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool()
-def get_langfuse_session_traces(session_name: str, limit: int = 50) -> list[dict[str, Any]]:
-    """List LangFuse traces for a container session.
-
-    Args:
-        session_name: Session name (e.g. test-1)
-        limit: Maximum number of traces to return (default: 50)
-    """
-    return _request("GET", f"/api/langfuse/sessions/{session_name}/traces?limit={limit}")
-
-
-@mcp.tool()
-def get_langfuse_session_summary(session_name: str) -> dict[str, Any]:
-    """Get trace count, error count, and tool breakdown for a session.
-
-    Args:
-        session_name: Session name (e.g. test-1)
-    """
-    return _request("GET", f"/api/langfuse/sessions/{session_name}/summary")
-
-
-@mcp.tool()
-def get_langfuse_trace_detail(trace_id: str) -> dict[str, Any]:
-    """Get full detail for a single LangFuse trace including observations.
-
-    Args:
-        trace_id: LangFuse trace ID
-    """
-    return _request("GET", f"/api/langfuse/traces/{trace_id}")
 
 
 # ---------------------------------------------------------------------------

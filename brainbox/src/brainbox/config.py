@@ -4,7 +4,7 @@ Configuration is read from environment variables with the ``CL_`` prefix
 (nested via ``CL__`` double-underscore delimiter).  For example:
 
     CL_API_PORT=9999            # top-level field
-    CL_LANGFUSE__BASE_URL=...   # nested LangfuseSettings.base_url
+    CL_QDRANT__URL=...          # nested QdrantSettings.url
 
 Container-injected environment variables
 -----------------------------------------
@@ -112,36 +112,6 @@ class CosignSettings(BaseSettings):
     key: str = ""  # path to PEM public key file
     certificate_identity: str = ""  # signer identity pattern (regexp) for keyless verification
     oidc_issuer: str = ""  # OIDC issuer URL for keyless verification
-
-
-def _langfuse_env_fallback(*env_names: str) -> str:
-    """Return the first set env var from the list, or empty string."""
-    import os
-
-    for name in env_names:
-        val = os.environ.get(name)
-        if val:
-            return val
-    return ""
-
-
-def _langfuse_base_url() -> str:
-    return _langfuse_env_fallback("LANGFUSE_BASE_URL") or "http://localhost:3000"
-
-
-def _langfuse_public_key() -> str:
-    return _langfuse_env_fallback("LANGFUSE_PUBLIC_KEY", "LANGFUSE_API_PUBLIC_KEY")
-
-
-def _langfuse_secret_key() -> str:
-    return _langfuse_env_fallback("LANGFUSE_SECRET_KEY", "LANGFUSE_API_SECRET_KEY")
-
-
-class LangfuseSettings(BaseSettings):
-    mode: Literal["off", "warn", "enforce"] = "warn"
-    base_url: str = Field(default_factory=_langfuse_base_url)
-    public_key: str = Field(default_factory=_langfuse_public_key)
-    secret_key: SecretStr = Field(default_factory=_langfuse_secret_key)
 
 
 class MinioSettings(BaseSettings):
@@ -523,7 +493,6 @@ class Settings(BaseSettings):
     resources: ResourceSettings = Field(default_factory=ResourceSettings)
     hardening: HardeningSettings = Field(default_factory=HardeningSettings)
     cosign: CosignSettings = Field(default_factory=CosignSettings)
-    langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     minio: MinioSettings = Field(default_factory=MinioSettings)
     gateway: GatewaySettings = Field(default_factory=GatewaySettings)
     orchestration: OrchestrationSettings = Field(default_factory=OrchestrationSettings)

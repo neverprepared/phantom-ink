@@ -7,7 +7,6 @@ import collections as _collections
 import json
 import os
 import secrets
-import threading
 import time
 import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -82,13 +81,6 @@ from .router import (
     submit_task,
 )
 from . import agent_store, event_match, event_rules, os_sink
-from .langfuse_client import (
-    LangfuseError,
-    health_check as langfuse_health_check,
-    get_session_traces_summary,
-    get_trace as langfuse_get_trace,
-    list_traces as langfuse_list_traces,
-)
 from .messages import get_message_log, get_messages, route as route_message
 from . import conversation_orchestrator
 from . import conversation_promote
@@ -2812,40 +2804,8 @@ async def _query_via_tmux(request: Request, name: str, body: QuerySessionRequest
 
 
 # ---------------------------------------------------------------------------
-# Container metrics (with LangFuse trace count cache)
+# Container metrics
 # ---------------------------------------------------------------------------
-
-_trace_cache: dict[str, dict[str, Any]] = {}  # session_name -> {data, ts}
-_trace_cache_lock = threading.Lock()
-_TRACE_CACHE_TTL = 60  # seconds - increased from 10s to reduce load
-
-
-def _get_trace_counts(session_name: str, timeout: float = 2.0) -> dict[str, int]:
-    """Get trace/error counts for a session, cached for 60s with timeout."""
-    now = time.monotonic()
-    with _trace_cache_lock:
-        cached = _trace_cache.get(session_name)
-    if cached and (now - cached["ts"]) < _TRACE_CACHE_TTL:
-        return cached["data"]
-
-    if settings.langfuse.mode == "off":
-        return {"trace_count": 0, "error_count": 0}
-
-    try:
-        # Use a thread pool with timeout to prevent blocking
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(get_session_traces_summary, session_name)
-            summary = future.result(timeout=timeout)
-            data = {"trace_count": summary.total_traces, "error_count": summary.error_count}
-    except (Exception, concurrent.futures.TimeoutError):
-        # Return zeros on timeout or error, don't cache failures
-        return {"trace_count": 0, "error_count": 0}
-
-    with _trace_cache_lock:
-        _trace_cache[session_name] = {"data": data, "ts": now}
-    return data
 
 
 def _new_docker_client() -> "docker.DockerClient":
@@ -2895,8 +2855,6 @@ def _get_container_metrics() -> list[dict[str, Any]]:
 
                 labels = c.labels or {}
                 session_name = _extract_session_name(c.name)
-                # Use shorter timeout for trace counts to prevent blocking
-                trace_counts = _get_trace_counts(session_name, timeout=1.0)
 
                 return {
                     "name": c.name,
@@ -2910,8 +2868,8 @@ def _get_container_metrics() -> list[dict[str, Any]]:
                     "mem_limit": mem_limit,
                     "mem_limit_human": _human_bytes(mem_limit),
                     "uptime_seconds": round(uptime_seconds),
-                    "trace_count": trace_counts["trace_count"],
-                    "error_count": trace_counts["error_count"],
+                    "trace_count": 0,
+                    "error_count": 0,
                 }
             except Exception as exc:
                 log.debug("metrics.container_stat_failed", metadata={"container": c.name, "reason": str(exc)})
@@ -2962,10 +2920,9 @@ async def api_container_metrics():
     - ``mem_limit`` (int): Container memory limit in **bytes**.
     - ``mem_limit_human`` (str): Human-readable memory limit.
     - ``uptime_seconds`` (int): Seconds since the container was started.
-    - ``trace_count`` (int): Number of LangFuse traces recorded for this
-      session (cached for 60 s; 0 when LangFuse is disabled or unreachable).
-    - ``error_count`` (int): Number of error-level LangFuse traces for this
-      session (cached alongside ``trace_count``).
+    - ``trace_count`` (int): Always ``0``; retained for payload compatibility
+      now that per-session trace counts are no longer collected here.
+    - ``error_count`` (int): Always ``0``; retained for payload compatibility.
     """
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _get_container_metrics)
@@ -4138,39 +4095,8 @@ async def conversation_stream_route(
 
 
 # ---------------------------------------------------------------------------
-# LangFuse observability proxy
+# Qdrant health
 # ---------------------------------------------------------------------------
-
-
-async def _langfuse_op(operation_fn, *args, **kwargs):
-    """Run a LangFuse operation respecting the configured mode."""
-    mode = settings.langfuse.mode
-    if mode == "off":
-        raise HTTPException(status_code=503, detail="LangFuse integration is disabled")
-    try:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, lambda: operation_fn(*args, **kwargs))
-    except LangfuseError as exc:
-        if mode == "enforce":
-            raise HTTPException(status_code=502, detail=str(exc))
-        log.warning("langfuse.operation_failed", metadata={"error": str(exc)})
-        return None
-    except Exception as exc:
-        if mode == "enforce":
-            raise HTTPException(status_code=502, detail=str(exc))
-        log.warning("langfuse.operation_failed", metadata={"error": str(exc)})
-        return None
-
-
-@app.get("/api/langfuse/health")
-async def api_langfuse_health():
-    """Check LangFuse connectivity."""
-    mode = settings.langfuse.mode
-    if mode == "off":
-        return {"healthy": False, "mode": "off", "url": None, "detail": "LangFuse integration is disabled"}
-    loop = asyncio.get_running_loop()
-    healthy = await loop.run_in_executor(None, langfuse_health_check)
-    return {"healthy": healthy, "mode": mode, "url": settings.langfuse.base_url, "detail": None}
 
 
 @app.get("/api/qdrant/health")
@@ -4188,82 +4114,6 @@ async def api_qdrant_health():
             return {"healthy": healthy, "mode": None, "url": settings.qdrant.url, "detail": None}
     except Exception as e:
         return {"healthy": False, "mode": None, "url": settings.qdrant.url, "detail": str(e)}
-
-
-@app.get("/api/langfuse/sessions/{session_name}/traces")
-async def api_langfuse_session_traces(
-    session_name: str, limit: int = Query(default=50), _key=Depends(require_api_key)
-):
-    """List traces for a container session."""
-    result = await _langfuse_op(langfuse_list_traces, session_name, limit)
-    if result is None:
-        return []
-    return [
-        {
-            "id": t.id,
-            "name": t.name,
-            "session_id": t.session_id,
-            "timestamp": t.timestamp,
-            "status": t.status,
-            "input": t.input,
-            "output": t.output,
-        }
-        for t in result
-    ]
-
-
-@app.get("/api/langfuse/sessions/{session_name}/summary")
-async def api_langfuse_session_summary(session_name: str, _key=Depends(require_api_key)):
-    """Trace count, error count, and tool breakdown for a session."""
-    result = await _langfuse_op(get_session_traces_summary, session_name)
-    if result is None:
-        return {
-            "session_id": session_name,
-            "total_traces": 0,
-            "total_observations": 0,
-            "error_count": 0,
-            "tool_counts": {},
-        }
-    return {
-        "session_id": result.session_id,
-        "total_traces": result.total_traces,
-        "total_observations": result.total_observations,
-        "error_count": result.error_count,
-        "tool_counts": result.tool_counts,
-    }
-
-
-@app.get("/api/langfuse/traces/{trace_id}")
-async def api_langfuse_trace_detail(trace_id: str, _key=Depends(require_api_key)):
-    """Single trace detail with observations."""
-    result = await _langfuse_op(langfuse_get_trace, trace_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Trace not available")
-    trace, observations = result
-    return {
-        "trace": {
-            "id": trace.id,
-            "name": trace.name,
-            "session_id": trace.session_id,
-            "timestamp": trace.timestamp,
-            "status": trace.status,
-            "input": trace.input,
-            "output": trace.output,
-        },
-        "observations": [
-            {
-                "id": o.id,
-                "trace_id": o.trace_id,
-                "name": o.name,
-                "type": o.type,
-                "start_time": o.start_time,
-                "end_time": o.end_time,
-                "status": o.status,
-                "level": o.level,
-            }
-            for o in observations
-        ],
-    }
 
 
 # ---------------------------------------------------------------------------

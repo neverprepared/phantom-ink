@@ -36,7 +36,7 @@ def isolated_config(tmp_path, monkeypatch):
 
 class TestToEnvName:
     def test_basic(self):
-        assert _to_env_name("langfuse-api", "public-key") == "LANGFUSE_API_PUBLIC_KEY"
+        assert _to_env_name("github-api", "public-key") == "GITHUB_API_PUBLIC_KEY"
 
     def test_single_word_field(self):
         assert _to_env_name("uptime-kuma", "password") == "UPTIME_KUMA_PASSWORD"
@@ -151,13 +151,13 @@ def _mock_op_run_factory(items_list: list[dict], items_detail: dict[str, dict]):
 class TestResolveFromOp:
     def test_discovers_items(self, monkeypatch):
         items_list = [
-            {"id": "id1", "title": "langfuse-api"},
+            {"id": "id1", "title": "github-api"},
             {"id": "id2", "title": "uptime-kuma"},
         ]
         items_detail = {
             "id1": {
                 "id": "id1",
-                "title": "langfuse-api",
+                "title": "github-api",
                 "fields": [
                     {"id": "username", "type": "STRING", "label": "public-key", "value": "pk-123"},
                     {
@@ -197,8 +197,8 @@ class TestResolveFromOp:
             result = resolve_from_op("fake-token")
 
         assert result == {
-            "LANGFUSE_API_PUBLIC_KEY": "pk-123",
-            "LANGFUSE_API_SECRET_KEY": "sk-456",
+            "GITHUB_API_PUBLIC_KEY": "pk-123",
+            "GITHUB_API_SECRET_KEY": "sk-456",
             "UPTIME_KUMA_USERNAME": "admin",
             "UPTIME_KUMA_PASSWORD": "secret",
         }
