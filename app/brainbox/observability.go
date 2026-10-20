@@ -11,16 +11,6 @@ type HealthStatus struct {
 	Message string `json:"message"`
 }
 
-// Trace represents a LangFuse trace.
-type Trace struct {
-	ID        string      `json:"id"`
-	Name      string      `json:"name"`
-	Timestamp string      `json:"timestamp"`
-	Model     string      `json:"model"`
-	Usage     interface{} `json:"usage"`
-	Metadata  interface{} `json:"metadata"`
-}
-
 // TraceDetail is the full detail of a single trace.
 type TraceDetail struct {
 	ID         string      `json:"id"`
@@ -54,15 +44,6 @@ type SessionMetricsSample struct {
 	CPUPercent float64 `json:"cpu_percent"`
 }
 
-// GetLangfuseHealth checks the LangFuse service health.
-func (c *Client) GetLangfuseHealth() (HealthStatus, error) {
-	var h HealthStatus
-	if err := c.get("/api/langfuse/health", &h); err != nil {
-		return h, err
-	}
-	return h, nil
-}
-
 // GetQdrantHealth checks the Qdrant service health.
 func (c *Client) GetQdrantHealth() (HealthStatus, error) {
 	var h HealthStatus
@@ -70,17 +51,6 @@ func (c *Client) GetQdrantHealth() (HealthStatus, error) {
 		return h, err
 	}
 	return h, nil
-}
-
-// GetSessionTraces returns LangFuse traces for a session.
-func (c *Client) GetSessionTraces(sessionName string, limit int) ([]Trace, error) {
-	var traces []Trace
-	path := fmt.Sprintf("/api/langfuse/sessions/%s/traces?limit=%d",
-		url.PathEscape(sessionName), limit)
-	if err := c.get(path, &traces); err != nil {
-		return nil, err
-	}
-	return traces, nil
 }
 
 // GetSessionSummary returns a trace count summary for a session.

@@ -3,7 +3,6 @@
 import {brainbox} from '../models';
 import {main} from '../models';
 import {opensearch} from '../models';
-import {langfuse} from '../models';
 import {provider} from '../models';
 import {doctor} from '../models';
 
@@ -131,10 +130,6 @@ export function GetAgentState(arg1:string):Promise<brainbox.AgentStateItem>;
 
 export function GetAgentWorkCharts(arg1:string,arg2:string):Promise<main.AgentWorkCharts>;
 
-export function GetAgentWorkFreshness(arg1:string):Promise<main.AgentWorkFreshness>;
-
-export function GetAgentWorkTimeline(arg1:string,arg2:string,arg3:number):Promise<langfuse.SessionTimeline>;
-
 export function GetAppLogs():Promise<Array<string>>;
 
 export function GetArtifactPreview(arg1:string,arg2:string):Promise<main.ArtifactPreview>;
@@ -172,8 +167,6 @@ export function GetHubState():Promise<main.HubStateView>;
 export function GetJiraJQL(arg1:string):Promise<string>;
 
 export function GetLANIP():Promise<string>;
-
-export function GetLangfuseHealth():Promise<brainbox.HealthStatus>;
 
 export function GetLatestCollectedEntry(arg1:string,arg2:string):Promise<main.CollectedEntry>;
 
@@ -231,8 +224,6 @@ export function GetRulesStatus():Promise<brainbox.RulesStatus>;
 
 export function GetSessionHistory(arg1:number,arg2:number):Promise<Array<brainbox.SessionHistoryEntry>>;
 
-export function GetSessionTraces(arg1:string,arg2:number):Promise<Array<brainbox.Trace>>;
-
 export function GetSessions(arg1:string):Promise<Array<brainbox.Session>>;
 
 export function GetSessionsMetricsHistory():Promise<Record<string, Array<brainbox.SessionMetricsSample>>>;
@@ -286,8 +277,6 @@ export function ListAgentRoles():Promise<Array<brainbox.AgentDefinition>>;
 export function ListAgentSessions(arg1:string,arg2:string,arg3:number):Promise<Array<opensearch.AgentSession>>;
 
 export function ListAgentState(arg1:main.AgentStateFilter):Promise<Array<brainbox.AgentStateItem>>;
-
-export function ListAgentWork(arg1:string,arg2:string,arg3:number):Promise<Array<main.AgentWorkRow>>;
 
 export function ListAgents():Promise<Array<main.DetectedAgent>>;
 

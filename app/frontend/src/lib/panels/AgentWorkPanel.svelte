@@ -510,7 +510,7 @@
       }
       const tl = await withTimeout(
         api.GetAgentSessionTimeline(s.session_id, activeProfile, 500),
-        'GetAgentWorkTimeline',
+        'GetAgentSessionTimeline',
       );
       if (mine !== timelineEpoch) return;
       timeline = tl as SessionTimeline;

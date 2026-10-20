@@ -187,25 +187,6 @@ func (c ServiceConfig) ActiveURL(defaultURL string) string {
 // ComposePath is relative to the repo root (resolved at runtime).
 var knownServices = []ServiceDef{
 	{
-		Name:        "langfuse",
-		Label:       "LangFuse",
-		Description: "LLM observability — Claude Code session traces, prompts, and cost",
-		DefaultURL:  "http://localhost:3000",
-		Port:        3000,
-		// Deliberately NOT Platform:true, even though the stack runs on the
-		// platform node. Platform:true hides an entry from the Integrations
-		// toggles on the assumption the Platform Services card shows it
-		// instead — but that card enumerates compose services filtered by
-		// `com.docker.compose.project=phantom-platform`, and the Langfuse
-		// stack is its own compose project (which is what keeps its generic
-		// postgres/minio/redis/clickhouse service names from shadowing the
-		// platform's). Setting Platform here would leave it visible nowhere.
-		//
-		// As an Integrations entry with Remote set to
-		// https://langfuse.<base domain>, the toggle is config-only and the
-		// URL resolves correctly.
-	},
-	{
 		Name:        "opensearch",
 		Label:       "OpenSearch",
 		Description: "OpenTelemetry signal store — traces, metrics, and logs via OTLP → OpenSearch + Dashboards",

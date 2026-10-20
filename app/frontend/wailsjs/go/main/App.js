@@ -250,14 +250,6 @@ export function GetAgentWorkCharts(arg1, arg2) {
   return window['go']['main']['App']['GetAgentWorkCharts'](arg1, arg2);
 }
 
-export function GetAgentWorkFreshness(arg1) {
-  return window['go']['main']['App']['GetAgentWorkFreshness'](arg1);
-}
-
-export function GetAgentWorkTimeline(arg1, arg2, arg3) {
-  return window['go']['main']['App']['GetAgentWorkTimeline'](arg1, arg2, arg3);
-}
-
 export function GetAppLogs() {
   return window['go']['main']['App']['GetAppLogs']();
 }
@@ -332,10 +324,6 @@ export function GetJiraJQL(arg1) {
 
 export function GetLANIP() {
   return window['go']['main']['App']['GetLANIP']();
-}
-
-export function GetLangfuseHealth() {
-  return window['go']['main']['App']['GetLangfuseHealth']();
 }
 
 export function GetLatestCollectedEntry(arg1, arg2) {
@@ -450,10 +438,6 @@ export function GetSessionHistory(arg1, arg2) {
   return window['go']['main']['App']['GetSessionHistory'](arg1, arg2);
 }
 
-export function GetSessionTraces(arg1, arg2) {
-  return window['go']['main']['App']['GetSessionTraces'](arg1, arg2);
-}
-
 export function GetSessions(arg1) {
   return window['go']['main']['App']['GetSessions'](arg1);
 }
@@ -560,10 +544,6 @@ export function ListAgentSessions(arg1, arg2, arg3) {
 
 export function ListAgentState(arg1) {
   return window['go']['main']['App']['ListAgentState'](arg1);
-}
-
-export function ListAgentWork(arg1, arg2, arg3) {
-  return window['go']['main']['App']['ListAgentWork'](arg1, arg2, arg3);
 }
 
 export function ListAgents() {

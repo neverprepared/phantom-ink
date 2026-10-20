@@ -81,12 +81,12 @@ func TestReconcilePlanSkipsNativeRemoteAndPlatform(t *testing.T) {
 	defs := []ServiceDef{
 		{Name: "phantom-brain-mesh", Native: true},
 		{Name: "opensearch", Port: 5601},
-		{Name: "langfuse", Platform: true},
+		{Name: "minio", Platform: true},
 	}
 	rows := map[string]IntegrationRow{
 		"phantom-brain-mesh": {Name: "phantom-brain-mesh", DesiredRunning: true},
 		"opensearch":         {Name: "opensearch", DesiredRunning: true, Remote: true},
-		"langfuse":           {Name: "langfuse", DesiredRunning: true},
+		"minio":              {Name: "minio", DesiredRunning: true},
 	}
 
 	if got := reconcilePlan(defs, rows, neverRunning); len(got) != 0 {
