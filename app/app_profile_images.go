@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -172,13 +173,22 @@ func classifyRegistryError(err error) ProfileImageState {
 	return classifyRegistryMessage(err.Error())
 }
 
+// authStatusRe matches 401/403 only as a standalone number. A bare substring
+// test cannot tell a status code from any other digits in the message: an
+// ephemeral port like 40399, a byte count like 14031, or a digest all carry
+// one. That is not hypothetical -- it is why a plain connection-refused error
+// ("dial tcp 127.0.0.1:40399: connect: connection refused") reported
+// "unauthorized", telling the operator to fix a credential when the registry
+// was simply unreachable.
+var authStatusRe = regexp.MustCompile(`\b(?:401|403)\b`)
+
 // classifyRegistryMessage inspects a message for an auth signal. String
 // matching is a last resort -- the router returns the registry's message as
 // free text -- so it is deliberately narrow and defaults to unreachable.
 func classifyRegistryMessage(msg string) ProfileImageState {
 	l := strings.ToLower(msg)
 	switch {
-	case strings.Contains(l, "401"), strings.Contains(l, "403"),
+	case authStatusRe.MatchString(l),
 		strings.Contains(l, "unauthorized"), strings.Contains(l, "forbidden"),
 		strings.Contains(l, "authentication required"), strings.Contains(l, "denied"):
 		return ImageStateUnauthorized
