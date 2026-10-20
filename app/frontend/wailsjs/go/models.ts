@@ -4507,6 +4507,18 @@ export namespace opensearch {
 	    workspace?: string;
 	    model?: string;
 	    duration_ms?: number;
+	    cost_usd?: number;
+	    input_tokens?: number;
+	    output_tokens?: number;
+	    cache_read_tokens?: number;
+	    cache_creation_tokens?: number;
+	    query_source?: string;
+	    tool_name?: string;
+	    hook_name?: string;
+	    success?: string;
+	    error_type?: string;
+	    num_hooks?: number;
+	    num_success?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new LogEntry(source);
@@ -4525,6 +4537,18 @@ export namespace opensearch {
 	        this.workspace = source["workspace"];
 	        this.model = source["model"];
 	        this.duration_ms = source["duration_ms"];
+	        this.cost_usd = source["cost_usd"];
+	        this.input_tokens = source["input_tokens"];
+	        this.output_tokens = source["output_tokens"];
+	        this.cache_read_tokens = source["cache_read_tokens"];
+	        this.cache_creation_tokens = source["cache_creation_tokens"];
+	        this.query_source = source["query_source"];
+	        this.tool_name = source["tool_name"];
+	        this.hook_name = source["hook_name"];
+	        this.success = source["success"];
+	        this.error_type = source["error_type"];
+	        this.num_hooks = source["num_hooks"];
+	        this.num_success = source["num_success"];
 	    }
 	}
 	export class Overview {

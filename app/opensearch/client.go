@@ -270,6 +270,30 @@ type LogEntry struct {
 	Workspace  string `json:"workspace,omitempty"`
 	Model      string `json:"model,omitempty"`
 	DurationMs int64  `json:"duration_ms,omitempty"`
+
+	// Per-event detail. Which of these is populated depends on event.name, and
+	// the tail was discarding all of them: an api_request row showed its model
+	// and its latency but not what it COST, a tool_result row did not say which
+	// tool, and a hook row did not say which hook.
+	//
+	// All arrive as STRINGS on some events and numbers on others (§P8), so every
+	// numeric here goes through numOf/floatOf rather than a type assertion.
+	CostUSD             float64 `json:"cost_usd,omitempty"`
+	InputTokens         int64   `json:"input_tokens,omitempty"`
+	OutputTokens        int64   `json:"output_tokens,omitempty"`
+	CacheReadTokens     int64   `json:"cache_read_tokens,omitempty"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens,omitempty"`
+	// main / subagent / auxiliary and friends. Without it a cost cannot be
+	// attributed to the work that caused it.
+	QuerySource string `json:"query_source,omitempty"`
+	ToolName    string `json:"tool_name,omitempty"`
+	HookName    string `json:"hook_name,omitempty"`
+	// Tri-state on purpose: a tool_decision has no success at all, so "absent"
+	// must not read as "failed".
+	Success    string `json:"success,omitempty"`
+	ErrorType  string `json:"error_type,omitempty"`
+	NumHooks   int64  `json:"num_hooks,omitempty"`
+	NumSuccess int64  `json:"num_success,omitempty"`
 }
 
 // TailLogs returns the most-recent `limit` log entries, newest first, optionally
@@ -300,6 +324,22 @@ func (c *Client) TailLogs(ctx context.Context, workspace string, limit int) ([]L
 			"resource.attributes.workspace",
 			"log.attributes.model",
 			"log.attributes.duration_ms",
+			// Per-event detail. Deliberately NOT tool_input / tool_parameters /
+			// prompt / response: those are content, and ADR-007 rule 4 keeps
+			// content out of this store's read path as well as its write path.
+			"log.attributes.cost_usd",
+			"log.attributes.input_tokens",
+			"log.attributes.output_tokens",
+			"log.attributes.cache_read_tokens",
+			"log.attributes.cache_creation_tokens",
+			"log.attributes.query_source",
+			"log.attributes.tool_name",
+			"log.attributes.hook_name",
+			"log.attributes.success",
+			"log.attributes.error_type",
+			"log.attributes.num_hooks",
+			"log.attributes.num_success",
+			"log.attributes.total_duration_ms",
 		},
 	}
 	var resp struct {
@@ -322,18 +362,49 @@ func (c *Client) TailLogs(ctx context.Context, workspace string, limit int) ([]L
 			// unset level is indistinguishable from INFO for a WRITER; for a
 			// reader, painting claude-code's blank as INFO invents data and
 			// makes a severity filter lie about most of the corpus.
-			Severity:   strOf(s["severityText"]),
-			Service:    strOf(s["serviceName"]),
-			EventName:  strOf(s["log.attributes.event@name"]),
-			Outcome:    strOf(s["log.attributes.event@outcome"]),
-			RunID:      strOf(s["log.attributes.run@id"]),
-			Session:    strOf(s["log.attributes.session@id"]),
-			Workspace:  strOf(s["resource.attributes.workspace"]),
-			Model:      strOf(s["log.attributes.model"]),
-			DurationMs: intOf(s["log.attributes.duration_ms"]),
+			Severity:  strOf(s["severityText"]),
+			Service:   strOf(s["serviceName"]),
+			EventName: strOf(s["log.attributes.event@name"]),
+			Outcome:   strOf(s["log.attributes.event@outcome"]),
+			RunID:     strOf(s["log.attributes.run@id"]),
+			Session:   strOf(s["log.attributes.session@id"]),
+			Workspace: strOf(s["resource.attributes.workspace"]),
+			Model:     strOf(s["log.attributes.model"]),
+			// hook_execution_* carry total_duration_ms and no duration_ms, and
+			// they are 44% of daily volume — a duration_ms-only reader leaves
+			// the most common rows in the tail with no timing at all.
+			DurationMs: firstNum(
+				s["log.attributes.duration_ms"],
+				s["log.attributes.total_duration_ms"],
+			),
+
+			CostUSD:             floatOf(s["log.attributes.cost_usd"]),
+			InputTokens:         numOf(s["log.attributes.input_tokens"]),
+			OutputTokens:        numOf(s["log.attributes.output_tokens"]),
+			CacheReadTokens:     numOf(s["log.attributes.cache_read_tokens"]),
+			CacheCreationTokens: numOf(s["log.attributes.cache_creation_tokens"]),
+			QuerySource:         strOf(s["log.attributes.query_source"]),
+			ToolName:            strOf(s["log.attributes.tool_name"]),
+			HookName:            strOf(s["log.attributes.hook_name"]),
+			Success:             strOf(s["log.attributes.success"]),
+			ErrorType:           strOf(s["log.attributes.error_type"]),
+			NumHooks:            numOf(s["log.attributes.num_hooks"]),
+			NumSuccess:          numOf(s["log.attributes.num_success"]),
 		})
 	}
 	return out, nil
+}
+
+// firstNum returns the first attribute that reads as a non-zero number. The
+// same quantity lives under different names depending on the event, and absence
+// is indistinguishable from zero in this index either way.
+func firstNum(values ...any) int64 {
+	for _, v := range values {
+		if n := numOf(v); n != 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 func strOf(v any) string {
@@ -343,15 +414,10 @@ func strOf(v any) string {
 	return ""
 }
 
-func intOf(v any) int64 {
-	switch x := v.(type) {
-	case float64:
-		return int64(x)
-	case int64:
-		return x
-	}
-	return 0
-}
+// intOf is deliberately absent: it existed here as a number-only reader and
+// silently returned 0 for the string-valued half of §P8's mixed mappings, which
+// renders as "no duration" rather than as a bug. Use numOf (sessions.go), which
+// handles both representations.
 
 // GetOverview fetches all four panel cards. When workspace is non-empty all
 // queries are constrained to that resource attribute; an additional probe runs

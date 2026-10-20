@@ -24,6 +24,18 @@
     workspace?: string;
     model?: string;
     duration_ms?: number;
+    cost_usd?: number;
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_tokens?: number;
+    cache_creation_tokens?: number;
+    query_source?: string;
+    tool_name?: string;
+    hook_name?: string;
+    success?: string;
+    error_type?: string;
+    num_hooks?: number;
+    num_success?: number;
   }
 
   let {
@@ -45,6 +57,28 @@
     onClearSort: () => void;
     onViewMore: () => void;
   } = $props();
+
+  // Compact so a row stays one line: 578304 -> 578.3k, 911520901 -> 911.5M.
+  function fmtCount(n: number): string {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return `${n}`;
+  }
+
+  // Sub-cent calls are the common case, so two decimals would show most rows as
+  // $0.00. Three significant-ish digits keeps them distinguishable.
+  function fmtCost(usd: number): string {
+    return usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`;
+  }
+
+  // Cache reads DOMINATE the token mix (578k read vs 94 in on a measured
+  // request), so folding them into one total would read as a contradiction
+  // against the cost. They get their own segment.
+  function fmtTokens(l: LogEntry): string {
+    const io = [l.input_tokens, l.output_tokens];
+    if (!io[0] && !io[1]) return '';
+    return `${fmtCount(io[0] ?? 0)}→${fmtCount(io[1] ?? 0)}`;
+  }
 
   function fmtTime(iso: string): string {
     if (!iso) return '';
@@ -106,6 +140,28 @@
           {#if l.model}<span class="log-tag">{l.model}</span>{/if}
           {#if l.workspace}<span class="log-tag tag-ws">{l.workspace}</span>{/if}
           {#if l.session}<span class="log-tag tag-sess">{sessionShort(l.session)}</span>{/if}
+          <!-- Per-event detail. Each event type populates a different
+               subset, so the row shows what that event actually knows rather
+               than a fixed grid of mostly-empty columns. -->
+          {#if l.tool_name}<span class="log-tag tag-tool">{l.tool_name}</span>{/if}
+          {#if l.hook_name}<span class="log-tag tag-tool">{l.hook_name}</span>{/if}
+          {#if l.num_hooks}
+            <span class="log-tag" class:tag-bad={l.num_success !== l.num_hooks}
+            >{l.num_success ?? 0}/{l.num_hooks} hooks</span>
+          {/if}
+          {#if l.query_source && l.query_source !== 'main'}
+            <span class="log-tag tag-src">{l.query_source}</span>
+          {/if}
+          {#if fmtTokens(l)}<span class="log-tok">{fmtTokens(l)}</span>{/if}
+          {#if l.cache_read_tokens}
+            <span class="log-tok log-cache" title="cache read tokens">{fmtCount(l.cache_read_tokens)} cached</span>
+          {/if}
+          <!-- success is TRI-STATE: a tool_decision has none, so only an
+               explicit "false" is a failure. Absent must not read as failed. -->
+          {#if l.success === 'false'}
+            <span class="log-tag tag-bad">{l.error_type || 'failed'}</span>
+          {/if}
+          {#if l.cost_usd}<span class="log-cost">{fmtCost(l.cost_usd)}</span>{/if}
           {#if l.duration_ms}<span class="log-dur">{fmtDur(l.duration_ms)}</span>{/if}
         </li>
       {/each}
@@ -152,6 +208,14 @@
      Both are what make a row attributable now that more than one service
      writes here. */
   .tag-svc   { font-weight: 600; }
+  .tag-tool  { font-family: var(--font-mono, ui-monospace, monospace); font-weight: 600; }
+  .tag-src   { font-style: italic; }
+  .tag-bad   { color: var(--color-status-error-text, crimson); font-weight: 600; }
+  .log-tok   { font-variant-numeric: tabular-nums; color: var(--text-muted, var(--color-text-secondary)); font-size: 11px; }
+  .log-cache { opacity: 0.75; }
+  /* Money earns emphasis: it is the one number on an api_request row that
+     cannot be inferred from the others. */
+  .log-cost  { font-variant-numeric: tabular-nums; font-weight: 600; }
   .tag-event { font-family: var(--font-mono, ui-monospace, monospace); }
 
   .log-sev {

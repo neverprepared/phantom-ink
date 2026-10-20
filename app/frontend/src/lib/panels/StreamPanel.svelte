@@ -62,6 +62,18 @@
     workspace?: string;
     model?: string;
     duration_ms?: number;
+    cost_usd?: number;
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_tokens?: number;
+    cache_creation_tokens?: number;
+    query_source?: string;
+    tool_name?: string;
+    hook_name?: string;
+    success?: string;
+    error_type?: string;
+    num_hooks?: number;
+    num_success?: number;
   }
 
   type Tab = 'live' | 'attention' | 'logs' | 'timeline';
