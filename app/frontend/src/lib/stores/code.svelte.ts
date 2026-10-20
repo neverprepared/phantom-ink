@@ -23,7 +23,7 @@
  */
 import { getApi } from '../utils/api';
 import { notifications } from '../notifications.svelte';
-import { resource } from './resource.svelte';
+import { resource, type Resource } from './resource.svelte';
 
 export interface Repo {
   provider: 'github' | 'ado';
@@ -318,39 +318,91 @@ class CodeStore {
   // The profile being viewed. Held separately from the resource's key because
   // the key is read DURING a fetch, while this is what the header renders —
   // it must not change until rows for the new profile actually land.
-  profile = $state('');
-  /** Which profile the in-flight (or next) fetch is for — the resource key. */
+  /** Which profile the panel is showing. Every read below is scoped to it. */
   private requested = $state('');
-  /** Set on the next fetch only: the Refresh button bypasses the server memo. */
-  private forceNext = false;
 
-  // One resource holds the whole payload. Every list below is a view of it, so
-  // there is no second copy to keep in sync and no `apply()` to forget a field.
-  private overview = resource<CodeOverview | null>(
-    (api) => api.CodeOverview(this.requested, this.forceNext) as Promise<CodeOverview>,
-    {
-      initial: null,
-      label: 'Code overview',
-      // Profile scoping, the invariant this codebase cares most about.
-      key: () => this.requested,
-    },
-  );
+  /**
+   * The profile that owns the rows currently on screen.
+   *
+   * Derived, not tracked. It used to be assigned after a load resolved, which
+   * was fine while a switch always blanked the panel — but with per-profile
+   * caching a switch to an already-visited profile paints ITS rows on the
+   * first frame, so a field that lagged until the revalidate landed named the
+   * PREVIOUS profile while showing the new one's notifications. An optimistic
+   * mark-read in that window wrote to the wrong account. The rows come from
+   * `resourceFor(requested)`, so `requested` is their owner by construction.
+   */
+  get profile() {
+    return this.requested;
+  }
+  /**
+   * Per-profile "bypass the server memo on the next fetch" flag.
+   *
+   * Keyed rather than a single boolean because fetches for two profiles can
+   * overlap — a shared flag lets one profile's Refresh turn into another
+   * profile's forced fan-out, or get cleared before its own fetch reads it.
+   */
+  private forceNext = new Map<string, boolean>();
+
+  /**
+   * ONE RESOURCE PER PROFILE, created on first visit and kept.
+   *
+   * A single keyed resource holds a single value, so a key change clears it —
+   * which meant switching profiles threw both profiles' rows away and
+   * switching back re-ran the whole provider fan-out. Giving each profile its
+   * own resource means no key ever changes, so nothing is ever cleared, and
+   * `loading` / `refreshing` / `error` become per-profile for free: a cold
+   * profile B shows its spinner while A's rows stay cached behind it.
+   *
+   * Isolation is stronger here, not weaker: reads go through `current`, which
+   * resolves the resource FOR `requested`. There is no code path that can hand
+   * back a different profile's value, and each resource still carries its own
+   * profile as its key so a late response is discarded.
+   *
+   * Unbounded on purpose — an operator has a handful of profiles and a payload
+   * is a few hundred rows. `hardReset()` clears the lot.
+   */
+  private resources = new Map<string, Resource<CodeOverview | null>>();
+
+  private resourceFor(profile: string): Resource<CodeOverview | null> {
+    let r = this.resources.get(profile);
+    if (!r) {
+      r = resource<CodeOverview | null>(
+        (api) =>
+          api.CodeOverview(profile, this.forceNext.get(profile) ?? false) as Promise<CodeOverview>,
+        {
+          initial: null,
+          label: `Code overview (${profile})`,
+          // Constant by construction. Kept so the resource still discards a
+          // response that somehow arrives for the wrong scope.
+          key: () => profile,
+        },
+      );
+      this.resources.set(profile, r);
+    }
+    return r;
+  }
+
+  /** The resource backing whatever profile is on screen, or null before one is. */
+  private get current(): Resource<CodeOverview | null> | null {
+    return this.requested ? this.resourceFor(this.requested) : null;
+  }
 
   /** True only while there is nothing to show yet — the full-panel spinner. */
   get loading() {
-    return this.overview.loading;
+    return this.current?.loading ?? false;
   }
   /** True while re-fetching over rows that are already on screen. */
   get refreshing() {
-    return this.overview.refreshing;
+    return this.current?.refreshing ?? false;
   }
   /** Set only when the single overview call itself failed (no sections at all). */
   get loadError() {
-    return this.overview.error;
+    return this.current?.error ?? null;
   }
   /** RFC3339 time the visible rows came off the providers, or '' before any load. */
   get fetchedAt() {
-    return this.overview.value?.fetched_at ?? '';
+    return this.ov?.fetched_at ?? '';
   }
   /**
    * True when the BACKEND handed over a past-TTL copy and is refreshing it
@@ -359,7 +411,7 @@ class CodeStore {
    * indicator for either.
    */
   get serverRevalidating() {
-    return this.overview.value?.stale ?? false;
+    return this.ov?.stale ?? false;
   }
   /** True while any background check is in flight, from either layer. */
   get backgroundBusy() {
@@ -367,7 +419,7 @@ class CodeStore {
   }
 
   private get ov(): CodeOverview | null {
-    return this.overview.value;
+    return this.current?.value ?? null;
   }
 
   tokenMissing = $derived(this.ov?.token_missing ?? false);
@@ -516,29 +568,26 @@ class CodeStore {
       this.hardReset();
       return;
     }
-    // A real profile change resets the per-profile view state. The ROWS are
-    // not cleared here — the resource is keyed by profile and clears them
-    // itself, which keeps that decision in one place.
-    const changed = profile !== this.requested;
-    if (changed) this.reset();
+    // A real profile change resets the per-profile VIEW state (filters, the
+    // open detail view). The rows are not touched: each profile owns its own
+    // resource, so switching away keeps them and switching back paints them.
+    if (profile !== this.requested) this.reset();
     this.requested = profile;
+    const r = this.resourceFor(profile);
     // force=true bypasses the Go-side per-profile memo; plain navigation
     // reuses it, which is what stops every panel visit re-issuing the whole
     // provider fan-out. A profile switch is NOT a force: the new profile's
     // own memo is perfectly good.
-    this.forceNext = force;
+    this.forceNext.set(profile, force);
     try {
-      // The resource collapses concurrent refreshes onto the one in flight,
-      // which is right for a remount and WRONG across a profile switch: the
-      // in-flight request is for the old key, so it would be discarded on
-      // arrival and the new profile would load nothing at all. Opting out of
-      // the collapse on a key change is what makes the switch land.
-      await this.overview.refresh({ force: force || changed });
+      // Each profile has its own resource, so a concurrent-call collapse can
+      // only ever collapse two requests for the SAME profile — which is what
+      // it is for. No key-change opt-out is needed any more.
+      await r.refresh({ force });
     } finally {
-      this.forceNext = false;
+      this.forceNext.delete(profile);
     }
-    // Only name the profile in the header once its rows are the ones showing.
-    if (this.overview.loaded) this.profile = this.ov?.profile || profile;
+
   }
 
   /** Load the hub's agent role catalog for the modal's picker. */
@@ -592,11 +641,12 @@ class CodeStore {
     this.reasonFilter = 'all';
   }
 
-  /** reset() plus the rows themselves — for "no profile at all" and for tests. */
+  /** reset() plus EVERY profile's rows — for "no profile at all" and for tests. */
   hardReset(): void {
     this.reset();
-    this.overview.reset();
-    this.profile = '';
+    for (const r of this.resources.values()) r.reset();
+    this.resources.clear();
+    this.forceNext.clear();
     this.requested = '';
   }
 
@@ -608,9 +658,10 @@ class CodeStore {
    * assigning the derived field.
    */
   private setNotifications(rows: GitHubNotification[]): void {
-    const cur = this.ov;
-    if (!cur) return;
-    this.overview.set({ ...cur, notifications: rows });
+    const r = this.current;
+    const cur = r?.value;
+    if (!r || !cur) return;
+    r.set({ ...cur, notifications: rows });
   }
 
 

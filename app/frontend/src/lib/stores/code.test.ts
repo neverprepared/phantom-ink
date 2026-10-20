@@ -162,3 +162,106 @@ describe('notifications', () => {
     expect(codeState.notifications.map((n) => n.id)).toEqual(['n2']);
   });
 });
+
+describe('per-profile cache', () => {
+  it('switching back to a visited profile paints its rows immediately', async () => {
+    await codeState.refresh('work');
+    await codeState.refresh('personal');
+    expect(codeState.repos[0].full_name).toBe('personal/one');
+
+    const calls = CodeOverview.mock.calls.length;
+    // Back to work: its rows must be on screen BEFORE the refetch resolves.
+    const back = codeState.refresh('work');
+    expect(codeState.repos[0].full_name).toBe('work/one');
+    expect(codeState.loading).toBe(false);
+    expect(codeState.refreshing).toBe(true);
+    await back;
+
+    // It still revalidates — cached does not mean frozen.
+    expect(CodeOverview.mock.calls.length).toBeGreaterThan(calls);
+    expect(codeState.repos[0].full_name).toBe('work/one');
+  });
+
+  it('a profile never visited still shows a cold spinner, not another profile rows', async () => {
+    await codeState.refresh('work');
+
+    const p = codeState.refresh('fresh');
+    // The cross-profile leak this whole design guards against: 'fresh' has no
+    // cache, so it must render empty-and-loading rather than work's rows.
+    expect(codeState.repos).toHaveLength(0);
+    expect(codeState.loading).toBe(true);
+    await p;
+    expect(codeState.repos[0].full_name).toBe('fresh/one');
+  });
+
+  it('keeps each profile loading state separate', async () => {
+    await codeState.refresh('work');
+
+    // A cold profile loading must not report a spinner for the cached one.
+    let settle!: (v: unknown) => void;
+    const pending = new Promise((r) => (settle = r));
+    CodeOverview.mockImplementation((profile: string) =>
+      profile === 'cold' ? pending : Promise.resolve(overview(profile)),
+    );
+
+    const p = codeState.refresh('cold');
+    expect(codeState.loading).toBe(true);
+
+    // Back to work mid-flight: work is cached, so no cold spinner.
+    await codeState.refresh('work');
+    expect(codeState.loading).toBe(false);
+    expect(codeState.repos[0].full_name).toBe('work/one');
+
+    settle(overview('cold'));
+    await p;
+    // The cold response must not paint over the profile now being viewed.
+    expect(codeState.repos[0].full_name).toBe('work/one');
+  });
+
+  it('a stale cached payload reports the backend as revalidating', async () => {
+    CodeOverview.mockImplementation(async (profile: string) =>
+      overview(profile, { stale: profile === 'work' }),
+    );
+    await codeState.refresh('work');
+    expect(codeState.serverRevalidating).toBe(true);
+
+    await codeState.refresh('personal');
+    // Freshness is per profile: personal's payload is not stale.
+    expect(codeState.serverRevalidating).toBe(false);
+  });
+
+  it('a mark-read after a warm switch targets the profile on screen', async () => {
+    // The bug this guards: a cached switch paints the new profile's rows on
+    // the first frame, so anything naming the profile from a field that
+    // lagged until the revalidate landed wrote to the PREVIOUS account.
+    CodeOverview.mockImplementation(async (profile: string) =>
+      overview(profile, { notifications: [{ id: `${profile}-n1`, repo_full_name: `${profile}/one` }] }),
+    );
+    await codeState.refresh('work');
+    await codeState.refresh('personal');
+    await codeState.refresh('work');
+
+    // Mid-switch to personal: its rows are cached, so they paint immediately
+    // and the in-flight revalidate has not resolved yet.
+    const pending = codeState.refresh('personal');
+    expect(codeState.notifications[0].id).toBe('personal-n1');
+
+    const MarkNotificationRead = vi.fn(async () => {});
+    mockGetApi.mockResolvedValue({ CodeOverview, MarkNotificationRead });
+    await codeState.markNotificationRead('personal-n1');
+    expect(MarkNotificationRead).toHaveBeenCalledWith('personal', 'personal-n1');
+    await pending;
+  });
+
+  it('hardReset drops every profile cache', async () => {
+    await codeState.refresh('work');
+    await codeState.refresh('personal');
+    codeState.hardReset();
+
+    expect(codeState.repos).toHaveLength(0);
+    // And a profile visited before the reset is cold again, not restored.
+    const p = codeState.refresh('work');
+    expect(codeState.loading).toBe(true);
+    await p;
+  });
+});

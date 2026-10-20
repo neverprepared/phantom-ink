@@ -309,7 +309,12 @@ var (
 )
 
 // InvalidateCodeOverview drops a profile's cached launchpad, or every profile's
-// when profile is empty. Called on explicit refresh and on profile switch.
+// when profile is empty.
+//
+// Called when a profile's CREDENTIALS change (SetGatewayEnv / DeleteGatewayEnv),
+// because the memo caches the credential verdict along with the rows. NOT called
+// on a profile switch: the memo is profile-keyed, so each profile keeps its own
+// rows and switching back paints instantly.
 func (a *App) InvalidateCodeOverview(profile string) {
 	codeOverviewMu.Lock()
 	defer codeOverviewMu.Unlock()

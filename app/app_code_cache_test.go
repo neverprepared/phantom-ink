@@ -88,21 +88,38 @@ func TestCodeOverviewMemoIsPerProfile(t *testing.T) {
 	}
 }
 
-// Switching profiles clears everything, so nothing on screen predates the
-// switch even within the TTL.
-func TestSetActiveProfileClearsCodeOverviewMemo(t *testing.T) {
+// Switching profiles must KEEP each profile's rows.
+//
+// This used to assert the opposite. The memo is profile-keyed, so it cannot
+// serve the wrong profile's rows either way -- the wipe only bought the
+// cosmetic property that nothing on screen predates a switch, and it cost the
+// thing operators actually notice: bouncing between two profiles re-ran the
+// whole provider fan-out every single time.
+func TestSetActiveProfileKeepsCodeOverviewMemo(t *testing.T) {
 	resetCodeOverviewCache()
 	storeCodeOverview("work", CodeOverview{Profile: "work"})
-	if _, _, ok := cachedCodeOverview("work"); !ok {
-		t.Fatal("precondition: entry should be cached")
-	}
+	storeCodeOverview("personal", CodeOverview{Profile: "personal"})
 
 	app := &App{config: &Config{}}
-	if err := app.SetActiveProfile("other"); err != nil {
+	if err := app.SetActiveProfile("personal"); err != nil {
 		t.Fatalf("SetActiveProfile: %v", err)
 	}
-	if _, _, ok := cachedCodeOverview("work"); ok {
-		t.Error("profile switch left a memoised launchpad behind")
+
+	ov, fresh, ok := cachedCodeOverview("work")
+	if !ok {
+		t.Fatal("switching away dropped the previous profile's launchpad")
+	}
+	if !fresh {
+		t.Error("the entry survived but was aged out; switching back would refetch")
+	}
+	if ov.Profile != "work" {
+		t.Errorf("Profile = %q, want \"work\"; the wrong entry survived", ov.Profile)
+	}
+
+	// And the profile being switched TO keeps its own rows, which is the whole
+	// point: switching back and forth paints instantly in both directions.
+	if _, _, ok := cachedCodeOverview("personal"); !ok {
+		t.Error("the profile being switched to lost its launchpad")
 	}
 }
 
@@ -302,4 +319,54 @@ func waitFor(t *testing.T, cond func() bool, msg string) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal(msg)
+}
+
+// Curating a profile's credentials must drop ITS memo and nobody else's. The
+// memo caches the credential verdict (token_missing / token_invalid) next to
+// the rows, so a memoised failure would outlive the token that fixed it.
+func TestSetGatewayEnvInvalidatesOnlyThatProfile(t *testing.T) {
+	resetCodeOverviewCache()
+	storeCodeOverview("work", CodeOverview{Profile: "work", TokenInvalid: true})
+	storeCodeOverview("personal", CodeOverview{Profile: "personal"})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	app := &App{client: brainbox.NewClient(srv.URL, ""), ctx: context.Background()}
+
+	if err := app.SetGatewayEnv("work", map[string]string{"GITHUB_TOKEN": "fresh"}); err != nil {
+		t.Fatalf("SetGatewayEnv: %v", err)
+	}
+
+	if _, _, ok := cachedCodeOverview("work"); ok {
+		t.Error("the edited profile kept a memo describing its OLD credential")
+	}
+	if _, _, ok := cachedCodeOverview("personal"); !ok {
+		t.Error("an unrelated profile lost its memo")
+	}
+}
+
+// Same contract for clearing a profile's env outright.
+func TestDeleteGatewayEnvInvalidatesOnlyThatProfile(t *testing.T) {
+	resetCodeOverviewCache()
+	storeCodeOverview("work", CodeOverview{Profile: "work"})
+	storeCodeOverview("personal", CodeOverview{Profile: "personal"})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	app := &App{client: brainbox.NewClient(srv.URL, ""), ctx: context.Background()}
+
+	if err := app.DeleteGatewayEnv("work"); err != nil {
+		t.Fatalf("DeleteGatewayEnv: %v", err)
+	}
+
+	if _, _, ok := cachedCodeOverview("work"); ok {
+		t.Error("the cleared profile kept its memo")
+	}
+	if _, _, ok := cachedCodeOverview("personal"); !ok {
+		t.Error("an unrelated profile lost its memo")
+	}
 }
