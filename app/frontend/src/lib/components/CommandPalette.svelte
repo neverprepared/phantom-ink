@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { commandPalette, currentPanel, integrationState, settingsState, jobsState, streamFocus, type SettingsTab, type JobsTab } from '../stores.svelte';
+  import { commandPalette, currentPanel, integrationState, settingsState, jobsState, eventsState, type SettingsTab, type JobsTab, type EventsTab } from '../stores.svelte';
   import { panels } from '../panels';
 
   // Settings tabs that used to be top-level panels — kept in the palette so
@@ -15,6 +15,14 @@
   const jobsTabCommands: { tab: JobsTab; label: string }[] = [
     { tab: 'loops', label: 'Loops' },
     { tab: 'collectors', label: 'Collectors' },
+    { tab: 'timeline', label: 'Timeline' },
+  ];
+
+  // Events-hub tabs. Rules and the raw bus view have no sidebar entry of
+  // their own, so the palette is the only way to jump straight to them.
+  const eventsTabCommands: { tab: EventsTab; label: string }[] = [
+    { tab: 'attention', label: 'Attention' },
+    { tab: 'live', label: 'Live' },
     { tab: 'rules', label: 'Rules' },
   ];
 
@@ -52,13 +60,12 @@
       description: 'Automations',
       action: () => { jobsState.open(t.tab); commandPalette.close(); },
     })),
-    {
-      // Timeline is now a tab under Stream — jump via the streamFocus signal.
-      id: 'nav:stream:timeline',
-      label: 'Go to Timeline',
-      description: 'Stream',
-      action: () => { streamFocus.focus({ tab: 'timeline' }); commandPalette.close(); },
-    },
+    ...eventsTabCommands.map(t => ({
+      id: `nav:events:${t.tab}`,
+      label: `Go to ${t.label}`,
+      description: 'Events',
+      action: () => { eventsState.open(t.tab); commandPalette.close(); },
+    })),
     {
       id: 'reload',
       label: 'Reload app',

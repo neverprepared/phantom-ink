@@ -553,35 +553,6 @@ export const attentionStore = {
 };
 
 // ---------------------------------------------------------------------------
-// Stream panel focus — one-shot signal so other panels (Dashboard, OpenSearch
-// metric widget) can ask Stream to land on a particular tab with an optional
-// preset filter (e.g. logs sorted by cost).
-// ---------------------------------------------------------------------------
-
-export interface StreamFocus {
-  tab: 'live' | 'attention' | 'logs' | 'timeline';
-  sortBy?: 'cost' | 'duration' | 'tokens';
-}
-
-let _streamFocus = $state<StreamFocus | null>(null);
-
-export const streamFocus = {
-  get value(): StreamFocus | null { return _streamFocus; },
-  /** Navigate to Stream with the given tab/filter intent. */
-  focus(target: StreamFocus): void {
-    _streamFocus = target;
-    currentPanel.value = 'stream';
-  },
-  /** Read once and clear — StreamPanel calls this on mount/effect. */
-  consume(): StreamFocus | null {
-    const f = _streamFocus;
-    _streamFocus = null;
-    return f;
-  },
-};
-
-
-// ---------------------------------------------------------------------------
 // Rule seed — used by Stream's "create rule" flow to hand off a pre-filled
 // rule draft (pattern derived from a live event card + suggested name/profile)
 // to the Events panel's Rules tab, which opens the new-rule form with it.

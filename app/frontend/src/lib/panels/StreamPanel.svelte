@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { timeAgo } from '../utils/format';
   import { getApi, openInBrowser } from '../utils/api';
-  import { profileState, currentPanel, attentionStore, eventsState, type EventsTab, ruleSeed, outboxStore } from '../stores.svelte';
+  import { profileState, currentPanel, attentionStore, eventsState, type EventsTab, ruleSeed, outboxStore, debugState } from '../stores.svelte';
   import { onAgentEvent, onWailsTopic } from '../utils/wailsTopic';
   import { streamLive, STATUS_OPTIONS } from '../stores/streamLive.svelte';
   import { notifications } from '../notifications.svelte';
@@ -10,6 +10,7 @@
   import ContextMenu from '../components/ContextMenu.svelte';
   import EnvelopeHistory from '../components/EnvelopeHistory.svelte';
   import AutomationsPanel from './AutomationsPanel.svelte';
+  import EventLogPanel from './EventLogPanel.svelte';
   import SessionSummaryCard from '../components/SessionSummaryCard.svelte';
 
   interface CtxMenuItem {
@@ -49,6 +50,14 @@
   // tab without a one-shot signal to consume.
   let tab = $derived(eventsState.tab);
   function setTab(t: EventsTab) { eventsState.tab = t; }
+  // The raw bus view is debug-gated. If the flag goes off while raw is the
+  // active tab we would render an empty panel, so bounce back to attention.
+  // `tab` is a $derived read and cannot be assigned — write the store.
+  $effect(() => {
+    if (eventsState.tab === 'raw' && !debugState.showEventLog) {
+      setTab('attention');
+    }
+  });
   // Attention list is sourced from the singleton attentionStore so the sidebar
   // badge, dashboard ActionItems widget, and this panel always agree without
   // duplicating polls.
@@ -296,6 +305,14 @@
       onclick={() => setTab('rules')}>
       rules
     </button>
+    {#if debugState.showEventLog}
+      <button
+        class="tab"
+        class:active={tab === 'raw'}
+        onclick={() => setTab('raw')}>
+        raw
+      </button>
+    {/if}
   </div>
 
   {#if tab === 'live'}
@@ -502,6 +519,10 @@
          embed used to. -->
     <div class="tab-embed">
       <AutomationsPanel />
+    </div>
+  {:else if tab === 'raw' && debugState.showEventLog}
+    <div class="tab-embed">
+      <EventLogPanel />
     </div>
   {/if}
 </div>
