@@ -193,7 +193,7 @@ func TestChartsTimeoutExceedsTheListTimeout(t *testing.T) {
 }
 
 // The chart payload must marshal with empty arrays, never nulls: the panel
-// iterates all four, and a null threw during render once already.
+// iterates all three, and a null threw during render once already.
 //
 // Also pins the shape FLAT. Embedding *langfuse.Charts made Wails' TypeScript
 // generator emit a class referencing langfuse.Point and langfuse.Share without
@@ -203,7 +203,10 @@ func TestAgentWorkChartsMarshalsWithoutNulls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"cost_series", "obs_series", "cost_by_model", "obs_by_type"} {
+	// obs_series and obs_by_type were Langfuse concepts and are gone; the
+	// breakdown is now cost_by_source, which is the split Langfuse could not
+	// produce.
+	for _, field := range []string{"cost_series", "cost_by_model", "cost_by_source"} {
 		if !strings.Contains(string(blob), `"`+field+`"`) {
 			t.Errorf("%s missing from the payload: %s", field, blob)
 		}

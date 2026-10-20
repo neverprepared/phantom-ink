@@ -2785,13 +2785,8 @@ export namespace main {
 	export class AgentWorkCharts {
 	    granularity: string;
 	    cost_series: ChartPoint[];
-	    obs_series: ChartPoint[];
 	    cost_by_model: ChartShare[];
-	    obs_by_type: ChartShare[];
-	    cost_understated: boolean;
-	    sessions_url?: string;
-	    traces_url?: string;
-	    dashboard_url?: string;
+	    cost_by_source: ChartShare[];
 	
 	    static createFrom(source: any = {}) {
 	        return new AgentWorkCharts(source);
@@ -2801,13 +2796,8 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.granularity = source["granularity"];
 	        this.cost_series = this.convertValues(source["cost_series"], ChartPoint);
-	        this.obs_series = this.convertValues(source["obs_series"], ChartPoint);
 	        this.cost_by_model = this.convertValues(source["cost_by_model"], ChartShare);
-	        this.obs_by_type = this.convertValues(source["obs_by_type"], ChartShare);
-	        this.cost_understated = source["cost_understated"];
-	        this.sessions_url = source["sessions_url"];
-	        this.traces_url = source["traces_url"];
-	        this.dashboard_url = source["dashboard_url"];
+	        this.cost_by_source = this.convertValues(source["cost_by_source"], ChartShare);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -4507,6 +4497,18 @@ export namespace opensearch {
 	    workspace?: string;
 	    model?: string;
 	    duration_ms?: number;
+	    cost_usd?: number;
+	    input_tokens?: number;
+	    output_tokens?: number;
+	    cache_read_tokens?: number;
+	    cache_creation_tokens?: number;
+	    query_source?: string;
+	    tool_name?: string;
+	    hook_name?: string;
+	    success?: string;
+	    error_type?: string;
+	    num_hooks?: number;
+	    num_success?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new LogEntry(source);
@@ -4525,6 +4527,18 @@ export namespace opensearch {
 	        this.workspace = source["workspace"];
 	        this.model = source["model"];
 	        this.duration_ms = source["duration_ms"];
+	        this.cost_usd = source["cost_usd"];
+	        this.input_tokens = source["input_tokens"];
+	        this.output_tokens = source["output_tokens"];
+	        this.cache_read_tokens = source["cache_read_tokens"];
+	        this.cache_creation_tokens = source["cache_creation_tokens"];
+	        this.query_source = source["query_source"];
+	        this.tool_name = source["tool_name"];
+	        this.hook_name = source["hook_name"];
+	        this.success = source["success"];
+	        this.error_type = source["error_type"];
+	        this.num_hooks = source["num_hooks"];
+	        this.num_success = source["num_success"];
 	    }
 	}
 	export class Overview {
