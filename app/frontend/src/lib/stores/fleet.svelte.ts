@@ -1,0 +1,94 @@
+/**
+ * Shared sessions + fleet reads, polled ONCE for the whole app.
+ *
+ * ## Why this exists
+ *
+ * GetSessions had three independent consumers: StatusBar (every 15s, for the
+ * life of the app), DashboardPanel (on mount plus its own poll) and
+ * SessionsPanel (on mount, on bus events, on refreshTick). ListRunners had
+ * three too. None of them shared, so the same data was fetched several times
+ * over, and because AppShell renders panels under `{#if}` both panels also
+ * blanked to a spinner on every single visit.
+ *
+ * Those are two different problems with one fix: hold the data at module scope
+ * and poll it in one place.
+ *
+ * ## Who owns the cadence
+ *
+ * StatusBar. It is the only consumer that is ALWAYS mounted — it lives in the
+ * shell, not under `{#if}` — so it is the only one whose lifetime matches the
+ * poll's. Panels read the values and may force a refresh in response to their
+ * own events; they never own a timer for this data.
+ *
+ * ## Scope
+ *
+ * Sessions are keyed by profile, because GetSessions(profile) filters by it
+ * server-side (app_brainbox.go). Runners are deliberately NOT keyed: a runner
+ * is fleet infrastructure with no profile, which is the lesson from the
+ * RunnerMetrics mixed-scope bug — see app_dora.go.
+ */
+import { keyedResource } from './resource.svelte';
+import { runnersRes } from './runners.svelte';
+
+/** How often the always-on poll re-reads. Matches StatusBar's previous timer. */
+export const FLEET_POLL_MS = 15_000;
+
+/**
+ * One profile's sessions.
+ *
+ * Consumers must NOT re-filter by workspace_profile. GetSessions already
+ * filters server-side on an exact match, so both panels' client-side
+ * case-insensitive re-filter was a no-op that implied a looser rule than the
+ * one actually in force.
+ */
+export const sessionsRes = keyedResource<any[]>(
+  (profile) => async (api) => ((await api.GetSessions(profile)) ?? []) as any[],
+  { initial: [], label: (profile) => `Failed to load sessions (${profile || 'all profiles'})` },
+);
+
+let pollHandle: ReturnType<typeof setInterval> | null = null;
+let pollProfile = '';
+
+/** Read everything the shared poll covers, for `profile`. */
+export async function refreshFleet(profile: string, force = false): Promise<void> {
+  pollProfile = profile;
+  await Promise.all([
+    sessionsRes.for(profile).refresh({ force }),
+    runnersRes.refresh({ force }),
+  ]);
+}
+
+/**
+ * Start the single app-wide poll. Idempotent, and re-pointing it at a new
+ * profile restarts it so the next tick reads the right one.
+ *
+ * Intended for StatusBar alone. Calling it from a panel would tie the cadence
+ * to that panel's mount, which is the arrangement this replaces.
+ */
+export function startFleetPolling(profile: string): void {
+  if (pollHandle !== null && profile === pollProfile) return;
+  stopFleetPolling();
+  pollProfile = profile;
+  void refreshFleet(profile);
+  pollHandle = setInterval(() => {
+    // A hidden window has nobody to render for; skipping keeps a backgrounded
+    // app off the hub entirely.
+    if (typeof document !== 'undefined' && document.hidden) return;
+    void refreshFleet(pollProfile);
+  }, FLEET_POLL_MS);
+}
+
+export function stopFleetPolling(): void {
+  if (pollHandle !== null) {
+    clearInterval(pollHandle);
+    pollHandle = null;
+  }
+}
+
+/** Test seam: drop every cached profile and stop the poll. */
+export function resetFleet(): void {
+  stopFleetPolling();
+  pollProfile = '';
+  sessionsRes.clear();
+  runnersRes.reset();
+}

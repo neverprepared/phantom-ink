@@ -6,11 +6,11 @@
     currentPanel,
     attentionStore,
     outboxStore,
-    dashboardDataStore,
     eventsState,
   } from '../stores.svelte';
   import { brainboxEvents } from '../events.svelte';
-  import { getApi, safe } from '../utils/api';
+  import { sessionsRes, startFleetPolling, stopFleetPolling } from '../stores/fleet.svelte';
+  import { runnersRes } from '../stores/runners.svelte';
 
   let connected     = $derived(connectionState.connected);
   let activeProfile = $derived(profileState.active);
@@ -23,44 +23,46 @@
   let outboxStuck = $derived(outboxStore.stuck);
   let outboxError = $derived(outboxStore.lastError);
 
-  // Sessions / runner counts piggyback on dashboardDataStore when it's
-  // populated (Dashboard panel sets it); otherwise we run a lightweight
-  // poll so the StatusBar stays informative on cold start.
-  let dashData = $derived(dashboardDataStore.value);
-  let activeSessions = $state(0);
-  let offlineRunners = $state(0);
-  let totalRunners = $state(0);
+  // StatusBar OWNS the shared sessions/fleet poll, because it is the only
+  // consumer always mounted — it lives in the shell, not under AppShell's
+  // {#if}. Dashboard and Sessions read the same store instead of each running
+  // their own timer, so this data is fetched once for the whole app.
+  //
+  // This also drops a straight waste: the previous poll fetched GetSessions
+  // unconditionally and then used the result only `if (dashData == null)`,
+  // so whenever the Dashboard had been visited the call was thrown away on a
+  // 15s timer for the life of the app.
+  //
+  // No client-side workspace_profile filter here or anywhere else:
+  // GetSessions already filters server-side on an exact match
+  // (app_brainbox.go), so the panels' case-insensitive re-filter was a no-op.
+  const OFFLINE_AFTER_MS = 90_000;
+  let now = $state(Date.now());
 
   onMount(() => {
     outboxStore.start();
-    let cancelled = false;
-
-    async function pollOps() {
-      if (cancelled) return;
-      const a = await getApi();
-      if (!a) return;
-      try {
-        const [sessions, runners] = await Promise.all([
-          safe(a.GetSessions(profileState.active?.name ?? ''), [], 'GetSessions'),
-          safe(a.ListRunners(), [], 'ListRunners'),
-        ]);
-        if (dashData == null) {
-          activeSessions = ((sessions ?? []) as any[]).filter(s => s.active).length;
-        }
-        const now = Date.now();
-        const rs = (runners ?? []) as any[];
-        totalRunners = rs.length;
-        offlineRunners = rs.filter(r => now - (r.last_seen ?? 0) >= 90_000).length;
-      } catch {}
-    }
-    void pollOps();
-    const handle = window.setInterval(pollOps, 15_000);
-    return () => { cancelled = true; window.clearInterval(handle); };
+    // A ticker so "offline" ages without needing a fetch: liveness is a
+    // function of last_seen and the clock, not of new data.
+    const tick = window.setInterval(() => { now = Date.now(); }, 10_000);
+    return () => {
+      window.clearInterval(tick);
+      stopFleetPolling();
+    };
   });
 
-  // Prefer dashboardDataStore numbers (already filtered by profile) when present.
-  let sessionsCount = $derived(dashData?.activeSessions ?? activeSessions);
-  let runnersOffline = $derived(dashData?.offlineRunners ?? offlineRunners);
+  // Re-point the shared poll when the profile changes; startFleetPolling is
+  // idempotent for the same profile, so this cannot stack timers.
+  $effect(() => {
+    startFleetPolling(activeProfile?.name ?? '');
+  });
+
+  let sessions = $derived(sessionsRes.for(activeProfile?.name ?? '').value);
+  let runners = $derived(runnersRes.value);
+  let sessionsCount = $derived(sessions.filter((s: any) => s.active).length);
+  let totalRunners = $derived(runners.length);
+  let runnersOffline = $derived(
+    runners.filter((r: any) => now - (r.last_seen ?? 0) >= OFFLINE_AFTER_MS).length
+  );
 
   function focus(panel: string) {
     currentPanel.value = panel;
@@ -93,7 +95,10 @@
   {/if}
 
   {#if runnersOffline > 0}
-    <button class="chip clickable warn" onclick={() => focus('runners')} title="{runnersOffline} of {totalRunners || dashData?.offlineRunners ? totalRunners : '?'} runners offline">
+    <!-- Both numbers come from the one shared fleet read, so the total is
+         always known. The previous expression mixed || and ?: and so could
+         only ever print the total or a literal '?'. -->
+    <button class="chip clickable warn" onclick={() => focus('runners')} title="{runnersOffline} of {totalRunners} runners offline">
       <span class="dot warn-dot"></span>
       {runnersOffline} runner{runnersOffline === 1 ? '' : 's'} offline
     </button>
