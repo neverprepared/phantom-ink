@@ -40,7 +40,9 @@ type AgentWorkCharts struct {
 // aggregations, and a metrics query scans a wider window than a session page.
 const chartsQueryTimeout = 20 * time.Second
 
-// GetAgentWorkCharts returns the trend and breakdown data for the chart tabs.
+// GetAgentWorkCharts returns everything the Telemetry panel's costs tab shows:
+// cost over time, cost by model, and cost by source. One call, one tab -- the
+// trend and the breakdowns were split across two tabs over this same payload.
 //
 // Sourced from OpenSearch metrics. The previous reader was a Stop hook that
 // never saw delegated subagent work: the spec measured 813 tool calls /

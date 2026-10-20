@@ -259,7 +259,13 @@ export const eventsState = {
 // drill-down cannot leak into the next.
 // ---------------------------------------------------------------------------
 
-export type TelemetryTab = 'logs' | 'traces' | 'trends' | 'breakdown';
+// 'costs' was two tabs, 'trends' and 'breakdown'. They were always one
+// GetAgentWorkCharts call sharing one loading state, and the payload is three
+// cost views (over time, by model, by source) -- so 'trends' held a single
+// chart and the split only hid the two pies behind a click. Nothing ever
+// deep-linked to either (open() is called with 'logs' and 'traces' only) and
+// the tab is not persisted, so no alias or migration is needed.
+export type TelemetryTab = 'logs' | 'traces' | 'costs';
 export type TelemetrySort = 'cost' | 'duration' | 'tokens';
 
 let _telemetryTab = $state<TelemetryTab>('traces');
