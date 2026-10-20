@@ -436,10 +436,14 @@
   }
 
   $effect(() => {
-    // Re-read when the profile or range changes.
+    // Re-read when the profile or range changes. Gated on the tab for the same
+    // reason loadCharts is: ListAgentSessions is a traces-tab query, and it ran
+    // behind every other tab until the fourth tab made that visible — a failed
+    // session fetch surfaced as an error notice over the logs table.
+    const v = view;
     void activeProfile;
     void range;
-    void load();
+    if (v === 'traces') void load();
   });
 
   $effect(() => {
@@ -454,7 +458,7 @@
     const tick = setInterval(() => {
       now = Date.now();
       if (document.hidden) return;
-      if (!loading) void load();
+      if (view === 'traces' && !loading) void load();
       if ((view === 'trends' || view === 'breakdown') && !chartsLoading) void loadCharts();
     }, POLL_MS);
     return () => clearInterval(tick);
@@ -672,7 +676,7 @@
       <button
         class="btn btn-sm"
         disabled={loading || chartsLoading}
-        onclick={() => (view === 'traces' ? load() : loadCharts())}
+        onclick={() => (view === 'logs' ? refreshLogs() : view === 'traces' ? load() : loadCharts())}
       >refresh</button>
     </div>
   </header>
@@ -689,31 +693,40 @@
     {/each}
   </div>
 
-  <p class="scope-note">
-    Sessions, content and cost from <strong>OpenSearch</strong>. Scoped to
-    <strong>{activeProfile || 'no profile'}</strong> by
-    <code>resource.attributes.workspace</code>, stamped on the events
-    themselves.
-  </p>
-
-  {#if activeCount}
-    <p class="working">
-      <span class="dot dot-active"></span>{activeCount} working right now.
+  <!-- These three describe the SESSIONS fetch, so they render only on the tab
+       that makes it. They sat above the tab bodies and so above all four, which
+       put "Could not load sessions." over the logs table whenever
+       ListAgentSessions failed — a traces-side failure reading as a logs one.
+       The logs tab reports its own errors through StreamLogsTab's `logsError`,
+       and `activeCount` is derived from `sessions`, which only the traces tab
+       now loads, so showing it elsewhere would show a frozen count. -->
+  {#if view === 'traces'}
+    <p class="scope-note">
+      Sessions, content and cost from <strong>OpenSearch</strong>. Scoped to
+      <strong>{activeProfile || 'no profile'}</strong> by
+      <code>resource.attributes.workspace</code>, stamped on the events
+      themselves.
     </p>
-  {/if}
 
-  {#if error}
-    <div class="notice notice-bad">
-      <strong>Could not load sessions.</strong>
-      <p>{error}</p>
-      <p class="notice-sub">
-        This panel reads OpenSearch, so it needs the platform reachable and the
-        OpenSearch integration enabled. Sessions are scoped by
-        <code>resource.attributes.workspace</code>, which Claude Code stamps
-        from <code>OTEL_RESOURCE_ATTRIBUTES</code> — so a profile with no
-        sessions may simply not be stamping one.
+    {#if activeCount}
+      <p class="working">
+        <span class="dot dot-active"></span>{activeCount} working right now.
       </p>
-    </div>
+    {/if}
+
+    {#if error}
+      <div class="notice notice-bad">
+        <strong>Could not load sessions.</strong>
+        <p>{error}</p>
+        <p class="notice-sub">
+          This panel reads OpenSearch, so it needs the platform reachable and the
+          OpenSearch integration enabled. Sessions are scoped by
+          <code>resource.attributes.workspace</code>, which Claude Code stamps
+          from <code>OTEL_RESOURCE_ATTRIBUTES</code> — so a profile with no
+          sessions may simply not be stamping one.
+        </p>
+      </div>
+    {/if}
   {/if}
 
   {#if view === 'logs'}
