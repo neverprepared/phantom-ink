@@ -126,12 +126,39 @@ func workspaceFilter(workspace string) []any {
 	}
 }
 
+// localDayOffset returns the host's current UTC offset in the ±HH:MM form
+// OpenSearch accepts as a range `time_zone`.
+//
+// Date math like `now/d` is rounded in UTC unless a time_zone is supplied, so
+// without this the "today" cards reset at UTC midnight — 17:00 the previous
+// afternoon in US Pacific — and read zero for the rest of the working day.
+// Measured against the live store at 02:08 UTC: `now/d` summed to 0.0 while the
+// same query with a time_zone summed to $325.70.
+//
+// Computed per query rather than cached so it follows DST without needing the
+// zone database. A window spanning a DST change rounds by the offset in force
+// when the query runs, which is an hour out twice a year and not worth the
+// tzdata dependency to fix.
+func localDayOffset() string {
+	return time.Now().Format("-07:00")
+}
+
+// dayRange builds a range clause, attaching the local offset so day-rounded
+// windows mean the operator's day rather than UTC's.
+func dayRange(since string) map[string]any {
+	bounds := map[string]any{"gte": since}
+	if strings.Contains(since, "/") {
+		bounds["time_zone"] = localDayOffset()
+	}
+	return map[string]any{"range": map[string]any{"time": bounds}}
+}
+
 // sumOfMetric runs a sum-of-value aggregation filtered by metric name and time,
 // optionally constrained to a workspace.
 func (c *Client) sumOfMetric(ctx context.Context, name, since, workspace string) (float64, error) {
 	must := []any{
 		map[string]any{"term": map[string]any{"name": name}},
-		map[string]any{"range": map[string]any{"time": map[string]any{"gte": since}}},
+		dayRange(since),
 	}
 	must = append(must, workspaceFilter(workspace)...)
 	body := map[string]any{

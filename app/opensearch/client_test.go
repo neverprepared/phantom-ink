@@ -2,6 +2,7 @@ package opensearch
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -123,5 +124,37 @@ func TestTailLogsRequestsTheNewFields(t *testing.T) {
 		if !strings.Contains(body, field) {
 			t.Errorf("query does not request %q; projected fields come back empty silently", field)
 		}
+	}
+}
+
+func TestGetOverviewScopesTodayToTheLocalDay(t *testing.T) {
+	// "now/d" is rounded by OpenSearch in UTC unless a time_zone is supplied, so
+	// the cost and token cards reset at UTC midnight — 17:00 the previous
+	// afternoon in US Pacific — and read 0 for the rest of the working day.
+	// Measured against the live store at 02:08 UTC: now/d gave 0.0 while the
+	// same query with a time_zone gave $325.70.
+	c, caps := serveJSON(t, `{"aggregations":{"total":{"value":1.0}},"hits":{"total":{"value":0},"hits":[]}}`)
+
+	if _, err := c.GetOverview(context.Background(), "personal"); err != nil {
+		t.Fatalf("GetOverview: %v", err)
+	}
+
+	body := caps.get("metrics-otel-*")
+	if !strings.Contains(body, "now/d") {
+		t.Fatalf("expected a day-rounded window, got: %s", body)
+	}
+	if !strings.Contains(body, "time_zone") {
+		t.Errorf("day-rounded window has no time_zone, so it rounds in UTC: %s", body)
+	}
+}
+
+func TestLocalDayOffsetIsAnOpenSearchTimeZone(t *testing.T) {
+	// OpenSearch accepts either an IANA name or a ±HH:MM offset. The offset is
+	// computed per query rather than cached, so it follows DST without needing
+	// the zone database.
+	got := localDayOffset()
+
+	if !regexp.MustCompile(`^[+-]\d{2}:\d{2}$`).MatchString(got) {
+		t.Errorf("localDayOffset() = %q, want a ±HH:MM offset", got)
 	}
 }
