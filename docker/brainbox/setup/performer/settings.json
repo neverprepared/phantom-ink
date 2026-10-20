@@ -6,18 +6,5 @@
   "promptSuggestionEnabled": false,
   "sandbox": {
     "allowUnsandboxedCommands": false
-  },
-  "hooks": {
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/developer/.claude/hooks/langfuse-hook.sh",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
   }
 }

@@ -218,7 +218,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         @neverprepared/mcp-new-relic' \
     # ---- Python MCP servers + hook deps + brainbox-mcp --------------------
     && uvx --python 3.12 --with-requirements /tmp/hooks-requirements.txt \
-         python -c "import langfuse; print('hook deps ok')" \
+         python -c "import requests; print('hook deps ok')" \
     && uv tool install --python 3.12 'mcp-atlassian==0.13.0' \
     && uv tool install --python 3.12 'mcp-server-git==2025.12.18' \
     && uv tool install --python 3.12 markitdown-mcp \

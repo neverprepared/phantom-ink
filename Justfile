@@ -82,9 +82,6 @@ sp-lint:
 reflex-dev:
     claude --plugin-dir reflex
 
-reflex-langfuse:
-    cd docker/langfuse && docker compose up -d
-
 # === OpenSearch (observability stack) ===
 
 opensearch-start:
