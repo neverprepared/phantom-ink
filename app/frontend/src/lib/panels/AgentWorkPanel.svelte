@@ -184,8 +184,7 @@
   const VIEWS: { id: TelemetryTab; label: string }[] = [
     { id: 'logs', label: 'logs' },
     { id: 'traces', label: 'traces' },
-    { id: 'trends', label: 'trends' },
-    { id: 'breakdown', label: 'breakdown' },
+    { id: 'costs', label: 'costs' },
   ];
 
   // The logs export batches every 10s; polling faster cannot surface fresher
@@ -447,7 +446,7 @@
     const v = view;
     void activeProfile;
     void range;
-    if (v === 'trends' || v === 'breakdown') void loadCharts();
+    if (v === 'costs') void loadCharts();
   });
 
   $effect(() => {
@@ -455,7 +454,7 @@
       now = Date.now();
       if (document.hidden) return;
       if (view === 'traces' && !loading) void load();
-      if ((view === 'trends' || view === 'breakdown') && !chartsLoading) void loadCharts();
+      if (view === 'costs' && !chartsLoading) void loadCharts();
     }, POLL_MS);
     return () => clearInterval(tick);
   });
@@ -957,7 +956,7 @@ counting delegated subagent and auxiliary work as well as the main thread."
   {/if}
   {/if}
 
-  {#if view === 'trends' || view === 'breakdown'}
+  {#if view === 'costs'}
     {#if chartsError}
       <div class="notice notice-bad">
         <strong>Could not load charts.</strong>
@@ -966,57 +965,61 @@ counting delegated subagent and auxiliary work as well as the main thread."
     {:else if chartsLoading && !charts}
       <p class="muted"><Spinner /> Loading charts…</p>
     {:else if charts}
-      {#if view === 'trends'}
-        <div class="charts">
-          <div class="chart-card">
-            <MetricsChart
-              data={charts.cost_series ?? []}
-              label={`cost per ${charts.granularity}`}
-              current={usd(costTotal)}
-              formatY={(v: number) => (v >= 1 ? `$${v.toFixed(0)}` : `$${v.toFixed(2)}`)}
-              height={150}
-            />
-          </div>
-        </div>
-      {:else}
-        <div class="charts">
-          <div class="chart-card">
-            <h3>cost by model</h3>
-            {#if modelSlices.length}
-              <div class="pie-row">
-                <PieChart slices={modelSlices} size={150} />
-                <ul class="legend">
-                  {#each modelSlices as s (s.name)}
-                    <li><span class="k">{s.name}</span><span class="v">{s.label}</span></li>
-                  {/each}
-                </ul>
-              </div>
-            {:else}
-              <p class="muted">No priced model calls in this window.</p>
-            {/if}
-          </div>
-          <div class="chart-card">
-            <h3>cost by source</h3>
-            {#if sourceSlices.length}
-              <div class="pie-row">
-                <PieChart slices={sourceSlices} size={150} />
-                <ul class="legend">
-                  {#each sourceSlices as s (s.name)}
-                    <li><span class="k">{s.name}</span><span class="v">{s.label}</span></li>
-                  {/each}
-                </ul>
-              </div>
-              <p class="note">
-                Main thread vs delegated subagents vs auxiliary overhead, split
-                by the query_source stamped on each OTEL event.
-              </p>
-            {:else}
-              <p class="muted">No priced calls in this window.</p>
-            {/if}
-          </div>
-        </div>
-      {/if}
+      <!-- The breakdowns lead; the series below is context for them.
+           Where the money went is the question people open this tab with, and
+           the pies answer it at a glance -- so they get the top, and the
+           trend line is shorter than them on purpose.
 
+           This was two tabs ('trends' and 'breakdown') over ONE
+           GetAgentWorkCharts call sharing one loading state, so the split cost
+           a click and bought nothing -- and 'trends' held only that line. -->
+      <div class="charts">
+        <div class="chart-card">
+          <h3>cost by model</h3>
+          {#if modelSlices.length}
+            <div class="pie-row">
+              <PieChart slices={modelSlices} size={150} />
+              <ul class="legend">
+                {#each modelSlices as s (s.name)}
+                  <li><span class="k">{s.name}</span><span class="v">{s.label}</span></li>
+                {/each}
+              </ul>
+            </div>
+          {:else}
+            <p class="muted">No priced model calls in this window.</p>
+          {/if}
+        </div>
+        <div class="chart-card">
+          <h3>cost by source</h3>
+          {#if sourceSlices.length}
+            <div class="pie-row">
+              <PieChart slices={sourceSlices} size={150} />
+              <ul class="legend">
+                {#each sourceSlices as s (s.name)}
+                  <li><span class="k">{s.name}</span><span class="v">{s.label}</span></li>
+                {/each}
+              </ul>
+            </div>
+            <p class="note">
+              Main thread vs delegated subagents vs auxiliary overhead, split
+              by the query_source stamped on each OTEL event.
+            </p>
+          {:else}
+            <p class="muted">No priced calls in this window.</p>
+          {/if}
+        </div>
+      </div>
+      <div class="charts charts-wide">
+        <div class="chart-card">
+          <MetricsChart
+            data={charts.cost_series ?? []}
+            label={`cost per ${charts.granularity}`}
+            current={usd(costTotal)}
+            formatY={(v: number) => (v >= 1 ? `$${v.toFixed(0)}` : `$${v.toFixed(2)}`)}
+            height={100}
+          />
+        </div>
+      </div>
     {/if}
   {/if}
 </div>
@@ -1251,6 +1254,13 @@ counting delegated subagent and auxiliary work as well as the main thread."
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: var(--spacing-md);
+  }
+  /* The cost-over-time series spans instead of taking a column, so the
+     auto-fit grid above cannot strand it beside an empty half at wide widths.
+     It sits BELOW the breakdowns and is deliberately shorter than them: the
+     pies answer "where did it go", the line is context for that answer. */
+  .charts-wide {
+    grid-template-columns: 1fr;
   }
   .chart-card {
     border: 1px solid var(--color-border-primary);

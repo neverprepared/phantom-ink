@@ -56,6 +56,21 @@ describe('telemetryState', () => {
     telemetryState.open('logs');
     expect(telemetryState.sortBy).toBeNull();
   });
+
+  // 'trends' and 'breakdown' merged into one 'costs' tab: they were always one
+  // GetAgentWorkCharts call sharing one loading state, and the payload is three
+  // cost views, so 'trends' held a single chart. Nothing deep-linked to either,
+  // which is what made the rename free -- this pins that only the two tabs
+  // widgets DO drill into are reachable by name, alongside the new one.
+  it('open() reaches the merged costs tab', () => {
+    telemetryState.open('costs');
+    expect(telemetryState.tab).toBe('costs');
+    expect(currentPanel.value).toBe('agent-work');
+  });
+
+  it('defaults to traces, the tab the panel opens on', () => {
+    expect(telemetryState.tab).toBe('traces');
+  });
 });
 
 describe('legacy panel id redirects', () => {
