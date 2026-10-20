@@ -77,11 +77,6 @@ sp-test:
 sp-lint:
     cd shell-profiler && golangci-lint run
 
-# === Reflex (Plugin) ===
-
-reflex-dev:
-    claude --plugin-dir reflex
-
 # === OpenSearch (observability stack) ===
 
 opensearch-start:

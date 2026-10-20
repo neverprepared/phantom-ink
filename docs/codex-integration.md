@@ -338,7 +338,6 @@ log_user_prompt = false
 phantom-ink's architecture (see [`docs/architecture-overview.md`](./architecture-overview.md)) centres on:
 
 - **Brainbox** — FastAPI + Svelte session manager that provisions sandboxed Docker containers
-- **Reflex** — Claude Code plugin with skills, slash commands, agents, workflow templates, and hooks
 - **Three container roles** — `developer` (full access), `performer` (restricted execution), `researcher` (read-only)
 - **Supporting infrastructure** — Qdrant vector DB, OpenSearch observability, MinIO object storage
 
@@ -361,15 +360,7 @@ codex-agent:
   working_dir: /workspace
 ```
 
-### 2. Reflex skill: `reflex:codex-exec`
-
-A new Reflex skill could wrap `codex exec` for non-interactive task dispatch from within a Claude Code session. The skill would:
-- Accept a natural-language task string
-- Run `codex exec --json "<task>"` inside the appropriate Brainbox container
-- Stream JSON events back to Claude Code via the existing SSE event stream
-- Store findings in Qdrant via the existing `ingest.py` script
-
-### 3. CI/CD via `codex exec`
+### 2. CI/CD via `codex exec`
 
 Phantom-ink's Justfile already drives automation. Adding a `codex` target would enable AI-powered code tasks in the pipeline:
 
@@ -381,7 +372,7 @@ codex-fix:
 
 For GitHub Actions, the workflow would install Codex with `npm i -g @openai/codex` and supply `OPENAI_API_KEY` from repository secrets.
 
-### 4. MCP bridge
+### 3. MCP bridge
 
 Codex CLI supports Model Context Protocol (MCP) servers. Since Brainbox exposes an MCP server endpoint (`/api/mcp`), Codex can be configured to use Brainbox as an MCP tool provider, giving Codex direct access to container lifecycle management:
 
@@ -393,7 +384,7 @@ args = ["-y", "@brainbox/mcp-server"]
 env = { BRAINBOX_URL = "http://localhost:8000" }
 ```
 
-### 5. OpenSearch observability
+### 4. OpenSearch observability
 
 Codex's built-in OpenTelemetry export can be pointed at the OpenSearch stack's Data
 Prepper OTLP ingest (`docker/opensearch/`), unifying LLM observability across Claude
@@ -406,7 +397,7 @@ exporter = "otlp-grpc"
 endpoint = "http://localhost:21890"   # traces; metrics 21891, logs 21892
 ```
 
-### 6. Shell Profiler integration
+### 5. Shell Profiler integration
 
 The `shell-profiler` Go CLI manages per-workspace direnv profiles. Adding a `codex` profile type would inject `OPENAI_API_KEY` and default `CODEX_HOME` automatically whenever a developer enters a workspace that uses Codex.
 

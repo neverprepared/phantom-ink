@@ -1,7 +1,8 @@
 """MCP gateway — catalog → ServerSpec resolution (ADR-002, phase 2d).
 
-Reads the curated MCP server catalog (reflex's ``mcp-catalog.json``) and turns
-the operator-allowlisted entries into ``ServerSpec``s the gateway can spawn.
+Reads the curated MCP server catalog (``mcp-catalog.json``, deployed from
+``phantom-platform/config/``) and turns the operator-allowlisted entries into
+``ServerSpec``s the gateway can spawn.
 
 Catalog entry shape: ``{definition: {command, args, env}, requires, ...}``. The
 definition's env may contain ``"${VAR}"`` placeholders — those are provided per

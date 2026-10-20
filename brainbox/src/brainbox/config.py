@@ -168,8 +168,9 @@ class GatewaySettings(BaseSettings):
     # bundles``; ``bundle_max_bytes`` caps the accepted plaintext tar.gz size.
     bundle_cache_dir: str = ""
     bundle_max_bytes: int = 10_485_760
-    # Path to the curated MCP server catalog (reflex's mcp-catalog.json). Empty
-    # = no downstream servers. (DB-backed/app-editable registry is issue #152.)
+    # Path to the curated MCP server catalog (``mcp-catalog.json``; the deployed
+    # copy lives at phantom-platform/config/mcp-catalog.json). Empty = no
+    # downstream servers. (DB-backed/app-editable registry is issue #152.)
     catalog_path: str = ""
     # Allowlist of catalog server names the gateway exposes. Empty = none;
     # set CL_GATEWAY__SERVERS='["phantom-brain","slack"]'. Keeps tools/list from

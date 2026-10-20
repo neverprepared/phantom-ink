@@ -11,7 +11,6 @@ Guidance for Claude Code (and other agents) working in this repository.
 | `app/` | **phantom-ink** — the Wails 2 macOS desktop app (command center) | Go 1.25 + Svelte 5 / TS |
 | `brainbox/` | **Brainbox** — FastAPI orchestration server, MCP server, MCP gateway, agent hub | Python 3.11+ |
 | `shell-profiler/` | CLI for direnv-backed workspace profiles | Go 1.25 |
-| `reflex/` | Claude Code plugin marketplace (skills, commands, agents, hooks) | Markdown + Python |
 | `packages/brainbox-mcp/` | Guest-side MCP helper shipped **into** a session container | Python |
 | `packages/brainbox/` | Homebrew/packaged brainbox launcher (`brainbox.sh`, compose) | Shell |
 | `tier0/` | opencode + local ollama harness wired to the MCP gateway | Shell/JSON |
@@ -97,9 +96,6 @@ just inbox-apply <profile> # stages B+C: extract locally, then file
 just inbox-requeue <profile>  # recover items stranded in processing/
 just inbox-test / inbox-lint
 
-# Reflex plugin
-just reflex-dev            # claude --plugin-dir reflex
-
 # Local service stacks
 just opensearch-start|stop|logs|status
 ```
@@ -153,9 +149,9 @@ Three distinct MCP things live here — do not conflate them:
 - **Secrets never land in git**: `.gitignore` excludes `docker/**/.env`, `.env.secrets`,
   `.env.local`, and `docker/volumes/`. Compose `.env` files carry bootstrap credentials.
 - **CI is path-filtered** (`.github/workflows/`): `test-app`, `test-brainbox`,
-  `test-reflex`, `test-shell-profiler` only run when their subtree changes, so a
+  `test-shell-profiler` only run when their subtree changes, so a
   root-only or docs-only change triggers **no** checks. Build/release workflows are
   tag- or path-triggered (app, containers, brainbox pkg, brainbox-mcp pkg,
-  shell-profiler, reflex).
+  shell-profiler).
 - **CLAUDE.md is excluded by a global gitignore** in this environment — commit it with
   `git add -f CLAUDE.md`.

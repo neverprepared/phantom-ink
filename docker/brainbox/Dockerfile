@@ -108,7 +108,7 @@ COPY --chown=developer:developer docker/brainbox/setup/ttyd-wrapper.sh /home/dev
 # PreToolUse hook, which guards stdout). Wired via core.hooksPath below.
 COPY --chown=developer:developer docker/brainbox/setup/git-hooks         /opt/git-hooks
 # Skills are injected per-profile at image build (see profileimage/builder.go
-# injectClaudeSkills) — the retired reflex plugin skill tree is no longer baked.
+# injectClaudeSkills) — no skill tree is baked into this image.
 # brainbox-complete: records the session result via the hub session store
 COPY docker/brainbox/setup/complete.sh /usr/local/bin/brainbox-complete
 RUN chmod 755 /usr/local/bin/brainbox-complete
