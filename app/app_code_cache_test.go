@@ -93,7 +93,7 @@ func TestCodeOverviewMemoIsPerProfile(t *testing.T) {
 func TestSetActiveProfileClearsCodeOverviewMemo(t *testing.T) {
 	resetCodeOverviewCache()
 	storeCodeOverview("work", CodeOverview{Profile: "work"})
-	if _, ok := cachedCodeOverview("work"); !ok {
+	if _, _, ok := cachedCodeOverview("work"); !ok {
 		t.Fatal("precondition: entry should be cached")
 	}
 
@@ -101,24 +101,8 @@ func TestSetActiveProfileClearsCodeOverviewMemo(t *testing.T) {
 	if err := app.SetActiveProfile("other"); err != nil {
 		t.Fatalf("SetActiveProfile: %v", err)
 	}
-	if _, ok := cachedCodeOverview("work"); ok {
+	if _, _, ok := cachedCodeOverview("work"); ok {
 		t.Error("profile switch left a memoised launchpad behind")
-	}
-}
-
-// An entry older than the TTL must not be served.
-func TestCodeOverviewMemoExpires(t *testing.T) {
-	resetCodeOverviewCache()
-	storeCodeOverview("work", CodeOverview{Profile: "work"})
-
-	codeOverviewMu.Lock()
-	e := codeOverviewCache["work"]
-	e.at = time.Now().Add(-2 * codeOverviewTTL)
-	codeOverviewCache["work"] = e
-	codeOverviewMu.Unlock()
-
-	if _, ok := cachedCodeOverview("work"); ok {
-		t.Error("an expired entry was served")
 	}
 }
 
@@ -130,10 +114,10 @@ func TestInvalidateCodeOverviewIsTargeted(t *testing.T) {
 
 	(&App{}).InvalidateCodeOverview("alpha")
 
-	if _, ok := cachedCodeOverview("alpha"); ok {
+	if _, _, ok := cachedCodeOverview("alpha"); ok {
 		t.Error("alpha should have been dropped")
 	}
-	if _, ok := cachedCodeOverview("beta"); !ok {
+	if _, _, ok := cachedCodeOverview("beta"); !ok {
 		t.Error("beta should have been left alone")
 	}
 }
@@ -155,4 +139,167 @@ func resetCodeOverviewCache() {
 	codeOverviewMu.Lock()
 	codeOverviewCache = map[string]codeOverviewEntry{}
 	codeOverviewMu.Unlock()
+}
+
+// ── Stale-while-revalidate ────────────────────────────────────────────────
+//
+// Past the TTL an entry is still perfectly good to DISPLAY: it is what the
+// operator was already looking at. Blocking the panel on a provider fan-out
+// before it may show anything is what made returning to Work feel slow. The
+// contract below is "serve stale, refresh behind it".
+
+// A stale entry is returned, flagged stale rather than withheld.
+func TestCachedCodeOverviewServesStaleFlagged(t *testing.T) {
+	resetCodeOverviewCache()
+	storeCodeOverview("work", CodeOverview{Profile: "work"})
+	ageCodeOverview("work", 2*codeOverviewTTL)
+
+	ov, fresh, ok := cachedCodeOverview("work")
+	if !ok {
+		t.Fatal("a stale entry was withheld; the panel has nothing to paint")
+	}
+	if fresh {
+		t.Error("a stale entry reported itself fresh")
+	}
+	if ov.Profile != "work" {
+		t.Errorf("Profile = %q, want \"work\"", ov.Profile)
+	}
+}
+
+// A fresh entry reports fresh, so no background refresh is started.
+func TestCachedCodeOverviewFreshEntryIsFresh(t *testing.T) {
+	resetCodeOverviewCache()
+	storeCodeOverview("work", CodeOverview{Profile: "work"})
+
+	if _, fresh, ok := cachedCodeOverview("work"); !ok || !fresh {
+		t.Errorf("ok = %v, fresh = %v; want both true", ok, fresh)
+	}
+}
+
+// A profile with nothing cached reports ok=false — the cold path.
+func TestCachedCodeOverviewMissIsNotOK(t *testing.T) {
+	resetCodeOverviewCache()
+	if _, _, ok := cachedCodeOverview("work"); ok {
+		t.Error("an empty cache reported a hit")
+	}
+}
+
+// Serving stale must return IMMEDIATELY (no provider round-trip on the
+// calling goroutine) and must refresh the entry behind the caller.
+func TestCodeOverviewServesStaleThenRevalidates(t *testing.T) {
+	resetCodeOverviewCache()
+
+	var envCalls atomic.Int64
+	app := &App{client: brainbox.NewClient(adoOnlyEnvServer(t, &envCalls).URL, ""), ctx: context.Background()}
+
+	// Prime with a marker we can recognise, then age it past the TTL.
+	storeCodeOverview("work", CodeOverview{Profile: "work", ReposError: "stale-marker"})
+	ageCodeOverview("work", 2*codeOverviewTTL)
+
+	ov, err := app.CodeOverview("work", false)
+	if err != nil {
+		t.Fatalf("CodeOverview: %v", err)
+	}
+	if ov.ReposError != "stale-marker" {
+		t.Fatalf("ReposError = %q; the stale entry was not served synchronously", ov.ReposError)
+	}
+	if !ov.Stale {
+		t.Error("the served copy was not marked Stale; the UI cannot show it is refreshing")
+	}
+
+	// The revalidate runs behind the caller, so wait for it to land.
+	waitFor(t, func() bool {
+		_, fresh, ok := cachedCodeOverview("work")
+		return ok && fresh
+	}, "background revalidate never refreshed the entry")
+
+	if envCalls.Load() == 0 {
+		t.Error("the background revalidate issued no provider request")
+	}
+}
+
+// Concurrent mounts of a stale profile must collapse into ONE revalidate.
+// Without single-flight, opening the panel while a tab switch is in flight
+// fans the whole provider set out twice.
+func TestCodeOverviewRevalidateIsSingleFlight(t *testing.T) {
+	resetCodeOverviewCache()
+
+	// Block the env read until released, so every caller piles up inside the
+	// same revalidate window.
+	release := make(chan struct{})
+	var envCalls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		envCalls.Add(1)
+		<-release
+		_, _ = w.Write([]byte(`{"profile":"work","env":{"ADO_ORG":"o","ADO_PROJECT":"p","ADO_PAT":"secret"}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	app := &App{client: brainbox.NewClient(srv.URL, ""), ctx: context.Background()}
+	storeCodeOverview("work", CodeOverview{Profile: "work"})
+	ageCodeOverview("work", 2*codeOverviewTTL)
+
+	for i := 0; i < 8; i++ {
+		if _, err := app.CodeOverview("work", false); err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+	}
+	// All eight were served stale, so at most one revalidate may be in flight.
+	waitFor(t, func() bool { return envCalls.Load() >= 1 }, "no revalidate started")
+	close(release)
+
+	waitFor(t, func() bool {
+		_, fresh, ok := cachedCodeOverview("work")
+		return ok && fresh
+	}, "revalidate never completed")
+
+	if got := envCalls.Load(); got != 1 {
+		t.Errorf("%d revalidates ran; single-flight did not collapse them", got)
+	}
+}
+
+// A cold miss still blocks — there is nothing to paint, so the caller must
+// get real data rather than an empty frame.
+func TestCodeOverviewColdMissFetchesSynchronously(t *testing.T) {
+	resetCodeOverviewCache()
+
+	var envCalls atomic.Int64
+	app := &App{client: brainbox.NewClient(adoOnlyEnvServer(t, &envCalls).URL, ""), ctx: context.Background()}
+
+	ov, err := app.CodeOverview("work", false)
+	if err != nil {
+		t.Fatalf("CodeOverview: %v", err)
+	}
+	if envCalls.Load() == 0 {
+		t.Error("a cold miss returned without asking any provider")
+	}
+	if ov.Stale {
+		t.Error("a freshly fetched overview was marked Stale")
+	}
+	if ov.FetchedAt == "" {
+		t.Error("FetchedAt is unset; the panel cannot show the data's age")
+	}
+}
+
+// ageCodeOverview backdates a cached entry so it reads as stale.
+func ageCodeOverview(profile string, by time.Duration) {
+	codeOverviewMu.Lock()
+	defer codeOverviewMu.Unlock()
+	e := codeOverviewCache[profile]
+	e.at = e.at.Add(-by)
+	codeOverviewCache[profile] = e
+}
+
+// waitFor polls cond for up to two seconds. The revalidate is deliberately
+// off the caller's goroutine, so there is no handle to join on.
+func waitFor(t *testing.T, cond func() bool, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal(msg)
 }

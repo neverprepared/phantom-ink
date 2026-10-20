@@ -2794,6 +2794,8 @@ export namespace main {
 	    issue_keys: Record<string, Array<IssueLink>>;
 	    jira_issues: Record<string, jira.Issue>;
 	    jira_error: string;
+	    fetched_at: string;
+	    stale: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new CodeOverview(source);
@@ -2815,6 +2817,8 @@ export namespace main {
 	        this.issue_keys = this.convertValues(source["issue_keys"], Array<IssueLink>, true);
 	        this.jira_issues = this.convertValues(source["jira_issues"], jira.Issue, true);
 	        this.jira_error = source["jira_error"];
+	        this.fetched_at = source["fetched_at"];
+	        this.stale = source["stale"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
