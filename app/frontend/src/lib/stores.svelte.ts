@@ -174,15 +174,17 @@ export const settingsState = {
 // redirected to the hub with the matching tab pre-selected.
 // ---------------------------------------------------------------------------
 
-export type JobsTab = 'jobs' | 'loops' | 'collectors' | 'rules';
+export type JobsTab = 'jobs' | 'loops' | 'collectors' | 'timeline';
 
 // Legacy panel ids that are now hub tabs → their tab. Used by AppShell to
-// redirect stale navigation/deep-links and by the command palette. Note the
-// old top-level 'automations' panel maps to the renamed 'rules' tab.
+// redirect stale navigation/#hash deep-links and by the command palette.
+// 'rules' moved OUT to the Events panel (it matches on the agent bus, so it
+// belongs beside the bus); 'timeline' moved IN (it is a schedule, so it
+// belongs beside the things that run on a schedule).
 export const JOBS_TAB_PANELS: Record<string, JobsTab> = {
   loops: 'loops',
   collectors: 'collectors',
-  automations: 'rules',
+  timeline: 'timeline',
 };
 
 /** Tabs of the Work hub (panel id stays 'code' — label-only rename). */
@@ -209,6 +211,69 @@ export const jobsState = {
   open(tab: JobsTab): void {
     _jobsTab = tab;
     currentPanel.value = 'jobs';
+  },
+};
+
+// ---------------------------------------------------------------------------
+// "Events" hub sub-tabs — the event plane. Everything here reads or acts on
+// the Postgres agent bus (`agent_events`): the live tail, the attention queue
+// of things that fired and need a human, the EventBridge-style rules that
+// match on it, and the raw envelope view. The panel id is still 'stream'
+// internally (label-only rename to "Events"), because currentPanel persists
+// through location.hash and an id migration would break deep links.
+// ---------------------------------------------------------------------------
+
+export type EventsTab = 'attention' | 'live' | 'rules' | 'raw';
+
+// Legacy panel ids that are now Events tabs → their tab.
+// 'automations' was the rules panel's original id; 'event-log' was the
+// debug-gated raw bus view that no longer has a sidebar entry.
+export const EVENTS_TAB_PANELS: Record<string, EventsTab> = {
+  automations: 'rules',
+  'event-log': 'raw',
+};
+
+// Attention is the default because it is the only actionable surface in the
+// panel, and it owns the sidebar badge.
+let _eventsTab = $state<EventsTab>('attention');
+
+export const eventsState = {
+  get tab(): EventsTab { return _eventsTab; },
+  set tab(v: EventsTab) { _eventsTab = v; },
+  /** Navigate to the Events panel with a specific tab pre-selected. */
+  open(tab: EventsTab): void {
+    _eventsTab = tab;
+    currentPanel.value = 'stream';
+  },
+};
+
+// ---------------------------------------------------------------------------
+// "Telemetry" hub sub-tabs — the telemetry plane. Everything here reads
+// OpenSearch: service logs, agent traces (the turn/prompt drill-down that
+// replaced Langfuse), and cost/token metrics. Panel id stays 'agent-work'.
+//
+// `sortBy` is a presentation intent a caller can hand in with the tab — the
+// Dashboard's OpenSearch metric widgets drill into Logs pre-sorted by the
+// metric that was clicked. open() always rewrites it, so a sort from one
+// drill-down cannot leak into the next.
+// ---------------------------------------------------------------------------
+
+export type TelemetryTab = 'logs' | 'traces' | 'trends' | 'breakdown';
+export type TelemetrySort = 'cost' | 'duration' | 'tokens';
+
+let _telemetryTab = $state<TelemetryTab>('traces');
+let _telemetrySort = $state<TelemetrySort | null>(null);
+
+export const telemetryState = {
+  get tab(): TelemetryTab { return _telemetryTab; },
+  set tab(v: TelemetryTab) { _telemetryTab = v; },
+  get sortBy(): TelemetrySort | null { return _telemetrySort; },
+  set sortBy(v: TelemetrySort | null) { _telemetrySort = v; },
+  /** Navigate to the Telemetry panel with a tab and optional sort intent. */
+  open(tab: TelemetryTab, sortBy: TelemetrySort | null = null): void {
+    _telemetryTab = tab;
+    _telemetrySort = sortBy;
+    currentPanel.value = 'agent-work';
   },
 };
 
@@ -519,7 +584,7 @@ export const streamFocus = {
 // ---------------------------------------------------------------------------
 // Rule seed — used by Stream's "create rule" flow to hand off a pre-filled
 // rule draft (pattern derived from a live event card + suggested name/profile)
-// to the Automations panel's Rules tab, which opens the new-rule form with it.
+// to the Events panel's Rules tab, which opens the new-rule form with it.
 // ---------------------------------------------------------------------------
 
 export interface RuleSeed {
@@ -536,9 +601,10 @@ export const ruleSeed = {
   get value(): RuleSeed | null { return _ruleSeed; },
   seed(target: RuleSeed): void {
     _ruleSeed = target;
-    // The rules engine now lives as the "rules" tab under the Automations hub.
-    _jobsTab = 'rules';
-    currentPanel.value = 'jobs';
+    // Rules now live as the "rules" tab of the Events panel, beside the bus
+    // they match on. This used to be a cross-panel handoff to Automations.
+    _eventsTab = 'rules';
+    currentPanel.value = 'stream';
   },
   consume(): RuleSeed | null {
     const f = _ruleSeed;
