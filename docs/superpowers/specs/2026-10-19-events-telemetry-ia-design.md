@@ -182,6 +182,37 @@ writes a collector. It needs its own design (condition language, dedup/flap
 suppression, envelope shape, per-profile scoping) and must not be bundled into
 a navigation change.
 
+### Durability asymmetry the bridge would inherit
+
+The two planes do not offer the same guarantee, and a bridge would hand the
+event plane's consumers the weaker one.
+
+The event plane is durable: `agent_events` is Postgres, and `event_rules.py`
+has retries plus a dead-letter path (`_emit_terminal_envelope` with a `'dead'`
+status).
+
+The telemetry plane has **no dead-letter path at any layer**:
+
+- Producers (Claude Code in session containers via `profileimage/builder.go:509`,
+  and our own services via `scripts/inbox/obslog.py:224`) use the OTel
+  `BatchLogRecordProcessor` — an in-memory queue, no `OTEL_BSP_*` tuning set
+  anywhere. A recycled session container loses whatever is still queued even
+  when the whole pipeline is healthy.
+- `docker/opensearch/config/pipelines.yaml` declares no `buffer:`, so all three
+  pipelines use Data Prepper's default in-memory `bounded_blocking` buffer.
+  Because it blocks, a stalled OpenSearch backpressures the OTLP source, which
+  surfaces at the producer as drops.
+- None of the three `opensearch` sinks configure `dlq_file` or `dlq`. Failed
+  records are logged and discarded. Adding `dlq_file` is not sufficient on its
+  own: the `data-prepper` service mounts only two read-only config files and has
+  no writable volume, so a file DLQ would land in the ephemeral container layer.
+
+So a rule fired from a log condition could silently never fire, with no record
+that it was missed. Any design for the bridge has to state what it does when
+the telemetry plane loses data — at minimum a writable DLQ volume plus a
+gap/lag signal the rule can see. This is a prerequisite for the bridge, not a
+nice-to-have, and it is worth fixing on its own merits regardless.
+
 ## Risks and edge cases
 
 - **Wrong-tab regressions are silent.** Every re-pointed navigation intent
