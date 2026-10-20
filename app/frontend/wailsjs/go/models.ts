@@ -4057,22 +4057,6 @@ export namespace main {
 		}
 	}
 	
-	export class SecretKeyStatus {
-	    key: string;
-	    has_value: boolean;
-	    source: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new SecretKeyStatus(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.key = source["key"];
-	        this.has_value = source["has_value"];
-	        this.source = source["source"];
-	    }
-	}
 	export class ServiceStatus {
 	    name: string;
 	    label: string;

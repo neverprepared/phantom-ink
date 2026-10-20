@@ -198,10 +198,6 @@ export function ExportBrainVault(arg1, arg2) {
   return window['go']['main']['App']['ExportBrainVault'](arg1, arg2);
 }
 
-export function ExportSecretsTemplate(arg1) {
-  return window['go']['main']['App']['ExportSecretsTemplate'](arg1);
-}
-
 export function FetchMetricUrl(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['FetchMetricUrl'](arg1, arg2, arg3, arg4);
 }
@@ -404,10 +400,6 @@ export function GetProfileColors() {
 
 export function GetProfileImageInfo(arg1) {
   return window['go']['main']['App']['GetProfileImageInfo'](arg1);
-}
-
-export function GetProfileSecrets(arg1) {
-  return window['go']['main']['App']['GetProfileSecrets'](arg1);
 }
 
 export function GetProfileServers(arg1) {

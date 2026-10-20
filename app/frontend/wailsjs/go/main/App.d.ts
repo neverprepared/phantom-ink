@@ -104,8 +104,6 @@ export function EnableLocalRunner(arg1:string):Promise<void>;
 
 export function ExportBrainVault(arg1:string,arg2:string):Promise<string>;
 
-export function ExportSecretsTemplate(arg1:string):Promise<string>;
-
 export function FetchMetricUrl(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function FindClaudeProcesses():Promise<Array<main.LocalProcess>>;
@@ -207,8 +205,6 @@ export function GetProfileBundleMeta(arg1:string):Promise<brainbox.BundleMeta>;
 export function GetProfileColors():Promise<Record<string, string>>;
 
 export function GetProfileImageInfo(arg1:string):Promise<main.ProfileImageRow|boolean>;
-
-export function GetProfileSecrets(arg1:string):Promise<Array<main.SecretKeyStatus>>;
 
 export function GetProfileServers(arg1:string):Promise<Array<brainbox.ProfileServerState>>;
 
