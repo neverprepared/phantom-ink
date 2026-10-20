@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Agent Work: the table of agent sessions, and the drill-down into one.
+  // Telemetry: logs, traces and metrics, all read from OpenSearch.
   //
   // Reads OpenSearch only. It read BOTH stores until 2026-10-19 -- Langfuse for
   // the sessions and their content, OpenSearch for the activity dot -- because
@@ -28,13 +28,15 @@
   // project the credentials pointed at -- native stamping, so no inheritance
   // across derived edges and no cross-profile leakage.
 
+  import { onMount } from 'svelte';
   import { getApi } from '../utils/api';
-  import { profileState } from '../stores.svelte';
+  import { profileState, telemetryState, type TelemetryTab } from '../stores.svelte';
   import Badge from '../components/Badge.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import MetricsChart from '../components/MetricsChart.svelte';
   import PieChart from '../components/PieChart.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import StreamLogsTab from '../components/StreamLogsTab.svelte';
   import { openInBrowser } from '../utils/api';
 
   // opensearch.AgentSession. Replaced a Langfuse-shaped row on 2026-10-19 when
@@ -135,7 +137,39 @@
     cost_by_source?: Share[] | null;
   }
 
-  type View = 'sessions' | 'trends' | 'breakdown';
+  // Two document classes land here and they fill different halves: a
+  // claude-code record has model/session but NO severity (severityText is unset
+  // on every one), an ADR-007 record from one of our services has
+  // severity/event_name/outcome/run_id but no model or session. `service` is
+  // what tells them apart.
+  interface LogEntry {
+    time: string;
+    body: string;
+    severity?: string;
+    service?: string;
+    event_name?: string;
+    outcome?: string;
+    run_id?: string;
+    session?: string;
+    workspace?: string;
+    model?: string;
+    duration_ms?: number;
+    cost_usd?: number;
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_tokens?: number;
+    cache_creation_tokens?: number;
+    query_source?: string;
+    tool_name?: string;
+    hook_name?: string;
+    success?: string;
+    error_type?: string;
+    num_hooks?: number;
+    num_success?: number;
+  }
+
+  // The tab set is `TelemetryTab` from the hub store — there is no panel-local
+  // View type, so the tab identifiers have exactly one definition.
 
   // Three shapes of one session, per the Agent Work Wheel probe: a list to act
   // on, a tree to audit, a wheel to see scale. Each answers a different
@@ -148,8 +182,11 @@
   // drill-down is a turn-grouped list for now. SessionTree.svelte is left in
   // the tree for whoever takes that on.
 
-  const VIEWS: { id: View; label: string }[] = [
-    { id: 'sessions', label: 'sessions' },
+  // Tab order puts logs first: it is the broadest surface and the one the
+  // Dashboard's metric widgets drill into.
+  const VIEWS: { id: TelemetryTab; label: string }[] = [
+    { id: 'logs', label: 'logs' },
+    { id: 'traces', label: 'traces' },
     { id: 'trends', label: 'trends' },
     { id: 'breakdown', label: 'breakdown' },
   ];
@@ -157,6 +194,12 @@
   // The logs export batches every 10s; polling faster cannot surface fresher
   // data.
   const POLL_MS = 15_000;
+
+  // The log tail is its own cadence: rows land continuously, so this is faster
+  // than the session/chart poll above.
+  const LOGS_POLL_MS = 3_000;
+  const LOGS_LIMIT = 1000;
+  const HEALTH_POLL_MS = 20_000;  // OpenSearch reachability changes rarely
 
   // A client-side deadline on every call. The Go side bounds each of its own
   // stages, but this panel sat on a permanent spinner twice while that was
@@ -197,7 +240,9 @@
   // 15-minute window now reflects a 15-minute reality and these ranges mean
   // what they say.
 
-  let view = $state<View>('sessions');
+  // The tab is a hub-store concern, not panel-local: the Dashboard's OpenSearch
+  // metric widgets navigate here by setting it.
+  let view = $derived(telemetryState.tab);
   // A pinned observation survives hover, so clicking one and then moving the
   // mouse does not lose it.
   let pinnedObsId = $state<string | null>(null);
@@ -223,6 +268,102 @@
   let timelineError = $state('');
 
   const activeProfile = $derived(profileState.active?.name ?? '');
+
+  // ── Logs tab ───────────────────────────────────────────────────────────────
+  // Moved here from the Stream panel: logs, traces and metrics all read
+  // OpenSearch, so they belong behind one panel rather than two.
+
+  const workspaceFilter = $derived(activeProfile);
+
+  let logs = $state<LogEntry[]>([]);
+  let logsLoading = $state(false);
+  let logsError = $state<string | null>(null);
+  let logsPoll: number | undefined;
+  let healthPoll: number | undefined;
+
+  // The sort key is a navigation intent handed in by the Dashboard's
+  // OpenSearch metric widgets, so it lives in the hub store, not here.
+  let logsSortBy = $derived(telemetryState.sortBy);
+
+  let displayLogs = $derived.by(() => {
+    if (!logsSortBy) return logs;
+    const key = logsSortBy === 'duration' ? 'duration_ms' : logsSortBy;
+    return [...logs].sort((a, b) => ((b as any)[key] ?? 0) - ((a as any)[key] ?? 0));
+  });
+
+  // Gate for the logs tab. NOT the service-flag list — opensearch is a Platform
+  // service (excluded from ListServices), so isActive('opensearch') is always
+  // false. Instead probe the resolved endpoint's real reachability.
+  let opensearchActive = $state(false);
+
+  async function refreshOpenSearchHealth() {
+    const a = await getApi();
+    if (!a) return;
+    try {
+      opensearchActive = await (a as any).GetOpenSearchHealth();
+    } catch {
+      opensearchActive = false;
+    }
+  }
+
+  async function refreshLogs() {
+    if (!opensearchActive) return;
+    const a = await getApi();
+    if (!a) return;
+    logsLoading = true;
+    try {
+      logs = ((await a.TailLogs(workspaceFilter, LOGS_LIMIT)) ?? []) as LogEntry[];
+      logsError = null;
+    } catch (err: any) {
+      logsError = `${err?.message ?? err}`;
+    } finally {
+      logsLoading = false;
+    }
+  }
+
+  function openDashboardsDiscover() {
+    const ws = workspaceFilter;
+    const filter = ws
+      ? `&_a=(filters:!((meta:(disabled:!f,index:logs-otel,key:'resource.attributes.workspace.keyword',negate:!f),query:(match_phrase:(resource.attributes.workspace.keyword:'${ws}')))))`
+      : '';
+    openInBrowser(`http://localhost:5601/app/data-explorer/discover#/?_g=()${filter}`);
+  }
+
+  // Telemetry does NOT bounce off a tab when OpenSearch is unreachable: all
+  // four tabs read OpenSearch, so there is nowhere to bounce to. The panel
+  // shows its error notice instead, and stays in the sidebar so the feature
+  // is still discoverable before the integration is switched on.
+  $effect(() => {
+    if (view === 'logs' && opensearchActive) {
+      void refreshLogs();
+      if (logsPoll === undefined) {
+        logsPoll = window.setInterval(refreshLogs, LOGS_POLL_MS);
+      }
+    } else if (logsPoll !== undefined) {
+      window.clearInterval(logsPoll);
+      logsPoll = undefined;
+    }
+  });
+
+  // A profile change rescopes the tail, so refetch rather than letting the
+  // 3s poll show another workspace's rows until it next fires.
+  let lastLogsFilter = $state(workspaceFilter);
+  $effect(() => {
+    if (workspaceFilter !== lastLogsFilter) {
+      lastLogsFilter = workspaceFilter;
+      if (view === 'logs') void refreshLogs();
+    }
+  });
+
+  onMount(() => {
+    void refreshOpenSearchHealth();
+    healthPoll = window.setInterval(refreshOpenSearchHealth, HEALTH_POLL_MS);
+    return () => {
+      if (logsPoll !== undefined) window.clearInterval(logsPoll);
+      if (healthPoll !== undefined) window.clearInterval(healthPoll);
+    };
+  });
+
   const selected = $derived(
     sessions.find((s) => s.session_id === selectedId) ?? selectedSnapshot,
   );
@@ -306,7 +447,7 @@
     const v = view;
     void activeProfile;
     void range;
-    if (v !== 'sessions') void loadCharts();
+    if (v === 'trends' || v === 'breakdown') void loadCharts();
   });
 
   $effect(() => {
@@ -314,7 +455,7 @@
       now = Date.now();
       if (document.hidden) return;
       if (!loading) void load();
-      if (view !== 'sessions' && !chartsLoading) void loadCharts();
+      if ((view === 'trends' || view === 'breakdown') && !chartsLoading) void loadCharts();
     }, POLL_MS);
     return () => clearInterval(tick);
   });
@@ -531,7 +672,7 @@
       <button
         class="btn btn-sm"
         disabled={loading || chartsLoading}
-        onclick={() => (view === 'sessions' ? load() : loadCharts())}
+        onclick={() => (view === 'traces' ? load() : loadCharts())}
       >refresh</button>
     </div>
   </header>
@@ -543,7 +684,7 @@
         class:active={view === v.id}
         role="tab"
         aria-selected={view === v.id}
-        onclick={() => (view = v.id)}
+        onclick={() => (telemetryState.tab = v.id)}
       >{v.label}</button>
     {/each}
   </div>
@@ -575,7 +716,18 @@
     </div>
   {/if}
 
-  {#if view === 'sessions'}
+  {#if view === 'logs'}
+    <StreamLogsTab
+      {opensearchActive}
+      {logsError}
+      {logs}
+      {logsLoading}
+      {logsSortBy}
+      {displayLogs}
+      onClearSort={() => (telemetryState.sortBy = null)}
+      onViewMore={openDashboardsDiscover}
+    />
+  {:else if view === 'traces'}
   {#if loading && sessions.length === 0}
     <p class="muted"><Spinner /> Loading sessions…</p>
   {:else if !error && sessions.length === 0}
@@ -583,7 +735,7 @@
       title={activeProfile
         ? 'No agent sessions in this window'
         : 'No profile selected'}
-      message={activeProfile ? emptyMessage : 'Agent Work reads Langfuse, whose API keys are per profile. Select a profile to load its sessions.'}
+      message={activeProfile ? emptyMessage : 'Telemetry reads OpenSearch, scoped per profile by resource.attributes.workspace. Select a profile to load its sessions.'}
     />
   {:else if sessions.length > 0}
     <div class="table-wrap">
@@ -783,7 +935,7 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
   {/if}
   {/if}
 
-  {#if view !== 'sessions'}
+  {#if view === 'trends' || view === 'breakdown'}
     {#if chartsError}
       <div class="notice notice-bad">
         <strong>Could not load charts.</strong>

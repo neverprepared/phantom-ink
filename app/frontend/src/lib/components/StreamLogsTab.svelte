@@ -1,10 +1,15 @@
 <script lang="ts">
   /**
-   * Live-logs tab body for the Stream panel — renders the OpenSearch telemetry
-   * tail (time / severity / body / event / service / model / workspace /
-   * session / duration) with the sort chip and footer. Display-only: the parent
-   * owns fetching, sorting, and the feature flag; this component just renders
-   * `displayLogs` and signals the two actions (clear sort, view-more) back up.
+   * The service-log table for the Telemetry panel's `logs` tab. Reads
+   * OpenSearch via TailLogs. Named for the Stream panel it was extracted
+   * from; the file keeps that name so the move stays reviewable as a
+   * relocation rather than a rewrite.
+   *
+   * Renders the telemetry tail (time / severity / body / event / service /
+   * model / workspace / session / duration) with the sort chip and footer.
+   * Display-only: the parent owns fetching, sorting, and the feature flag;
+   * this component just renders `displayLogs` and signals the two actions
+   * (clear sort, view-more) back up.
    *
    * Severity and event name arrived with ADR-007, when our own services started
    * emitting here. Before that every row came from claude-code and had neither.
