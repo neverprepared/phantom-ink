@@ -148,10 +148,9 @@ Three distinct MCP things live here — do not conflate them:
   `github.com/neverprepared/shell-profile-manager`.
 - **Secrets never land in git**: `.gitignore` excludes `docker/**/.env`, `.env.secrets`,
   `.env.local`, and `docker/volumes/`. Compose `.env` files carry bootstrap credentials.
-- **CI is path-filtered** (`.github/workflows/`): `test-app`, `test-brainbox`,
-  `test-shell-profiler` only run when their subtree changes, so a
-  root-only or docs-only change triggers **no** checks. Build/release workflows are
-  tag- or path-triggered (app, containers, brainbox pkg, brainbox-mcp pkg,
-  shell-profiler).
+- **CI is path-filtered** (`.github/workflows/`): `test-app`, `test-brainbox`, and
+  `test-shell-profiler` only run when their subtree changes, so a root-only or
+  docs-only change triggers **no** checks. Build/release workflows are tag- or
+  path-triggered (app, containers, brainbox pkg, brainbox-mcp pkg, shell-profiler).
 - **CLAUDE.md is excluded by a global gitignore** in this environment — commit it with
   `git add -f CLAUDE.md`.
