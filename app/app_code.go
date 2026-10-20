@@ -84,6 +84,16 @@ type CodeOverview struct {
 	// JiraError is non-fatal, exactly like the per-section errors above: a
 	// Jira outage costs the chips, never the git rows.
 	JiraError string `json:"jira_error"`
+
+	// FetchedAt is when these rows actually came off the providers (RFC3339).
+	// It travels with the payload rather than being tracked frontend-side so
+	// that a copy served from the memo reports the age of the DATA, not the
+	// age of the call that handed it over.
+	FetchedAt string `json:"fetched_at"`
+	// Stale marks a copy served past the TTL while a refresh runs behind it.
+	// The panel keeps these rows on screen and shows a refreshing indicator;
+	// a fresh copy follows when the revalidate lands.
+	Stale bool `json:"stale"`
 }
 
 // IssueLink is one code->ticket link. Manual distinguishes a stored override
@@ -310,22 +320,63 @@ func (a *App) InvalidateCodeOverview(profile string) {
 	delete(codeOverviewCache, profile)
 }
 
-// cachedCodeOverview returns a fresh-enough entry for profile, if any.
-func cachedCodeOverview(profile string) (CodeOverview, bool) {
+// cachedCodeOverview returns profile's memoised entry and whether it is still
+// within the TTL. A stale entry is RETURNED, not withheld: it is exactly what
+// the operator was already looking at, so painting it immediately and
+// refreshing behind it beats holding the panel empty for a provider fan-out.
+// ok=false means nothing is cached at all — the only case that must block.
+func cachedCodeOverview(profile string) (ov CodeOverview, fresh bool, ok bool) {
 	codeOverviewMu.Lock()
 	defer codeOverviewMu.Unlock()
 	e, ok := codeOverviewCache[profile]
-	if !ok || time.Since(e.at) >= codeOverviewTTL {
-		return CodeOverview{}, false
+	if !ok {
+		return CodeOverview{}, false, false
 	}
-	return e.overview, true
+	return e.overview, time.Since(e.at) < codeOverviewTTL, true
 }
 
-// storeCodeOverview memoises a successful read for profile.
+// storeCodeOverview memoises a successful read for profile. FetchedAt is
+// stamped here so every served copy carries the age of the data itself.
 func storeCodeOverview(profile string, ov CodeOverview) {
+	now := time.Now()
+	ov.Stale = false
+	if ov.FetchedAt == "" {
+		ov.FetchedAt = now.UTC().Format(time.RFC3339)
+	}
 	codeOverviewMu.Lock()
 	defer codeOverviewMu.Unlock()
-	codeOverviewCache[profile] = codeOverviewEntry{overview: ov, at: time.Now()}
+	codeOverviewCache[profile] = codeOverviewEntry{overview: ov, at: now}
+}
+
+// codeOverviewRevalidating tracks which profiles have a background refresh in
+// flight. Mounting the panel while a tab switch is still revalidating would
+// otherwise fan the whole provider set out twice; this collapses them.
+var codeOverviewRevalidating = map[string]bool{}
+
+// revalidateCodeOverview refreshes profile behind the caller, at most one
+// refresh per profile at a time. Errors are dropped on purpose: the caller
+// already has rows on screen, and replacing them with an error banner because
+// a background poll failed would be worse than showing slightly old data. The
+// next explicit refresh surfaces the failure.
+func (a *App) revalidateCodeOverview(profile string) {
+	codeOverviewMu.Lock()
+	if codeOverviewRevalidating[profile] {
+		codeOverviewMu.Unlock()
+		return
+	}
+	codeOverviewRevalidating[profile] = true
+	codeOverviewMu.Unlock()
+
+	go func() {
+		defer func() {
+			codeOverviewMu.Lock()
+			delete(codeOverviewRevalidating, profile)
+			codeOverviewMu.Unlock()
+		}()
+		// codeOverviewUncached stores on success, so there is nothing to do
+		// with the result here beyond discarding it.
+		_, _ = a.codeOverviewUncached(profile)
+	}()
 }
 
 // CodeOverview fetches a profile's launchpad across every configured provider
@@ -335,7 +386,13 @@ func storeCodeOverview(profile string, ov CodeOverview) {
 // navigation passes false.
 func (a *App) CodeOverview(profile string, force bool) (CodeOverview, error) {
 	if !force {
-		if ov, ok := cachedCodeOverview(profile); ok {
+		if ov, fresh, ok := cachedCodeOverview(profile); ok {
+			if fresh {
+				return ov, nil
+			}
+			// Stale but displayable: hand it back now, refresh behind it.
+			ov.Stale = true
+			a.revalidateCodeOverview(profile)
 			return ov, nil
 		}
 	}
@@ -391,6 +448,9 @@ func (a *App) codeOverviewUncached(profile string) (CodeOverview, error) {
 	// notifications does not fail the call), so this stores partial results
 	// too -- which is correct: re-running the whole fan-out would not fix a
 	// scope problem, and the refresh button bypasses the memo anyway.
+	// Stamp before storing so the copy returned here and the copy in the memo
+	// report the same age -- storeCodeOverview takes its argument by value.
+	out.FetchedAt = time.Now().UTC().Format(time.RFC3339)
 	storeCodeOverview(profile, out)
 	return out, nil
 }

@@ -14,7 +14,7 @@
   import { currentPanel, settingsState, jobsState } from '../stores.svelte';
   import { codeState, itemCloneURL, type Issue, type Repo } from '../stores/code.svelte';
   import { openInBrowser } from '../utils/api';
-  import { timeAgoOrDate } from '../utils/format';
+  import { timeAgo, timeAgoOrDate } from '../utils/format';
   import CardExpander from '../components/CardExpander.svelte';
   import DispatchModal from '../components/DispatchModal.svelte';
   import MarkdownRenderer from '../components/MarkdownRenderer.svelte';
@@ -40,13 +40,29 @@
 
   onMount(() => { void codeState.loadAgents(); });
 
-  // Re-fetch on mount AND on every profile switch — the whole page is one
-  // profile's account, so a switch is a full reload, not a filter.
+  // Re-fetch on mount AND on every profile switch. The store decides what a
+  // switch costs: it is keyed by profile, so changing profile clears the rows
+  // while a SAME-profile remount keeps them and revalidates behind them.
+  //
+  // This used to call codeState.reset() first. AppShell renders panels under
+  // {#if}, so every navigation away destroys this component — and resetting on
+  // mount threw away rows the module-scoped store had kept, dropping the panel
+  // into a full spinner over data that had been on screen a second earlier.
   $effect(() => {
-    const p = activeProfile;
-    codeState.reset();
-    void codeState.refresh(p);
+    void codeState.refresh(activeProfile);
   });
+
+  // Live age for the "updated Nm ago" label: a static string would still read
+  // "just now" ten minutes later. One tick a minute, only while mounted.
+  let now = $state(Date.now());
+  $effect(() => {
+    const t = setInterval(() => (now = Date.now()), 60_000);
+    return () => clearInterval(t);
+  });
+
+  const fetchedAgo = $derived(
+    codeState.fetchedAt ? timeAgo(Date.parse(codeState.fetchedAt), now) : ''
+  );
 
   /** epoch-ms for the shared time formatters; GitHub sends RFC3339. */
   function ts(iso: string): number {
@@ -149,6 +165,20 @@
           one-click hand-off to an agent.
         {/if}
       </p>
+      <!-- Freshness, so rows kept across a remount are not mistaken for live
+           ones. `backgroundBusy` covers both layers: this store re-fetching,
+           and the backend serving a past-TTL copy while it refreshes. -->
+      {#if !codeState.detailRepo && (fetchedAgo || codeState.backgroundBusy)}
+        <p class="freshness" aria-live="polite">
+          {#if codeState.backgroundBusy}
+            <span class="dot" aria-hidden="true"></span>
+            <span>Checking for updates…</span>
+            {#if fetchedAgo}<span class="sep">·</span><span>showing data from {fetchedAgo}</span>{/if}
+          {:else}
+            <span>Updated {fetchedAgo}</span>
+          {/if}
+        </p>
+      {/if}
     </div>
     <!-- Refresh re-runs whichever view is showing, not always the overview. -->
     {#if codeState.detailRepo}
@@ -162,9 +192,18 @@
         {codeState.detailLoading ? 'Refreshing…' : 'Refresh'}
       </button>
     {:else}
-      <button class="refresh" title="Refresh" disabled={codeState.loading} onclick={() => codeState.refresh(activeProfile, true)}>
+      <!-- Disabled only on a cold load: during a background revalidate there
+           ARE rows on screen, and asking for them again is a reasonable thing
+           to want. -->
+      <button
+        class="refresh"
+        class:busy={codeState.backgroundBusy}
+        title="Refresh"
+        disabled={codeState.loading}
+        onclick={() => codeState.refresh(activeProfile, true)}
+      >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
-        {codeState.loading ? 'Refreshing…' : 'Refresh'}
+        {codeState.loading || codeState.backgroundBusy ? 'Refreshing…' : 'Refresh'}
       </button>
     {/if}
   </header>
@@ -595,6 +634,33 @@
     padding: 5px 10px; font-size: 0.8rem; cursor: pointer;
   }
   .refresh:disabled { opacity: 0.6; cursor: progress; }
+  /* The icon turns while a background check runs, so the button itself says
+     something is happening even if the freshness line is scrolled past. */
+  .refresh.busy svg { animation: spin 1.1s linear infinite; }
+
+  /* Freshness line: deliberately quieter than .sub. It must be readable when
+     looked for and ignorable otherwise — the rows are the content. */
+  .freshness {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin: 4px 0 0; font-size: 0.75rem; color: var(--color-text-muted);
+  }
+  .freshness .sep { opacity: 0.5; }
+  .freshness .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--color-accent, var(--color-text-secondary));
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.25; }
+    50% { opacity: 1; }
+  }
+  /* Respect the OS setting: a persistent pulse is exactly what this hurts. */
+  @media (prefers-reduced-motion: reduce) {
+    .refresh.busy svg { animation: none; }
+    .freshness .dot { animation: none; opacity: 0.8; }
+  }
 
   .card {
     background: var(--color-bg-secondary);

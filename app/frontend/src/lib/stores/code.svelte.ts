@@ -1,18 +1,29 @@
 /**
  * Store for the Code panel — the profile's GitHub launchpad.
  *
- * One `GitHubOverview(profile)` call fills every section, so the four result
+ * One `CodeOverview(profile)` call fills every section, so the four result
  * lists, the loading/error flags, and the dispatch-modal target all live here
  * rather than in CodePanel's `$state`. The panel's sections and the dispatch
  * modal read the same source without prop-drilling through three levels.
  *
- * Nothing is cached across profiles: a refresh for profile B overwrites the
- * lists, and a response that lands after a profile switch is DROPPED (the
- * overview echoes back which profile it belongs to). Showing one profile's
- * repositories under another profile's name would be a leak, not a glitch.
+ * ## Stale-while-revalidate
+ *
+ * The overview goes through `resource()`, which exists for exactly this
+ * problem. AppShell renders panels under `{#if}`, so every navigation away
+ * destroys CodePanel; this store is a module singleton that outlives it. The
+ * panel used to `reset()` on mount, discarding rows that were still in memory
+ * and dropping into a full-panel spinner over data that had been on screen a
+ * second earlier. Now a same-profile remount keeps its rows and flips
+ * `refreshing`; only a real profile change clears them.
+ *
+ * Isolation is unchanged and still the point: the resource is KEYED by
+ * profile, so a key change clears the retained value and a response that
+ * lands after a switch is discarded. Showing one profile's repositories under
+ * another profile's name would be a leak, not a glitch.
  */
 import { getApi } from '../utils/api';
 import { notifications } from '../notifications.svelte';
+import { resource } from './resource.svelte';
 
 export interface Repo {
   provider: 'github' | 'ado';
@@ -98,6 +109,10 @@ export interface CodeOverview {
   jira_issues: Record<string, JiraIssue>;
   /** Non-fatal: a Jira outage costs the chips, never the git rows. */
   jira_error: string;
+  /** RFC3339 timestamp of when these rows came off the providers. */
+  fetched_at: string;
+  /** True when the backend served a past-TTL copy and is refreshing behind it. */
+  stale: boolean;
 }
 
 export interface Branch {
@@ -299,26 +314,78 @@ function splitReasons(reason: string): string[] {
 
 class CodeStore {
   // ── Overview ─────────────────────────────────────────────────────────────
+  //
+  // The profile being viewed. Held separately from the resource's key because
+  // the key is read DURING a fetch, while this is what the header renders —
+  // it must not change until rows for the new profile actually land.
   profile = $state('');
-  loading = $state(false);
+  /** Which profile the in-flight (or next) fetch is for — the resource key. */
+  private requested = $state('');
+  /** Set on the next fetch only: the Refresh button bypasses the server memo. */
+  private forceNext = false;
+
+  // One resource holds the whole payload. Every list below is a view of it, so
+  // there is no second copy to keep in sync and no `apply()` to forget a field.
+  private overview = resource<CodeOverview | null>(
+    (api) => api.CodeOverview(this.requested, this.forceNext) as Promise<CodeOverview>,
+    {
+      initial: null,
+      label: 'Code overview',
+      // Profile scoping, the invariant this codebase cares most about.
+      key: () => this.requested,
+    },
+  );
+
+  /** True only while there is nothing to show yet — the full-panel spinner. */
+  get loading() {
+    return this.overview.loading;
+  }
+  /** True while re-fetching over rows that are already on screen. */
+  get refreshing() {
+    return this.overview.refreshing;
+  }
   /** Set only when the single overview call itself failed (no sections at all). */
-  loadError = $state<string | null>(null);
-  tokenMissing = $state(false);
-  tokenInvalid = $state(false);
+  get loadError() {
+    return this.overview.error;
+  }
+  /** RFC3339 time the visible rows came off the providers, or '' before any load. */
+  get fetchedAt() {
+    return this.overview.value?.fetched_at ?? '';
+  }
+  /**
+   * True when the BACKEND handed over a past-TTL copy and is refreshing it
+   * behind us. Distinct from `refreshing`, which is this store's own fetch:
+   * both mean "a background check is running", and the panel shows one
+   * indicator for either.
+   */
+  get serverRevalidating() {
+    return this.overview.value?.stale ?? false;
+  }
+  /** True while any background check is in flight, from either layer. */
+  get backgroundBusy() {
+    return this.refreshing || this.serverRevalidating;
+  }
 
-  repos = $state<Repo[]>([]);
-  pullRequests = $state<Issue[]>([]);
-  issues = $state<Issue[]>([]);
-  notifications = $state<GitHubNotification[]>([]);
+  private get ov(): CodeOverview | null {
+    return this.overview.value;
+  }
 
-  issueKeys = $state<Record<string, IssueLink[]>>({});
-  jiraIssues = $state<Record<string, JiraIssue>>({});
-  jiraError = $state('');
+  tokenMissing = $derived(this.ov?.token_missing ?? false);
+  tokenInvalid = $derived(this.ov?.token_invalid ?? false);
 
-  reposError = $state('');
-  pullRequestsError = $state('');
-  issuesError = $state('');
-  notificationsError = $state('');
+  repos = $derived(this.ov?.repos ?? []);
+  pullRequests = $derived(this.ov?.pull_requests ?? []);
+  issues = $derived(this.ov?.issues ?? []);
+  notifications = $derived(this.ov?.notifications ?? []);
+
+  issueKeys = $derived(this.ov?.issue_keys ?? {});
+  jiraIssues = $derived(this.ov?.jira_issues ?? {});
+  jiraError = $derived(this.ov?.jira_error ?? '');
+
+  reposError = $derived(this.ov?.repos_error ?? '');
+  pullRequestsError = $derived(this.ov?.pull_requests_error ?? '');
+  issuesError = $derived(this.ov?.issues_error ?? '');
+  notificationsError = $derived(this.ov?.notifications_error ?? '');
 
   /** Client-side filter over the repositories list. */
   repoFilter = $state('');
@@ -446,30 +513,32 @@ class CodeStore {
    */
   async refresh(profile: string, force = false): Promise<void> {
     if (!profile) {
-      this.reset();
+      this.hardReset();
       return;
     }
-    const a = await getApi();
-    if (!a) {
-      this.loadError = 'API bindings unavailable';
-      return;
-    }
-    this.loading = true;
+    // A real profile change resets the per-profile view state. The ROWS are
+    // not cleared here — the resource is keyed by profile and clears them
+    // itself, which keeps that decision in one place.
+    const changed = profile !== this.requested;
+    if (changed) this.reset();
+    this.requested = profile;
+    // force=true bypasses the Go-side per-profile memo; plain navigation
+    // reuses it, which is what stops every panel visit re-issuing the whole
+    // provider fan-out. A profile switch is NOT a force: the new profile's
+    // own memo is perfectly good.
+    this.forceNext = force;
     try {
-      // force=true bypasses the Go-side per-profile memo; plain navigation
-      // reuses it, which is what stops every panel visit re-issuing the whole
-      // provider fan-out.
-      const ov = (await a.CodeOverview(profile, force)) as CodeOverview;
-      // A response for a profile the user has since switched away from is
-      // stale — dropping it keeps the header's profile name honest.
-      if (ov.profile && ov.profile !== profile) return;
-      this.apply(ov);
-      this.loadError = null;
-    } catch (e) {
-      this.loadError = String(e);
+      // The resource collapses concurrent refreshes onto the one in flight,
+      // which is right for a remount and WRONG across a profile switch: the
+      // in-flight request is for the old key, so it would be discarded on
+      // arrival and the new profile would load nothing at all. Opting out of
+      // the collapse on a key change is what makes the switch land.
+      await this.overview.refresh({ force: force || changed });
     } finally {
-      this.loading = false;
+      this.forceNext = false;
     }
+    // Only name the profile in the header once its rows are the ones showing.
+    if (this.overview.loaded) this.profile = this.ov?.profile || profile;
   }
 
   /** Load the hub's agent role catalog for the modal's picker. */
@@ -483,23 +552,6 @@ class CodeStore {
     } catch {
       /* fleet may be down — the picker falls back to ['worker'] */
     }
-  }
-
-  private apply(ov: CodeOverview): void {
-    this.profile = ov.profile;
-    this.tokenMissing = ov.token_missing;
-    this.tokenInvalid = ov.token_invalid;
-    this.repos = ov.repos ?? [];
-    this.pullRequests = ov.pull_requests ?? [];
-    this.issues = ov.issues ?? [];
-    this.notifications = ov.notifications ?? [];
-    this.reposError = ov.repos_error ?? '';
-    this.pullRequestsError = ov.pull_requests_error ?? '';
-    this.issuesError = ov.issues_error ?? '';
-    this.notificationsError = ov.notifications_error ?? '';
-    this.issueKeys = ov.issue_keys ?? {};
-    this.jiraIssues = ov.jira_issues ?? {};
-    this.jiraError = ov.jira_error ?? '';
   }
 
   /**
@@ -516,24 +568,19 @@ class CodeStore {
       .filter((i): i is JiraIssue & { manual: boolean } => Boolean(i));
   }
 
+  /**
+   * Clear the view state that belongs to one profile. The ROWS are not touched:
+   * the resource is keyed by profile and drops them on a key change, so a
+   * same-profile remount keeps its data while this still runs harmlessly.
+   *
+   * Call this on a profile change, NOT on every panel mount — resetting on
+   * mount is what made returning to the Work panel show an empty spinner over
+   * rows that were still in memory.
+   */
   reset(): void {
     // A profile switch closes the detail view: leaving another account's
     // repo open under a new profile's name would be a leak, not a glitch.
     this.closeDetail();
-    this.repos = [];
-    this.pullRequests = [];
-    this.issues = [];
-    this.notifications = [];
-    this.reposError = '';
-    this.pullRequestsError = '';
-    this.issuesError = '';
-    this.notificationsError = '';
-    this.issueKeys = {};
-    this.jiraIssues = {};
-    this.jiraError = '';
-    this.tokenMissing = false;
-    this.tokenInvalid = false;
-    this.loadError = null;
     // Lane results belong to the profile they were started under.
     this.lastTaskID = '';
     this.lastSessionURL = '';
@@ -545,7 +592,27 @@ class CodeStore {
     this.reasonFilter = 'all';
   }
 
+  /** reset() plus the rows themselves — for "no profile at all" and for tests. */
+  hardReset(): void {
+    this.reset();
+    this.overview.reset();
+    this.profile = '';
+    this.requested = '';
+  }
+
   // ── Notifications: mark read ───────────────────────────────────────────────
+
+  /**
+   * Replace just the notifications on the held payload. The lists are views of
+   * one resource value, so an optimistic edit has to go through it rather than
+   * assigning the derived field.
+   */
+  private setNotifications(rows: GitHubNotification[]): void {
+    const cur = this.ov;
+    if (!cur) return;
+    this.overview.set({ ...cur, notifications: rows });
+  }
+
 
   /**
    * Mark one notification read on GitHub and drop it from the list.
@@ -558,11 +625,11 @@ class CodeStore {
     const a = await getApi();
     if (!a) return;
     const prev = this.notifications;
-    this.notifications = this.notifications.filter((n) => n.id !== id);
+    this.setNotifications(prev.filter((n) => n.id !== id));
     try {
       await (a as any).MarkNotificationRead(profile, id);
     } catch (e: any) {
-      this.notifications = prev;
+      this.setNotifications(prev);
       notifications.error(`Couldn't mark read: ${e?.message ?? e}`);
     }
   }
@@ -574,12 +641,12 @@ class CodeStore {
     const a = await getApi();
     if (!a) return;
     const prev = this.notifications;
-    this.notifications = [];
+    this.setNotifications([]);
     try {
       await (a as any).MarkAllNotificationsRead(profile);
       notifications.success('All notifications marked read');
     } catch (e: any) {
-      this.notifications = prev;
+      this.setNotifications(prev);
       notifications.error(`Couldn't mark all read: ${e?.message ?? e}`);
     }
   }
