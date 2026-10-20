@@ -2787,9 +2787,6 @@ export namespace main {
 	    cost_series: ChartPoint[];
 	    cost_by_model: ChartShare[];
 	    cost_by_source: ChartShare[];
-	    sessions_url?: string;
-	    traces_url?: string;
-	    dashboard_url?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AgentWorkCharts(source);
@@ -2801,9 +2798,6 @@ export namespace main {
 	        this.cost_series = this.convertValues(source["cost_series"], ChartPoint);
 	        this.cost_by_model = this.convertValues(source["cost_by_model"], ChartShare);
 	        this.cost_by_source = this.convertValues(source["cost_by_source"], ChartShare);
-	        this.sessions_url = source["sessions_url"];
-	        this.traces_url = source["traces_url"];
-	        this.dashboard_url = source["dashboard_url"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

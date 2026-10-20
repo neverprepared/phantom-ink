@@ -107,8 +107,8 @@ func TestLiveGetAgentWorkCharts(t *testing.T) {
 		t.Logf("%s granularity=%s in %v: cost pts=%d ($%.2f) models=%d sources=%d",
 			since, c.Granularity, time.Since(start).Round(time.Millisecond),
 			len(c.CostSeries), cost, len(c.CostByModel), len(c.CostBySource))
-		if c.DashboardURL == "" {
-			t.Error("no dashboard link resolved")
+		if len(c.CostSeries) == 0 {
+			t.Error("no cost series; the charts read metrics-otel and a live window should have points")
 		}
 		// The source split is the point of moving these charts off Langfuse: a
 		// non-trivial window always has at least a "main" bucket, and the

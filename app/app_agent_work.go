@@ -338,16 +338,22 @@ type AgentWorkCharts struct {
 	// view Langfuse cannot provide: the delegated work its Stop hook misses is
 	// precisely the subagent bucket.
 	CostBySource []ChartShare `json:"cost_by_source"`
-	// Links are empty when the project id could not be resolved, and the UI
-	// omits the link rather than offering one that 404s.
-	SessionsURL  string `json:"sessions_url,omitempty"`
-	TracesURL    string `json:"traces_url,omitempty"`
-	DashboardURL string `json:"dashboard_url,omitempty"`
 }
 
 // chartsQueryTimeout is longer than the list's: GetCharts issues four
 // aggregations, and a metrics query scans a wider window than a session page.
 const chartsQueryTimeout = 20 * time.Second
+
+// DEPRECATED, 2026-10-19: ListAgentWork, GetAgentWorkTimeline and
+// GetAgentWorkFreshness below are no longer called by any panel. The Agent Work
+// panel reads ListAgentSessions / GetAgentSessionTimeline (app_agent_sessions.go,
+// OpenSearch) instead, and this file's charts read metrics-otel.
+//
+// They are left in place for one release rather than deleted in the same change
+// that switched the reader, so a regression can be compared against the old
+// path. Delete them and app/langfuse with the rest of the Langfuse teardown —
+// leaving two session readers with the same method names is what made the
+// OpenSearch one sit unused and unnoticed in the first place.
 
 // GetAgentWorkCharts returns the trend and breakdown data for the chart tabs.
 //
@@ -397,16 +403,9 @@ func (a *App) GetAgentWorkCharts(profile, since string) (*AgentWorkCharts, error
 		CostBySource: shares(charts.CostBySource),
 	}
 
-	// Deep links into Langfuse remain a convenience for reading ONE session,
-	// which is still its job. Failing to resolve the project must not cost the
-	// charts, so the error is dropped and the links are simply absent.
-	if c := a.langfuseClient(profile); c != nil {
-		if id, lerr := c.ProjectID(ctx); lerr == nil {
-			out.SessionsURL = c.UILink(id, "sessions")
-			out.TracesURL = c.UILink(id, "traces")
-			out.DashboardURL = c.UILink(id, "dashboards")
-		}
-	}
+	// The Langfuse deep links are gone with the panel buttons that opened them.
+	// Resolving a project id costs a round trip, and the URLs pointed at a
+	// store that is being decommissioned.
 	return out, nil
 }
 

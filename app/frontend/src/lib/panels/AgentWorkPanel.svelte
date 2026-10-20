@@ -1,90 +1,117 @@
 <script lang="ts">
   // Agent Work: the table of agent sessions, and the drill-down into one.
   //
-  // Reads from BOTH stores, because neither can do the whole job and the
-  // measurements are the reason this is a split rather than a choice:
+  // Reads OpenSearch only. It read BOTH stores until 2026-10-19 -- Langfuse for
+  // the sessions and their content, OpenSearch for the activity dot -- because
+  // Langfuse was the only place the conversation existed. That stopped being
+  // true when Claude Code's content-logging flags were switched on: logs-otel
+  // now carries full prompt and assistant text (measured at 46 user prompts and
+  // 201 assistant responses on one session), so the one thing Langfuse was
+  // here for is available from the store that was already fresher and complete.
   //
-  //  - LANGFUSE owns the work. Its observations carry the real prompt and
-  //    completion text, so "click a session and read what it said" is only
-  //    answerable there. OpenSearch has no content at all — it is stripped from
-  //    spans by design, and the log attributes read "<REDACTED>".
-  //  - OPENSEARCH owns liveness. Measured together on one live session,
-  //    OpenSearch was 33s behind and Langfuse 725s: the Claude Code capture is
-  //    a Stop hook, firing once per COMPLETED turn, so a session mid-turn is
-  //    invisible in Langfuse until the turn ends. A dot built on Langfuse
-  //    recency marks a working session dead.
+  // The measurements that settled it, all on live data:
+  //   freshness  OpenSearch ~33s behind, Langfuse 725s -- its capture is a Stop
+  //              hook firing once per COMPLETED turn, so a session mid-turn was
+  //              invisible and a short window looked like a broken panel.
+  //   cost       Langfuse understated by roughly half (813 tool calls / $309.05
+  //              against 1,786 / $416.26 for the same session) because that
+  //              same hook misses delegated subagent work.
+  //   attribution  query_source is on the OTEL events, so subagent work is
+  //              distinguishable here. Langfuse could not do it at all.
   //
-  // The Go side merges them (app_agent_work.go) and each half degrades on its
-  // own: either store being unreachable costs its own columns, never the row.
+  // What was lost: the parent/child observation tree, and with it the tree and
+  // radial shapes. OpenSearch gives a flat event stream keyed by turn_id, so
+  // the drill-down is turn-grouped instead.
   //
-  // Scope is the ACTIVE PROFILE, always. There is no "all profiles" view and
-  // cannot be: Langfuse API keys are project-scoped, so the credentials
-  // themselves select the profile. That is also what stops this panel reading
-  // another profile's traces.
+  // Scope is the ACTIVE PROFILE, always. It is now enforced by
+  // resource.attributes.workspace on the events themselves rather than by which
+  // project the credentials pointed at -- native stamping, so no inheritance
+  // across derived edges and no cross-profile leakage.
+
   import { getApi } from '../utils/api';
   import { profileState } from '../stores.svelte';
   import Badge from '../components/Badge.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import MetricsChart from '../components/MetricsChart.svelte';
   import PieChart from '../components/PieChart.svelte';
-  import SessionTree from '../components/SessionTree.svelte';
   import Spinner from '../components/Spinner.svelte';
   import { openInBrowser } from '../utils/api';
 
+  // opensearch.AgentSession. Replaced a Langfuse-shaped row on 2026-10-19 when
+  // Langfuse was deprecated: this is a strict superset of what that carried,
+  // and its cost is the complete figure rather than the Stop hook's partial
+  // view (813 tool calls / $309.05 there against 1,786 / $416.26 here for the
+  // same session).
   interface AgentWorkRow {
     session_id: string;
     workspace: string;
     first_seen: string;
     last_seen: string;
-    // From Langfuse. `observations` counts generations, tool calls and spans
-    // together — it is NOT the OpenSearch tool-call figure.
-    observations: number;
-    generations: number;
+    // Distinct prompt@id values — USER turns, not tool calls.
+    turns: number;
     tool_calls: number;
-    tokens: number;
+    failures: number;
+    last_tool?: string;
+    top_tools?: string[] | null;
     // Typed as possibly absent on purpose: Go marshals a nil slice as `null`,
     // and reading .length on it threw during render and killed this component.
     models?: string[] | null;
     cost_usd: number;
-    // From OpenSearch. `liveness_available` distinguishes "no overlay" from
-    // "the overlay says unknown"; without it a missing store would render as
-    // a confident "dormant".
+    // tokens_in EXCLUDES cache reads and writes, which dominate by orders of
+    // magnitude on a long session. Reporting it alone beside the cost reads as
+    // a contradiction, so the cache counters are shown rather than folded in.
+    tokens_in: number;
+    tokens_out: number;
+    tokens_cache_in: number;
+    tokens_cache_new: number;
     liveness?: 'active' | 'idle' | 'dormant' | 'unknown';
     last_activity_ms?: number;
     last_heartbeat_ms?: number;
-    liveness_available: boolean;
+    last_beat?: string;
   }
 
-  interface Observation {
-    id: string;
-    parent_id?: string;
-    // Precomputed in Go from the parent links, so rendering never walks the
-    // tree. A parent outside the fetched page counts as a root, which stops a
-    // truncated fetch producing runaway indentation.
-    depth: number;
-    name: string;
-    type: string;
-    start_time: string;
-    end_time?: string;
-    latency_ms?: number;
+  // opensearch.SessionEvent. A FLAT event stream grouped by turn_id, not a
+  // parent/child tree: that is the one structural thing Langfuse had that this
+  // does not. In exchange `agent` carries query_source, so subagent work is
+  // attributable — which Langfuse could not do at all.
+  interface SessionEvent {
+    sequence: number;
+    time: string;
+    // user_prompt | assistant_response | tool_result | api_request
+    kind: string;
+    // prompt@id — the join key that groups events into one turn.
+    turn_id: string;
+    tool_name?: string;
+    tool_use_id?: string;
+    success?: boolean;
+    duration_ms?: number;
+    input_size?: number;
+    result_size?: number;
+    // query_source: repl_main_thread for the session's own thread,
+    // agent:* for a subagent, away_summary/compact/etc for harness overhead
+    // that still costs money. Absent on tool_result.
+    agent?: string;
     model?: string;
     cost_usd?: number;
-    level?: string;
-    status_message?: string;
-    input?: string;
-    output?: string;
+    input_tokens?: number;
+    output_tokens?: number;
+    prompt?: string;
+    response?: string;
+    // Length-only when content logging is off, so a redacted turn still
+    // reports its size rather than looking empty.
+    redacted?: boolean;
   }
 
   interface SessionTimeline {
     session_id: string;
     workspace: string;
-    observations: Observation[];
-    total: number;
+    events: SessionEvent[];
+    total_events: number;
     truncated: boolean;
-    // False when nothing carried input or output. Native OTLP spans carry
-    // neither, so a span-only session has structure but no conversation — said
-    // plainly rather than rendered as an empty transcript.
-    content_available: boolean;
+    // Non-empty when the search only partially succeeded (shard failures).
+    // Surfaced rather than swallowed: a drill-down that silently drops events
+    // is worse than one that says it did.
+    warning?: string;
   }
 
   interface Point {
@@ -106,9 +133,6 @@
     // misses is exactly the subagent bucket, so this split was the one thing
     // it could never show.
     cost_by_source?: Share[] | null;
-    sessions_url?: string;
-    traces_url?: string;
-    dashboard_url?: string;
   }
 
   type View = 'sessions' | 'trends' | 'breakdown';
@@ -116,13 +140,13 @@
   // Three shapes of one session, per the Agent Work Wheel probe: a list to act
   // on, a tree to audit, a wheel to see scale. Each answers a different
   // question, so all three are kept rather than one being chosen.
-  type SessionView = 'list' | 'tree' | 'radial';
 
-  const SESSION_VIEWS: { id: SessionView; label: string; hint: string }[] = [
-    { id: 'list', label: 'list', hint: 'Chronological rows — scan and act' },
-    { id: 'tree', label: 'tree', hint: 'Depth across, time down — the audit shape' },
-    { id: 'radial', label: 'radial', hint: 'Time clockwise, depth outward — scale and fan-out' },
-  ];
+  // The tree and radial shapes are GONE with Langfuse, not merely hidden: they
+  // rendered a parent/child observation tree, and OpenSearch gives a flat event
+  // stream keyed by turn_id. Rebuilding them means deriving a turn -> events
+  // hierarchy first, which is a design question rather than a port, so the
+  // drill-down is a turn-grouped list for now. SessionTree.svelte is left in
+  // the tree for whoever takes that on.
 
   const VIEWS: { id: View; label: string }[] = [
     { id: 'sessions', label: 'sessions' },
@@ -131,7 +155,7 @@
   ];
 
   // The logs export batches every 10s; polling faster cannot surface fresher
-  // data. Langfuse is slower still (Stop hook), so this is generous for it.
+  // data.
   const POLL_MS = 15_000;
 
   // A client-side deadline on every call. The Go side bounds each of its own
@@ -168,22 +192,16 @@
     { label: '3d', value: 'now-3d' },
   ];
 
-  // Ranges under an hour are routinely EMPTY here, and that is a property of
-  // the capture rather than a fault: Langfuse's Claude Code hook fires on Stop,
-  // once per completed turn, so nothing is written during a long turn. Measured
-  // while these ranges were added, the newest observation was 2h30m old while
-  // the session was actively working. So when a list comes back empty the panel
-  // asks how far behind the store is and says so, instead of showing a blank
-  // table that looks like the bug we spent five rounds chasing.
-  const SHORT_RANGES = new Set(['now-15m', 'now-30m', 'now-60m']);
+  // Short ranges used to be routinely empty because Langfuse only wrote at the
+  // end of a turn. OpenSearch is event-driven and lags roughly a minute, so a
+  // 15-minute window now reflects a 15-minute reality and these ranges mean
+  // what they say.
 
   let view = $state<View>('sessions');
-  let sessionView = $state<SessionView>('list');
   // A pinned observation survives hover, so clicking one and then moving the
   // mouse does not lose it.
   let pinnedObsId = $state<string | null>(null);
   let charts = $state<Charts | null>(null);
-  let freshness = $state<{ age_ms: number; has_data: boolean } | null>(null);
   let chartsLoading = $state(false);
   let chartsError = $state('');
   let chartsEpoch = 0;
@@ -233,8 +251,8 @@
         return;
       }
       const rows = await withTimeout(
-        api.ListAgentWork(activeProfile, range, 50),
-        'ListAgentWork',
+        api.ListAgentSessions(activeProfile, range, 50),
+        'ListAgentSessions',
       );
       if (mine !== listEpoch) return;
       // The server already returns most-recently-active first; lift the
@@ -242,13 +260,6 @@
       sessions = ((rows ?? []) as AgentWorkRow[])
         .slice()
         .sort((a, b) => Number(isActive(b)) - Number(isActive(a)));
-      // Only asked for when there is nothing to show: one extra call in the
-      // case that needs an explanation, none in the case that does not.
-      if (sessions.length === 0) {
-        void loadFreshness();
-      } else {
-        freshness = null;
-      }
     } catch (e) {
       if (mine !== listEpoch) return;
       error = String(e);
@@ -256,29 +267,6 @@
     } finally {
       if (mine === listEpoch) loading = false;
     }
-  }
-
-  async function loadFreshness() {
-    try {
-      const api = await getApi();
-      if (!api || !activeProfile) return;
-      freshness = (await withTimeout(
-        api.GetAgentWorkFreshness(activeProfile),
-        'GetAgentWorkFreshness',
-      )) as { age_ms: number; has_data: boolean };
-    } catch {
-      // A failed explanation must not become an error of its own.
-      freshness = null;
-    }
-  }
-
-  function humanAge(ms: number): string {
-    const s = Math.round(ms / 1000);
-    if (s < 60) return `${s}s`;
-    if (s < 3600) return `${Math.round(s / 60)}m`;
-    const h = Math.floor(s / 3600);
-    const m = Math.round((s % 3600) / 60);
-    return m ? `${h}h ${m}m` : `${h}h`;
   }
 
   // Charts are fetched only while a chart tab is open. GetCharts issues four
@@ -338,9 +326,6 @@
   const activeCount = $derived(sessions.filter(isActive).length);
 
   function livenessTitle(s: AgentWorkRow): string {
-    if (!s.liveness_available) {
-      return 'No liveness data — the OpenSearch overlay was unavailable. This is not a statement that the session is idle.';
-    }
     const secs = (ms?: number) => `${Math.round((ms ?? 0) / 1000)}s`;
     switch (s.liveness) {
       case 'active':
@@ -379,7 +364,7 @@
         return;
       }
       const tl = await withTimeout(
-        api.GetAgentWorkTimeline(s.session_id, activeProfile, 500),
+        api.GetAgentSessionTimeline(s.session_id, activeProfile, 500),
         'GetAgentWorkTimeline',
       );
       if (mine !== timelineEpoch) return;
@@ -404,7 +389,7 @@
   }
 
   const pinnedObs = $derived(
-    (timeline?.observations ?? []).find((o) => o.id === pinnedObsId) ?? null,
+    (timeline?.events ?? []).find((e) => String(e.sequence) === pinnedObsId) ?? null,
   );
 
   // --- formatting -----------------------------------------------------------
@@ -461,8 +446,11 @@
     return 'default';
   }
 
-  function isError(o: Observation): boolean {
-    return (o.level ?? '').toUpperCase() === 'ERROR';
+  // success is TRI-STATE: absent on events that have no outcome (a user_prompt,
+  // an api_request), so only an explicit false is an error. Absent must not
+  // render as failed.
+  function isError(e: SessionEvent): boolean {
+    return e.success === false;
   }
 
   // PieChart wants {name, value, label}; the label is formatted here rather
@@ -482,22 +470,41 @@
     })),
   );
 
-  // Says WHY the window is empty, using the measured lag rather than a
-  // generic "no data" that reads as a malfunction.
+  // Says WHY the window is empty. The previous version explained Langfuse's
+  // Stop-hook lag -- it wrote once per COMPLETED turn, so a short window was
+  // routinely empty while work was happening, and the panel had to probe how
+  // far behind the store was to say so. OpenSearch is event-driven and lags
+  // roughly 33s, so an empty short window now means genuinely idle rather than
+  // "wait for the turn to end", and no freshness probe is needed.
+  // Group the flat event stream into turns. turn_id is prompt@id, so one turn
+  // is one user prompt and everything it caused — the unit a person actually
+  // reads. Events arrive oldest-first, and insertion order preserves that, so
+  // the groups come out in the order the work happened.
+  //
+  // Events with no turn_id (session-level plumbing) fall into one trailing
+  // group rather than one group each, which would otherwise shred the list.
+  const turnGroups = $derived.by(() => {
+    const byTurn = new Map<string, SessionEvent[]>();
+    for (const e of timeline?.events ?? []) {
+      const key = e.turn_id || '(session)';
+      const bucket = byTurn.get(key);
+      if (bucket) bucket.push(e);
+      else byTurn.set(key, [e]);
+    }
+    return [...byTurn.entries()].map(([id, events]) => ({
+      id,
+      events,
+      cost: events.reduce((a, e) => a + (e.cost_usd ?? 0), 0),
+      // Which agents touched this turn. tool_result carries no query_source, so
+      // this is drawn from the model calls — absence is not "main thread", it
+      // is "not recorded on this event".
+      agents: [...new Set(events.map((e) => e.agent).filter(Boolean))] as string[],
+    }));
+  });
+
   const emptyMessage = $derived.by(() => {
     const win = range.replace('now-', 'the last ');
-    const base = `Queried Langfuse for environment "${activeProfile}" over ${win}.`;
-    if (freshness && !freshness.has_data) {
-      return `${base} This project holds no observations at all yet.`;
-    }
-    if (freshness) {
-      const age = humanAge(freshness.age_ms);
-      const short = SHORT_RANGES.has(range)
-        ? ' Langfuse captures Claude Code on a Stop hook — it writes once per completed turn, so a short window is often empty even while work is happening.'
-        : '';
-      return `${base} The newest observation in Langfuse is ${age} old, so nothing falls inside this window.${short}`;
-    }
-    return `${base} Nothing has been traced there in that range.`;
+    return `No agent activity in ${win} for "${activeProfile}". Events reach OpenSearch within about a minute of happening, so an empty short window means nothing ran — not that a turn is still in flight.`;
   });
 
   const costTotal = $derived(
@@ -542,10 +549,10 @@
   </div>
 
   <p class="scope-note">
-    Sessions and content from <strong>Langfuse</strong>; the activity dot from
-    OpenSearch, which ingests in seconds where the Langfuse capture waits for a
-    turn to finish. Scoped to <strong>{activeProfile || 'no profile'}</strong> —
-    Langfuse keys are per project, so there is no all-profiles view.
+    Sessions, content and cost from <strong>OpenSearch</strong>. Scoped to
+    <strong>{activeProfile || 'no profile'}</strong> by
+    <code>resource.attributes.workspace</code>, stamped on the events
+    themselves.
   </p>
 
   {#if activeCount}
@@ -559,10 +566,11 @@
       <strong>Could not load sessions.</strong>
       <p>{error}</p>
       <p class="notice-sub">
-        This panel needs <code>LANGFUSE_BASE_URL</code>,
-        <code>LANGFUSE_PUBLIC_KEY</code> and <code>LANGFUSE_SECRET_KEY</code> in
-        the profile's env file. The keys are project-scoped, so each profile
-        carries its own.
+        This panel reads OpenSearch, so it needs the platform reachable and the
+        OpenSearch integration enabled. Sessions are scoped by
+        <code>resource.attributes.workspace</code>, which Claude Code stamps
+        from <code>OTEL_RESOURCE_ATTRIBUTES</code> — so a profile with no
+        sessions may simply not be stamping one.
       </p>
     </div>
   {/if}
@@ -583,10 +591,11 @@
         <thead>
           <tr>
             <th>session</th>
-            <th class="num">obs</th>
-            <th class="num">model calls</th>
+            <th class="num">turns</th>
             <th class="num">tools</th>
+            <th class="num">fails</th>
             <th class="num">tokens</th>
+            <th class="num">cached</th>
             <th class="num">cost</th>
             <th class="num">elapsed</th>
             <th>last active</th>
@@ -613,15 +622,22 @@
                   <span class="muted models">{s.models.join(', ')}</span>
                 {/if}
               </td>
-              <td class="num">{s.observations}</td>
-              <td class="num">{s.generations || '—'}</td>
-              <td class="num">{s.tool_calls || '—'}</td>
-              <td class="num">{compact(s.tokens)}</td>
+              <td class="num">{s.turns || '—'}</td>
+              <td class="num" title={s.last_tool ? `last: ${s.last_tool}` : ''}
+                >{s.tool_calls || '—'}</td>
+              <!-- Only a non-zero failure count is worth colouring; zero is the
+                   normal case and should not read as a warning. -->
+              <td class="num" class:bad={s.failures > 0}>{s.failures || '—'}</td>
+              <td class="num">{compact((s.tokens_in ?? 0) + (s.tokens_out ?? 0))}</td>
+              <!-- Cache reads get their own column rather than being folded in:
+                   they dominate by orders of magnitude, so one merged total
+                   reads as a contradiction against the cost. -->
+              <td class="num muted">{compact((s.tokens_cache_in ?? 0) + (s.tokens_cache_new ?? 0))}</td>
               <td class="num">{usd(s.cost_usd)}</td>
               <td class="num">{duration(s.first_seen, s.last_seen)}</td>
               <td class="muted">
                 <span
-                  class="dot dot-{s.liveness_available ? s.liveness : 'none'}"
+                  class="dot dot-{s.liveness ?? 'none'}"
                   title={livenessTitle(s)}
                   aria-label={livenessTitle(s)}
                 ></span>
@@ -645,8 +661,9 @@
       </header>
 
       <p class="muted totals">
-        {selected.observations} observations · {selected.generations} model calls ·
-        {selected.tool_calls} tool calls · {compact(selected.tokens)} tokens ·
+        {selected.turns} turns · {selected.tool_calls} tool calls ·
+        {selected.failures} failed · {compact((selected.tokens_in ?? 0) + (selected.tokens_out ?? 0))} tokens
+        ({compact((selected.tokens_cache_in ?? 0) + (selected.tokens_cache_new ?? 0))} cached) ·
         <span title="Langfuse's own pricing of the generations it captured. The
 OpenSearch figure for the same session is higher, because the Stop hook misses
 delegated work — treat this as Langfuse's view, not authoritative spend."
@@ -662,13 +679,15 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
           <div class="notice">
             <strong>This timeline is truncated.</strong>
             <p>
-              Showing the first {timeline.observations.length} observations of a
-              longer session. Deeper history is in Langfuse itself.
+              Showing the most recent {timeline.events.length} of
+              {timeline.total_events} events. The query takes the NEWEST events,
+              so what is missing is the earliest part of the session — for a
+              running session the recent end is the useful end.
             </p>
           </div>
         {/if}
 
-        {#if !timeline.content_available}
+        {#if timeline.events.length > 0 && timeline.events.every((e) => e.redacted || (!e.prompt && !e.response))}
           <div class="notice">
             <strong>No prompt or completion text in this session.</strong>
             <p>
@@ -680,66 +699,81 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
           </div>
         {/if}
 
-        <div class="viewbar">
-          <span class="vlbl">shape</span>
-          <div class="seg" role="tablist" aria-label="Session shape">
-            {#each SESSION_VIEWS as v (v.id)}
-              <button
-                class="seg-btn"
-                class:active={sessionView === v.id}
-                role="tab"
-                aria-selected={sessionView === v.id}
-                title={v.hint}
-                onclick={() => (sessionView = v.id)}
-              >{v.label}</button>
-            {/each}
-          </div>
-          <span class="muted vhint">
-            {SESSION_VIEWS.find((v) => v.id === sessionView)?.hint}
-          </span>
-        </div>
+        <!-- Turn-grouped event list. OpenSearch gives a FLAT event stream
+             keyed by turn_id (prompt@id), not the parent/child observation tree
+             Langfuse produced, so SessionTree and the radial view have nothing
+             to draw and their toggles are hidden above. What is gained: `agent`
+             carries query_source, so a model call made by a subagent is
+             distinguishable from the main thread — which Langfuse could not do
+             at all. -->
+        <ol class="turns">
+          {#each turnGroups as turn (turn.id)}
+            <li class="turn">
+              <div class="turn-head">
+                <span class="t">{clock(turn.events[0].time)}</span>
+                <span class="muted">{turn.events.length} events</span>
+                {#if turn.cost}<span class="muted">{usd(turn.cost)}</span>{/if}
+                {#if turn.agents.length}
+                  <span class="muted agents">{turn.agents.join(', ')}</span>
+                {/if}
+              </div>
+              <ul class="turn-events">
+                {#each turn.events as e (e.sequence)}
+                  <li
+                    class="ev"
+                    class:ev-bad={isError(e)}
+                    class:ev-pinned={String(e.sequence) === pinnedObsId}
+                  >
+                    <button
+                      class="ev-btn"
+                      onclick={() => (pinnedObsId = String(e.sequence) === pinnedObsId ? null : String(e.sequence))}
+                    >
+                      <Badge text={e.kind.replace(/_/g, ' ')} variant={typeVariant(e.kind)} />
+                      {#if e.tool_name}<span class="name">{e.tool_name}</span>{/if}
+                      {#if e.model}<span class="muted">{e.model}</span>{/if}
+                      {#if e.duration_ms}<span class="muted">{ms(e.duration_ms)}</span>{/if}
+                      {#if e.cost_usd}<span class="muted">{usd(e.cost_usd)}</span>{/if}
+                      {#if isError(e)}<span class="bad">failed</span>{/if}
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            </li>
+          {/each}
+        </ol>
 
-        <SessionTree
-          observations={timeline.observations}
-          view={sessionView}
-          selectedId={pinnedObsId}
-          onSelect={(id) => (pinnedObsId = id)}
-        />
-
-        <!-- The pinned observation's full detail, including the conversation.
-             Lives here rather than inside the shapes: a tree node or a wheel dot
-             cannot hold a transcript, and in the list it made every row a
-             collapsible, which buried the thing being looked for. -->
+        <!-- The pinned event's text. Lives here rather than inline per row:
+             inside the list every row became a collapsible, which buried the
+             thing being looked for. -->
         {#if pinnedObs}
           <div class="obsdetail">
             <div class="obs-head">
-              <span class="t">{clock(pinnedObs.start_time)}</span>
-              <Badge text={pinnedObs.type.toLowerCase()} variant={typeVariant(pinnedObs.type)} />
-              <strong class="name">{pinnedObs.name || '(unnamed)'}</strong>
+              <span class="t">{clock(pinnedObs.time)}</span>
+              <Badge text={pinnedObs.kind.replace(/_/g, ' ')} variant={typeVariant(pinnedObs.kind)} />
+              {#if pinnedObs.tool_name}<strong class="name">{pinnedObs.tool_name}</strong>{/if}
+              {#if pinnedObs.agent}<span class="muted">{pinnedObs.agent}</span>{/if}
               {#if pinnedObs.model}<span class="muted">{pinnedObs.model}</span>{/if}
-              {#if pinnedObs.latency_ms}<span class="muted">{ms(pinnedObs.latency_ms)}</span>{/if}
+              {#if pinnedObs.duration_ms}<span class="muted">{ms(pinnedObs.duration_ms)}</span>{/if}
               {#if pinnedObs.cost_usd}<span class="muted">{usd(pinnedObs.cost_usd)}</span>{/if}
               <button class="linkish" onclick={() => (pinnedObsId = null)}>clear</button>
             </div>
-            {#if isError(pinnedObs) && pinnedObs.status_message}
-              <p class="status">{pinnedObs.status_message}</p>
-            {/if}
-            {#if pinnedObs.input}
+            {#if pinnedObs.prompt}
               <div class="io">
-                <span class="io-label">in</span>
-                <pre>{pinnedObs.input}</pre>
+                <span class="io-label">prompt</span>
+                <pre>{pinnedObs.prompt}</pre>
               </div>
             {/if}
-            {#if pinnedObs.output}
+            {#if pinnedObs.response}
               <div class="io">
-                <span class="io-label">out</span>
-                <pre>{pinnedObs.output}</pre>
+                <span class="io-label">response</span>
+                <pre>{pinnedObs.response}</pre>
               </div>
             {/if}
-            {#if !pinnedObs.input && !pinnedObs.output}
+            {#if !pinnedObs.prompt && !pinnedObs.response}
               <p class="muted">
-                This observation carries no message text — native OTLP spans
-                record metadata only.
+                {pinnedObs.redacted
+                  ? 'Text redacted — content logging was off when this ran.'
+                  : 'This event carries no message text; tool calls and model requests record metadata only.'}
               </p>
             {/if}
           </div>
@@ -810,18 +844,6 @@ delegated work — treat this as Langfuse's view, not authoritative spend."
         </div>
       {/if}
 
-      {#if charts.dashboard_url || charts.sessions_url}
-        <p class="links">
-          {#if charts.dashboard_url}
-            <button class="linkish" onclick={() => openInBrowser(charts!.dashboard_url!)}
-              >open Langfuse dashboards ↗</button>
-          {/if}
-          {#if charts.sessions_url}
-            <button class="linkish" onclick={() => openInBrowser(charts!.sessions_url!)}
-              >open Langfuse sessions ↗</button>
-          {/if}
-        </p>
-      {/if}
     {/if}
   {/if}
 </div>
