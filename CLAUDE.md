@@ -6,6 +6,27 @@ Guidance for Claude Code (and other agents) working in this repository.
 
 `phantom-ink` is a **monorepo** for a local-first AI-agent platform. Its pieces:
 
+> [!IMPORTANT]
+> **`brainbox/` is NOT what runs in production.** The deployed orchestrator is
+> **phantom-router** (its own repo, package `phantom_router`), and several files
+> under `brainbox/src/brainbox/` are forks of it that have since DRIFTED — they
+> are not kept in sync. `agent_store.py` is the known case: the router's copy
+> carries `loop_id` / `loop_iteration` metadata that the brainbox copy lacks.
+>
+> So a producer-side change made only in `brainbox/` is a **no-op in
+> production**. Before editing anything that emits events, sessions or tasks,
+> check which service actually produces them:
+>
+> ```bash
+> # the live envelope says who built it
+> curl -s -H "X-API-Key: $CL_API_KEY" \
+>   "$CL_ROUTER_API/api/agent_events/search?limit=1" | jq -r '.items[0].envelope.source'
+> # -> "phantom_router-hub"  => phantom-router, NOT brainbox/ (which sets "brainbox-hub")
+> ```
+>
+> Match that `source` string against the `source=` literal in the code you are
+> about to edit. If they differ, you are in the wrong repo.
+
 | Path | What it is | Language |
 |---|---|---|
 | `app/` | **phantom-ink** — the Wails 2 macOS desktop app (command center) | Go 1.25 + Svelte 5 / TS |
