@@ -3,12 +3,42 @@
   import { formatClock } from '../utils/format';
   import EmptyState from '../components/EmptyState.svelte';
   import SessionSummaryCard from '../components/SessionSummaryCard.svelte';
+  import EnvelopePayload from '../components/EnvelopePayload.svelte';
   import { getApi } from '../utils/api';
   import { profileState } from '../stores.svelte';
+  import type { BrainboxEvent } from '../events.svelte';
 
-  // session.summary rows expand into a rich card (narrative + facts + evidence).
+  // Every row expands. session.summary gets the rich card (narrative + facts +
+  // evidence); everything else gets the envelope payload -- `metadata` is where
+  // the decidable data lives (llm.completion carries backend/model/tokens/cost/
+  // attempts there) and the rows themselves only show title + status.
   let expandedSeq = $state<number | null>(null);
   function toggleExpand(seq: number) { expandedSeq = expandedSeq === seq ? null : seq; }
+
+  // The live tail has no seq to key on -- the ring holds stable objects, so
+  // identity is the key.
+  let expandedEvent = $state<BrainboxEvent | null>(null);
+  function toggleExpandLive(event: BrainboxEvent) {
+    expandedEvent = expandedEvent === event ? null : event;
+  }
+
+  // A live frame is the brainbox SSE line verbatim (app.go emits it as
+  // `brainbox:event`), so an agent envelope arrives wrapped as
+  // {"event":"agent.event","data":{...envelope}}. Unwrap that so the payload
+  // view gets the envelope and not the transport frame; other frames
+  // (hub events, webhook triggers) are shown as they came.
+  function livePayload(event: BrainboxEvent): unknown {
+    const data = event.data as Record<string, any> | undefined;
+    if (data && data.event === 'agent.event' && data.data) return data.data;
+    return data ?? event.raw;
+  }
+
+  function rowKeydown(e: KeyboardEvent, activate: () => void) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      activate();
+    }
+  }
 
   let logEl: HTMLElement;
   let autoscroll = $state(true);
@@ -98,7 +128,9 @@
   }
 
   $effect(() => {
-    if (autoscroll && !searchActive && log.length && logEl) {
+    // An expanded live row pauses autoscroll: without this the next event
+    // scrolls the payload you just opened off the screen.
+    if (autoscroll && !expandedEvent && !searchActive && log.length && logEl) {
       logEl.scrollTop = logEl.scrollHeight;
     }
   });
@@ -177,18 +209,26 @@
       {:else}
         {#each searchResults as item (item.seq)}
           {@const isSummary = item.type === 'session.summary' && item.envelope}
-          <div class="row" class:clickable={isSummary} onclick={() => isSummary && toggleExpand(item.seq)}
-            role={isSummary ? 'button' : undefined} tabindex={isSummary ? 0 : undefined}>
+          {@const expanded = expandedSeq === item.seq}
+          <div class="row clickable" onclick={() => toggleExpand(item.seq)}
+            onkeydown={(e) => rowKeydown(e, () => toggleExpand(item.seq))}
+            role="button" tabindex={0}>
             <span class="ts" title={new Date(item.ts).toISOString()}>{formatTs(item.ts)}</span>
             <span class="type">{item.type ?? '—'}</span>
-            <span class="raw" title={JSON.stringify(item.envelope)}>
-              {#if isSummary}<span class="disclosure">{expandedSeq === item.seq ? '▾' : '▸'}</span>{/if}
+            <span class="raw">
+              <span class="disclosure">{expanded ? '▾' : '▸'}</span>
               {item.envelope?.title ?? item.id}{item.status ? ` · ${item.status}` : ''}
               {#if item.envelope?.workspace}<span class="ws">[{item.envelope.workspace}]</span>{/if}
             </span>
           </div>
-          {#if isSummary && expandedSeq === item.seq}
-            <div class="summary-wrap"><SessionSummaryCard envelope={item.envelope} /></div>
+          {#if expanded}
+            <div class="summary-wrap">
+              {#if isSummary}
+                <SessionSummaryCard envelope={item.envelope} />
+              {:else}
+                <EnvelopePayload payload={item.envelope ?? item} />
+              {/if}
+            </div>
           {/if}
         {/each}
       {/if}
@@ -199,11 +239,20 @@
         <EmptyState title="No events yet" message="Waiting for brainbox activity." />
       {:else}
         {#each orderedLog as event (event)}
-          <div class="row">
+          {@const expanded = expandedEvent === event}
+          <div class="row clickable" onclick={() => toggleExpandLive(event)}
+            onkeydown={(e) => rowKeydown(e, () => toggleExpandLive(event))}
+            role="button" tabindex={0}>
             <span class="ts">{formatTime(new Date(event.receivedAt))}</span>
             <span class="type">{event.type ?? '—'}</span>
-            <span class="raw">{event.raw}</span>
+            <span class="raw">
+              <span class="disclosure">{expanded ? '▾' : '▸'}</span>
+              {event.raw}
+            </span>
           </div>
+          {#if expanded}
+            <div class="summary-wrap"><EnvelopePayload payload={livePayload(event)} /></div>
+          {/if}
         {/each}
       {/if}
     </div>

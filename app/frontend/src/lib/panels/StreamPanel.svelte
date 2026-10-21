@@ -9,6 +9,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import ContextMenu from '../components/ContextMenu.svelte';
   import EnvelopeHistory from '../components/EnvelopeHistory.svelte';
+  import EnvelopePayload from '../components/EnvelopePayload.svelte';
   import AutomationsPanel from './AutomationsPanel.svelte';
   import EventLogPanel from './EventLogPanel.svelte';
   import SessionSummaryCard from '../components/SessionSummaryCard.svelte';
@@ -192,6 +193,14 @@
   // not only via Event Log search.
   let expandedSummaryId = $state<string | null>(null);
   function toggleSummary(id: string) { expandedSummaryId = expandedSummaryId === id ? null : id; }
+
+  // 'history' answers *what states did this pass through*; it renders type +
+  // status + outcome and nothing else. This answers *what is the data* --
+  // envelope.metadata, which is where llm.completion keeps backend/model/
+  // tokens/cost/attempts. The live rows already carry the full metadata map
+  // (streamLive merges it off the SSE envelope), so this needs no fetch.
+  let payloadId = $state<string | null>(null);
+  function togglePayload(id: string) { payloadId = payloadId === id ? null : id; }
 
   // Hand off a pre-filled rule draft to Automations → Rules, deriving the match
   // pattern from this live event card (type/workspace/source). The action is
@@ -407,6 +416,9 @@
                 <button class="btn ghost small" onclick={() => streamLive.toggleHistory(item.id)}>
                   {streamLive.history[item.id] ? 'hide history' : 'history'}
                 </button>
+                <button class="btn ghost small" onclick={() => togglePayload(item.id)}>
+                  {payloadId === item.id ? 'hide payload' : 'payload'}
+                </button>
                 <button class="btn ghost small" onclick={() => createRule(item)}
                   title="Create an automation rule matching events like this one">
                   create rule
@@ -414,6 +426,9 @@
               </div>
               {#if item.type === 'session.summary' && expandedSummaryId === item.id}
                 <div class="summary-wrap"><SessionSummaryCard envelope={item} /></div>
+              {/if}
+              {#if payloadId === item.id}
+                <div class="summary-wrap"><EnvelopePayload payload={item} /></div>
               {/if}
               {#if streamLive.history[item.id]}
                 <EnvelopeHistory entries={streamLive.history[item.id]} loading={streamLive.historyLoading[item.id]} />
@@ -487,7 +502,14 @@
                     {streamLive.history[item.id] ? 'hide history' : 'history'}
                   </button>
                 {/if}
+                <button class="btn ghost small" onclick={() => togglePayload(item.id)}>
+                  {payloadId === item.id ? 'hide payload' : 'payload'}
+                </button>
               </div>
+
+              {#if payloadId === item.id}
+                <div class="summary-wrap"><EnvelopePayload payload={item} /></div>
+              {/if}
 
               {#if streamLive.history[item.id]}
                 <EnvelopeHistory entries={streamLive.history[item.id]} loading={streamLive.historyLoading[item.id]} />

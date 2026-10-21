@@ -502,6 +502,12 @@ _TASK_STATUS_MAP: dict[str, str] = {
 }
 
 
+# Upper bound on the task prompt copied into `envelope.description`. Generous
+# enough for a real agent brief, small enough that a pathological prompt cannot
+# bloat every lifecycle event on an append-only table.
+_MAX_PROMPT_CHARS = 4096
+
+
 def envelope_from_hub_task(event: str, task: Any) -> AgentEnvelope:
     """Translate a brainbox router task-lifecycle event into the unified envelope.
 
@@ -511,7 +517,23 @@ def envelope_from_hub_task(event: str, task: Any) -> AgentEnvelope:
     status_raw = getattr(getattr(task, "status", None), "value", None) or "pending"
     mapped = _TASK_STATUS_MAP.get(status_raw, status_raw)
 
-    title = (task.description or "").strip().splitlines()[0][:120] if task.description else task.id
+    # `title` is deliberately lossy -- first line, 120 chars -- so stream cards
+    # stay one line tall. `description` then carries the WHOLE prompt, which is
+    # what makes an event identifiable: before this it went out empty on every
+    # envelope, so nothing on the bus could answer "what was this task asked to
+    # do". Only stamped when the title actually lost something, so short
+    # single-line prompts are not duplicated into the payload view.
+    #
+    # Capped because EVERY lifecycle event for a task repeats it -- an
+    # unbounded prompt would multiply into the append-only `agent_events`.
+    prompt = (task.description or "").strip()
+    title = prompt.splitlines()[0][:120] if prompt else task.id
+    description: str | None = None
+    if prompt and prompt != title:
+        description = (
+            prompt if len(prompt) <= _MAX_PROMPT_CHARS
+            else prompt[: _MAX_PROMPT_CHARS - 1] + "\u2026"
+        )
     subtitle_parts = [p for p in (task.agent_name, getattr(task, "session_name", None)) if p]
     subtitle = " · ".join(subtitle_parts) if subtitle_parts else None
 
@@ -538,6 +560,7 @@ def envelope_from_hub_task(event: str, task: Any) -> AgentEnvelope:
         status=mapped,
         title=title,
         subtitle=subtitle,
+        description=description,
         workspace=getattr(task, "workspace_profile", None),
         parent_id=(f"hub-task:{task.job_id}" if getattr(task, "job_id", None) and task.job_id != task.id else None),
         start_at=getattr(task, "created_at", None),
