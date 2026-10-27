@@ -454,6 +454,14 @@ export function GetVaultProfiles(arg1) {
   return window['go']['main']['App']['GetVaultProfiles'](arg1);
 }
 
+export function GetVaultRecordHistory(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetVaultRecordHistory'](arg1, arg2, arg3);
+}
+
+export function GetVaultRecordVersion(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetVaultRecordVersion'](arg1, arg2, arg3);
+}
+
 export function GetVaultRecords(arg1, arg2) {
   return window['go']['main']['App']['GetVaultRecords'](arg1, arg2);
 }

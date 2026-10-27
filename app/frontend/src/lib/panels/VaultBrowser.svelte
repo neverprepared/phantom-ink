@@ -4,9 +4,15 @@
   // on the mesh daemon, Bearer-authed with the per-vault token), reads them, and can
   // delete one (ForgetVaultRecord → tombstone that propagates across the mesh). Because
   // the vault p2p-syncs, this shows records authored on ANY mesh node.
+  //
+  // The list is HEAD-ONLY (?head=true). A record is edited by learning a new one and
+  // superseding the old, so a logical document is a chain of SHAs — the reader's
+  // version dropdown (GetVaultRecordHistory + GetVaultRecordVersion) is the only way
+  // back to an earlier one. Older versions are read-only: delete/copy/move/todo
+  // actions must always target the head.
   import { onMount, onDestroy } from 'svelte';
   import { getApi } from '../utils/api';
-  import { timeAgo } from '../utils/format';
+  import { timeAgo, timeAgoOrDate } from '../utils/format';
   import { profileState } from '../stores.svelte';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -19,6 +25,19 @@
     body: string;
     topic?: string;
     tags?: string[];
+    updated_at: string;
+  }
+
+  // One entry in a record's supersession chain, as GetVaultRecordHistory returns
+  // them: NEWEST FIRST, with `version` counted from the oldest so a label is stable
+  // once a newer version lands.
+  interface VaultVersion {
+    sha: string;
+    title: string;
+    kind: string;
+    version: number;
+    superseded: boolean;
+    is_head: boolean;
     updated_at: string;
   }
 
@@ -49,6 +68,12 @@
   let confirmingDelete = $state(false);
   let deleting = $state(false);
   let query = $state('');
+  // version history for the selected record
+  let versions = $state<VaultVersion[]>([]);
+  let pickedSha = $state('');                       // the version being read ('' ⇒ none selected)
+  let versionBody = $state<string | null>(null);    // body of an OLDER version; null ⇒ show the head's
+  let versionLoading = $state(false);
+  let versionError = $state<string | null>(null);
   // copy/move
   let vaultProfiles = $state<string[]>([]);
   let destProfile = $state('');
@@ -193,8 +218,71 @@
   });
 
   const selected = $derived(records.find((r) => r.sha === selectedSha) ?? null);
-  // reset the delete confirm + transfer notice whenever the selection changes
-  $effect(() => { selectedSha; confirmingDelete = false; transferMsg = null; });
+
+  // Viewing anything other than the head of the chain. Everything destructive is
+  // gated on this: delete/copy/move/todo must act on the head, never on a version
+  // the operator happens to be reading.
+  const viewingOlder = $derived(!!pickedSha && !!selected && pickedSha !== selected.sha);
+  const headVersion = $derived(versions.find((v) => v.is_head) ?? null);
+
+  // Load the supersession chain for the selected record. A single-entry chain (the
+  // common case) renders no dropdown.
+  async function loadHistory(sha: string | null) {
+    const profile = activeProfile;
+    versions = [];
+    versionBody = null;
+    versionError = null;
+    pickedSha = sha ?? '';
+    if (!sha || !profile) return;
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const chain = (await (a as any).GetVaultRecordHistory(profile, vault, sha)) as VaultVersion[];
+      // Discard a late response: the selection or the profile has moved on.
+      if (profile !== activeProfile || sha !== selectedSha) return;
+      versions = chain ?? [];
+    } catch (e: any) {
+      versions = [];
+      versionError = e?.message ?? String(e);
+    }
+  }
+
+  // Read one version. The head's body is already in hand from the list; only an
+  // older version needs a fetch (the head-only list cannot return it).
+  async function selectVersion(sha: string) {
+    const profile = activeProfile;
+    pickedSha = sha;
+    versionError = null;
+    if (!selected || sha === selected.sha) { versionBody = null; return; }
+    const a = await getApi();
+    if (!a || !profile) return;
+    versionLoading = true;
+    versionBody = null;
+    try {
+      const rec = (await (a as any).GetVaultRecordVersion(profile, vault, sha)) as VaultRecord;
+      // A later pick (or a profile switch) wins over this one.
+      if (profile !== activeProfile || sha !== pickedSha) return;
+      versionBody = rec?.body ?? '';
+    } catch (e: any) {
+      versionError = e?.message ?? String(e);
+    } finally {
+      versionLoading = false;
+    }
+  }
+
+  function versionLabel(v: VaultVersion): string {
+    if (v.is_head) return `v${v.version} \u00b7 latest`;
+    const when = v.updated_at ? timeAgoOrDate(Date.parse(v.updated_at), '') : '';
+    return when ? `v${v.version} \u00b7 ${when}` : `v${v.version}`;
+  }
+
+  // reset the delete confirm + transfer notice, and reload the chain, whenever the
+  // selection changes
+  $effect(() => {
+    confirmingDelete = false;
+    transferMsg = null;
+    void loadHistory(selectedSha);
+  });
 </script>
 
 <div class="vault">
@@ -287,8 +375,10 @@
             <div class="reader-meta">
               {#if showTopic(selected.topic)}<span class="chip">{selected.topic}</span>{/if}
               {#each meaningfulTags(selected.tags) as t}<span class="chip subtle">{t}</span>{/each}
-              <span class="reader-sha" title={selected.sha}>{selected.sha.slice(0, 12)}</span>
-              {#if confirmingDelete}
+              <span class="reader-sha" title={viewingOlder ? pickedSha : selected.sha}>{(viewingOlder ? pickedSha : selected.sha).slice(0, 12)}</span>
+              {#if viewingOlder}
+                <!-- no destructive control while an older version is on screen -->
+              {:else if confirmingDelete}
                 <span class="del-confirm">
                   <span class="del-q">delete?</span>
                   <button class="btn danger" onclick={() => void deleteSelected()} disabled={deleting}>
@@ -300,7 +390,30 @@
                 <button class="btn del" onclick={() => (confirmingDelete = true)} title="Delete this {noun}">delete</button>
               {/if}
             </div>
-            {#if destProfiles.length > 0}
+            {#if versions.length > 1}
+              <div class="versions">
+                <span class="t-label">version</span>
+                <select
+                  class="t-select"
+                  value={pickedSha}
+                  disabled={versionLoading}
+                  onchange={(e) => void selectVersion(e.currentTarget.value)}
+                >
+                  {#each versions as v (v.sha)}
+                    <option value={v.sha}>{versionLabel(v)}</option>
+                  {/each}
+                </select>
+                {#if versionLoading}<span class="t-msg">loading…</span>{/if}
+                {#if viewingOlder}
+                  <span class="t-msg warn">
+                    read-only — superseded{headVersion ? ` by v${headVersion.version}` : ''}
+                  </span>
+                  <button class="btn" onclick={() => void selectVersion(selected.sha)}>back to latest</button>
+                {/if}
+              </div>
+            {/if}
+            {#if versionError}<div class="t-msg err">{versionError}</div>{/if}
+            {#if destProfiles.length > 0 && !viewingOlder}
               <div class="transfer">
                 <span class="t-label">copy / move to</span>
                 <select class="t-select" bind:value={destProfile} disabled={transferring}>
@@ -312,7 +425,7 @@
                 {#if transferMsg}<span class="t-msg" class:err={transferMsg.startsWith('Failed')}>{transferMsg}</span>{/if}
               </div>
             {/if}
-            {#if vault === 'todo'}
+            {#if vault === 'todo' && !viewingOlder}
               <TodoActions
                 record={{ sha: selected.sha, title: selected.title, body: selected.body }}
                 profile={activeProfile}
@@ -320,7 +433,11 @@
               />
             {/if}
           </div>
-          <pre class="body">{selected.body}</pre>
+          {#if versionLoading}
+            <Spinner />
+          {:else}
+            <pre class="body">{viewingOlder ? (versionBody ?? '') : selected.body}</pre>
+          {/if}
         {:else}
           <div class="reader-empty">Select {vault === 'skills' ? 'a skill' : 'an ' + noun} to read its definition.</div>
         {/if}
@@ -398,7 +515,7 @@
   .del-confirm { display: inline-flex; align-items: center; gap: 6px; }
   .del-q { font-size: 0.72rem; color: var(--color-error); }
 
-  .transfer { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .transfer, .versions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   .t-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-tertiary); }
   .t-select {
     background: var(--color-bg-primary); border: 1px solid var(--color-border-primary);
@@ -406,6 +523,7 @@
   }
   .t-msg { font-size: 0.7rem; color: var(--color-text-muted); }
   .t-msg.err { color: var(--color-error); }
+  .t-msg.warn { color: var(--color-warning); }
   .reader-empty { color: var(--color-text-muted); font-size: 0.85rem; }
   .body { white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5; color: var(--color-text-secondary); margin: 0; }
 
