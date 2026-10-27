@@ -232,6 +232,10 @@ export function GetTrust(arg1:string):Promise<brainbox.TrustConfig>;
 
 export function GetVaultProfiles(arg1:string):Promise<Array<string>>;
 
+export function GetVaultRecordHistory(arg1:string,arg2:string,arg3:string):Promise<Array<main.VaultVersion>>;
+
+export function GetVaultRecordVersion(arg1:string,arg2:string,arg3:string):Promise<main.VaultRecord>;
+
 export function GetVaultRecords(arg1:string,arg2:string):Promise<Array<main.VaultRecord>>;
 
 export function GetWidgetCount(arg1:string,arg2:string):Promise<number>;

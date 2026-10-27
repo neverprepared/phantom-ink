@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -327,6 +328,164 @@ func (a *App) forgetWithToken(sha, token string) error {
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("forget returned HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// ── Version history (supersession chains) ───────────────────────────────────
+//
+// A vault record is EDITED by learning a new record and linking the old one to
+// it with `supersede`, so a logical document is a chain of SHAs. The browser
+// lists head-only (`?head=true`), which keeps the list clean but makes every
+// earlier version unreachable from the app — these two methods are how the
+// reader walks back:
+//
+//   GET /api/brain/history/{sha} → the whole chain, oldest → newest
+//   GET /api/brain/fetch/{sha}   → one version's body, superseded ones included
+//
+// The daemon's history entries carry no timestamp, so GetVaultRecordHistory
+// enriches each one with its record's UpdatedAt (a concurrent fetch per chain
+// member — chains are a handful of entries against a local daemon).
+
+// VaultVersion is one entry in a record's supersession chain.
+type VaultVersion struct {
+	SHA   string `json:"sha"`
+	Title string `json:"title"`
+	Kind  string `json:"kind"`
+	// Version is 1-based with the OLDEST version as 1, so the label is stable
+	// as new versions land (v3 stays v3 once v4 exists).
+	Version    int       `json:"version"`
+	Superseded bool      `json:"superseded"`
+	IsHead     bool      `json:"is_head"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type vaultHistoryResponse struct {
+	Chain []struct {
+		SHA        string `json:"sha"`
+		Title      string `json:"title"`
+		Kind       string `json:"kind"`
+		Superseded bool   `json:"superseded"`
+		IsHead     bool   `json:"is_head"`
+	} `json:"chain"`
+	HeadSHA string `json:"head_sha"`
+}
+
+// GetVaultRecordHistory returns the supersession chain containing sha,
+// NEWEST FIRST so the reader's dropdown can default to the head.
+//
+// A record with no edits comes back as a single entry; the panel treats that
+// as "no versions to choose from" and shows no dropdown.
+//
+// Profile is explicit for the same reason as every other method here: the
+// caller renders under one profile and the user may switch mid-flight.
+func (a *App) GetVaultRecordHistory(profile, vault, sha string) ([]VaultVersion, error) {
+	profile = strings.TrimSpace(profile)
+	if profile == "" {
+		return nil, fmt.Errorf("no profile specified")
+	}
+	token := a.tokenFor(vault, profile)
+	if token == "" {
+		return nil, fmt.Errorf("no %s-vault token for profile %q", vault, profile)
+	}
+	return vaultHistory(a.meshURL(), vault, token, sha)
+}
+
+// GetVaultRecordVersion reads one version's full record by SHA — including a
+// superseded one, which the head-only list cannot return.
+func (a *App) GetVaultRecordVersion(profile, vault, sha string) (VaultRecord, error) {
+	profile = strings.TrimSpace(profile)
+	if profile == "" {
+		return VaultRecord{}, fmt.Errorf("no profile specified")
+	}
+	token := a.tokenFor(vault, profile)
+	if token == "" {
+		return VaultRecord{}, fmt.Errorf("no %s-vault token for profile %q", vault, profile)
+	}
+	return fetchVaultRecord(a.meshURL(), vault, token, sha)
+}
+
+// vaultHistory does the /history read and the timestamp enrichment. base is a
+// parameter (rather than a.meshURL()) so it is testable against httptest.
+func vaultHistory(base, vault, token, sha string) ([]VaultVersion, error) {
+	sha = strings.TrimSpace(sha)
+	if sha == "" {
+		return nil, fmt.Errorf("empty sha")
+	}
+	var out vaultHistoryResponse
+	if err := vaultGetJSON(base+"/api/brain/history/"+sha, vault, token, &out); err != nil {
+		return nil, err
+	}
+
+	// Number oldest→newest, then reverse so the head leads.
+	versions := make([]VaultVersion, 0, len(out.Chain))
+	for i, e := range out.Chain {
+		versions = append(versions, VaultVersion{
+			SHA:        e.SHA,
+			Title:      e.Title,
+			Kind:       e.Kind,
+			Version:    i + 1,
+			Superseded: e.Superseded,
+			IsHead:     e.IsHead,
+		})
+	}
+
+	// Best-effort timestamps: a chain entry whose record was forgotten leaves
+	// the link but no row, so a failed fetch just means no date on that entry.
+	var wg sync.WaitGroup
+	for i := range versions {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if rec, err := fetchVaultRecord(base, vault, token, versions[i].SHA); err == nil {
+				versions[i].UpdatedAt = rec.UpdatedAt
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	for l, r := 0, len(versions)-1; l < r; l, r = l+1, r-1 {
+		versions[l], versions[r] = versions[r], versions[l]
+	}
+	return versions, nil
+}
+
+func fetchVaultRecord(base, vault, token, sha string) (VaultRecord, error) {
+	sha = strings.TrimSpace(sha)
+	if sha == "" {
+		return VaultRecord{}, fmt.Errorf("empty sha")
+	}
+	var rec VaultRecord
+	if err := vaultGetJSON(base+"/api/brain/fetch/"+sha, vault, token, &rec); err != nil {
+		return VaultRecord{}, err
+	}
+	return rec, nil
+}
+
+// vaultGetJSON is the shared authenticated GET + decode, with the same error
+// vocabulary the browser already switches on ("token rejected" → re-prompt).
+func vaultGetJSON(endpoint, vault, token string, dest any) error {
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("build %s request: %w", vault, err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("mesh daemon unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("%s-vault token rejected (401) — check the token in Settings", vault)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("record not found in the %s vault", vault)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("mesh daemon returned HTTP %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
+		return fmt.Errorf("decode %s response: %w", vault, err)
 	}
 	return nil
 }
