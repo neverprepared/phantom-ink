@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -171,5 +173,71 @@ func TestMeshStatus_DecodesOldDaemonPayload(t *testing.T) {
 	}
 	if got.Metrics.ErrorsTotal != "996" {
 		t.Errorf("existing fields must still decode, got %q", got.Metrics.ErrorsTotal)
+	}
+}
+
+// The daemon sends an actionable envelope on every non-2xx; discarding it left
+// the operator with a bare status code. Each typed case must carry it through.
+func TestPostMeshAdmin_SurfacesDaemonDetail(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		want   string
+	}{
+		{"404 envelope", http.StatusNotFound,
+			`{"error":{"code":"NOT_FOUND","message":"no configured peer with id bogus"}}`,
+			"no configured peer with id bogus"},
+		{"403 envelope", http.StatusForbidden,
+			`{"error":{"code":"INVALID_TOKEN","message":"admin key mismatch"}}`,
+			"admin key mismatch"},
+		{"503 envelope", http.StatusServiceUnavailable,
+			`{"error":{"code":"UNAVAILABLE","message":"no database for profile gsa"}}`,
+			"no database for profile gsa"},
+		{"unclassified status", http.StatusBadGateway,
+			`{"error":{"code":"BAD_GATEWAY","message":"upstream died"}}`,
+			"upstream died"},
+		{"non-envelope body falls back to raw", http.StatusBadGateway,
+			`plain text failure`, "plain text failure"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base, hc, _, _ := meshAdminStub(t, tc.status, tc.body)
+			_, err := postMeshAdmin(base, "k", "/api/brain/admin/mesh/errors/clear", hc)
+			if err == nil {
+				t.Fatalf("want an error on %d", tc.status)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error must carry the daemon's detail %q, got %q", tc.want, err)
+			}
+		})
+	}
+}
+
+// An empty body must not leave a dangling separator.
+func TestPostMeshAdmin_EmptyBodyHasNoDanglingColon(t *testing.T) {
+	base, hc, _, _ := meshAdminStub(t, http.StatusForbidden, "")
+	_, err := postMeshAdmin(base, "k", "/api/brain/admin/mesh/errors/clear", hc)
+	if err == nil {
+		t.Fatal("want an error on 403")
+	}
+	if strings.HasSuffix(err.Error(), ": ") || strings.HasSuffix(err.Error(), ":") {
+		t.Errorf("empty body must not leave a dangling separator, got %q", err)
+	}
+}
+
+// Reporting a slow-but-alive daemon as "unreachable" sends the operator off to
+// restart a healthy container, and hides that the action may still be running.
+func TestMeshReach_DistinguishesTimeoutFromUnreachable(t *testing.T) {
+	to := meshReach(context.DeadlineExceeded, "http://x")
+	if !strings.Contains(to, "did not respond in time") {
+		t.Errorf("a timeout must read as a timeout, got %q", to)
+	}
+	if strings.Contains(to, "unreachable") {
+		t.Errorf("a timeout must not claim the daemon is unreachable, got %q", to)
+	}
+	down := meshReach(errors.New("connection refused"), "http://x")
+	if !strings.Contains(down, "unreachable") {
+		t.Errorf("a non-timeout must read as unreachable, got %q", down)
 	}
 }
