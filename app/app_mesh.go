@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -82,7 +85,7 @@ func (a *App) GetMeshStatus() (MeshStatus, error) {
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return MeshStatus{}, fmt.Errorf("mesh daemon unreachable at %s: %w", url, err)
+		return MeshStatus{}, fmt.Errorf("%s: %w", meshReach(err, url), err)
 	}
 	defer resp.Body.Close()
 
@@ -127,6 +130,48 @@ type MeshActionResult struct {
 // A missing key short-circuits before the request: the daemon's 403 for an
 // unset PB_ADMIN_KEY and for a wrong key are indistinguishable, and "you never
 // set a key" is the more useful of the two diagnoses.
+// meshReach distinguishes a timeout from an unreachable daemon. Reporting a
+// slow-but-alive daemon as "unreachable" sent the operator off to restart a
+// healthy container; a timed-out action may also still be running server-side,
+// which the operator needs to know before retrying it.
+func meshReach(err error, target string) string {
+	if os.IsTimeout(err) || errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Sprintf("mesh daemon at %s did not respond in time — it may still be working on this action", target)
+	}
+	return fmt.Sprintf("mesh daemon unreachable at %s", target)
+}
+
+// meshDetail renders the daemon's own error body as a trailing clause. The
+// daemon sends a useful envelope on every non-2xx ("no configured peer with id
+// X", "no database for profile Y" plus a cause); discarding it left the
+// operator with a bare status code and nothing to act on. Returns "" when the
+// body is empty or unreadable, so the caller's sentence still stands alone.
+func meshDetail(resp *http.Response) string {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return ""
+	}
+	msg := strings.TrimSpace(string(body))
+	if msg == "" {
+		return ""
+	}
+	// Unwrap {"error":{"code":...,"message":"..."}} to the message alone;
+	// fall back to the raw body for any other shape.
+	var env struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &env) == nil && strings.TrimSpace(env.Error.Message) != "" {
+		msg = strings.TrimSpace(env.Error.Message)
+	}
+	if len(msg) > 300 {
+		msg = msg[:300] + "…"
+	}
+	return ": " + msg
+}
+
 func postMeshAdmin(base, key, path string, hc *http.Client) (MeshActionResult, error) {
 	var out MeshActionResult
 	if strings.TrimSpace(key) == "" {
@@ -139,19 +184,19 @@ func postMeshAdmin(base, key, path string, hc *http.Client) (MeshActionResult, e
 	req.Header.Set("X-API-Key", key)
 	resp, err := hc.Do(req)
 	if err != nil {
-		return out, fmt.Errorf("mesh daemon unreachable at %s: %w", base, err)
+		return out, fmt.Errorf("%s: %w", meshReach(err, base), err)
 	}
 	defer resp.Body.Close()
 
 	switch {
 	case resp.StatusCode == http.StatusForbidden:
-		return out, fmt.Errorf("mesh admin key rejected by the daemon")
+		return out, fmt.Errorf("mesh admin key rejected by the daemon (403)%s", meshDetail(resp))
 	case resp.StatusCode == http.StatusNotFound:
-		return out, fmt.Errorf("unknown peer — the peer list is stale, refresh and retry")
+		return out, fmt.Errorf("unknown peer — the peer list is stale, refresh and retry%s", meshDetail(resp))
 	case resp.StatusCode == http.StatusServiceUnavailable:
-		return out, fmt.Errorf("sync is disabled on this node")
+		return out, fmt.Errorf("sync is disabled on this node%s", meshDetail(resp))
 	case resp.StatusCode < 200 || resp.StatusCode >= 300:
-		return out, fmt.Errorf("mesh action failed: HTTP %d", resp.StatusCode)
+		return out, fmt.Errorf("mesh action failed: HTTP %d%s", resp.StatusCode, meshDetail(resp))
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return out, fmt.Errorf("decode mesh action result: %w", err)

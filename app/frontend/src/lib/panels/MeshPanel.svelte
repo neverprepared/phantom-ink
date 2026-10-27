@@ -89,7 +89,13 @@
 
   onMount(() => {
     void refresh();
-    pollHandle = window.setInterval(() => void refresh(), 10_000);
+    // Skip a tick rather than stacking refreshes: an action's own reload, or a
+    // slow one against a wedged daemon, must not race the poll and overwrite
+    // the status a just-finished action was reporting against.
+    pollHandle = window.setInterval(() => {
+      if (refreshing || actionBusy !== null) return;
+      void refresh();
+    }, 10_000);
   });
   onDestroy(() => { if (pollHandle !== undefined) window.clearInterval(pollHandle); });
 
@@ -214,6 +220,15 @@
   let adminKeySet = $state(false);
   let actionBusy = $state<string | null>(null);
   let actionNote = $state<string | null>(null);
+  let actionNoteOk = $state(true);
+
+  // A result rendered at panel level scrolls out of view behind 48 error rows,
+  // so the click reads as a no-op. Outcomes are therefore keyed by group and
+  // rendered INSIDE the row that was clicked; the panel-level note is kept only
+  // for `clear errors`, whose card unmounts on success and would take an
+  // in-row note with it.
+  type RowOutcome = { ok: boolean; text: string };
+  let rowOutcome = $state<Record<string, RowOutcome>>({});
 
   const shownGroups = $derived(
     errorPeerFilter ? errorGroups.filter((g) => g.peer === errorPeerFilter) : errorGroups,
@@ -224,16 +239,35 @@
     return Number.isFinite(ms) ? timeAgo(ms) : '';
   }
 
-  async function runAction(label: string, fn: () => Promise<any>, note: (r: any) => string) {
+  // `rowKey` places the outcome next to the button that was clicked. A null
+  // rowKey falls back to the panel-level note. `note` returns the success text
+  // plus whether the daemon actually reported success — a 200 carrying an
+  // errors[] is a FAILURE, and must not be painted green.
+  async function runAction(
+    label: string,
+    fn: () => Promise<any>,
+    note: (r: any) => RowOutcome,
+    rowKey: string | null = null,
+  ) {
     actionBusy = label;
-    actionNote = null;
+    if (rowKey) delete rowOutcome[rowKey];
+    else actionNote = null;
+    let outcome: RowOutcome;
     try {
-      actionNote = note(await fn());
+      outcome = note(await fn());
     } catch (e: any) {
-      actionNote = e?.message ?? String(e);
+      // app_mesh.go classifies the daemon's own non-2xx body into actionable
+      // prose; surface it verbatim rather than flattening it to "failed".
+      outcome = { ok: false, text: e?.message ?? String(e) };
+    }
+    // Clear the busy flag only after the post-action reload resolves, so a row
+    // cannot read idle while its own refresh is still in flight.
+    try {
+      await refresh();
     } finally {
       actionBusy = null;
-      await refresh();
+      if (rowKey) rowOutcome[rowKey] = outcome;
+      else { actionNote = outcome.text; actionNoteOk = outcome.ok; }
     }
   }
 
@@ -246,10 +280,21 @@
     if (!a) return;
     // A retry that fails must say why — reporting failure is the button's whole
     // point, so the daemon's own error text wins over the merged counts.
-    await runAction(`retry:${groupKey}`, () => (a as any).RetryMeshPeer(id), (r) =>
-      r?.errors?.length
-        ? `${id}: retry failed — ${r.errors[0].err}`
-        : `${id}: merged ${r?.rows_merged ?? 0} rows, ${r?.links_merged ?? 0} links`,
+    await runAction(
+      `retry:${groupKey}`,
+      () => (a as any).RetryMeshPeer(id),
+      (r) => {
+        if (r?.errors?.length) return { ok: false, text: `retry failed — ${r.errors[0].err}` };
+        const rows = r?.rows_merged ?? 0, links = r?.links_merged ?? 0, blobs = r?.blobs_fetched ?? 0;
+        // An all-zero pull is a SUCCESS, not a no-op: this store is
+        // content-addressed, so content already held under a different
+        // row_ulid is skipped by design and merges nothing. Saying "merged 0
+        // rows" invites the reader to conclude the button did nothing.
+        return rows + links + blobs === 0
+          ? { ok: true, text: 'pull succeeded — already up to date, nothing new to merge' }
+          : { ok: true, text: `pull succeeded — merged ${rows} rows, ${links} links, ${blobs} blobs` };
+      },
+      groupKey,
     );
   }
 
@@ -263,25 +308,39 @@
       return;
     const a = await getApi();
     if (!a) return;
-    await runAction(`reset:${groupKey}`, () => (a as any).ResetMeshPeerCursor(id), () => `${id}: cursor reset`);
+    await runAction(
+      `reset:${groupKey}`,
+      () => (a as any).ResetMeshPeerCursor(id),
+      // The daemon reports whether it actually reset; claiming success on a
+      // `reset:false` would be a lie the operator cannot see through.
+      (r) =>
+        r?.reset === false
+          ? { ok: false, text: 'daemon declined the cursor reset' }
+          : { ok: true, text: 'cursor reset — the next pull re-reads the whole op-log' },
+      groupKey,
+    );
   }
 
   // A note describes one click against one filter view, so it must not outlive
   // either — closing the card or changing the filter retires it.
   function toggleErrors() {
     errorsOpen = !errorsOpen;
-    if (!errorsOpen) actionNote = null;
+    if (!errorsOpen) { actionNote = null; rowOutcome = {}; }
   }
 
   function setErrorPeerFilter(peer: string | null) {
     errorPeerFilter = peer;
     actionNote = null;
+    rowOutcome = {};
   }
 
   async function clearErrors() {
     const a = await getApi();
     if (!a) return;
-    await runAction('clear', () => (a as any).ClearMeshErrors(), (r) => `cleared ${r?.cleared ?? 0} recorded errors`);
+    await runAction('clear', () => (a as any).ClearMeshErrors(), (r) => ({
+      ok: true,
+      text: `cleared ${r?.cleared ?? 0} recorded errors from this node's local history (all peers)`,
+    }));
   }
 
   // The daemon reports one peer per (machine, profile, vault) triple, so three
@@ -367,7 +426,8 @@
        against a dead daemon swaps the whole chain for the unreachable state.
        Either would take the note with it and leave the click unconfirmed. -->
   {#if actionNote}
-    <p class="action-note" role="status" aria-live="polite">
+    <p class="action-note" class:ok={actionNoteOk} class:fail={!actionNoteOk} role="status" aria-live="polite">
+      <span class="ro-icon" aria-hidden="true">{actionNoteOk ? '✓' : '✕'}</span>
       {actionNote}
       <button class="note-x" onclick={() => (actionNote = null)} aria-label="dismiss">✕</button>
     </p>
@@ -401,11 +461,15 @@
           onclick={toggleErrors}
           disabled={recentErrors.length === 0}
           aria-expanded={errorsOpen}
-          title={recentErrors.length ? 'show recorded errors' : 'no recorded error detail to show'}
+          title={errorsAreLive
+            ? `${status?.errors_15m ?? 0} sync errors in the last 15 minutes — this is live`
+            : 'Cumulative count since the daemon started. It never decays, so a healed outage keeps counting. Nothing is currently failing.'}
         >
           <span class="c-val" class:err={errorsAreLive} class:stale={!errorsAreLive && metric('pb_sync_errors_total') !== '0'}
             >{metric('pb_sync_errors_total')}</span>
-          <span class="c-label">errors{#if recentErrors.length} {errorsOpen ? '▾' : '▸'}{/if}</span>
+          <!-- A monotone _total counter is history, not a live alarm. Labelling
+               it "errors" made a self-healed DNS burst read as a current fault. -->
+          <span class="c-label">errors {errorsAreLive ? 'live' : 'recorded'}{#if recentErrors.length} {errorsOpen ? '▾' : '▸'}{/if}</span>
           {#if !errorsAreLive && lastErrorAge}
             <span class="c-note">none in {lastErrorAge}</span>
           {/if}
@@ -426,8 +490,13 @@
           {#if errorPeerFilter}
             <button class="pill active" onclick={() => setErrorPeerFilter(null)}>{errorPeerFilter} ✕</button>
           {/if}
-          <button class="btn sm" onclick={() => void clearErrors()} disabled={!adminKeySet || actionBusy !== null}>
-            {actionBusy === 'clear' ? 'clearing…' : 'clear errors'}
+          <button
+            class="btn sm"
+            onclick={() => void clearErrors()}
+            disabled={!adminKeySet || actionBusy === 'clear'}
+            title="Erase this node's local error history for ALL peers, including any hidden by the current filter. Does not fix anything and does not touch any peer."
+          >
+            {actionBusy === 'clear' ? 'clearing…' : 'clear local error history'}
           </button>
         </h2>
         {#if !adminKeySet}
@@ -455,7 +524,8 @@
                 <button
                   class="btn sm"
                   onclick={() => void retryPeer(g.peer, g.key)}
-                  disabled={!adminKeySet || actionBusy !== null}
+                  disabled={!adminKeySet || actionBusy === `retry:${g.key}`}
+                  title="Pull from this peer now, from this node. Does not change the peer, and cannot lose data."
                 >
                   {actionBusy === `retry:${g.key}` ? 'retrying…' : 'retry peer'}
                 </button>
@@ -463,12 +533,24 @@
                   <button
                     class="btn sm danger"
                     onclick={() => void resetCursor(g.peer, g.key)}
-                    disabled={!adminKeySet || actionBusy !== null}
+                    disabled={!adminKeySet || actionBusy === `reset:${g.key}`}
+                    title="Re-read this peer's whole op-log on the next pull. Costs bandwidth only; cannot lose data."
                   >
                     {actionBusy === `reset:${g.key}` ? 'resetting…' : 'reset cursor'}
                   </button>
                 {/if}
               </div>
+              <!-- The outcome belongs in the row that was clicked: a note at
+                   panel level sits above 48 rows and scrolls out of view. -->
+              {#if rowOutcome[g.key]}
+                <p class="row-outcome" class:ok={rowOutcome[g.key].ok} class:fail={!rowOutcome[g.key].ok} role="status" aria-live="polite">
+                  <span class="ro-icon" aria-hidden="true">{rowOutcome[g.key].ok ? '✓' : '✕'}</span>
+                  {rowOutcome[g.key].text}
+                  {#if rowOutcome[g.key].ok}
+                    <span class="ro-hint">this row is history and stays until cleared</span>
+                  {/if}
+                </p>
+              {/if}
             </div>
           {/each}
         </div>
@@ -704,6 +786,35 @@
     background: var(--color-bg-secondary); border: 1px solid var(--color-border-secondary);
     border-radius: var(--radius-sm);
   }
+  /* A failure styled like a success is why a rejected action read as "nothing
+     happened". Severity must be visible without reading the sentence. */
+  .action-note.ok {
+    color: var(--color-success); background: var(--color-success-bg);
+    border-color: var(--color-success-border);
+  }
+  .action-note.fail {
+    color: var(--color-error); background: var(--color-error-bg);
+    border-color: var(--color-error-border);
+  }
+  /* Per-row outcome: sits with the button that produced it, so the result is
+     in the viewport the click happened in. */
+  .row-outcome {
+    display: flex; align-items: baseline; gap: var(--spacing-sm);
+    margin: var(--spacing-sm) 0 0; padding: var(--spacing-sm) var(--spacing-md);
+    font-size: 0.74rem; border-radius: var(--radius-sm); border: 1px solid transparent;
+  }
+  .row-outcome.ok {
+    color: var(--color-success); background: var(--color-success-bg);
+    border-color: var(--color-success-border);
+  }
+  .row-outcome.fail {
+    color: var(--color-error); background: var(--color-error-bg);
+    border-color: var(--color-error-border);
+  }
+  .ro-icon { font-weight: 700; }
+  .ro-hint { margin-left: auto; color: var(--color-text-tertiary); font-size: 0.68rem; }
+  /* A disabled button must not swallow clicks as though it were live. */
+  .err-actions .btn:disabled, .errors-card h2 .btn:disabled { pointer-events: none; }
   .note-x {
     margin-left: auto; background: none; border: none; cursor: pointer;
     color: var(--color-text-tertiary); font-size: 0.7rem; padding: 0 2px; line-height: 1;
