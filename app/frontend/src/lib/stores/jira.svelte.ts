@@ -12,7 +12,54 @@
  */
 import { keyedResource, type Resource } from './resource.svelte';
 import { notifications } from '../notifications.svelte';
+import { httpsCloneURL, type DispatchTarget, type Repo } from './code.svelte';
 import type { main } from '../../../wailsjs/go/models';
+
+/**
+ * Resolve the repository a ticket's work happens in — ref first, else nothing.
+ *
+ * A Jira ticket carries no repo, but every begin-work lane needs one. The
+ * ticket's own code refs are the best available answer: if a pull request
+ * already references the key, that is where the work lives. Only when there is
+ * no ref at all does the caller fall back to asking (the inline repo picker),
+ * which arrives here as `chosen`.
+ *
+ * Returns null when there is nothing to go on, which is the signal to show
+ * that picker rather than a dead button.
+ */
+export function jiraDispatchTarget(
+  tk: main.JiraTicket,
+  repos: Repo[],
+  chosen?: string,
+): DispatchTarget | null {
+  const base = {
+    kind: 'jira' as const,
+    number: 0,
+    title: tk?.summary ?? '',
+    htmlURL: tk?.url ?? '',
+    issueKey: tk?.key ?? '',
+  };
+
+  // An explicit choice wins over any ref: the operator is correcting us.
+  if (chosen) {
+    const picked = repos.find((r) => r.full_name === chosen);
+    return picked
+      ? { ...base, repoFullName: picked.full_name, repoURL: picked.clone_url }
+      : null;
+  }
+
+  const ref = (tk?.refs ?? [])[0];
+  if (!ref?.repo) return null;
+
+  const known = repos.find((r) => r.full_name === ref.repo);
+  if (known) return { ...base, repoFullName: known.full_name, repoURL: known.clone_url };
+
+  // The ref points at a repo this profile does not list — a fork, or another
+  // org's. Its pull-request url still normalizes to a clone url, which beats
+  // offering the operator nothing on a ticket that plainly has code.
+  const url = httpsCloneURL({ repoURL: '', htmlURL: ref.url } as DispatchTarget);
+  return url ? { ...base, repoFullName: ref.repo, repoURL: url } : null;
+}
 
 type Tickets = main.JiraTicketsResult | null;
 

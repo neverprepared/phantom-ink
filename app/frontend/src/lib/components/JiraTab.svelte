@@ -6,8 +6,10 @@
   import { notifications } from '../notifications.svelte';
   import { profileState } from '../stores.svelte';
   import { codeState } from '../stores/code.svelte';
-  import { jiraState } from '../stores/jira.svelte';
+  import { jiraState, jiraDispatchTarget } from '../stores/jira.svelte';
   import { timeAgo } from '../utils/format';
+  import DispatchModal from './DispatchModal.svelte';
+  import type { main } from '../../../wailsjs/go/models';
 
   // Editor state, deliberately component-local: the JQL draft and the link
   // picker describe one visit, not the profile. The TICKETS live in
@@ -16,6 +18,7 @@
   let jqlDraft = $state('');
   let editingJql = $state(false);
   let linkingKey = $state(''); // ticket currently showing the PR picker
+  let pickingKey = $state(''); // ticket currently showing the repo picker
 
   let profile = $derived(profileState.active?.name ?? '');
   let tickets = $derived(jiraState.rows);
@@ -30,6 +33,17 @@
   // screen while this revalidates behind them.
   $effect(() => {
     if (profile) void load();
+  });
+
+  // The code overview and the agent roster are what this tab's PICKERS are
+  // built from — repos for "which repo does this ticket's work happen in", and
+  // pull requests for the link picker, which until now told the operator to
+  // "open the code tab first". Both stores are cached per profile, so warming
+  // them here costs one round trip at most and nothing on a revisit.
+  $effect(() => {
+    if (!profile) return;
+    void codeState.refresh(profile);
+    void codeState.loadAgents();
   });
 
   // Live age for the freshness label; one tick a minute while mounted.
@@ -88,6 +102,58 @@
 
   function openInBrowser(url: string) {
     (window as any).runtime?.BrowserOpenURL(url);
+  }
+
+  // ── Begin work ───────────────────────────────────────────────────────────
+  //
+  // The same two lanes a repo row gets in the code tab, with one extra step: a
+  // ticket carries no repo, so it is resolved from the ticket's code refs and
+  // only asked for when there are none.
+
+  function target(tk: main.JiraTicket, chosen?: string) {
+    return jiraDispatchTarget(tk, codeState.repos, chosen);
+  }
+
+  /** True when this ticket can start work without asking which repo. */
+  function hasRepo(tk: main.JiraTicket): boolean {
+    return target(tk) !== null;
+  }
+
+  /** Open the dispatch modal, asking for a repo first if we cannot infer one. */
+  function beginWork(tk: main.JiraTicket, chosen?: string) {
+    const t = target(tk, chosen);
+    if (!t) {
+      pickingKey = tk.key;
+      return;
+    }
+    pickingKey = '';
+    codeState.openDispatch(t);
+  }
+
+  /** The host lane: clone into this profile's workspace and open a terminal. */
+  function cloneAndOpen(tk: main.JiraTicket, chosen?: string) {
+    const t = target(tk, chosen);
+    if (!t) {
+      pickingKey = tk.key;
+      return;
+    }
+    pickingKey = '';
+    void codeState.cloneAndOpen(profile, t);
+  }
+
+  // Which lane the repo picker is standing in for, so choosing a repo
+  // continues what the operator actually clicked.
+  let pickingLane = $state<'work' | 'clone'>('work');
+
+  function askRepo(tk: main.JiraTicket, lane: 'work' | 'clone') {
+    pickingLane = lane;
+    pickingKey = tk.key;
+  }
+
+  function chooseRepo(tk: main.JiraTicket, fullName: string) {
+    if (!fullName) return;
+    if (pickingLane === 'clone') cloneAndOpen(tk, fullName);
+    else beginWork(tk, fullName);
   }
 
   function chipClass(cat: string): string {
@@ -183,6 +249,46 @@
             </div>
           {/each}
 
+          <!-- Begin work. The lanes are the code tab's, so the labels match:
+               the modal lane (autonomous task / interactive session) and the
+               host lane (clone + terminal) that skips the modal entirely. -->
+          <div class="tk-lanes">
+            <button class="link accent" onclick={() => (hasRepo(tk) ? beginWork(tk) : askRepo(tk, 'work'))}>
+              Begin work ▾
+            </button>
+            <button
+              class="link"
+              disabled={codeState.cloningRepo !== ''}
+              onclick={() => (hasRepo(tk) ? cloneAndOpen(tk) : askRepo(tk, 'clone'))}
+            >
+              {codeState.cloningRepo !== '' ? 'cloning…' : 'Clone + terminal'}
+            </button>
+            {#if hasRepo(tk)}
+              <!-- Which repo was inferred, so an agent is never sent at a
+                   repository the operator did not realise they had chosen. -->
+              <code class="tk-inferred">{target(tk)?.repoFullName}</code>
+            {/if}
+          </div>
+
+          {#if pickingKey === tk.key}
+            <div class="tk-picker">
+              {#if codeState.repos.length === 0}
+                <span class="muted-note">No repositories loaded for this profile.</span>
+              {:else}
+                <select
+                  aria-label="choose a repository for {tk.key}"
+                  onchange={(e) => chooseRepo(tk, (e.currentTarget as HTMLSelectElement).value)}
+                >
+                  <option value="">choose a repository…</option>
+                  {#each codeState.repos as r (r.full_name)}
+                    <option value={r.full_name}>{r.full_name}</option>
+                  {/each}
+                </select>
+              {/if}
+              <button class="btn ghost sm" onclick={() => (pickingKey = '')}>cancel</button>
+            </div>
+          {/if}
+
           {#if (tk.refs ?? []).length === 0 && (tk.orphan_rows ?? []).length === 0}
             {#if linkingKey === tk.key}
               <div class="tk-picker">
@@ -212,6 +318,10 @@
     </ul>
   {/if}
 </div>
+
+<!-- Same modal the code tab uses. Driven by module-scoped dispatch state, and
+     the Work hub renders one tab at a time, so the two mounts never coexist. -->
+<DispatchModal {profile} />
 
 <style>
   .jira-tab { padding: var(--panel-padding); display: flex; flex-direction: column; gap: var(--spacing-sm); }
@@ -284,4 +394,14 @@
     border-radius: var(--radius-sm); padding: 2px 8px;
   }
   .tk-link-btn:hover { color: var(--color-text-primary); border-color: var(--color-text-tertiary); }
+
+  .tk-lanes { display: flex; align-items: center; gap: 12px; margin: 5px 0 0 14px; }
+  .tk-lanes .link {
+    background: none; border: none; padding: 0; cursor: pointer;
+    font: inherit; font-size: 11px; color: var(--color-text-secondary);
+  }
+  .tk-lanes .link:hover:not(:disabled) { color: var(--color-text-primary); text-decoration: underline; }
+  .tk-lanes .link:disabled { cursor: default; opacity: 0.5; }
+  .tk-lanes .link.accent { color: var(--color-accent, var(--color-info)); }
+  .tk-inferred { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-tertiary); }
 </style>

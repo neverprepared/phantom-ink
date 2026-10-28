@@ -17,7 +17,7 @@ vi.mock('../notifications.svelte', () => ({
   notifications: { error: errorToast, success: vi.fn(), info: vi.fn() },
 }));
 
-const { jiraState } = await import('./jira.svelte');
+const { jiraState, jiraDispatchTarget } = await import('./jira.svelte');
 
 function result(profile: string, extra: Record<string, unknown> = {}) {
   return {
@@ -144,4 +144,68 @@ it('profile names the tickets on screen immediately after a warm switch', async 
   expect(jiraState.profile).toBe('personal');
   expect(jiraState.rows[0].key).toBe('PERSONAL-1');
   await pending;
+});
+
+describe('ref-first repo resolution', () => {
+  const repos = [
+    { provider: 'github', full_name: 'acme/api', clone_url: 'https://github.com/acme/api.git' },
+    { provider: 'ado', full_name: 'acme/web', clone_url: 'https://dev.azure.com/acme/proj/_git/web' },
+  ] as any[];
+
+  const ticket = (extra: Record<string, unknown> = {}) =>
+    ({
+      key: 'PLAT-42',
+      summary: 'Rate limit the webhook endpoint',
+      url: 'https://acme.atlassian.net/browse/PLAT-42',
+      ...extra,
+    }) as any;
+
+  it('takes the repo from the ticket first code ref', () => {
+    const t = jiraDispatchTarget(
+      ticket({ refs: [{ repo: 'acme/api', url: 'https://github.com/acme/api/pull/7' }] }),
+      repos,
+    );
+    expect(t?.repoFullName).toBe('acme/api');
+    expect(t?.repoURL).toBe('https://github.com/acme/api.git');
+    expect(t?.issueKey).toBe('PLAT-42');
+    // The ticket link rides along as htmlURL so the prompt can cite it.
+    expect(t?.htmlURL).toBe('https://acme.atlassian.net/browse/PLAT-42');
+  });
+
+  it('resolves an ADO ref the same way', () => {
+    const t = jiraDispatchTarget(
+      ticket({ refs: [{ repo: 'acme/web', url: 'https://dev.azure.com/acme/proj/_git/web/pullrequest/3' }] }),
+      repos,
+    );
+    expect(t?.repoURL).toBe('https://dev.azure.com/acme/proj/_git/web');
+  });
+
+  // A ref can point at a repo this profile does not list (a fork, another
+  // org). Falling back to the PR url beats offering the operator nothing.
+  it('falls back to the ref pull-request url when the repo is not listed', () => {
+    const t = jiraDispatchTarget(
+      ticket({ refs: [{ repo: 'other/thing', url: 'https://github.com/other/thing/pull/1' }] }),
+      repos,
+    );
+    expect(t?.repoFullName).toBe('other/thing');
+    expect(t?.repoURL).toBe('https://github.com/other/thing.git');
+  });
+
+  it('returns null with no refs, so the caller shows the repo picker', () => {
+    expect(jiraDispatchTarget(ticket({ refs: [] }), repos)).toBeNull();
+    expect(jiraDispatchTarget(ticket(), repos)).toBeNull();
+  });
+
+  it('an explicit repo choice overrides the ref', () => {
+    const t = jiraDispatchTarget(
+      ticket({ refs: [{ repo: 'acme/api', url: 'https://github.com/acme/api/pull/7' }] }),
+      repos,
+      'acme/web',
+    );
+    expect(t?.repoFullName).toBe('acme/web');
+  });
+
+  it('an explicit choice that is not in the repo list resolves to nothing', () => {
+    expect(jiraDispatchTarget(ticket(), repos, 'nope/nope')).toBeNull();
+  });
 });

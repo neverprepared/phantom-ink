@@ -18,7 +18,13 @@
 
   const target = $derived(codeState.dispatchTarget);
   const kindLabel = $derived(
-    target?.kind === 'pr' ? 'pull request' : target?.kind === 'issue' ? 'issue' : 'repository'
+    target?.kind === 'pr'
+      ? 'pull request'
+      : target?.kind === 'issue'
+        ? 'issue'
+        : target?.kind === 'jira'
+          ? 'ticket'
+          : 'repository'
   );
   const session = $derived(codeState.dispatchLane === 'session');
   const canSend = $derived(codeState.dispatchPrompt.trim().length > 0 && !codeState.dispatching);
@@ -30,7 +36,13 @@
       <h2>Begin work</h2>
       <p class="dm-target">
         on {kindLabel}
-        <strong>{target.repoFullName}{target.number ? `#${target.number}` : ''}</strong>
+        {#if target.issueKey}
+          <!-- A ticket's repo was inferred, not given — say which one it is. -->
+          <strong>{target.issueKey}</strong>
+          <span class="dm-in">in <code>{target.repoFullName}</code></span>
+        {:else}
+          <strong>{target.repoFullName}{target.number ? `#${target.number}` : ''}</strong>
+        {/if}
       </p>
       {#if target.title}<p class="dm-title">{target.title}</p>{/if}
     </header>
@@ -118,6 +130,8 @@
   .dm-head h2 { font-size: 1.05rem; margin: 0; color: var(--color-text-primary); }
   .dm-target { margin: 4px 0 0; font-size: 0.85rem; color: var(--color-text-muted); }
   .dm-target strong { color: var(--color-text-secondary); font-family: var(--font-mono); }
+  .dm-in { color: var(--color-text-muted); }
+  .dm-in code { font-family: var(--font-mono); font-size: 0.8rem; }
   .dm-title { margin: 4px 0 0; font-size: 0.85rem; color: var(--color-text-secondary); }
 
   .dm-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: var(--spacing-md); }

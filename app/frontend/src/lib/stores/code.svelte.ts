@@ -154,7 +154,7 @@ export interface RepoDetail {
 }
 
 /** What a dispatch is about — drives which prompt templates are offered. */
-export type DispatchKind = 'repo' | 'pr' | 'issue';
+export type DispatchKind = 'repo' | 'pr' | 'issue' | 'jira';
 
 export interface DispatchTarget {
   kind: DispatchKind;
@@ -165,8 +165,13 @@ export interface DispatchTarget {
   /** PR/issue number, 0 for a repo-level dispatch. */
   number: number;
   title: string;
-  /** github.com link to the PR/issue (or the repo). */
+  /** github.com link to the PR/issue (or the repo). For a `jira` target this
+   *  is the TICKET's link, not the repo's — the repo is identified by repoURL
+   *  and repoFullName, and httpsCloneURL prefers repoURL, so the ticket link
+   *  can never be handed to `git clone`. */
   htmlURL: string;
+  /** Jira issue key (ABC-123). Set only on a `jira` target. */
+  issueKey?: string;
 }
 
 export interface PromptTemplate {
@@ -218,6 +223,33 @@ export const PROMPT_TEMPLATES: Record<DispatchKind, PromptTemplate[]> = {
         `Address issue #${t.number} ("${t.title}") in ${t.repoFullName}.\n${t.htmlURL}\n\n` +
         `Read the issue, implement the fix on a feature branch with tests, and open a PR that ` +
         `references the issue. Stay in scope.\n\n` +
+        STYLE_NOTE,
+    },
+  ],
+  // A ticket is the one kind whose target repo is INFERRED (from the ticket's
+  // existing code refs, else chosen in the picker), so these templates name
+  // the repo explicitly — the operator should see which one they are about to
+  // send an agent at.
+  jira: [
+    {
+      label: 'Implement this ticket',
+      build: (t) =>
+        `Jira ${t.issueKey ?? ''}: ${t.title}\n${t.htmlURL}\n` +
+        `Repository: ${t.repoFullName}\n\n` +
+        `Implement this ticket. Work on a branch named ${t.issueKey ?? ''}-<short-slug>, add ` +
+        `tests for every behaviour you touch, and open a pull request whose title STARTS with ` +
+        `${t.issueKey ?? ''} — the ticket's code link is derived from the pull request title, so a ` +
+        `title without the key leaves the work invisible from the ticket.\n\n` +
+        STYLE_NOTE,
+    },
+    {
+      label: 'Investigate this ticket',
+      build: (t) =>
+        `Jira ${t.issueKey ?? ''}: ${t.title}\n${t.htmlURL}\n` +
+        `Repository: ${t.repoFullName}\n\n` +
+        `Investigate this ticket against the repository: reproduce what it describes, find the ` +
+        `cause, and report what you found and what you would change. Do not push code and do ` +
+        `not open a pull request.\n\n` +
         STYLE_NOTE,
     },
   ],

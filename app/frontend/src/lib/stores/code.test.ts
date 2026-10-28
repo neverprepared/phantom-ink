@@ -21,7 +21,7 @@ vi.mock('../notifications.svelte', () => ({
   notifications: { error: vi.fn(), success: vi.fn(), info: vi.fn() },
 }));
 
-const { codeState } = await import('./code.svelte');
+const { codeState, httpsCloneURL, PROMPT_TEMPLATES } = await import('./code.svelte');
 
 /** A minimal CodeOverview — only the fields a test asserts on are set. */
 function overview(profile: string, extra: Record<string, unknown> = {}) {
@@ -263,5 +263,53 @@ describe('per-profile cache', () => {
     const p = codeState.refresh('work');
     expect(codeState.loading).toBe(true);
     await p;
+  });
+});
+
+describe('jira dispatch kind', () => {
+  // A ticket target carries the TICKET's url in htmlURL and the repo's clone
+  // url in repoURL. httpsCloneURL prefers repoURL, which is the whole reason
+  // that mapping is safe — if it ever flipped, a `git clone` of a Jira page
+  // would reach the agent.
+  const target = {
+    kind: 'jira' as const,
+    repoFullName: 'acme/api',
+    repoURL: 'https://github.com/acme/api.git',
+    number: 0,
+    title: 'Rate limit the webhook endpoint',
+    htmlURL: 'https://acme.atlassian.net/browse/PLAT-42',
+    issueKey: 'PLAT-42',
+  };
+
+  it('resolves the clone url from the repo, never from the ticket link', () => {
+    expect(httpsCloneURL(target)).toBe('https://github.com/acme/api.git');
+  });
+
+  it('has templates, each naming the key, the summary and the ticket link', () => {
+    const tpls = PROMPT_TEMPLATES.jira;
+    expect(tpls.length).toBeGreaterThan(0);
+    for (const t of tpls) {
+      const prompt = t.build(target);
+      expect(prompt).toContain('PLAT-42');
+      expect(prompt).toContain('Rate limit the webhook endpoint');
+      expect(prompt).toContain('https://acme.atlassian.net/browse/PLAT-42');
+      expect(prompt).toContain('acme/api');
+    }
+  });
+
+  // The whole point of putting the key in the branch and PR title: the Jira
+  // tab's derived link is parsed out of the PR TITLE, so an agent that omits
+  // the key produces work this tab cannot see.
+  it('the implement template tells the agent to carry the key into the PR title', () => {
+    const prompt = PROMPT_TEMPLATES.jira[0].build(target);
+    expect(prompt).toMatch(/PLAT-42-/); // branch convention
+    expect(prompt.toLowerCase()).toContain('pull request title');
+  });
+
+  it('openDispatch on a ticket seeds the jira templates', () => {
+    codeState.openDispatch(target);
+    expect(codeState.templates).toBe(PROMPT_TEMPLATES.jira);
+    expect(codeState.dispatchPrompt).toContain('PLAT-42');
+    codeState.closeDispatch();
   });
 });
