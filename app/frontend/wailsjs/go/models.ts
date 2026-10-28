@@ -3409,6 +3409,20 @@ export namespace main {
 	        this.manual = source["manual"];
 	    }
 	}
+	export class JiraJQLPreset {
+	    name: string;
+	    jql: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new JiraJQLPreset(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.jql = source["jql"];
+	    }
+	}
 	export class JiraProfileStatus {
 	    profile: string;
 	    configured: boolean;

@@ -10,6 +10,8 @@ export function AddBrainMCP(arg1:string,arg2:string):Promise<string>;
 
 export function AddConversationParticipant(arg1:string,arg2:string,arg3:brainbox.AddConversationParticipantRequest):Promise<brainbox.Conversation>;
 
+export function ApplyJiraJQLPreset(arg1:string,arg2:string):Promise<void>;
+
 export function ApplyRemedy(arg1:string):Promise<main.DoctorRemedyResult>;
 
 export function ArchiveConversation(arg1:string,arg2:string):Promise<brainbox.Conversation>;
@@ -163,6 +165,8 @@ export function GetHiddenProfiles():Promise<Array<string>>;
 export function GetHubState():Promise<main.HubStateView>;
 
 export function GetJiraJQL(arg1:string):Promise<string>;
+
+export function GetJiraJQLPresets(arg1:string):Promise<Array<main.JiraJQLPreset>>;
 
 export function GetLANIP():Promise<string>;
 
@@ -467,6 +471,8 @@ export function SetJiraEnabled(arg1:boolean):Promise<void>;
 export function SetJiraEnabledForProfile(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetJiraJQL(arg1:string,arg2:string):Promise<void>;
+
+export function SetJiraJQLPresets(arg1:string,arg2:Array<main.JiraJQLPreset>):Promise<void>;
 
 export function SetMeshAdminKey(arg1:string):Promise<void>;
 

@@ -209,3 +209,85 @@ describe('ref-first repo resolution', () => {
     expect(jiraDispatchTarget(ticket(), repos, 'nope/nope')).toBeNull();
   });
 });
+
+describe('JQL presets', () => {
+  let GetJiraJQLPresets: ReturnType<typeof vi.fn>;
+  let SetJiraJQLPresets: ReturnType<typeof vi.fn>;
+  let ApplyJiraJQLPreset: ReturnType<typeof vi.fn>;
+
+  const preset = (name: string) => ({ name, jql: `label = ${name}` });
+
+  beforeEach(() => {
+    GetJiraJQLPresets = vi.fn(async (profile: string) => [
+      preset(`${profile}-a`),
+      preset(`${profile}-b`),
+    ]);
+    SetJiraJQLPresets = vi.fn(async () => undefined);
+    ApplyJiraJQLPreset = vi.fn(async () => undefined);
+    mockGetApi.mockResolvedValue({
+      JiraTickets,
+      GetJiraJQLPresets,
+      SetJiraJQLPresets,
+      ApplyJiraJQLPreset,
+    });
+  });
+
+  it('loads a profile presets and caches them per profile', async () => {
+    await jiraState.loadPresets('work');
+    expect(jiraState.presets.map((p) => p.name)).toEqual(['work-a', 'work-b']);
+
+    await jiraState.loadPresets('personal');
+    expect(jiraState.presets[0].name).toBe('personal-a');
+
+    // Switching back paints from cache immediately and only revalidates —
+    // the chip row must never blank out between two visits.
+    const back = jiraState.loadPresets('work');
+    expect(jiraState.presets[0].name).toBe('work-a');
+    expect(jiraState.presetsLoading).toBe(false);
+    await back;
+    expect(jiraState.presets[0].name).toBe('work-a');
+  });
+
+  it('applying a preset drops the cached tickets so the new query is read', async () => {
+    await jiraState.refresh('work');
+    await jiraState.loadPresets('work');
+
+    await jiraState.applyPreset('work', 'work-b');
+    expect(ApplyJiraJQLPreset).toHaveBeenCalledWith('work', 'work-b');
+
+    // The tickets on screen belonged to the PREVIOUS query — the next read
+    // must be a cold one, not a cache hit.
+    const p = jiraState.refresh('work');
+    expect(jiraState.loading).toBe(true);
+    await p;
+  });
+
+  it('a failed apply surfaces an error and leaves the tickets cached', async () => {
+    await jiraState.refresh('work');
+    ApplyJiraJQLPreset.mockRejectedValue(new Error('no preset named "nope"'));
+
+    await expect(jiraState.applyPreset('work', 'nope')).rejects.toThrow('no preset');
+    const p = jiraState.refresh('work');
+    expect(jiraState.loading).toBe(false); // still cached
+    await p;
+  });
+
+  it('saving the list writes it and refreshes the presets', async () => {
+    await jiraState.loadPresets('work');
+    const next = [preset('escalations')];
+
+    await jiraState.savePresets('work', next);
+    expect(SetJiraJQLPresets).toHaveBeenCalledWith('work', next);
+    // Re-read, so a rejected or normalised list is what ends up on screen.
+    expect(GetJiraJQLPresets).toHaveBeenCalledTimes(2);
+  });
+
+  it('saving does not drop the cached tickets — the active query is unchanged', async () => {
+    await jiraState.refresh('work');
+    await jiraState.savePresets('work', [preset('escalations')]);
+
+    const p = jiraState.refresh('work');
+    expect(jiraState.loading).toBe(false);
+    await p;
+  });
+});

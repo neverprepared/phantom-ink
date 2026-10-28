@@ -20,8 +20,25 @@
   let linkingKey = $state(''); // ticket currently showing the PR picker
   let pickingKey = $state(''); // ticket currently showing the repo picker
 
+  // Preset editor state, component-local for the same reason the JQL draft is:
+  // a draft list describes one visit. The SAVED list lives in jiraState.
+  let managingPresets = $state(false);
+  let presetDraft = $state<main.JiraJQLPreset[]>([]);
+  let savingPresets = $state(false);
+  let switchingTo = $state(''); // preset name mid-apply, for the busy chip
+
   let profile = $derived(profileState.active?.name ?? '');
   let tickets = $derived(jiraState.rows);
+
+  let presets = $derived(jiraState.presets);
+  /**
+   * The chip currently in force. Matched on the QUERY, not a stored "active"
+   * flag — the active query is whatever SetJiraJQL last wrote, and the
+   * edit-query box can change that without going through a chip at all.
+   */
+  let activePreset = $derived(
+    presets.find((p) => (p.jql ?? '').trim() === jiraState.jql.trim())?.name ?? '',
+  );
 
   /** Reload, then re-seed the draft unless the operator is mid-edit. */
   async function load(force = false) {
@@ -44,6 +61,12 @@
     if (!profile) return;
     void codeState.refresh(profile);
     void codeState.loadAgents();
+  });
+
+  // The chip row is its own read — see the store: presets change only when
+  // edited, so they must not ride the tickets' 45s TTL.
+  $effect(() => {
+    if (profile) void jiraState.loadPresets(profile);
   });
 
   // Live age for the freshness label; one tick a minute while mounted.
@@ -98,6 +121,70 @@
       if (!a) throw new Error('API bindings unavailable');
       await a.UnlinkJiraIssue(profile, issueKey, rowKey);
     }, `${issueKey} unlinked`);
+  }
+
+  // ── Presets ──────────────────────────────────────────────────────────────
+  //
+  // A preset click goes through the SAVED query, so switching views is the
+  // same write the edit-query box makes. That keeps the memo, the freshness
+  // line and the displayed JQL all describing one thing.
+
+  async function applyPreset(name: string) {
+    if (name === activePreset || switchingTo) return;
+    switchingTo = name;
+    try {
+      await jiraState.applyPreset(profile, name);
+      editingJql = false;
+      await load();
+    } catch (e: any) {
+      notifications.error(`${e?.message ?? e}`);
+    } finally {
+      switchingTo = '';
+    }
+  }
+
+  /** Open the editor on a COPY, so cancelling really discards. */
+  function manage() {
+    presetDraft = presets.map((p) => ({ ...p }) as main.JiraJQLPreset);
+    managingPresets = true;
+  }
+
+  function addPresetRow(jql = '') {
+    presetDraft = [...presetDraft, { name: '', jql } as main.JiraJQLPreset];
+  }
+
+  /** Capture the query on screen as a new, unnamed preset row. */
+  function captureCurrent() {
+    manage();
+    addPresetRow(jqlDraft.trim() || jiraState.jql);
+  }
+
+  function removePresetRow(i: number) {
+    presetDraft = presetDraft.filter((_, n) => n !== i);
+  }
+
+  /** Reorder by one step; the stored order is the chip order. */
+  function movePresetRow(i: number, delta: number) {
+    const to = i + delta;
+    if (to < 0 || to >= presetDraft.length) return;
+    const next = [...presetDraft];
+    [next[i], next[to]] = [next[to], next[i]];
+    presetDraft = next;
+  }
+
+  async function savePresets() {
+    savingPresets = true;
+    try {
+      await jiraState.savePresets(profile, presetDraft);
+      managingPresets = false;
+      notifications.success('presets saved');
+    } catch (e: any) {
+      // Validation lives in the backend, so a blank name or a duplicate
+      // arrives here as a message and the editor stays open on the draft.
+      notifications.error(`${e?.message ?? e}`);
+    } finally {
+      savingPresets = false;
+    }
   }
 
   function openInBrowser(url: string) {
@@ -167,6 +254,9 @@
   <div class="panel-header">
     <h1 class="page-title">jira</h1>
     <div class="head-actions">
+      <button class="btn ghost sm" onclick={() => (managingPresets ? (managingPresets = false) : manage())}>
+        {managingPresets ? 'done' : 'presets'}
+      </button>
       <button class="btn ghost sm" onclick={() => (editingJql = !editingJql)}>
         {editingJql ? 'cancel' : 'edit query'}
       </button>
@@ -192,6 +282,66 @@
         <span>Updated {fetchedAgo}</span>
       {/if}
     </p>
+  {/if}
+
+  <!-- Preset chips: one saved query per button, so the common views are one
+       click rather than a re-typed JQL. The active one is matched on the
+       query itself — see activePreset. -->
+  {#if presets.length > 0 || managingPresets}
+    <div class="presets" role="group" aria-label="saved queries">
+      {#each presets as p (p.name)}
+        <button
+          class="chip"
+          class:active={p.name === activePreset}
+          aria-pressed={p.name === activePreset}
+          title={p.jql}
+          disabled={switchingTo !== ''}
+          onclick={() => applyPreset(p.name)}
+        >{switchingTo === p.name ? '…' : p.name}</button>
+      {/each}
+      {#if !managingPresets}
+        <button class="chip add" title="save the query on screen as a preset" onclick={captureCurrent}>+ save current</button>
+      {/if}
+    </div>
+  {/if}
+
+  {#if managingPresets}
+    <!-- The whole list is edited and saved at once, which is also what the
+         backend takes: a rename, an edit, a delete and a reorder are one
+         write, so a half-applied list is not a state that can exist. -->
+    <div class="preset-edit">
+      {#if presetDraft.length === 0}
+        <p class="muted-note">No presets. Add one, or save none to keep the chip row empty.</p>
+      {/if}
+      {#each presetDraft as row, i (i)}
+        <div class="preset-row">
+          <input
+            class="p-name"
+            bind:value={presetDraft[i].name}
+            placeholder="name"
+            aria-label="preset {i + 1} name"
+            spellcheck="false"
+          />
+          <input
+            class="p-jql"
+            bind:value={presetDraft[i].jql}
+            placeholder="JQL"
+            aria-label="preset {i + 1} query"
+            spellcheck="false"
+          />
+          <button class="p-btn" title="move up" disabled={i === 0} onclick={() => movePresetRow(i, -1)}>↑</button>
+          <button class="p-btn" title="move down" disabled={i === presetDraft.length - 1} onclick={() => movePresetRow(i, 1)}>↓</button>
+          <button class="p-btn del" title="remove this preset" onclick={() => removePresetRow(i)}>×</button>
+        </div>
+      {/each}
+      <div class="preset-actions">
+        <button class="btn ghost sm" onclick={() => addPresetRow(jiraState.jql)}>+ add</button>
+        <button class="btn sm" disabled={savingPresets} onclick={savePresets}>
+          {savingPresets ? 'saving…' : 'save presets'}
+        </button>
+        <button class="btn ghost sm" onclick={() => (managingPresets = false)}>cancel</button>
+      </div>
+    </div>
   {/if}
 
   {#if editingJql}
@@ -345,6 +495,42 @@
   @media (prefers-reduced-motion: reduce) {
     .freshness .dot { animation: none; opacity: 0.8; }
   }
+  /* Preset chips. Quiet by default so the active one reads as the selection
+     rather than the row reading as a toolbar. */
+  .presets { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  .chip {
+    font: inherit; font-size: 11px; line-height: 1.6; padding: 1px 9px; cursor: pointer;
+    background: var(--color-bg-tertiary); color: var(--color-text-secondary);
+    border: 1px solid var(--color-border-secondary); border-radius: 11px;
+  }
+  .chip:hover:not(:disabled) { color: var(--color-text-primary); border-color: var(--color-text-tertiary); }
+  .chip:disabled { cursor: default; opacity: 0.55; }
+  .chip.active {
+    color: var(--color-text-primary); font-weight: 600;
+    border-color: var(--color-accent, var(--color-info));
+    background: var(--color-bg-secondary);
+  }
+  .chip.add { background: none; border-style: dashed; color: var(--color-text-tertiary); }
+
+  .preset-edit { display: flex; flex-direction: column; gap: 4px; }
+  .preset-row { display: flex; gap: 5px; align-items: center; }
+  .preset-row input {
+    font-family: var(--font-mono); font-size: 11px; padding: 3px 6px; min-width: 0;
+    background: var(--color-bg-tertiary); color: var(--color-text-primary);
+    border: 1px solid var(--color-border-secondary); border-radius: var(--radius-sm);
+  }
+  .preset-row .p-name { flex: 0 0 150px; }
+  .preset-row .p-jql { flex: 1; }
+  .p-btn {
+    background: none; border: 1px solid var(--color-border-secondary); border-radius: var(--radius-sm);
+    color: var(--color-text-tertiary); cursor: pointer; font-size: 11px; line-height: 1;
+    padding: 4px 6px;
+  }
+  .p-btn:hover:not(:disabled) { color: var(--color-text-primary); }
+  .p-btn:disabled { opacity: 0.35; cursor: default; }
+  .p-btn.del:hover { color: var(--color-error); border-color: var(--color-error); }
+  .preset-actions { display: flex; gap: 6px; }
+
   .jql-view { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-tertiary); }
   .jql-edit { display: flex; gap: 6px; align-items: flex-start; }
   .jql-edit textarea {

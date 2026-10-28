@@ -11,6 +11,7 @@
  * state for one visit, not data about a profile.
  */
 import { keyedResource, type Resource } from './resource.svelte';
+import { getApi } from '../utils/api';
 import { notifications } from '../notifications.svelte';
 import { httpsCloneURL, type DispatchTarget, type Repo } from './code.svelte';
 import type { main } from '../../../wailsjs/go/models';
@@ -62,10 +63,14 @@ export function jiraDispatchTarget(
 }
 
 type Tickets = main.JiraTicketsResult | null;
+type Presets = main.JiraJQLPreset[];
 
 class JiraStore {
   /** The profile whose tickets are on screen. Every read below is scoped to it. */
   private requested = $state('');
+  /** The profile whose PRESETS are on screen — tracked apart from `requested`
+   *  so loading a chip row never makes the ticket list look cold. */
+  private presetProfile = $state('');
   /** Per-profile "bypass the server memo next fetch" — see CodeStore for why
    *  this is keyed rather than a single boolean. */
   private forceNext = new Map<string, boolean>();
@@ -78,6 +83,24 @@ class JiraStore {
     {
       initial: null,
       label: (profile) => `Jira tickets (${profile})`,
+      onError: (m) => notifications.error(m),
+    },
+  );
+
+  /**
+   * The profile's named queries, cached the same way its tickets are.
+   *
+   * A second resource rather than a field on the tickets payload: the presets
+   * change only when the operator edits them, so folding them into the
+   * 45s-TTL ticket read would re-fetch a list that almost never moves, and a
+   * ticket refresh would churn the chip row.
+   */
+  private presetsRes = keyedResource<Presets>(
+    (profile) => (api) =>
+      api.GetJiraJQLPresets(profile) as Promise<main.JiraJQLPreset[]>,
+    {
+      initial: [],
+      label: (profile) => `Jira presets (${profile})`,
       onError: (m) => notifications.error(m),
     },
   );
@@ -128,6 +151,57 @@ class JiraStore {
   /** The saved query this profile's tickets came from. */
   jql = $derived(this.res?.jql ?? '');
 
+  /** This profile's named queries. Empty until loadPresets has resolved. */
+  presets = $derived(
+    this.presetProfile ? (this.presetsRes.for(this.presetProfile).value ?? []) : [],
+  );
+  /** True only while there is no chip row to show yet. */
+  get presetsLoading() {
+    return this.presetProfile ? this.presetsRes.for(this.presetProfile).loading : false;
+  }
+
+  /** Read this profile's presets, painting from cache on a revisit. */
+  async loadPresets(profile: string): Promise<void> {
+    if (!profile) return;
+    this.presetProfile = profile;
+    await this.presetsRes.for(profile).refresh();
+  }
+
+  /**
+   * Make one preset the active query.
+   *
+   * The tickets on screen are the PREVIOUS query's results, so they are
+   * dropped here — the backend drops its own memo inside SetJiraJQL, but the
+   * frontend resource would otherwise keep serving what it already holds and
+   * the chip would appear to do nothing.
+   *
+   * Errors are rethrown rather than swallowed: the caller decides whether a
+   * failed switch is a toast or an inline message.
+   */
+  async applyPreset(profile: string, name: string): Promise<void> {
+    const api = await getApi();
+    if (!api) throw new Error('API bindings unavailable');
+    await api.ApplyJiraJQLPreset(profile, name);
+    this.invalidate(profile);
+  }
+
+  /**
+   * Replace this profile's preset list, then re-read it.
+   *
+   * The re-read matters: the backend trims names and queries, so what ends up
+   * on screen is what was actually stored and not the operator's draft.
+   *
+   * The tickets are deliberately NOT invalidated — editing the list does not
+   * change which query is active.
+   */
+  async savePresets(profile: string, presets: main.JiraJQLPreset[]): Promise<void> {
+    const api = await getApi();
+    if (!api) throw new Error('API bindings unavailable');
+    await api.SetJiraJQLPresets(profile, presets);
+    this.presetsRes.drop(profile);
+    await this.loadPresets(profile);
+  }
+
   async refresh(profile: string, force = false): Promise<void> {
     if (!profile) return;
     this.requested = profile;
@@ -154,8 +228,10 @@ class JiraStore {
   /** Forget every profile — for tests and for "no profile at all". */
   hardReset(): void {
     this.tickets.clear();
+    this.presetsRes.clear();
     this.forceNext.clear();
     this.requested = '';
+    this.presetProfile = '';
   }
 }
 
