@@ -42,6 +42,18 @@
 
   async function load(force = false) {
     await jiraState.refresh(profile, force);
+    // The backend serves the rows without waiting on the provider fan-out they
+    // are joined against; this is the half that waits, with the list already
+    // painted and interactive while it runs.
+    if (jiraState.refsPending) {
+      try {
+        await jiraState.loadRefs(profile);
+      } catch (e: any) {
+        // The rows are fine and on screen -- only their code decoration is
+        // missing, so this is a note, not a failure of the tab.
+        notifications.error(`code refs: ${e?.message ?? e}`);
+      }
+    }
   }
 
   /**
@@ -457,7 +469,15 @@
             </div>
           {/if}
 
-          {#if (tk.refs ?? []).length === 0 && (tk.orphan_rows ?? []).length === 0}
+          {#if jiraState.refsPending}
+            <!-- Not "no code": we do not know yet. Saying nothing here would
+                 read as an answer, and the begin-work button below falls back
+                 to the repo picker for the same reason. -->
+            <div class="tk-ref pending">
+              <span class="tk-arrow">↳</span>
+              <span class="muted-note">checking for code that mentions {tk.key}…</span>
+            </div>
+          {:else if (tk.refs ?? []).length === 0 && (tk.orphan_rows ?? []).length === 0}
             {#if linkingKey === tk.key}
               <div class="tk-picker">
                 {#if codeState.pullRequests.length === 0}
@@ -577,6 +597,7 @@
 
   .tk-ref { display: flex; align-items: center; gap: 6px; margin: 3px 0 0 14px; font-size: 11px; }
   .tk-ref.orphan { opacity: 0.7; }
+  .tk-ref.pending { opacity: 0.6; }
   .tk-arrow { color: var(--color-text-tertiary); }
   .tk-pr { background: none; border: none; padding: 0; cursor: pointer; color: var(--color-text-secondary); font: inherit; text-align: left; }
   .tk-pr:hover { color: var(--color-text-primary); text-decoration: underline; }

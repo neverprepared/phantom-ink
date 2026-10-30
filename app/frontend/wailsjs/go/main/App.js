@@ -518,6 +518,10 @@ export function JiraStatus(arg1) {
   return window['go']['main']['App']['JiraStatus'](arg1);
 }
 
+export function JiraTicketRefs(arg1) {
+  return window['go']['main']['App']['JiraTicketRefs'](arg1);
+}
+
 export function JiraTickets(arg1, arg2) {
   return window['go']['main']['App']['JiraTickets'](arg1, arg2);
 }

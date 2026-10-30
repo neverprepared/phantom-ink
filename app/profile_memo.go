@@ -161,6 +161,22 @@ func (m *profileMemo[T]) fly(profile string, f *memoFlight[T], fetch func(string
 	return f.value, f.err
 }
 
+// replace swaps a profile's value while KEEPING its age, for a caller that
+// enriches what is already cached rather than re-reading it (the Jira tab
+// folding late code refs into memoised tickets). A profile with nothing cached
+// is left alone: there is nothing to enrich, and seeding an entry here would
+// invent freshness no read ever established.
+func (m *profileMemo[T]) replace(profile string, value T) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.entries[profile]
+	if !ok {
+		return
+	}
+	e.value = value
+	m.entries[profile] = e
+}
+
 // age backdates an entry, for tests that need one to read as stale.
 func (m *profileMemo[T]) age(profile string, by time.Duration) {
 	m.mu.Lock()

@@ -291,3 +291,68 @@ describe('JQL presets', () => {
     await p;
   });
 });
+
+describe('late code refs', () => {
+  it('reports refsPending from the payload', async () => {
+    JiraTickets = vi.fn(async (profile: string) => result(profile, { refs_pending: true }));
+    mockGetApi.mockResolvedValue({ JiraTickets });
+
+    await jiraState.refresh('work');
+
+    expect(jiraState.refsPending).toBe(true);
+  });
+
+  it('merges late refs onto the rows already on screen and clears pending', async () => {
+    JiraTickets = vi.fn(async (profile: string) => result(profile, { refs_pending: true }));
+    const JiraTicketRefs = vi.fn(async () => ({
+      profile: 'work',
+      refs: { 'WORK-1': [{ row_key: 'github:org/repo#7', number: 7, repo: 'org/repo' }] },
+      orphan_rows: { 'WORK-1': ['github:org/repo#999'] },
+    }));
+    mockGetApi.mockResolvedValue({ JiraTickets, JiraTicketRefs });
+
+    await jiraState.refresh('work');
+    expect(jiraState.rows[0].refs ?? []).toHaveLength(0);
+
+    await jiraState.loadRefs('work');
+
+    expect(jiraState.refsPending).toBe(false);
+    expect(jiraState.rows[0].refs).toHaveLength(1);
+    expect(jiraState.rows[0].refs[0].number).toBe(7);
+    expect(jiraState.rows[0].orphan_rows).toEqual(['github:org/repo#999']);
+  });
+
+  it('leaves a row with no refs alone rather than inventing an empty list', async () => {
+    JiraTickets = vi.fn(async (profile: string) => result(profile, { refs_pending: true }));
+    const JiraTicketRefs = vi.fn(async () => ({ profile: 'work', refs: {}, orphan_rows: {} }));
+    mockGetApi.mockResolvedValue({ JiraTickets, JiraTicketRefs });
+
+    await jiraState.refresh('work');
+    await jiraState.loadRefs('work');
+
+    expect(jiraState.rows).toHaveLength(1);
+    expect(jiraState.rows[0].refs ?? []).toHaveLength(0);
+    expect(jiraState.refsPending).toBe(false);
+  });
+
+  // The refs belong to the profile that asked for them. A profile switch
+  // mid-flight must not paint one account's pull requests onto another's.
+  it('discards refs that arrive for a profile no longer on screen', async () => {
+    JiraTickets = vi.fn(async (profile: string) => result(profile, { refs_pending: true }));
+    const JiraTicketRefs = vi.fn(async () => ({
+      profile: 'work',
+      refs: { 'WORK-1': [{ row_key: 'github:org/repo#7', number: 7, repo: 'org/repo' }] },
+      orphan_rows: {},
+    }));
+    mockGetApi.mockResolvedValue({ JiraTickets, JiraTicketRefs });
+
+    await jiraState.refresh('work');
+    const pending = jiraState.loadRefs('work');
+    await jiraState.refresh('home'); // operator switches profile
+    await pending;
+
+    expect(jiraState.profile).toBe('home');
+    expect(jiraState.rows[0].key).toBe('HOME-1');
+    expect(jiraState.rows[0].refs ?? []).toHaveLength(0);
+  });
+});

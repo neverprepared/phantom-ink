@@ -264,6 +264,8 @@ export function JiraOptedIn(arg1:string):Promise<boolean>;
 
 export function JiraStatus(arg1:string):Promise<main.JiraProfileStatus>;
 
+export function JiraTicketRefs(arg1:string):Promise<main.JiraRefsResult>;
+
 export function JiraTickets(arg1:string,arg2:boolean):Promise<main.JiraTicketsResult>;
 
 export function LaunchInteractiveSession(arg1:main.InteractiveSessionRequest):Promise<brainbox.SessionActionResponse>;

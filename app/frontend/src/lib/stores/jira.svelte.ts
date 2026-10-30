@@ -150,6 +150,15 @@ class JiraStore {
   jiraError = $derived(this.res?.error ?? '');
   /** The saved query this profile's tickets came from. */
   jql = $derived(this.res?.jql ?? '');
+  /**
+   * The rows are real but their code refs are not known yet.
+   *
+   * The backend serves the list without waiting on the provider fan-out it
+   * joins against -- that read is measured in seconds on a large profile, and
+   * holding the whole list behind it was the slowest thing about this tab. The
+   * panel answers this flag by calling loadRefs.
+   */
+  refsPending = $derived(this.res?.refs_pending ?? false);
 
   /** This profile's named queries. Empty until loadPresets has resolved. */
   presets = $derived(
@@ -200,6 +209,43 @@ class JiraStore {
     await api.SetJiraJQLPresets(profile, presets);
     this.presetsRes.drop(profile);
     await this.loadPresets(profile);
+  }
+
+  /**
+   * Fetch the code refs for a pending list and merge them onto the rows.
+   *
+   * Merged rather than re-read: the rows are already on screen and the
+   * operator may be reading them, so the refs arrive as an overlay instead of
+   * a new list that would repaint everything.
+   *
+   * A profile switch mid-flight discards the result. The refs describe one
+   * account's pull requests, and painting them onto another account's tickets
+   * is the cross-profile leak this store exists to prevent.
+   */
+  async loadRefs(profile: string): Promise<void> {
+    if (!profile) return;
+    const api = await getApi();
+    if (!api) return;
+    const refs = await api.JiraTicketRefs(profile);
+    if (this.requested !== profile) return; // switched away while we waited
+
+    const res = this.tickets.for(profile).value;
+    if (!res) return;
+    const byKey = (refs?.refs ?? {}) as Record<string, main.CodeRef[]>;
+    const orphans = (refs?.orphan_rows ?? {}) as Record<string, string[]>;
+    this.tickets.for(profile).set({
+      ...res,
+      refs_pending: false,
+      tickets: res.tickets.map((tk) => {
+        const got = byKey[tk.key];
+        const orphan = orphans[tk.key];
+        // A ticket with no code keeps what it had: an empty list assigned here
+        // would be indistinguishable from "we looked and found none", which
+        // is true, but it also churns every row for nothing.
+        if (!got && !orphan) return tk;
+        return { ...tk, refs: got ?? tk.refs, orphan_rows: orphan ?? tk.orphan_rows };
+      }),
+    } as main.JiraTicketsResult);
   }
 
   async refresh(profile: string, force = false): Promise<void> {

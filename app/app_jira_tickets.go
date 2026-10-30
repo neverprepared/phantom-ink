@@ -53,6 +53,20 @@ type JiraTicketsResult struct {
 	// as CodeOverview -- see profile_memo.go.
 	FetchedAt string `json:"fetched_at"`
 	Stale     bool   `json:"stale"`
+
+	// RefsPending says the rows are real but their code refs are not known
+	// yet: the provider fan-out they are joined against was not already
+	// cached, and waiting for it would have held the whole list behind a read
+	// measured in seconds. The frontend answers this with JiraTicketRefs.
+	RefsPending bool `json:"refs_pending"`
+}
+
+// JiraRefsResult is the second half of a pending ticket list: the code that
+// references each issue, keyed by issue key, once the fan-out has landed.
+type JiraRefsResult struct {
+	Profile    string               `json:"profile"`
+	Refs       map[string][]CodeRef `json:"refs"`
+	OrphanRows map[string][]string  `json:"orphan_rows"`
 }
 
 // jiraTicketsTTL matches the launchpad's: these are the same provider round
@@ -211,23 +225,80 @@ func (a *App) jiraTicketsUncached(profile string) (JiraTicketsResult, error) {
 		return res, nil
 	}
 
-	// The pull requests are whatever the Code tab would show for this profile.
+	// The pull requests are whatever the Code tab would show for this profile
+	// -- but only if that fan-out is ALREADY cached. Running it here put the
+	// whole ticket list behind a read measured in seconds (9.8s on a
+	// 686-repo profile) purely to decorate rows. When it is cold the rows go
+	// out undecorated and the frontend asks for the refs separately.
 	var prs []provider.Item
-	// Reuse the memo: this is a read of what the Code tab would already show,
-	// so it must not trigger a second full provider fan-out.
-	if ov, err := a.CodeOverview(profile, false); err == nil {
+	if ov, _, ok := cachedCodeOverview(profile); ok {
 		prs = ov.PullRequests
+	} else {
+		res.RefsPending = true
 	}
-	var manual map[string][]string
-	if a.db != nil {
-		manual, _ = a.db.JiraLinksByIssue(profile)
-	}
-	res.Tickets = buildTickets(issues, prs, manual)
+	res.Tickets = buildTickets(issues, prs, a.jiraManualLinks(profile))
 	// Only a clean read is memoised. A JQL error and "jira is not enabled" are
 	// both states the operator fixes and expects to see fixed on the next look,
 	// and they return above without reaching this line.
 	storeJiraTickets(profile, res)
 	return res, nil
+}
+
+// jiraManualLinks reads this profile's manual issue->row overrides, or nil.
+func (a *App) jiraManualLinks(profile string) map[string][]string {
+	if a.db == nil {
+		return nil
+	}
+	manual, _ := a.db.JiraLinksByIssue(profile)
+	return manual
+}
+
+// JiraTicketRefs resolves the code refs for a ticket list that was served with
+// RefsPending set. THIS is the call that waits on the provider fan-out, so the
+// rows are already on screen and interactive while it runs.
+//
+// The refs are also folded back into the memoised tickets: without that, a tab
+// switch inside the TTL would repaint rows that have already been decorated
+// once, and the operator would watch the pull-request chips disappear.
+func (a *App) JiraTicketRefs(profile string) (JiraRefsResult, error) {
+	out := JiraRefsResult{
+		Profile:    profile,
+		Refs:       map[string][]CodeRef{},
+		OrphanRows: map[string][]string{},
+	}
+
+	memoised, _, ok := jiraTicketsMemo.get(profile)
+	if !ok {
+		// Nothing on screen to decorate. Not an error: the operator switched
+		// away, or the tickets failed, and either way there is nothing to say.
+		return out, nil
+	}
+
+	ov, err := a.CodeOverview(profile, false)
+	if err != nil {
+		return out, err
+	}
+
+	issues := make([]jira.Issue, 0, len(memoised.Tickets))
+	for _, tk := range memoised.Tickets {
+		issues = append(issues, tk.Issue)
+	}
+	decorated := buildTickets(issues, ov.PullRequests, a.jiraManualLinks(profile))
+	for _, tk := range decorated {
+		if len(tk.Refs) > 0 {
+			out.Refs[tk.Key] = tk.Refs
+		}
+		if len(tk.OrphanRows) > 0 {
+			out.OrphanRows[tk.Key] = tk.OrphanRows
+		}
+	}
+
+	// replace, not store: the tickets are still as old as Jira said they were,
+	// so this must not restart their TTL.
+	memoised.Tickets = decorated
+	memoised.RefsPending = false
+	jiraTicketsMemo.replace(profile, memoised)
+	return out, nil
 }
 
 // LinkJiraIssue records a manual link between a ticket and a pull-request row.

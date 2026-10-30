@@ -336,3 +336,32 @@ func TestProfileMemoColdFetchPiggybacksOnARevalidate(t *testing.T) {
 		t.Fatalf("fetches = %d, want 1: the cold caller did not piggyback", n)
 	}
 }
+
+// replace swaps a value WITHOUT restarting its TTL: the Jira tab folds late
+// code refs into memoised tickets, and those tickets are still exactly as old
+// as Jira said they were.
+func TestProfileMemoReplaceKeepsTheEntrysAge(t *testing.T) {
+	m := newProfileMemo[string](time.Minute)
+	m.store("work", "old")
+	m.age("work", 2*time.Minute) // now stale
+
+	m.replace("work", "decorated")
+
+	v, fresh, ok := m.get("work")
+	if !ok || v != "decorated" {
+		t.Fatalf("value = %q, ok = %v", v, ok)
+	}
+	if fresh {
+		t.Fatal("replace restarted the TTL; the data did not get any younger")
+	}
+}
+
+// Nothing cached means nothing to replace -- replace must not seed an entry,
+// or a profile with no tickets would gain one out of nowhere.
+func TestProfileMemoReplaceIgnoresAMissingEntry(t *testing.T) {
+	m := newProfileMemo[string](time.Minute)
+	m.replace("work", "decorated")
+	if _, _, ok := m.get("work"); ok {
+		t.Fatal("replace seeded an entry for a profile that had none")
+	}
+}
