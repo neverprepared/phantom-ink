@@ -286,7 +286,7 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 	// new key, so this must run every build. Warn-and-continue: a broker hiccup
 	// must not fail an otherwise-good image build.
 	if result.EnvKey != "" {
-		if err := a.client.SetGatewayProfileEnvKey(req.Profile, "PROFILE_ENV_KEY", result.EnvKey); err != nil {
+		if err := a.publishGatewayEnvKey(req.Profile, "PROFILE_ENV_KEY", result.EnvKey); err != nil {
 			runtime.LogWarningf(a.ctx, "profile image: failed to publish PROFILE_ENV_KEY to broker: %v", err)
 		}
 	}

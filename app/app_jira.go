@@ -127,7 +127,7 @@ func (a *App) jiraStatusForEnv(profile string, env map[string]string) JiraProfil
 // JiraStatus reports one profile's Jira wiring for the settings card. The
 // token never crosses the boundary — only whether the profile is configured.
 func (a *App) JiraStatus(profile string) (JiraProfileStatus, error) {
-	env, err := a.GetGatewayEnv(profile)
+	env, err := a.profileEnv(profile)
 	if err != nil {
 		return JiraProfileStatus{Profile: profile}, err
 	}

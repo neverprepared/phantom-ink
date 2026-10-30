@@ -167,6 +167,11 @@ func codeRefFrom(rowKey string, pr provider.Item, manual bool) CodeRef {
 // force bypasses the per-profile memo -- the refresh button passes true, plain
 // navigation passes false.
 func (a *App) JiraTickets(profile string, force bool) (JiraTicketsResult, error) {
+	if force {
+		// Same as CodeOverview: refresh means "re-read everything", the
+		// profile's credentials included.
+		a.invalidateProfileEnv(profile)
+	}
 	if !force {
 		if res, fresh, ok := jiraTicketsMemo.get(profile); ok {
 			if fresh {
@@ -184,7 +189,7 @@ func (a *App) JiraTickets(profile string, force bool) (JiraTicketsResult, error)
 func (a *App) jiraTicketsUncached(profile string) (JiraTicketsResult, error) {
 	res := JiraTicketsResult{Profile: profile, JQL: a.GetJiraJQL(profile)}
 
-	env, err := a.GetGatewayEnv(profile)
+	env, err := a.profileEnv(profile)
 	if err != nil {
 		return res, err
 	}

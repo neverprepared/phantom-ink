@@ -337,6 +337,11 @@ func storeCodeOverview(profile string, ov CodeOverview) {
 // force bypasses the per-profile memo — the refresh button passes true, plain
 // navigation passes false.
 func (a *App) CodeOverview(profile string, force bool) (CodeOverview, error) {
+	if force {
+		// The refresh button is also how an operator says "I just fixed my
+		// token", so a forced read must not be handed a memoised env.
+		a.invalidateProfileEnv(profile)
+	}
 	if !force {
 		if ov, fresh, ok := cachedCodeOverview(profile); ok {
 			if fresh {
@@ -352,7 +357,7 @@ func (a *App) CodeOverview(profile string, force bool) (CodeOverview, error) {
 }
 
 func (a *App) codeOverviewUncached(profile string) (CodeOverview, error) {
-	env, err := a.GetGatewayEnv(profile)
+	env, err := a.profileEnv(profile)
 	if err != nil {
 		return CodeOverview{Profile: profile}, err
 	}
@@ -588,7 +593,7 @@ const maxConcurrentReads = 8
 // routing needs no lookup.
 func (a *App) RepoDetail(profile string, ref provider.RepoRef) (RepoDetailResult, error) {
 	base := RepoDetailResult{Profile: profile, Provider: ref.Provider, Owner: ref.Owner, Repo: ref.Name, DefaultBranch: ref.DefaultBranch}
-	env, err := a.GetGatewayEnv(profile)
+	env, err := a.profileEnv(profile)
 	if err != nil {
 		return base, err
 	}
@@ -625,7 +630,7 @@ func (a *App) RepoDetail(profile string, ref provider.RepoRef) (RepoDetailResult
 // GitHub returns 401, which the UI surfaces and keeps the row.
 
 func (a *App) githubForProfile(profile string) (*github.Client, error) {
-	env, err := a.GetGatewayEnv(profile)
+	env, err := a.profileEnv(profile)
 	if err != nil {
 		return nil, err
 	}
@@ -842,7 +847,7 @@ var runGitCloneAuth = func(cloneURL, dest, authHeader string) error {
 // package var (like runGitClone) so a test can supply an ADO_PAT without a live
 // broker; production delegates to the real GetGatewayEnv.
 var readProfileGatewayEnv = func(a *App, profile string) (map[string]string, error) {
-	return a.GetGatewayEnv(profile)
+	return a.profileEnv(profile)
 }
 
 // adoAzAuthHeader mints a one-shot ADO bearer header from the operator's az

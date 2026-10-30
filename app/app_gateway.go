@@ -26,7 +26,17 @@ func (a *App) GatewayInfo() (brainbox.GatewayProfilesInfo, error) {
 
 // GetGatewayEnv returns the decrypted env map for a profile. A profile with
 // no stored env yet (404) returns an empty map, not an error.
+//
+// This is the LIVE read, and it stays live on purpose. Its frontend caller is
+// the env editor, which saves a full overwrite of whatever it was shown, so a
+// memoised snapshot here would let a save clobber a value written in between.
+// Internal data paths want `profileEnv` instead.
 func (a *App) GetGatewayEnv(profile string) (map[string]string, error) {
+	return a.fetchGatewayEnv(profile)
+}
+
+// fetchGatewayEnv is the one place the broker is actually asked.
+func (a *App) fetchGatewayEnv(profile string) (map[string]string, error) {
 	env, err := a.client.GetGatewayProfileEnv(profile)
 	if err != nil {
 		if strings.Contains(err.Error(), "HTTP 404") {
@@ -35,6 +45,41 @@ func (a *App) GetGatewayEnv(profile string) (map[string]string, error) {
 		return nil, err
 	}
 	return env, nil
+}
+
+// profileEnv is the memoised read for internal data paths: the launchpad fan-
+// out, the ticket list, DORA, repo detail, the clone path. See
+// profile_env_memo.go for why it exists and why the TTL is short.
+func (a *App) profileEnv(profile string) (map[string]string, error) {
+	return a.envMemo().load(profile, a.fetchGatewayEnv)
+}
+
+// invalidateProfileEnv drops a profile's memoised env. Every write to the
+// stored env must call it, which is why the writes go through the helpers
+// below rather than reaching for a.client directly.
+func (a *App) invalidateProfileEnv(profile string) {
+	a.envMemo().invalidate(profile)
+}
+
+// publishGatewayEnvKey sets ONE key without touching the rest, and drops the
+// memo. Used by the image build to publish a freshly minted PROFILE_ENV_KEY.
+func (a *App) publishGatewayEnvKey(profile, key, value string) error {
+	if err := a.client.SetGatewayProfileEnvKey(profile, key, value); err != nil {
+		return err
+	}
+	a.invalidateProfileEnv(profile)
+	return nil
+}
+
+// writeGatewayProfileEnv replaces a profile's stored env and drops the memo.
+// The full-overwrite semantics are the client's; this exists so no write path
+// can forget the invalidation.
+func (a *App) writeGatewayProfileEnv(profile string, env map[string]string) error {
+	if err := a.client.SetGatewayProfileEnv(profile, env); err != nil {
+		return err
+	}
+	a.invalidateProfileEnv(profile)
+	return nil
 }
 
 // SetGatewayEnv replaces a profile's stored env (full overwrite).
@@ -50,7 +95,7 @@ func (a *App) SetGatewayEnv(profile string, env map[string]string) error {
 	for k := range brainEndpointVars {
 		delete(env, k)
 	}
-	if err := a.client.SetGatewayProfileEnv(profile, env); err != nil {
+	if err := a.writeGatewayProfileEnv(profile, env); err != nil {
 		return err
 	}
 	// GITHUB_TOKEN and ADO_PAT are curated here, and the launchpad memo caches
@@ -69,6 +114,7 @@ func (a *App) DeleteGatewayEnv(profile string) error {
 	if err := a.client.DeleteGatewayProfileEnv(profile); err != nil {
 		return err
 	}
+	a.invalidateProfileEnv(profile)
 	// Same reason as SetGatewayEnv: the profile has no credentials now, so its
 	// memoised rows describe a provider it can no longer reach.
 	a.InvalidateCodeOverview(profile)
