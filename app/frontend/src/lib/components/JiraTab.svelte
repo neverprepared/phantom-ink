@@ -40,10 +40,26 @@
     presets.find((p) => (p.jql ?? '').trim() === jiraState.jql.trim())?.name ?? '',
   );
 
-  /** Reload, then re-seed the draft unless the operator is mid-edit. */
   async function load(force = false) {
     await jiraState.refresh(profile, force);
-    if (!editingJql) jqlDraft = jiraState.jql;
+  }
+
+  /**
+   * Open the editor on the query that is actually in force, or close it.
+   *
+   * The draft is seeded HERE rather than after a load: this component is
+   * destroyed on every tab and profile switch, so a draft seeded by a load
+   * only survives until the next switch, and the tickets that come back from
+   * cache do not re-seed it. Opening the box is the one moment the saved
+   * query is certainly known, so that is where it is read.
+   */
+  function toggleJqlEditor() {
+    if (editingJql) {
+      editingJql = false;
+      return;
+    }
+    jqlDraft = jiraState.jql;
+    editingJql = true;
   }
 
   // Re-read on mount and on every profile change. Cached tickets stay on
@@ -156,7 +172,9 @@
   /** Capture the query on screen as a new, unnamed preset row. */
   function captureCurrent() {
     manage();
-    addPresetRow(jqlDraft.trim() || jiraState.jql);
+    // The draft counts only while the box is open; once it is closed the
+    // query on screen is the saved one, and a discarded draft must not win.
+    addPresetRow((editingJql && jqlDraft.trim()) || jiraState.jql);
   }
 
   function removePresetRow(i: number) {
@@ -257,7 +275,7 @@
       <button class="btn ghost sm" onclick={() => (managingPresets ? (managingPresets = false) : manage())}>
         {managingPresets ? 'done' : 'presets'}
       </button>
-      <button class="btn ghost sm" onclick={() => (editingJql = !editingJql)}>
+      <button class="btn ghost sm" onclick={toggleJqlEditor}>
         {editingJql ? 'cancel' : 'edit query'}
       </button>
       <!-- Disabled only on a cold load: during a background check there ARE
