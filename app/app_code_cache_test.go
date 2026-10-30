@@ -4,11 +4,15 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"phantom-ink/brainbox"
+	"phantom-ink/provider"
+	"phantom-ink/provider/github"
 )
 
 // The Code panel issues ~6 remote calls per configured ADO project on every
@@ -362,5 +366,66 @@ func TestDeleteGatewayEnvInvalidatesOnlyThatProfile(t *testing.T) {
 	}
 	if _, _, ok := cachedCodeOverview("personal"); !ok {
 		t.Error("an unrelated profile lost its memo")
+	}
+}
+
+// ── Cold-path single-flight at the app level ──────────────────────────────
+
+// fanOutGitHub is a fake GitHub that counts how many times the repo-listing
+// endpoint is asked -- one hit per fan-out. The env-hit counter the older
+// tests use cannot measure this any more: the gateway env is memoised, so a
+// second fan-out reads it zero times.
+func fanOutGitHub(t *testing.T, repoCalls *atomic.Int64) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/user/repos") {
+			repoCalls.Add(1)
+			// Hold the fan-out open long enough for a second caller to arrive.
+			time.Sleep(100 * time.Millisecond)
+		}
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func githubOnlyEnvServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"profile":"work","env":{"GITHUB_TOKEN":"t"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// The Jira tab mounts two cold readers of the same overview: the code panel's
+// refresh and the ticket list's join. They must share ONE fan-out.
+func TestCodeOverviewColdMissIsSingleFlight(t *testing.T) {
+	resetCodeOverviewCache()
+
+	var repoCalls atomic.Int64
+	gh := fanOutGitHub(t, &repoCalls)
+	orig := newGitHubClient
+	newGitHubClient = func(token string) provider.Client {
+		return github.NewWithBase(gh.URL, token, nil)
+	}
+	t.Cleanup(func() { newGitHubClient = orig })
+
+	app := &App{client: brainbox.NewClient(githubOnlyEnvServer(t).URL, ""), ctx: context.Background()}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := app.CodeOverview("work", false); err != nil {
+				t.Errorf("CodeOverview: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if n := repoCalls.Load(); n != 1 {
+		t.Fatalf("fan-outs = %d, want 1: two cold callers must share one", n)
 	}
 }

@@ -227,10 +227,15 @@ func (a *App) resolveADOProjects(ctx context.Context, env map[string]string, azC
 // projects in ADO_PROJECT — one client per project, so the fan-out aggregates
 // repos/PRs/work-items across every listed project. Auth is ADO_PAT when
 // present, otherwise the profile's az login session (azConfigDir).
+// newGitHubClient builds the GitHub provider. A package var (like runGitClone
+// and readProfileGatewayEnv) so a test can point the fan-out at a local server
+// and count how many times it actually runs.
+var newGitHubClient = func(token string) provider.Client { return github.New(token) }
+
 func buildProviders(env map[string]string, azConfigDir string, adoProjects []string) []provider.Client {
 	var clients []provider.Client
 	if tok := strings.TrimSpace(env["GITHUB_TOKEN"]); tok != "" {
-		clients = append(clients, github.New(tok))
+		clients = append(clients, newGitHubClient(tok))
 	}
 	org := strings.TrimSpace(env["ADO_ORG"])
 	pat := strings.TrimSpace(env["ADO_PAT"])
@@ -352,7 +357,12 @@ func (a *App) CodeOverview(profile string, force bool) (CodeOverview, error) {
 			codeOverviewMemo.revalidate(profile, a.codeOverviewUncached)
 			return ov, nil
 		}
+		// Cold: share one fan-out with any other caller that missed at the
+		// same moment. The Jira tab mounts exactly two of those.
+		return codeOverviewMemo.coldFetch(profile, a.codeOverviewUncached)
 	}
+	// force is the refresh button: it gets its own fan-out rather than joining
+	// one that may already have read a credential the operator just fixed.
 	return a.codeOverviewUncached(profile)
 }
 

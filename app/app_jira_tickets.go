@@ -182,6 +182,7 @@ func (a *App) JiraTickets(profile string, force bool) (JiraTicketsResult, error)
 			jiraTicketsMemo.revalidate(profile, a.jiraTicketsUncached)
 			return res, nil
 		}
+		return jiraTicketsMemo.coldFetch(profile, a.jiraTicketsUncached)
 	}
 	return a.jiraTicketsUncached(profile)
 }
