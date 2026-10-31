@@ -217,22 +217,50 @@ def _gateway_server_entry(
     }
 
 
-def _gateway_session_env(workspace_profile: str) -> dict[str, str]:
-    """PHANTOM_GATEWAY_URL/TOKEN env pair for a runner-hosted session, or {}.
+def _gateway_url_for(*, backend: str = "docker", runner: str | None = None) -> str:
+    """The URL a guest on this transport uses to reach the gateway.
+
+    - UTM/QEMU guests cannot resolve the ``host.docker.internal`` alias, so
+      they get ``vm_url``.
+    - A runner-hosted container reaches the daemon over the network, so it gets
+      the daemon's public base (CL_PUBLIC_URL), falling back to
+      ``container_url`` for single-host setups with no public URL configured.
+    - A local docker container shares the daemon's host, so ``container_url``.
+    """
+    if backend == "utm":
+        return settings.gateway.vm_url
+    if runner and runner != "local":
+        base = settings.public_url.rstrip("/") if settings.public_url else ""
+        return f"{base}/gateway/mcp" if base else settings.gateway.container_url
+    return settings.gateway.container_url
+
+
+def _gateway_session_env(
+    workspace_profile: str,
+    *,
+    backend: str = "docker",
+    runner: str | None = None,
+    entry: dict | None = None,
+) -> dict[str, str]:
+    """PHANTOM_GATEWAY_URL/TOKEN env pair for a session guest, or {}.
 
     Profile images bake a ``phantom-gateway`` entry whose url and bearer are
     ``${PHANTOM_GATEWAY_URL}`` / ``${PHANTOM_GATEWAY_TOKEN}``; Claude Code
-    expands them from the container env at connect time, so the runner only
-    has to merge these two variables — no runtime .mcp.json write.
+    expands those from the guest env at connect time. This pair must reach
+    EVERY session, not just runner-hosted ones: the baked declaration is what
+    the guest reads whenever no generated .mcp.json is mounted over it, and
+    with the pair missing the url stays the literal ``${PHANTOM_GATEWAY_URL}``
+    and Claude Code rejects the server outright with INVALID_CONFIG — which
+    takes every gateway tool with it.
 
-    Runner containers reach the gateway over the network, so the URL is the
-    daemon's public base (CL_PUBLIC_URL) rather than the Docker Desktop
-    host.docker.internal alias; falls back to ``container_url`` for
-    single-host setups where no public URL is configured.
+    Pass *entry* to reuse an already-minted entry instead of minting a second
+    per-session gateway token for the same guest.
     """
-    base = settings.public_url.rstrip("/") if settings.public_url else ""
-    url = f"{base}/gateway/mcp" if base else settings.gateway.container_url
-    entry = _gateway_server_entry(workspace_profile, gateway_url=url)
+    if entry is None:
+        entry = _gateway_server_entry(
+            workspace_profile,
+            gateway_url=_gateway_url_for(backend=backend, runner=runner),
+        )
     if entry is None:
         return {}
     token = entry["headers"]["Authorization"].removeprefix("Bearer ")
@@ -244,6 +272,7 @@ def _generate_container_mcp_json(
     dest_path: Path,
     *,
     workspace_profile: str = "",
+    gateway_entry: dict | None = None,
 ) -> bool:
     """Generate a workspace .mcp.json with container-optimised MCP commands.
 
@@ -264,7 +293,11 @@ def _generate_container_mcp_json(
     from .backends.configure import _CONTAINER_MCP_OVERRIDES
 
     container_servers: dict = {}
-    gateway_entry = _gateway_server_entry(workspace_profile)
+    # Reuse the caller's entry when it has one: provision() mints a single
+    # per-session gateway token and delivers it both as the env pair and in
+    # this file, so the two can never disagree about which token is live.
+    if gateway_entry is None:
+        gateway_entry = _gateway_server_entry(workspace_profile)
     gateway_only = settings.gateway.exclusive and gateway_entry is not None
 
     claude_json_path = claude_config_dir / ".claude.json"
@@ -786,13 +819,9 @@ async def _provision_via_runner(*, runner: str, **payload: Any) -> SessionContex
     resolved_image, _ = _resolve_image_for_session(payload.get("workspace_profile"))
     payload["image"] = resolved_image
 
-    # Gateway wiring: token minting and policy live daemon-side; the runner
-    # just merges these env vars into the container, where the image's baked
-    # phantom-gateway entry expands them at connect time.
-    gateway_env = _gateway_session_env(payload.get("workspace_profile") or "")
-    if gateway_env:
-        payload["extra_env"] = {**(payload.get("extra_env") or {}), **gateway_env}
-
+    # Gateway wiring already rode in on payload["extra_env"]: provision()
+    # merges the env pair for every transport (see _gateway_session_env), so
+    # the runner just passes it through as real container env.
     serializable = {
         k: (v.model_dump() if hasattr(v, "model_dump") else v)
         for k, v in payload.items()
@@ -865,6 +894,21 @@ async def provision(
     extra_env: dict[str, str] | None = None,
 ) -> SessionContext:
     from .backends import create_backend
+
+    # Gateway wiring, for every transport. Token minting and policy live
+    # daemon-side; the guest only needs the env pair its baked
+    # ``phantom-gateway`` declaration expands. This used to be merged inside
+    # _provision_via_runner, which left LOCAL docker sessions with the literal
+    # ``${PHANTOM_GATEWAY_URL}`` whenever no generated .mcp.json was mounted
+    # over the baked one — and that mount is itself gated on workspace_home,
+    # so a hub task submitted without one lost every gateway tool.
+    _gw_profile = workspace_profile or os.environ.get("WORKSPACE_PROFILE") or ""
+    gateway_entry = _gateway_server_entry(
+        _gw_profile, gateway_url=_gateway_url_for(backend=backend, runner=runner)
+    )
+    gateway_env = _gateway_session_env(_gw_profile, entry=gateway_entry)
+    if gateway_env:
+        extra_env = {**(extra_env or {}), **gateway_env}
 
     # Runner routing — if a remote runner is named, dispatch the whole
     # provision request to it and return the SessionContext it builds.
@@ -1014,7 +1058,10 @@ async def provision(
         )
         _mcp_json_path = session_data_dir / "workspace-mcp.json"
         if _generate_container_mcp_json(
-            _claude_config_dir, _mcp_json_path, workspace_profile=resolved_workspace_profile
+            _claude_config_dir,
+            _mcp_json_path,
+            workspace_profile=resolved_workspace_profile,
+            gateway_entry=gateway_entry,
         ):
             volumes[str(_mcp_json_path)] = {
                 "bind": "/home/developer/workspace/.mcp.json",
