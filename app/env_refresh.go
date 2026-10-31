@@ -124,7 +124,10 @@ func (a *App) refreshProfileEnv(profile, workspaceHome string) ([]string, error)
 	if len(changed) == 0 {
 		return nil, nil
 	}
-	if err := a.client.SetGatewayProfileEnv(profile, next); err != nil {
+	// Through the App helper, not the client: this rewrites values with no
+	// operator action at all, so a memoised env would keep serving the token
+	// the watcher just replaced.
+	if err := a.writeGatewayProfileEnv(profile, next); err != nil {
 		return nil, err
 	}
 	return changed, nil

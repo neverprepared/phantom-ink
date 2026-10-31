@@ -17,7 +17,7 @@ vi.mock('../notifications.svelte', () => ({
   notifications: { error: errorToast, success: vi.fn(), info: vi.fn() },
 }));
 
-const { jiraState } = await import('./jira.svelte');
+const { jiraState, jiraDispatchTarget } = await import('./jira.svelte');
 
 function result(profile: string, extra: Record<string, unknown> = {}) {
   return {
@@ -144,4 +144,215 @@ it('profile names the tickets on screen immediately after a warm switch', async 
   expect(jiraState.profile).toBe('personal');
   expect(jiraState.rows[0].key).toBe('PERSONAL-1');
   await pending;
+});
+
+describe('ref-first repo resolution', () => {
+  const repos = [
+    { provider: 'github', full_name: 'acme/api', clone_url: 'https://github.com/acme/api.git' },
+    { provider: 'ado', full_name: 'acme/web', clone_url: 'https://dev.azure.com/acme/proj/_git/web' },
+  ] as any[];
+
+  const ticket = (extra: Record<string, unknown> = {}) =>
+    ({
+      key: 'PLAT-42',
+      summary: 'Rate limit the webhook endpoint',
+      url: 'https://acme.atlassian.net/browse/PLAT-42',
+      ...extra,
+    }) as any;
+
+  it('takes the repo from the ticket first code ref', () => {
+    const t = jiraDispatchTarget(
+      ticket({ refs: [{ repo: 'acme/api', url: 'https://github.com/acme/api/pull/7' }] }),
+      repos,
+    );
+    expect(t?.repoFullName).toBe('acme/api');
+    expect(t?.repoURL).toBe('https://github.com/acme/api.git');
+    expect(t?.issueKey).toBe('PLAT-42');
+    // The ticket link rides along as htmlURL so the prompt can cite it.
+    expect(t?.htmlURL).toBe('https://acme.atlassian.net/browse/PLAT-42');
+  });
+
+  it('resolves an ADO ref the same way', () => {
+    const t = jiraDispatchTarget(
+      ticket({ refs: [{ repo: 'acme/web', url: 'https://dev.azure.com/acme/proj/_git/web/pullrequest/3' }] }),
+      repos,
+    );
+    expect(t?.repoURL).toBe('https://dev.azure.com/acme/proj/_git/web');
+  });
+
+  // A ref can point at a repo this profile does not list (a fork, another
+  // org). Falling back to the PR url beats offering the operator nothing.
+  it('falls back to the ref pull-request url when the repo is not listed', () => {
+    const t = jiraDispatchTarget(
+      ticket({ refs: [{ repo: 'other/thing', url: 'https://github.com/other/thing/pull/1' }] }),
+      repos,
+    );
+    expect(t?.repoFullName).toBe('other/thing');
+    expect(t?.repoURL).toBe('https://github.com/other/thing.git');
+  });
+
+  it('returns null with no refs, so the caller shows the repo picker', () => {
+    expect(jiraDispatchTarget(ticket({ refs: [] }), repos)).toBeNull();
+    expect(jiraDispatchTarget(ticket(), repos)).toBeNull();
+  });
+
+  it('an explicit repo choice overrides the ref', () => {
+    const t = jiraDispatchTarget(
+      ticket({ refs: [{ repo: 'acme/api', url: 'https://github.com/acme/api/pull/7' }] }),
+      repos,
+      'acme/web',
+    );
+    expect(t?.repoFullName).toBe('acme/web');
+  });
+
+  it('an explicit choice that is not in the repo list resolves to nothing', () => {
+    expect(jiraDispatchTarget(ticket(), repos, 'nope/nope')).toBeNull();
+  });
+});
+
+describe('JQL presets', () => {
+  let GetJiraJQLPresets: ReturnType<typeof vi.fn>;
+  let SetJiraJQLPresets: ReturnType<typeof vi.fn>;
+  let ApplyJiraJQLPreset: ReturnType<typeof vi.fn>;
+
+  const preset = (name: string) => ({ name, jql: `label = ${name}` });
+
+  beforeEach(() => {
+    GetJiraJQLPresets = vi.fn(async (profile: string) => [
+      preset(`${profile}-a`),
+      preset(`${profile}-b`),
+    ]);
+    SetJiraJQLPresets = vi.fn(async () => undefined);
+    ApplyJiraJQLPreset = vi.fn(async () => undefined);
+    mockGetApi.mockResolvedValue({
+      JiraTickets,
+      GetJiraJQLPresets,
+      SetJiraJQLPresets,
+      ApplyJiraJQLPreset,
+    });
+  });
+
+  it('loads a profile presets and caches them per profile', async () => {
+    await jiraState.loadPresets('work');
+    expect(jiraState.presets.map((p) => p.name)).toEqual(['work-a', 'work-b']);
+
+    await jiraState.loadPresets('personal');
+    expect(jiraState.presets[0].name).toBe('personal-a');
+
+    // Switching back paints from cache immediately and only revalidates —
+    // the chip row must never blank out between two visits.
+    const back = jiraState.loadPresets('work');
+    expect(jiraState.presets[0].name).toBe('work-a');
+    expect(jiraState.presetsLoading).toBe(false);
+    await back;
+    expect(jiraState.presets[0].name).toBe('work-a');
+  });
+
+  it('applying a preset drops the cached tickets so the new query is read', async () => {
+    await jiraState.refresh('work');
+    await jiraState.loadPresets('work');
+
+    await jiraState.applyPreset('work', 'work-b');
+    expect(ApplyJiraJQLPreset).toHaveBeenCalledWith('work', 'work-b');
+
+    // The tickets on screen belonged to the PREVIOUS query — the next read
+    // must be a cold one, not a cache hit.
+    const p = jiraState.refresh('work');
+    expect(jiraState.loading).toBe(true);
+    await p;
+  });
+
+  it('a failed apply surfaces an error and leaves the tickets cached', async () => {
+    await jiraState.refresh('work');
+    ApplyJiraJQLPreset.mockRejectedValue(new Error('no preset named "nope"'));
+
+    await expect(jiraState.applyPreset('work', 'nope')).rejects.toThrow('no preset');
+    const p = jiraState.refresh('work');
+    expect(jiraState.loading).toBe(false); // still cached
+    await p;
+  });
+
+  it('saving the list writes it and refreshes the presets', async () => {
+    await jiraState.loadPresets('work');
+    const next = [preset('escalations')];
+
+    await jiraState.savePresets('work', next);
+    expect(SetJiraJQLPresets).toHaveBeenCalledWith('work', next);
+    // Re-read, so a rejected or normalised list is what ends up on screen.
+    expect(GetJiraJQLPresets).toHaveBeenCalledTimes(2);
+  });
+
+  it('saving does not drop the cached tickets — the active query is unchanged', async () => {
+    await jiraState.refresh('work');
+    await jiraState.savePresets('work', [preset('escalations')]);
+
+    const p = jiraState.refresh('work');
+    expect(jiraState.loading).toBe(false);
+    await p;
+  });
+});
+
+describe('late code refs', () => {
+  it('reports refsPending from the payload', async () => {
+    JiraTickets = vi.fn(async (profile: string) => result(profile, { refs_pending: true }));
+    mockGetApi.mockResolvedValue({ JiraTickets });
+
+    await jiraState.refresh('work');
+
+    expect(jiraState.refsPending).toBe(true);
+  });
+
+  it('merges late refs onto the rows already on screen and clears pending', async () => {
+    JiraTickets = vi.fn(async (profile: string) => result(profile, { refs_pending: true }));
+    const JiraTicketRefs = vi.fn(async () => ({
+      profile: 'work',
+      refs: { 'WORK-1': [{ row_key: 'github:org/repo#7', number: 7, repo: 'org/repo' }] },
+      orphan_rows: { 'WORK-1': ['github:org/repo#999'] },
+    }));
+    mockGetApi.mockResolvedValue({ JiraTickets, JiraTicketRefs });
+
+    await jiraState.refresh('work');
+    expect(jiraState.rows[0].refs ?? []).toHaveLength(0);
+
+    await jiraState.loadRefs('work');
+
+    expect(jiraState.refsPending).toBe(false);
+    expect(jiraState.rows[0].refs).toHaveLength(1);
+    expect(jiraState.rows[0].refs[0].number).toBe(7);
+    expect(jiraState.rows[0].orphan_rows).toEqual(['github:org/repo#999']);
+  });
+
+  it('leaves a row with no refs alone rather than inventing an empty list', async () => {
+    JiraTickets = vi.fn(async (profile: string) => result(profile, { refs_pending: true }));
+    const JiraTicketRefs = vi.fn(async () => ({ profile: 'work', refs: {}, orphan_rows: {} }));
+    mockGetApi.mockResolvedValue({ JiraTickets, JiraTicketRefs });
+
+    await jiraState.refresh('work');
+    await jiraState.loadRefs('work');
+
+    expect(jiraState.rows).toHaveLength(1);
+    expect(jiraState.rows[0].refs ?? []).toHaveLength(0);
+    expect(jiraState.refsPending).toBe(false);
+  });
+
+  // The refs belong to the profile that asked for them. A profile switch
+  // mid-flight must not paint one account's pull requests onto another's.
+  it('discards refs that arrive for a profile no longer on screen', async () => {
+    JiraTickets = vi.fn(async (profile: string) => result(profile, { refs_pending: true }));
+    const JiraTicketRefs = vi.fn(async () => ({
+      profile: 'work',
+      refs: { 'WORK-1': [{ row_key: 'github:org/repo#7', number: 7, repo: 'org/repo' }] },
+      orphan_rows: {},
+    }));
+    mockGetApi.mockResolvedValue({ JiraTickets, JiraTicketRefs });
+
+    await jiraState.refresh('work');
+    const pending = jiraState.loadRefs('work');
+    await jiraState.refresh('home'); // operator switches profile
+    await pending;
+
+    expect(jiraState.profile).toBe('home');
+    expect(jiraState.rows[0].key).toBe('HOME-1');
+    expect(jiraState.rows[0].refs ?? []).toHaveLength(0);
+  });
 });

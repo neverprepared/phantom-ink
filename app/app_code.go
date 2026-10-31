@@ -227,10 +227,15 @@ func (a *App) resolveADOProjects(ctx context.Context, env map[string]string, azC
 // projects in ADO_PROJECT — one client per project, so the fan-out aggregates
 // repos/PRs/work-items across every listed project. Auth is ADO_PAT when
 // present, otherwise the profile's az login session (azConfigDir).
+// newGitHubClient builds the GitHub provider. A package var (like runGitClone
+// and readProfileGatewayEnv) so a test can point the fan-out at a local server
+// and count how many times it actually runs.
+var newGitHubClient = func(token string) provider.Client { return github.New(token) }
+
 func buildProviders(env map[string]string, azConfigDir string, adoProjects []string) []provider.Client {
 	var clients []provider.Client
 	if tok := strings.TrimSpace(env["GITHUB_TOKEN"]); tok != "" {
-		clients = append(clients, github.New(tok))
+		clients = append(clients, newGitHubClient(tok))
 	}
 	org := strings.TrimSpace(env["ADO_ORG"])
 	pat := strings.TrimSpace(env["ADO_PAT"])
@@ -337,6 +342,11 @@ func storeCodeOverview(profile string, ov CodeOverview) {
 // force bypasses the per-profile memo — the refresh button passes true, plain
 // navigation passes false.
 func (a *App) CodeOverview(profile string, force bool) (CodeOverview, error) {
+	if force {
+		// The refresh button is also how an operator says "I just fixed my
+		// token", so a forced read must not be handed a memoised env.
+		a.invalidateProfileEnv(profile)
+	}
 	if !force {
 		if ov, fresh, ok := cachedCodeOverview(profile); ok {
 			if fresh {
@@ -347,12 +357,17 @@ func (a *App) CodeOverview(profile string, force bool) (CodeOverview, error) {
 			codeOverviewMemo.revalidate(profile, a.codeOverviewUncached)
 			return ov, nil
 		}
+		// Cold: share one fan-out with any other caller that missed at the
+		// same moment. The Jira tab mounts exactly two of those.
+		return codeOverviewMemo.coldFetch(profile, a.codeOverviewUncached)
 	}
+	// force is the refresh button: it gets its own fan-out rather than joining
+	// one that may already have read a credential the operator just fixed.
 	return a.codeOverviewUncached(profile)
 }
 
 func (a *App) codeOverviewUncached(profile string) (CodeOverview, error) {
-	env, err := a.GetGatewayEnv(profile)
+	env, err := a.profileEnv(profile)
 	if err != nil {
 		return CodeOverview{Profile: profile}, err
 	}
@@ -588,7 +603,7 @@ const maxConcurrentReads = 8
 // routing needs no lookup.
 func (a *App) RepoDetail(profile string, ref provider.RepoRef) (RepoDetailResult, error) {
 	base := RepoDetailResult{Profile: profile, Provider: ref.Provider, Owner: ref.Owner, Repo: ref.Name, DefaultBranch: ref.DefaultBranch}
-	env, err := a.GetGatewayEnv(profile)
+	env, err := a.profileEnv(profile)
 	if err != nil {
 		return base, err
 	}
@@ -625,7 +640,7 @@ func (a *App) RepoDetail(profile string, ref provider.RepoRef) (RepoDetailResult
 // GitHub returns 401, which the UI surfaces and keeps the row.
 
 func (a *App) githubForProfile(profile string) (*github.Client, error) {
-	env, err := a.GetGatewayEnv(profile)
+	env, err := a.profileEnv(profile)
 	if err != nil {
 		return nil, err
 	}
@@ -842,7 +857,7 @@ var runGitCloneAuth = func(cloneURL, dest, authHeader string) error {
 // package var (like runGitClone) so a test can supply an ADO_PAT without a live
 // broker; production delegates to the real GetGatewayEnv.
 var readProfileGatewayEnv = func(a *App, profile string) (map[string]string, error) {
-	return a.GetGatewayEnv(profile)
+	return a.profileEnv(profile)
 }
 
 // adoAzAuthHeader mints a one-shot ADO bearer header from the operator's az

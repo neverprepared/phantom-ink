@@ -3409,6 +3409,20 @@ export namespace main {
 	        this.manual = source["manual"];
 	    }
 	}
+	export class JiraJQLPreset {
+	    name: string;
+	    jql: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new JiraJQLPreset(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.jql = source["jql"];
+	    }
+	}
 	export class JiraProfileStatus {
 	    profile: string;
 	    configured: boolean;
@@ -3428,6 +3442,40 @@ export namespace main {
 	        this.url = source["url"];
 	        this.username = source["username"];
 	    }
+	}
+	export class JiraRefsResult {
+	    profile: string;
+	    refs: Record<string, Array<CodeRef>>;
+	    orphan_rows: Record<string, Array<string>>;
+	
+	    static createFrom(source: any = {}) {
+	        return new JiraRefsResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.refs = this.convertValues(source["refs"], Array<CodeRef>, true);
+	        this.orphan_rows = source["orphan_rows"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class JiraTicket {
 	    key: string;
@@ -3480,6 +3528,7 @@ export namespace main {
 	    error: string;
 	    fetched_at: string;
 	    stale: boolean;
+	    refs_pending: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new JiraTicketsResult(source);
@@ -3493,6 +3542,7 @@ export namespace main {
 	        this.error = source["error"];
 	        this.fetched_at = source["fetched_at"];
 	        this.stale = source["stale"];
+	        this.refs_pending = source["refs_pending"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

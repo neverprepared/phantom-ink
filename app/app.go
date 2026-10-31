@@ -22,11 +22,15 @@ import (
 
 // App is the Wails-bound struct. All exported methods become callable from JS.
 type App struct {
-	ctx              context.Context
-	mu               sync.RWMutex // protects config
-	config           *Config
-	db               *DB
-	client           *brainbox.Client
+	ctx    context.Context
+	mu     sync.RWMutex // protects config
+	config *Config
+	db     *DB
+	client *brainbox.Client
+	// Per-profile gateway env memo; see profile_env_memo.go. Lazily built via
+	// envMemo() so the zero App works.
+	envMemoOnce      sync.Once
+	envMemoVal       *envMemo
 	sse              *brainbox.SSEListener
 	conversations    *brainbox.ConversationStreams
 	collectScheduler *collectScheduler

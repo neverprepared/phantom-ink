@@ -133,7 +133,7 @@ func (a *App) DORAOverview(profile string, windowDays int) (DORAOverview, error)
 	}
 	out.TokenInvalid = doraAuthIsInvalid(profile)
 	// A profile with no git provider gets the connect banner, not an error.
-	if env, envErr := a.GetGatewayEnv(profile); envErr == nil {
+	if env, envErr := a.profileEnv(profile); envErr == nil {
 		out.TokenMissing = !hasGitProvider(env)
 	}
 	return out, nil
@@ -195,7 +195,7 @@ func clampDORAWindow(days int) int {
 // reported in the result; the call itself fails only when the profile's env
 // cannot be read at all.
 func (a *App) SyncDORA(profile string) (DORASyncResult, error) {
-	env, err := a.GetGatewayEnv(profile)
+	env, err := a.profileEnv(profile)
 	if err != nil {
 		return DORASyncResult{Profile: profile}, err
 	}

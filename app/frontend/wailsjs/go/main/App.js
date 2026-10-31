@@ -10,6 +10,10 @@ export function AddConversationParticipant(arg1, arg2, arg3) {
   return window['go']['main']['App']['AddConversationParticipant'](arg1, arg2, arg3);
 }
 
+export function ApplyJiraJQLPreset(arg1, arg2) {
+  return window['go']['main']['App']['ApplyJiraJQLPreset'](arg1, arg2);
+}
+
 export function ApplyRemedy(arg1) {
   return window['go']['main']['App']['ApplyRemedy'](arg1);
 }
@@ -318,6 +322,10 @@ export function GetJiraJQL(arg1) {
   return window['go']['main']['App']['GetJiraJQL'](arg1);
 }
 
+export function GetJiraJQLPresets(arg1) {
+  return window['go']['main']['App']['GetJiraJQLPresets'](arg1);
+}
+
 export function GetLANIP() {
   return window['go']['main']['App']['GetLANIP']();
 }
@@ -508,6 +516,10 @@ export function JiraOptedIn(arg1) {
 
 export function JiraStatus(arg1) {
   return window['go']['main']['App']['JiraStatus'](arg1);
+}
+
+export function JiraTicketRefs(arg1) {
+  return window['go']['main']['App']['JiraTicketRefs'](arg1);
 }
 
 export function JiraTickets(arg1, arg2) {
@@ -924,6 +936,10 @@ export function SetJiraEnabledForProfile(arg1, arg2) {
 
 export function SetJiraJQL(arg1, arg2) {
   return window['go']['main']['App']['SetJiraJQL'](arg1, arg2);
+}
+
+export function SetJiraJQLPresets(arg1, arg2) {
+  return window['go']['main']['App']['SetJiraJQLPresets'](arg1, arg2);
 }
 
 export function SetMeshAdminKey(arg1) {
