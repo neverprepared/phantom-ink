@@ -239,6 +239,25 @@ else
     # sessions the env contract arrives via ~/.env; on runner sessions it
     # is already in the container env.
     [ -f "${HOME}/.env" ] && . "${HOME}/.env" 2>/dev/null
+
+    # --- Gateway MCP: substitute REAL values into the baked entry --------
+    # The image bakes url/Authorization as ${PHANTOM_GATEWAY_URL} /
+    # "Bearer ${PHANTOM_GATEWAY_TOKEN}" and assumed Claude Code expands
+    # both at connect time. It expands the url and NOT the headers, so the
+    # bearer went out literal, the gateway answered 401 invalid_token, and the
+    # container lost every gateway tool with no explanation. Substitute here
+    # instead: this is the first point where both variables are in scope
+    # (~/.env has just been sourced for local sessions; runner sessions carry
+    # them as real container env). Idempotent, so a ttyd reattach may re-run it.
+    if [ -n "${PHANTOM_GATEWAY_URL:-}" ] && [ -n "${PHANTOM_GATEWAY_TOKEN:-}" ]; then
+        if CLAUDE_JSON="${HOME}/.claude.json" \
+           python3 "${HOME}/materialize-gateway-mcp.py"; then
+            echo "gateway: phantom-gateway MCP entry materialized"
+        else
+            echo "gateway: WARNING could not materialize the MCP entry — gateway tools will be unavailable" >&2
+        fi
+    fi
+
     TOKEN=$(cat "${HOME}/.agent-token" 2>/dev/null || echo "${BRAINBOX_TOKEN:-}")
     HUB="${BRAINBOX_HUB_URL_PUBLIC:-${BRAINBOX_HUB_URL:-}}"
     TASK_FILE=""

@@ -103,6 +103,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Developer-owned static assets (COPY after useradd so developer name resolves)
 COPY --chown=developer:developer docker/brainbox/setup/.bashrc         /tmp/.bashrc.extra
 COPY --chown=developer:developer docker/brainbox/setup/ttyd-wrapper.sh /home/developer/ttyd-wrapper.sh
+# Substitutes real values into the baked phantom-gateway MCP entry at container
+# start: Claude Code expands ${VAR} in an MCP entry's url but NOT in its
+# headers, so the bearer has to be written in literally.
+COPY --chown=developer:developer docker/brainbox/setup/materialize-gateway-mcp.py /home/developer/materialize-gateway-mcp.py
 # gitleaks pre-commit hook — global git hook that scans staged changes before
 # every in-container commit (the git-side backstop to the secret-guard.py
 # PreToolUse hook, which guards stdout). Wired via core.hooksPath below.
