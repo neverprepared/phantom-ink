@@ -285,3 +285,108 @@ func TestDurationMirrorsMatchTheirDurations(t *testing.T) {
 		t.Errorf("per-repo mirror not populated: %+v", r)
 	}
 }
+
+// The Delivery tab's scope selector reads PerAuthor to answer "which of these
+// numbers are mine". A revert carries no author of its own, so it is charged
+// to the author of the PR it reverted — "whose change got reverted" is the
+// right attribution for a change failure rate.
+func TestPerAuthorBreakdownSplitsAndDoesNotRecurse(t *testing.T) {
+	w := Window{From: day(1), To: day(11)}
+	deploys := []DeployEvent{
+		{RepoFullName: "o/a", PRNumber: 1, Author: "ada", CreatedAt: day(2).Add(-1 * time.Hour), MergedAt: day(2)},
+		{RepoFullName: "o/a", PRNumber: 2, Author: "ada", CreatedAt: day(3).Add(-1 * time.Hour), MergedAt: day(3)},
+		{RepoFullName: "o/b", PRNumber: 9, Author: "grace", CreatedAt: day(4).Add(-9 * time.Hour), MergedAt: day(4)},
+	}
+	failures := []FailureEvent{{RepoFullName: "o/b", RevertSHA: "z", MatchedPRNumber: 9, RevertedAt: day(5)}}
+	m := Compute(deploys, failures, w)
+
+	if len(m.PerAuthor) != 2 {
+		t.Fatalf("want a row per author, got %+v", m.PerAuthor)
+	}
+	ada, grace := m.PerAuthor["ada"], m.PerAuthor["grace"]
+	if ada.DeployCount != 2 || grace.DeployCount != 1 {
+		t.Fatalf("per-author deploy counts wrong: ada=%d grace=%d", ada.DeployCount, grace.DeployCount)
+	}
+	// grace's single deploy was reverted; ada's were not.
+	if ada.FailureCount != 0 || grace.FailureCount != 1 {
+		t.Fatalf("failures leaked across authors: ada=%d grace=%d", ada.FailureCount, grace.FailureCount)
+	}
+	if grace.ChangeFailureRate != 1 {
+		t.Fatalf("grace cfr: got %v want 1", grace.ChangeFailureRate)
+	}
+	if ada.PerAuthor != nil || grace.PerAuthor != nil {
+		t.Fatal("nested PerAuthor must be nil — it would recurse forever through JSON")
+	}
+	// An author bucket KEEPS its per-repo breakdown — the scoped view needs a
+	// per-repo table too — but must not nest a further author level.
+	if len(ada.PerRepo) != 1 || ada.PerRepo["o/a"].DeployCount != 2 {
+		t.Fatalf("ada's bucket lost its per-repo table: %+v", ada.PerRepo)
+	}
+	if ada.PerRepo["o/a"].PerAuthor != nil || ada.PerRepo["o/a"].PerRepo != nil {
+		t.Fatal("a repo inside an author bucket must not nest further")
+	}
+}
+
+// A revert that could not be traced back to a known deploy belongs to nobody.
+// It still counts in the profile-wide failure count, but charging it to an
+// arbitrary author would invent a fact. The scope selector's caveat says so.
+func TestUnattributableRevertCountsOverallButAgainstNoAuthor(t *testing.T) {
+	w := Window{From: day(1), To: day(11)}
+	deploys := []DeployEvent{
+		{RepoFullName: "o/a", PRNumber: 1, Author: "ada", CreatedAt: day(2).Add(-1 * time.Hour), MergedAt: day(2)},
+	}
+	// MatchedPRNumber 0 == the revert matched no deploy we know about.
+	failures := []FailureEvent{{RepoFullName: "o/a", RevertSHA: "z", MatchedPRNumber: 0, RevertedAt: day(5)}}
+	m := Compute(deploys, failures, w)
+
+	if m.FailureCount != 1 {
+		t.Fatalf("profile-wide failure count: got %d want 1", m.FailureCount)
+	}
+	if got := m.PerAuthor["ada"].FailureCount; got != 0 {
+		t.Fatalf("an untraceable revert must not be charged to ada, got %d", got)
+	}
+}
+
+// A deploy whose provider gave us no author cannot be scoped to a person. It
+// must not create an empty-string bucket the selector would render as a blank
+// row, but it must still count in the profile-wide total.
+func TestDeployWithNoAuthorMakesNoBucket(t *testing.T) {
+	w := Window{From: day(1), To: day(11)}
+	deploys := []DeployEvent{
+		{RepoFullName: "o/a", PRNumber: 1, Author: "ada", CreatedAt: day(2).Add(-1 * time.Hour), MergedAt: day(2)},
+		{RepoFullName: "o/a", PRNumber: 2, Author: "", CreatedAt: day(3).Add(-1 * time.Hour), MergedAt: day(3)},
+	}
+	m := Compute(deploys, nil, w)
+
+	if m.DeployCount != 2 {
+		t.Fatalf("profile-wide deploy count: got %d want 2", m.DeployCount)
+	}
+	if _, ok := m.PerAuthor[""]; ok {
+		t.Fatal("an empty author must not create a bucket")
+	}
+	if len(m.PerAuthor) != 1 {
+		t.Fatalf("want only ada's bucket, got %+v", m.PerAuthor)
+	}
+}
+
+// PR numbers restart per repository, so #9 exists in both o/a and o/b. Keying
+// the revert-to-author lookup on the number alone would charge o/b's revert to
+// o/a's author, inventing a failure for someone who shipped nothing broken.
+func TestRevertAttributionDoesNotCrossRepos(t *testing.T) {
+	w := Window{From: day(1), To: day(11)}
+	// o/a's #9 is listed LAST on purpose: a lookup keyed on the bare number
+	// would end up holding ada, so the ordering must not decide attribution.
+	deploys := []DeployEvent{
+		{RepoFullName: "o/b", PRNumber: 9, Author: "grace", CreatedAt: day(3).Add(-1 * time.Hour), MergedAt: day(3)},
+		{RepoFullName: "o/a", PRNumber: 9, Author: "ada", CreatedAt: day(2).Add(-1 * time.Hour), MergedAt: day(2)},
+	}
+	failures := []FailureEvent{{RepoFullName: "o/b", RevertSHA: "z", MatchedPRNumber: 9, RevertedAt: day(4)}}
+	m := Compute(deploys, failures, w)
+
+	if got := m.PerAuthor["ada"].FailureCount; got != 0 {
+		t.Fatalf("o/b's revert was charged to o/a's author ada: got %d want 0", got)
+	}
+	if got := m.PerAuthor["grace"].FailureCount; got != 1 {
+		t.Fatalf("grace owns o/b#9 and must carry its revert: got %d want 1", got)
+	}
+}

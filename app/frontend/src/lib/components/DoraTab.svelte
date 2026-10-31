@@ -36,6 +36,8 @@
   let bands = $derived(doraState.bands);
   let perRepo = $derived(doraState.perRepo);
   let loading = $derived(doraState.loading);
+  let authors = $derived(doraState.authors);
+  let scope = $derived(doraState.scope);
   let repoErrors = $derived(Object.entries(lastSync?.repo_errors ?? {}));
 
   async function load(force = false) {
@@ -86,6 +88,15 @@
   /** Window toggle. A window already seen for this profile paints instantly. */
   function pickWindow(days: number) {
     void doraState.setWindow(profile, days);
+  }
+
+  /**
+   * Scope toggle. Unlike the window this fetches nothing: the per-author
+   * breakdown rides along in the payload already on screen, so switching is
+   * instant and costs no round-trip.
+   */
+  function pickScope(e: Event) {
+    doraState.setScope((e.currentTarget as HTMLSelectElement).value);
   }
 
   function openProfiles() {
@@ -140,6 +151,17 @@
   <div class="panel-header">
     <h1 class="page-title">delivery</h1>
     <div class="head-actions">
+      <!-- Only offered once the data names somebody. With one author it is
+           still worth showing: it is how you learn the numbers are all yours. -->
+      {#if authors.length > 0}
+        <label class="scope-pick">
+          <span class="vh">Scope metrics to</span>
+          <select value={scope} onchange={pickScope}>
+            <option value="">everyone</option>
+            {#each authors as a (a)}<option value={a}>{a}</option>{/each}
+          </select>
+        </label>
+      {/if}
       <div class="window-toggle" role="group" aria-label="Metric window">
         {#each WINDOWS as w (w)}
           <button
@@ -219,6 +241,15 @@
     {#if loading && !metrics}
       <p class="muted-note">loading…</p>
     {:else if metrics}
+      <!-- Every figure below is filtered. Saying so next to them beats hoping
+           the reader noticed the selector in the header. -->
+      {#if scope}
+        <p class="scope-note" aria-live="polite">
+          Showing only <strong>{scope}</strong>’s merges.
+          <button class="link-btn" onclick={() => doraState.setScope('')}>show everyone</button>
+        </p>
+      {/if}
+
       <div class="cards">
         <div class="card">
           <div class="card-head">
@@ -273,21 +304,26 @@
         </div>
       </div>
 
-      {#if doraState.caveats.length > 0}
+      {#if doraState.activeCaveats.length > 0}
         <!-- The authoritative wording from the approved design, rendered in
              full rather than hidden behind a tooltip. -->
         <div class="caveats">
           <span class="caveats-label">how to read these</span>
           <ul>
-            {#each doraState.caveats as c (c)}<li>{c}</li>{/each}
+            {#each doraState.activeCaveats as c (c)}<li>{c}</li>{/each}
           </ul>
         </div>
       {/if}
 
       {#if metrics.deploy_count === 0}
         <p class="muted-note">
-          No merges to a default branch in the last {doraState.windowOf} days. Either nothing
-          shipped, or this profile has not synced yet — try sync, or widen the window.
+          {#if scope}
+            {scope} has no merges to a default branch in the last {doraState.windowOf} days.
+            Widen the window, or show everyone.
+          {:else}
+            No merges to a default branch in the last {doraState.windowOf} days. Either nothing
+            shipped, or this profile has not synced yet — try sync, or widen the window.
+          {/if}
         </p>
       {:else if perRepo.length > 0}
         <h2 class="section-title">by repository</h2>
@@ -348,6 +384,33 @@
     .freshness .dot { animation: none; opacity: 0.8; }
   }
   .synced { font-size: 10px; color: var(--color-text-tertiary); font-family: var(--font-mono); }
+
+  .scope-pick select {
+    font: inherit; font-size: 11px;
+    color: var(--color-text-primary);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-sm);
+    padding: 3px 6px;
+    max-width: 160px;
+    cursor: pointer;
+  }
+  /* Visually hidden, still read aloud — the select has no visible label. */
+  .vh {
+    position: absolute; width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden;
+    clip-path: inset(50%); white-space: nowrap;
+  }
+  .scope-note {
+    margin: 0 0 var(--spacing-md); font-size: 12px;
+    color: var(--color-text-secondary);
+  }
+  .scope-note strong { color: var(--color-text-primary); }
+  .link-btn {
+    background: none; border: none; padding: 0; margin-left: 6px;
+    font: inherit; font-size: 12px;
+    color: var(--color-accent); cursor: pointer; text-decoration: underline;
+  }
 
   .window-toggle { display: flex; border: 1px solid var(--color-border-secondary); border-radius: var(--radius-sm); overflow: hidden; }
   .win {

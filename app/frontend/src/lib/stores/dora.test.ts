@@ -23,7 +23,21 @@ function overview(profile: string, days: number) {
     token_invalid: false,
     // deploy_count carries the window, so each window's cached payload is
     // distinguishable in the assertions below.
-    metrics: { bands: {}, per_repo: { [`${profile}/r`]: { deploy_count: days } } },
+    metrics: {
+      bands: { lead_time: 'high' },
+      deploy_count: 10,
+      per_repo: { [`${profile}/r`]: { deploy_count: days } },
+      per_author: {
+        ada: {
+          bands: { lead_time: 'elite' },
+          deploy_count: 7,
+          per_repo: { [`${profile}/a`]: { deploy_count: 7 } },
+        },
+        grace: { bands: {}, deploy_count: 3, per_repo: {} },
+      },
+    },
+    caveats: ['overall'],
+    scope_caveats: ['scoped'],
   };
 }
 
@@ -171,5 +185,54 @@ describe('freshness label', () => {
 
   it('is empty before anything has loaded', () => {
     expect(doraState.fetchedAt).toBe('');
+  });
+});
+
+describe('author scope', () => {
+  it('lists authors most-prolific first so the selector is stable', async () => {
+    await doraState.refresh('work');
+    expect(doraState.authors).toEqual(['ada', 'grace']);
+  });
+
+  it('unscoped shows the profile-wide numbers', async () => {
+    await doraState.refresh('work');
+    expect(doraState.scope).toBe('');
+    expect(doraState.metrics?.deploy_count).toBe(10);
+    expect(doraState.perRepo[0][0]).toBe('work/r');
+  });
+
+  it('scoping swaps metrics, bands and the per-repo table to that author', async () => {
+    await doraState.refresh('work');
+    doraState.setScope('ada');
+    expect(doraState.metrics?.deploy_count).toBe(7);
+    expect(doraState.bands.lead_time).toBe('elite');
+    expect(doraState.perRepo[0][0]).toBe('work/a');
+  });
+
+  // The scope-only caveats describe how a one-person view is lossier. Showing
+  // them unscoped would teach people to stop reading the caveats.
+  it('surfaces the scope caveats only while scoped', async () => {
+    await doraState.refresh('work');
+    expect(doraState.activeCaveats).toEqual(['overall']);
+    doraState.setScope('ada');
+    expect(doraState.activeCaveats).toEqual(['overall', 'scoped']);
+  });
+
+  it('scope is remembered per profile, like the window is', async () => {
+    await doraState.refresh('work');
+    doraState.setScope('ada');
+    await doraState.refresh('personal');
+    expect(doraState.scope).toBe('');
+    await doraState.refresh('work');
+    expect(doraState.scope).toBe('ada');
+  });
+
+  // An author who stops shipping drops out of the next window's payload. A
+  // stale scope must not blank the page with an empty bucket.
+  it('falls back to all when the remembered author is absent from the data', async () => {
+    await doraState.refresh('work');
+    doraState.setScope('nobody');
+    expect(doraState.scope).toBe('');
+    expect(doraState.metrics?.deploy_count).toBe(10);
   });
 });

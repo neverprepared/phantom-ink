@@ -53,8 +53,12 @@ type DeployEvent struct {
 	RepoFullName string
 	PRNumber     int
 	Title        string
-	CreatedAt    time.Time
-	MergedAt     time.Time
+	// Author is the provider's login for whoever opened the PR, "" when the
+	// provider did not tell us. It exists so the Delivery tab can scope the
+	// metrics to one person; an empty one is simply unscopeable.
+	Author    string
+	CreatedAt time.Time
+	MergedAt  time.Time
 }
 
 // FailureEvent is one revert commit on a default branch. MatchedPRNumber is 0
@@ -155,36 +159,99 @@ type Metrics struct {
 	// Nested values carry a nil PerRepo — the structure is one level deep by
 	// construction, not by luck.
 	PerRepo map[string]Metrics `json:"per_repo"`
+
+	// PerAuthor is the same metrics computed per deploy author, keyed by the
+	// provider login. It drives the Delivery tab's scope selector. Two
+	// deliberate omissions, both reported as caveats beside the numbers: a
+	// deploy with no author creates no bucket, and a revert that matched no
+	// known deploy is charged to nobody. Nested values carry a nil PerAuthor.
+	PerAuthor map[string]Metrics `json:"per_author"`
 }
 
 // Compute reduces the events falling inside w to one set of metrics, plus a
 // per-repo breakdown. Events outside the window are ignored; nothing here
 // mutates its inputs.
 func Compute(deploys []DeployEvent, failures []FailureEvent, w Window) Metrics {
-	m := computeOne(inWindowDeploys(deploys, w), inWindowFailures(failures, w), w)
+	// Filter once: every breakdown below reduces the same windowed events.
+	wd := inWindowDeploys(deploys, w)
+	wf := inWindowFailures(failures, w)
 
-	// Per-repo breakdown. Group first so each repo's metrics see only its own
-	// events — a revert in one repo must never count against another's deploys.
-	byRepoDeploys := map[string][]DeployEvent{}
-	byRepoFailures := map[string][]FailureEvent{}
-	repos := map[string]bool{}
-	for _, d := range inWindowDeploys(deploys, w) {
-		byRepoDeploys[d.RepoFullName] = append(byRepoDeploys[d.RepoFullName], d)
-		repos[d.RepoFullName] = true
+	m := computeOne(wd, wf, w)
+	m.PerRepo = perRepoOf(wd, wf, w)
+
+	// Per-author breakdown. A revert carries no author of its own, so it is
+	// charged to the author of the PR it reverted — "whose change got
+	// reverted" is what a per-person change failure rate means. A revert that
+	// matched no known deploy therefore belongs to nobody and is dropped here;
+	// it still counts in the profile-wide figures above.
+	byAuthorDeploys := map[string][]DeployEvent{}
+	byAuthorFailures := map[string][]FailureEvent{}
+	// Keyed by repo AND number: PR numbers restart per repository, so a bare
+	// number would let one repo's revert land on another repo's author.
+	type prRef struct {
+		repo   string
+		number int
 	}
-	for _, f := range inWindowFailures(failures, w) {
-		byRepoFailures[f.RepoFullName] = append(byRepoFailures[f.RepoFullName], f)
-		repos[f.RepoFullName] = true
+	authorOfPR := map[prRef]string{}
+	authors := map[string]bool{}
+	for _, d := range wd {
+		if d.Author == "" {
+			continue
+		}
+		byAuthorDeploys[d.Author] = append(byAuthorDeploys[d.Author], d)
+		authorOfPR[prRef{d.RepoFullName, d.PRNumber}] = d.Author
+		authors[d.Author] = true
 	}
-	if len(repos) > 0 {
-		m.PerRepo = make(map[string]Metrics, len(repos))
-		for repo := range repos {
-			one := computeOne(byRepoDeploys[repo], byRepoFailures[repo], w)
-			one.PerRepo = nil
-			m.PerRepo[repo] = one
+	for _, f := range wf {
+		a, ok := authorOfPR[prRef{f.RepoFullName, f.MatchedPRNumber}]
+		if !ok || a == "" {
+			continue
+		}
+		byAuthorFailures[a] = append(byAuthorFailures[a], f)
+	}
+	if len(authors) > 0 {
+		m.PerAuthor = make(map[string]Metrics, len(authors))
+		for a := range authors {
+			one := computeOne(byAuthorDeploys[a], byAuthorFailures[a], w)
+			// An author bucket keeps its own per-repo table — a scoped view
+			// shows one too — but never a further author level. Built with
+			// perRepoOf rather than Compute so this cannot recurse.
+			one.PerRepo = perRepoOf(byAuthorDeploys[a], byAuthorFailures[a], w)
+			one.PerAuthor = nil
+			m.PerAuthor[a] = one
 		}
 	}
 	return m
+}
+
+// perRepoOf groups events ALREADY filtered to w by repository and reduces each
+// group on its own, so a revert in one repo never counts against another's
+// deploys. Buckets are leaves: both nested breakdowns are nil, which is what
+// keeps the structure one level deep by construction rather than by luck.
+// Returns nil when there is nothing to break down.
+func perRepoOf(deploys []DeployEvent, failures []FailureEvent, w Window) map[string]Metrics {
+	byDeploys := map[string][]DeployEvent{}
+	byFailures := map[string][]FailureEvent{}
+	repos := map[string]bool{}
+	for _, d := range deploys {
+		byDeploys[d.RepoFullName] = append(byDeploys[d.RepoFullName], d)
+		repos[d.RepoFullName] = true
+	}
+	for _, f := range failures {
+		byFailures[f.RepoFullName] = append(byFailures[f.RepoFullName], f)
+		repos[f.RepoFullName] = true
+	}
+	if len(repos) == 0 {
+		return nil
+	}
+	out := make(map[string]Metrics, len(repos))
+	for repo := range repos {
+		one := computeOne(byDeploys[repo], byFailures[repo], w)
+		one.PerRepo = nil
+		one.PerAuthor = nil
+		out[repo] = one
+	}
+	return out
 }
 
 // computeOne is the metric arithmetic over events ALREADY filtered to w.
