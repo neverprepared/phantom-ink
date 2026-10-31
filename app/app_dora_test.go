@@ -661,3 +661,24 @@ func TestRunnerMetricsUnreachableHubIsNotAnError(t *testing.T) {
 		t.Error("Available should be false with no runners")
 	}
 }
+
+// The author is stored in SQLite but was silently dropped on the way into the
+// metrics layer, which made a per-person view impossible without anyone
+// noticing a column was being thrown away. Pin the boundary.
+func TestToDoraDeploysCarriesTheAuthor(t *testing.T) {
+	rows := []DeployEventRow{{
+		RepoFullName: "o/r",
+		PRNumber:     1,
+		Title:        "t",
+		Author:       "ada",
+		CreatedAt:    "2026-01-01T00:00:00Z",
+		MergedAt:     "2026-01-02T00:00:00Z",
+	}}
+	got := toDoraDeploys(rows)
+	if len(got) != 1 {
+		t.Fatalf("want 1 event, got %d", len(got))
+	}
+	if got[0].Author != "ada" {
+		t.Fatalf("author dropped crossing into the dora package: got %q want %q", got[0].Author, "ada")
+	}
+}

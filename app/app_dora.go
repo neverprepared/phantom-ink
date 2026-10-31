@@ -58,6 +58,15 @@ var doraCaveats = []string{
 	"Merge is treated as deploy: under batched or manual deploys, deployment frequency overcounts.",
 }
 
+// doraScopeCaveats are the two extra ways a ONE-PERSON view is lossier than
+// the profile-wide one. They are kept separate from doraCaveats because they
+// are only true of a scoped view, and a caveat shown when it does not apply
+// teaches people to stop reading them.
+var doraScopeCaveats = []string{
+	"A revert that matched no known PR is counted profile-wide but charged to nobody, so a person's change failure rate reads low.",
+	"A merge whose author the provider did not report appears in the profile total but under no person.",
+}
+
 // DORAOverview is one page-load of the Delivery tab, computed from local state.
 type DORAOverview struct {
 	// Profile echoes back which profile these metrics belong to, so a response
@@ -78,6 +87,9 @@ type DORAOverview struct {
 	LastSyncedAt string `json:"last_synced_at"`
 	// Caveats are the limitations the UI must display alongside the numbers.
 	Caveats []string `json:"caveats"`
+	// ScopeCaveats apply ONLY when the Delivery tab is scoped to one author.
+	// The tab shows them in addition to Caveats, and only while scoped.
+	ScopeCaveats []string `json:"scope_caveats"`
 	// SyncError reports a problem reading local state, kept as a string for the
 	// same reason CodeOverview's section errors are: it belongs inside the
 	// card, not in a toast that blanks the page.
@@ -151,9 +163,10 @@ func hasGitProvider(env map[string]string) bool {
 func doraOverview(db *DB, profile string, windowDays int, now time.Time) (DORAOverview, error) {
 	windowDays = clampDORAWindow(windowDays)
 	out := DORAOverview{
-		Profile:    profile,
-		WindowDays: windowDays,
-		Caveats:    doraCaveats,
+		Profile:      profile,
+		WindowDays:   windowDays,
+		Caveats:      doraCaveats,
+		ScopeCaveats: doraScopeCaveats,
 	}
 	if db == nil {
 		return out, errNoDB
@@ -549,6 +562,7 @@ func toDoraDeploys(rows []DeployEventRow) []dora.DeployEvent {
 			RepoFullName: r.RepoFullName,
 			PRNumber:     r.PRNumber,
 			Title:        r.Title,
+			Author:       r.Author,
 			CreatedAt:    created.UTC(),
 			MergedAt:     merged.UTC(),
 		})
