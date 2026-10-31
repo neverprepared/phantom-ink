@@ -104,13 +104,15 @@ class DoraStore {
   }
 
   /**
-   * Authors present in the visible payload, most deploys first so the
-   * selector does not reshuffle between loads; ties broken by name.
+   * Authors present in the visible payload, sorted alphabetically.
+   *
+   * By name rather than by volume: the selector is something you scan for a
+   * name you already know, so findability beats ranking -- and a name's
+   * position then does not move as people ship. localeCompare so accented
+   * logins land where a reader expects rather than after z.
    */
   authors = $derived(
-    Object.entries(this.ov?.metrics?.per_author ?? {})
-      .sort((a, b) => (b[1].deploy_count ?? 0) - (a[1].deploy_count ?? 0) || a[0].localeCompare(b[0]))
-      .map(([name]) => name),
+    Object.keys(this.ov?.metrics?.per_author ?? {}).sort((a, b) => a.localeCompare(b)),
   );
 
   /**

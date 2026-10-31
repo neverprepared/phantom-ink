@@ -34,6 +34,7 @@ function overview(profile: string, days: number) {
           per_repo: { [`${profile}/a`]: { deploy_count: 7 } },
         },
         grace: { bands: {}, deploy_count: 3, per_repo: {} },
+        zed: { bands: {}, deploy_count: 99, per_repo: {} },
       },
     },
     caveats: ['overall'],
@@ -189,9 +190,12 @@ describe('freshness label', () => {
 });
 
 describe('author scope', () => {
-  it('lists authors most-prolific first so the selector is stable', async () => {
+  // Alphabetical, not by volume: the selector is something you scan for a
+  // name you already know, so findability beats ranking. zed has by far the
+  // most deploys and still sorts last.
+  it('lists authors alphabetically', async () => {
     await doraState.refresh('work');
-    expect(doraState.authors).toEqual(['ada', 'grace']);
+    expect(doraState.authors).toEqual(['ada', 'grace', 'zed']);
   });
 
   it('unscoped shows the profile-wide numbers', async () => {
