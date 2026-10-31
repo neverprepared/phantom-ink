@@ -2386,6 +2386,7 @@ export namespace dora {
 	    restore_samples: number;
 	    bands: Record<string, string>;
 	    per_repo: Record<string, Metrics>;
+	    per_author: Record<string, Metrics>;
 	
 	    static createFrom(source: any = {}) {
 	        return new Metrics(source);
@@ -2403,6 +2404,7 @@ export namespace dora {
 	        this.restore_samples = source["restore_samples"];
 	        this.bands = source["bands"];
 	        this.per_repo = this.convertValues(source["per_repo"], Metrics, true);
+	        this.per_author = this.convertValues(source["per_author"], Metrics, true);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -3021,6 +3023,7 @@ export namespace main {
 	    metrics: dora.Metrics;
 	    last_synced_at: string;
 	    caveats: string[];
+	    scope_caveats: string[];
 	    sync_error: string;
 	
 	    static createFrom(source: any = {}) {
@@ -3036,6 +3039,7 @@ export namespace main {
 	        this.metrics = this.convertValues(source["metrics"], dora.Metrics);
 	        this.last_synced_at = source["last_synced_at"];
 	        this.caveats = source["caveats"];
+	        this.scope_caveats = source["scope_caveats"];
 	        this.sync_error = source["sync_error"];
 	    }
 	

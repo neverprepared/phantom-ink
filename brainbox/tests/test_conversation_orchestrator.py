@@ -196,7 +196,12 @@ class TestConcurrencyCap:
         conv = _room(_persona("a"), _persona("b"), _persona("c"))
         orch.set_gate(FakeGate({"a": (True, 0.2), "b": (True, 0.9), "c": (True, 0.5)}))
         await orch.run_round(conv, _post(conv, "user"))
-        assert spoke == ["b", "c"]
+        # The claim is WHICH personas the cap admits, not the order they finish
+        # in: selected personas stream concurrently, so `spoke` records asyncio
+        # scheduling order and asserting it made this test flake (['c', 'b']).
+        # Selection order is covered deterministically against
+        # select_responders by test_ties_break_on_roster_order_not_completion_order.
+        assert sorted(spoke) == ["b", "c"]
 
     async def test_cap_of_one_lets_exactly_one_speak(self, spoke, _tunables):
         _tunables.concurrency_cap = 1

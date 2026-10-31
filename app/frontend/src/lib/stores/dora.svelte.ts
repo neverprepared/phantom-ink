@@ -28,6 +28,17 @@ class DoraStore {
   /** Which window the tab is showing. Persisted across mounts with the data. */
   windowDays = $state(30);
 
+  /**
+   * Which author the tab is scoped to, per profile. '' is the whole profile.
+   *
+   * Kept per profile rather than globally because an author is a fact about
+   * one profile's repos: carrying "ada" across a profile switch would scope
+   * to someone who does not appear in the new profile's data at all. Not part
+   * of the cache key -- unlike the window, a scope needs no fetch, it is a
+   * selection over a payload already in hand.
+   */
+  private scopeByProfile = $state<Record<string, string>>({});
+
   private requested = $state('');
 
   /**
@@ -92,17 +103,66 @@ class DoraStore {
     return at ? new Date(at).toISOString() : '';
   }
 
-  metrics = $derived(this.ov?.metrics ?? null);
-  bands = $derived(this.ov?.metrics?.bands ?? {});
+  /**
+   * Authors present in the visible payload, sorted alphabetically.
+   *
+   * By name rather than by volume: the selector is something you scan for a
+   * name you already know, so findability beats ranking -- and a name's
+   * position then does not move as people ship. localeCompare so accented
+   * logins land where a reader expects rather than after z.
+   */
+  authors = $derived(
+    Object.keys(this.ov?.metrics?.per_author ?? {}).sort((a, b) => a.localeCompare(b)),
+  );
+
+  /**
+   * The active scope, '' for the whole profile.
+   *
+   * A remembered author who is absent from the visible payload reads as
+   * unscoped rather than as an empty bucket: an author who stopped shipping
+   * drops out of the next window's data, and a blank page is a worse answer
+   * than the profile-wide one.
+   */
+  get scope(): string {
+    const want = this.scopeByProfile[this.requested] ?? '';
+    if (!want) return '';
+    return this.ov?.metrics?.per_author?.[want] ? want : '';
+  }
+
+  /** The slice the tab renders: one author's metrics, or the whole profile. */
+  private get scoped(): main.DORAOverview['metrics'] | null {
+    const s = this.scope;
+    if (s) return this.ov?.metrics?.per_author?.[s] ?? null;
+    return this.ov?.metrics ?? null;
+  }
+
+  /** Scope the tab to one author, or '' for the whole profile. */
+  setScope(author: string): void {
+    if (!this.requested) return;
+    this.scopeByProfile[this.requested] = author;
+  }
+
+  metrics = $derived(this.scoped);
+  bands = $derived(this.scoped?.bands ?? {});
   tokenMissing = $derived(this.ov?.token_missing ?? false);
   tokenInvalid = $derived(this.ov?.token_invalid ?? false);
   windowOf = $derived(this.ov?.window_days ?? 0);
   lastSyncedAt = $derived(this.ov?.last_synced_at ?? '');
   syncError = $derived(this.ov?.sync_error ?? '');
   caveats = $derived(this.ov?.caveats ?? []);
+  /**
+   * The caveats to show right now. The scope-only ones describe the two ways
+   * a one-person view is lossier, and appear ONLY while scoped -- a caveat
+   * displayed when it does not apply teaches people to stop reading them.
+   */
+  activeCaveats = $derived(
+    this.scope
+      ? [...(this.ov?.caveats ?? []), ...(this.ov?.scope_caveats ?? [])]
+      : (this.ov?.caveats ?? []),
+  );
   /** Sorted so the table does not reshuffle between loads. */
   perRepo = $derived(
-    Object.entries(this.ov?.metrics?.per_repo ?? {}).sort((a, b) => a[0].localeCompare(b[0])),
+    Object.entries(this.scoped?.per_repo ?? {}).sort((a, b) => a[0].localeCompare(b[0])),
   );
 
   /** Load the metrics for the current profile and window. */
@@ -148,6 +208,7 @@ class DoraStore {
     this.fetchedAtByKey = {};
     this.requested = '';
     this.windowDays = 30;
+    this.scopeByProfile = {};
   }
 }
 
