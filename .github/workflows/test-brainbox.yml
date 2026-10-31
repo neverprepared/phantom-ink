@@ -1,9 +1,12 @@
 name: Test brainbox
 on:
+  # docker/** is here because this suite covers the session container's startup
+  # scripts (tests/test_session_gateway_mcp_materialize.py). Without it, editing
+  # ttyd-wrapper.sh or materialize-gateway-mcp.py would run no tests at all.
   push:
-    paths: ['brainbox/**', '.github/workflows/test-brainbox.yml']
+    paths: ['brainbox/**', 'docker/**', '.github/workflows/test-brainbox.yml']
   pull_request:
-    paths: ['brainbox/**', '.github/workflows/test-brainbox.yml']
+    paths: ['brainbox/**', 'docker/**', '.github/workflows/test-brainbox.yml']
 jobs:
   test:
     runs-on: ubuntu-latest
