@@ -62,6 +62,43 @@ export function jiraDispatchTarget(
   return url ? { ...base, repoFullName: ref.repo, repoURL: url } : null;
 }
 
+/**
+ * The dispatch target for one ticket, resolving its code refs FIRST if they
+ * are not known yet.
+ *
+ * The ticket list paints before the provider fan-out has landed, so for a few
+ * seconds "this ticket has no refs" and "we have not looked yet" are the same
+ * shape: null. Asking the operator which repo to use in that window is asking
+ * a question the app is about to be able to answer, and a wrong pick silently
+ * sends an agent at the wrong repository.
+ *
+ * So the wait moves to the moment of intent: whoever actually clicks begin
+ * work pays for the refs, and nobody else waits at all. In practice the refs
+ * have usually landed by the time anyone has read the list and chosen a row,
+ * so this rarely blocks.
+ *
+ * A null return now means what the picker needs it to mean: there is genuinely
+ * no code pointing at this ticket.
+ */
+export async function resolveTicketTarget(
+  profile: string,
+  key: string,
+  repos: Repo[],
+  chosen?: string,
+): Promise<DispatchTarget | null> {
+  // An explicit choice needs no refs at all -- the operator has answered the
+  // only question the refs were going to answer.
+  if (!chosen && jiraState.refsPending) {
+    await jiraState.loadRefs(profile);
+  }
+  // Re-read the row: loadRefs REPLACES the ticket objects, so resolving
+  // against the copy the caller was holding would read the pre-refs version
+  // and ask for a repo anyway.
+  const tk = jiraState.rows.find((r) => r.key === key);
+  if (!tk) return null; // switched profile, or the list was refreshed under us
+  return jiraDispatchTarget(tk, repos, chosen);
+}
+
 type Tickets = main.JiraTicketsResult | null;
 type Presets = main.JiraJQLPreset[];
 
@@ -71,6 +108,11 @@ class JiraStore {
   /** The profile whose PRESETS are on screen — tracked apart from `requested`
    *  so loading a chip row never makes the ticket list look cold. */
   private presetProfile = $state('');
+  /** The refs lookup failed for the profile on screen. Tracked so a row stops
+   *  claiming the refs are still on their way: refs_pending stays true on the
+   *  payload (nothing replaced it), and a row that says "checking…" forever
+   *  after a failure is a lie the operator cannot act on. */
+  private refsFailed = $state(false);
   /** Per-profile "bypass the server memo next fetch" — see CodeStore for why
    *  this is keyed rather than a single boolean. */
   private forceNext = new Map<string, boolean>();
@@ -159,6 +201,10 @@ class JiraStore {
    * panel answers this flag by calling loadRefs.
    */
   refsPending = $derived(this.res?.refs_pending ?? false);
+  /** The refs lookup failed; refsPending is no longer a promise of anything. */
+  get refsLookupFailed() {
+    return this.refsFailed;
+  }
 
   /** This profile's named queries. Empty until loadPresets has resolved. */
   presets = $derived(
@@ -226,7 +272,15 @@ class JiraStore {
     if (!profile) return;
     const api = await getApi();
     if (!api) return;
-    const refs = await api.JiraTicketRefs(profile);
+    let refs: main.JiraRefsResult;
+    try {
+      refs = await api.JiraTicketRefs(profile);
+    } catch (e) {
+      // Recorded, then rethrown: the caller decides how loudly to say so, but
+      // the row must stop advertising refs that are not coming.
+      if (this.requested === profile) this.refsFailed = true;
+      throw e;
+    }
     if (this.requested !== profile) return; // switched away while we waited
 
     const res = this.tickets.for(profile).value;
@@ -251,6 +305,7 @@ class JiraStore {
   async refresh(profile: string, force = false): Promise<void> {
     if (!profile) return;
     this.requested = profile;
+    this.refsFailed = false;
     this.forceNext.set(profile, force);
     try {
       await this.tickets.for(profile).refresh({ force });
@@ -278,6 +333,7 @@ class JiraStore {
     this.forceNext.clear();
     this.requested = '';
     this.presetProfile = '';
+    this.refsFailed = false;
   }
 }
 

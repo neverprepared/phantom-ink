@@ -17,7 +17,7 @@ vi.mock('../notifications.svelte', () => ({
   notifications: { error: errorToast, success: vi.fn(), info: vi.fn() },
 }));
 
-const { jiraState, jiraDispatchTarget } = await import('./jira.svelte');
+const { jiraState, jiraDispatchTarget, resolveTicketTarget } = await import('./jira.svelte');
 
 function result(profile: string, extra: Record<string, unknown> = {}) {
   return {
@@ -354,5 +354,169 @@ describe('late code refs', () => {
     expect(jiraState.profile).toBe('home');
     expect(jiraState.rows[0].key).toBe('HOME-1');
     expect(jiraState.rows[0].refs ?? []).toHaveLength(0);
+  });
+});
+
+describe('resolving a ticket target while refs are still pending', () => {
+  const repos = [
+    { full_name: 'org/repo', clone_url: 'https://github.com/org/repo.git' },
+  ] as any[];
+
+  function pendingTickets() {
+    return vi.fn(async (profile: string) =>
+      result(profile, {
+        refs_pending: true,
+        tickets: [{ key: 'WORK-1', summary: 'a ticket', url: 'https://j/WORK-1' }],
+      }),
+    );
+  }
+
+  it('waits for the refs, then resolves the repo the ref points at', async () => {
+    const JiraTicketRefs = vi.fn(async () => ({
+      profile: 'work',
+      refs: {
+        'WORK-1': [
+          { row_key: 'github:org/repo#7', number: 7, repo: 'org/repo', url: 'https://github.com/org/repo/pull/7' },
+        ],
+      },
+      orphan_rows: {},
+    }));
+    mockGetApi.mockResolvedValue({ JiraTickets: pendingTickets(), JiraTicketRefs });
+
+    await jiraState.refresh('work');
+    const t = await resolveTicketTarget('work', 'WORK-1', repos);
+
+    expect(JiraTicketRefs).toHaveBeenCalledOnce();
+    expect(t?.repoFullName).toBe('org/repo');
+    expect(t?.issueKey).toBe('WORK-1');
+  });
+
+  it('does not re-fetch refs that are already known', async () => {
+    const JiraTicketRefs = vi.fn(async () => ({ profile: 'work', refs: {}, orphan_rows: {} }));
+    const JiraTickets = vi.fn(async (profile: string) =>
+      result(profile, {
+        refs_pending: false,
+        tickets: [
+          {
+            key: 'WORK-1',
+            summary: 'a ticket',
+            refs: [{ row_key: 'github:org/repo#7', number: 7, repo: 'org/repo' }],
+          },
+        ],
+      }),
+    );
+    mockGetApi.mockResolvedValue({ JiraTickets, JiraTicketRefs });
+
+    await jiraState.refresh('work');
+    const t = await resolveTicketTarget('work', 'WORK-1', repos);
+
+    expect(JiraTicketRefs).not.toHaveBeenCalled();
+    expect(t?.repoFullName).toBe('org/repo');
+  });
+
+  // Null is the signal to fall back to the inline picker, and it must mean
+  // "there is genuinely no code", never "we had not looked yet".
+  it('returns null once the refs come back empty, so the picker is the answer', async () => {
+    const JiraTicketRefs = vi.fn(async () => ({ profile: 'work', refs: {}, orphan_rows: {} }));
+    mockGetApi.mockResolvedValue({ JiraTickets: pendingTickets(), JiraTicketRefs });
+
+    await jiraState.refresh('work');
+
+    expect(await resolveTicketTarget('work', 'WORK-1', repos)).toBeNull();
+  });
+
+  // The rows are REPLACED when refs land, so resolving against the object the
+  // caller was holding would read the pre-refs copy and ask for a repo anyway.
+  it('resolves against the row as it is after the refs landed', async () => {
+    const JiraTicketRefs = vi.fn(async () => ({
+      profile: 'work',
+      refs: { 'WORK-1': [{ row_key: 'github:org/repo#7', number: 7, repo: 'org/repo' }] },
+      orphan_rows: {},
+    }));
+    mockGetApi.mockResolvedValue({ JiraTickets: pendingTickets(), JiraTicketRefs });
+
+    await jiraState.refresh('work');
+    const staleRow = jiraState.rows[0];
+    const t = await resolveTicketTarget('work', 'WORK-1', repos);
+
+    expect(staleRow.refs ?? []).toHaveLength(0); // the copy the caller held
+    expect(t?.repoFullName).toBe('org/repo'); // what it resolved anyway
+  });
+
+  // A fork, or another org's repo: the ref is real even though this profile
+  // does not list it, and its PR url still normalises to a clone url.
+  it('keeps a ref whose repo this profile does not list', async () => {
+    const JiraTicketRefs = vi.fn(async () => ({
+      profile: 'work',
+      refs: {
+        'WORK-1': [
+          { row_key: 'github:other/fork#3', number: 3, repo: 'other/fork', url: 'https://github.com/other/fork/pull/3' },
+        ],
+      },
+      orphan_rows: {},
+    }));
+    mockGetApi.mockResolvedValue({ JiraTickets: pendingTickets(), JiraTicketRefs });
+
+    await jiraState.refresh('work');
+    const t = await resolveTicketTarget('work', 'WORK-1', repos);
+
+    expect(t?.repoFullName).toBe('other/fork');
+    expect(t?.repoURL).toContain('other/fork');
+  });
+
+  it('returns null for a ticket that is gone after a profile switch', async () => {
+    const JiraTicketRefs = vi.fn(async () => ({ profile: 'work', refs: {}, orphan_rows: {} }));
+    mockGetApi.mockResolvedValue({ JiraTickets: pendingTickets(), JiraTicketRefs });
+
+    await jiraState.refresh('work');
+    await jiraState.refresh('home');
+
+    expect(await resolveTicketTarget('home', 'WORK-1', repos)).toBeNull();
+  });
+
+  // An explicit pick must still win, and must not pay for a refs fetch.
+  it('honours an explicit repo choice without consulting the refs', async () => {
+    const JiraTicketRefs = vi.fn(async () => ({ profile: 'work', refs: {}, orphan_rows: {} }));
+    mockGetApi.mockResolvedValue({ JiraTickets: pendingTickets(), JiraTicketRefs });
+
+    await jiraState.refresh('work');
+    const t = await resolveTicketTarget('work', 'WORK-1', repos, 'org/repo');
+
+    expect(JiraTicketRefs).not.toHaveBeenCalled();
+    expect(t?.repoFullName).toBe('org/repo');
+  });
+});
+
+describe('when the refs fetch fails', () => {
+  it('stops claiming the refs are still coming, and rethrows', async () => {
+    const JiraTickets = vi.fn(async (profile: string) => result(profile, { refs_pending: true }));
+    const JiraTicketRefs = vi.fn(async () => {
+      throw new Error('providers down');
+    });
+    mockGetApi.mockResolvedValue({ JiraTickets, JiraTicketRefs });
+
+    await jiraState.refresh('work');
+    expect(jiraState.refsLookupFailed).toBe(false);
+
+    await expect(jiraState.loadRefs('work')).rejects.toThrow('providers down');
+
+    // The caller surfaces the error; the row must stop saying "checking…".
+    expect(jiraState.refsLookupFailed).toBe(true);
+  });
+
+  it('clears the failure when the list is reloaded', async () => {
+    const JiraTickets = vi.fn(async (profile: string) => result(profile, { refs_pending: true }));
+    const JiraTicketRefs = vi.fn(async () => {
+      throw new Error('providers down');
+    });
+    mockGetApi.mockResolvedValue({ JiraTickets, JiraTicketRefs });
+
+    await jiraState.refresh('work');
+    await expect(jiraState.loadRefs('work')).rejects.toThrow();
+    expect(jiraState.refsLookupFailed).toBe(true);
+
+    await jiraState.refresh('work', true);
+
+    expect(jiraState.refsLookupFailed).toBe(false);
   });
 });

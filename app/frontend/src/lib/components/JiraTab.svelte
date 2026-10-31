@@ -6,7 +6,7 @@
   import { notifications } from '../notifications.svelte';
   import { profileState } from '../stores.svelte';
   import { codeState } from '../stores/code.svelte';
-  import { jiraState, jiraDispatchTarget } from '../stores/jira.svelte';
+  import { jiraState, jiraDispatchTarget, resolveTicketTarget } from '../stores/jira.svelte';
   import { timeAgo } from '../utils/format';
   import DispatchModal from './DispatchModal.svelte';
   import type { main } from '../../../wailsjs/go/models';
@@ -19,6 +19,7 @@
   let editingJql = $state(false);
   let linkingKey = $state(''); // ticket currently showing the PR picker
   let pickingKey = $state(''); // ticket currently showing the repo picker
+  let resolvingKey = $state(''); // ticket whose repo is being resolved on click
 
   // Preset editor state, component-local for the same reason the JQL draft is:
   // a draft list describes one visit. The SAVED list lives in jiraState.
@@ -231,15 +232,42 @@
     return jiraDispatchTarget(tk, codeState.repos, chosen);
   }
 
-  /** True when this ticket can start work without asking which repo. */
+  /**
+   * True when this ticket can start work without asking which repo.
+   *
+   * While the refs are pending this is not yet knowable, and the lanes do NOT
+   * use it to decide whether to ask: they resolve on click instead. It only
+   * drives the "which repo was inferred" label, which must stay silent until
+   * there is an actual answer to show.
+   */
   function hasRepo(tk: main.JiraTicket): boolean {
-    return target(tk) !== null;
+    return !jiraState.refsPending && target(tk) !== null;
+  }
+
+  /**
+   * Resolve a ticket's repo, waiting for its code refs if they are still in
+   * flight, and fall back to the picker only once there is nothing to find.
+   *
+   * The wait is deliberately here rather than on the list: see
+   * resolveTicketTarget. Returns null when the operator must be asked.
+   */
+  async function resolve(tk: main.JiraTicket, chosen?: string) {
+    if (!chosen && jiraState.refsPending) resolvingKey = tk.key;
+    try {
+      return await resolveTicketTarget(profile, tk.key, codeState.repos, chosen);
+    } catch (e: any) {
+      notifications.error(`${e?.message ?? e}`);
+      return null;
+    } finally {
+      resolvingKey = '';
+    }
   }
 
   /** Open the dispatch modal, asking for a repo first if we cannot infer one. */
-  function beginWork(tk: main.JiraTicket, chosen?: string) {
-    const t = target(tk, chosen);
+  async function beginWork(tk: main.JiraTicket, chosen?: string) {
+    const t = await resolve(tk, chosen);
     if (!t) {
+      pickingLane = 'work';
       pickingKey = tk.key;
       return;
     }
@@ -248,9 +276,10 @@
   }
 
   /** The host lane: clone into this profile's workspace and open a terminal. */
-  function cloneAndOpen(tk: main.JiraTicket, chosen?: string) {
-    const t = target(tk, chosen);
+  async function cloneAndOpen(tk: main.JiraTicket, chosen?: string) {
+    const t = await resolve(tk, chosen);
     if (!t) {
+      pickingLane = 'clone';
       pickingKey = tk.key;
       return;
     }
@@ -259,18 +288,15 @@
   }
 
   // Which lane the repo picker is standing in for, so choosing a repo
-  // continues what the operator actually clicked.
+  // continues what the operator actually clicked. Set by whichever lane
+  // failed to resolve a repo -- there is no separate "ask" entry point any
+  // more, because the lanes no longer decide up front whether to ask.
   let pickingLane = $state<'work' | 'clone'>('work');
-
-  function askRepo(tk: main.JiraTicket, lane: 'work' | 'clone') {
-    pickingLane = lane;
-    pickingKey = tk.key;
-  }
 
   function chooseRepo(tk: main.JiraTicket, fullName: string) {
     if (!fullName) return;
-    if (pickingLane === 'clone') cloneAndOpen(tk, fullName);
-    else beginWork(tk, fullName);
+    if (pickingLane === 'clone') void cloneAndOpen(tk, fullName);
+    else void beginWork(tk, fullName);
   }
 
   function chipClass(cat: string): string {
@@ -433,13 +459,20 @@
                the modal lane (autonomous task / interactive session) and the
                host lane (clone + terminal) that skips the modal entirely. -->
           <div class="tk-lanes">
-            <button class="link accent" onclick={() => (hasRepo(tk) ? beginWork(tk) : askRepo(tk, 'work'))}>
-              Begin work ▾
+            <!-- Both lanes resolve the repo ON CLICK: while the code refs are
+                 still in flight we cannot tell "no repo" from "not looked
+                 yet", and only the operator who actually acts should wait. -->
+            <button
+              class="link accent"
+              disabled={resolvingKey === tk.key}
+              onclick={() => void beginWork(tk)}
+            >
+              {resolvingKey === tk.key ? 'finding the repo…' : 'Begin work ▾'}
             </button>
             <button
               class="link"
-              disabled={codeState.cloningRepo !== ''}
-              onclick={() => (hasRepo(tk) ? cloneAndOpen(tk) : askRepo(tk, 'clone'))}
+              disabled={codeState.cloningRepo !== '' || resolvingKey === tk.key}
+              onclick={() => void cloneAndOpen(tk)}
             >
               {codeState.cloningRepo !== '' ? 'cloning…' : 'Clone + terminal'}
             </button>
@@ -469,10 +502,11 @@
             </div>
           {/if}
 
-          {#if jiraState.refsPending}
+          {#if jiraState.refsPending && !jiraState.refsLookupFailed}
             <!-- Not "no code": we do not know yet. Saying nothing here would
-                 read as an answer, and the begin-work button below falls back
-                 to the repo picker for the same reason. -->
+                 read as an answer. Suppressed once the lookup has FAILED --
+                 the refs are not on their way any more, and this line would
+                 keep promising them. -->
             <div class="tk-ref pending">
               <span class="tk-arrow">↳</span>
               <span class="muted-note">checking for code that mentions {tk.key}…</span>
