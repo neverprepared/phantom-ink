@@ -223,7 +223,7 @@ export const jobsState = {
 // through location.hash and an id migration would break deep links.
 // ---------------------------------------------------------------------------
 
-export type EventsTab = 'attention' | 'live' | 'rules' | 'raw';
+export type EventsTab = 'attention' | 'live' | 'rules' | 'raw' | 'window';
 
 // Legacy panel ids that are now Events tabs → their tab.
 // 'automations' was the rules panel's original id; 'event-log' was the

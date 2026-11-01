@@ -24,6 +24,7 @@
     { tab: 'attention', label: 'Attention' },
     { tab: 'live', label: 'Live' },
     { tab: 'rules', label: 'Rules' },
+    { tab: 'window', label: 'All events' },
   ];
 
   interface Command {
