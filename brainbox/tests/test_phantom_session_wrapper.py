@@ -213,3 +213,27 @@ class TestDockerfileContract:
         assert "nvm install 20" not in text
         assert "goenv install 1.21" not in text
         assert "uv python install 3.12 3.11" not in text
+
+
+class TestMcpVersionPin:
+    """mcp 2.x removed `mcp.server.fastmcp`.
+
+    The session image was built when 1.x was current, so the unpinned
+    `mcp[cli]>=1.9` resolved fine for weeks. The first fresh rebuild resolved
+    2.3.0, brainbox-mcp exited 1 on import, and every session lost its
+    `channel_*` tools with Claude Code reporting only `CONNECTION_CLOSED`.
+    """
+
+    def test_brainbox_mcp_pins_mcp_below_2(self):
+        pyproject = (
+            pathlib.Path(__file__).resolve().parents[2]
+            / "packages" / "brainbox-mcp" / "pyproject.toml"
+        ).read_text()
+        assert '"mcp[cli]>=1.9,<2"' in pyproject, (
+            "the upper bound is load-bearing: mcp 2.x removes mcp.server.fastmcp"
+        )
+
+    def test_image_verifies_the_import_not_just_the_binary(self):
+        """`command -v brainbox-mcp` passed while the server was unstartable."""
+        dockerfile = (_ROOT / "Dockerfile").read_text()
+        assert "import mcp.server.fastmcp" in dockerfile
