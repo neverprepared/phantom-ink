@@ -13,7 +13,12 @@
 -->
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { eventsWindow, WINDOW_RANGES, PAGE_LIMIT } from '../stores/eventsWindow.svelte';
+  import {
+    eventsWindow,
+    WINDOW_RANGES,
+    PAGE_LIMIT,
+    shortEnvelopeId,
+  } from '../stores/eventsWindow.svelte';
   import { formatClock } from '../utils/format';
   import { onAgentEvent } from '../utils/wailsTopic';
   import EmptyState from './EmptyState.svelte';
@@ -39,6 +44,16 @@
       debounceHandle = null;
       void eventsWindow.setFilters({ q: qInput, typePrefix: typeInput });
     }, 300);
+  }
+
+  function correlate(e: Event, id: string) {
+    // The id sits inside a row that expands on click, so the correlate action
+    // must not also toggle it open.
+    e.stopPropagation();
+    if (debounceHandle !== null) clearTimeout(debounceHandle);
+    qInput = id;
+    typeInput = '';
+    void eventsWindow.correlate(id);
   }
 
   function clearFilters() {
@@ -180,9 +195,32 @@
           role="button" tabindex={0}>
           <span class="ts" title={new Date(item.ts).toISOString()}>{formatTs(item.ts)}</span>
           <span class="type">{item.type ?? '—'}</span>
+          <!-- The id is the correlation key, so it gets its own column rather
+               than being a fallback for a missing title. Click it to pull up
+               every event in that lifecycle. Full id in the tooltip, because
+               the display form is truncated. -->
+          <span
+            class="corr"
+            role="button"
+            tabindex={0}
+            title={`${item.id}\n\nclick to show every event with this id`}
+            onclick={(e) => correlate(e, item.id)}
+            onkeydown={(e) => rowKeydown(e, () => correlate(e, item.id))}>
+            {shortEnvelopeId(item.id)}
+          </span>
           <span class="raw">
             <span class="disclosure">{expanded ? '▾' : '▸'}</span>
-            {item.envelope?.title ?? item.id}{item.status ? ` · ${item.status}` : ''}
+            {item.envelope?.title ?? '—'}{item.status ? ` · ${item.status}` : ''}
+            {#if item.parent_id}
+              <span
+                class="parent"
+                role="button"
+                tabindex={0}
+                title={`parent: ${item.parent_id}\n\nclick to show the parent's events`}
+                onclick={(e) => correlate(e, item.parent_id)}
+                onkeydown={(e) => rowKeydown(e, () => correlate(e, item.parent_id))}
+                >↰ {shortEnvelopeId(item.parent_id)}</span>
+            {/if}
             {#if item.envelope?.workspace}<span class="ws">[{item.envelope.workspace}]</span>{/if}
           </span>
         </div>
@@ -301,7 +339,9 @@
 
   .row {
     display: grid;
-    grid-template-columns: 110px 160px 1fr;
+    /* ts | type | id (the correlation key) | title */
+    grid-template-columns: 96px 150px 200px 1fr;
+    gap: 8px;
     padding: 3px 6px;
     border-radius: var(--radius-sm);
     min-width: 0;
@@ -328,6 +368,22 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  .corr {
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .corr:hover { color: var(--color-accent); text-decoration: underline; }
+
+  .parent {
+    color: var(--color-text-tertiary);
+    cursor: pointer;
+    margin-left: 6px;
+  }
+  .parent:hover { color: var(--color-accent); text-decoration: underline; }
 
   .ws { color: var(--color-text-tertiary); margin-left: 6px; }
 

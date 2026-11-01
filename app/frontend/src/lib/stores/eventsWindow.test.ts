@@ -19,7 +19,8 @@ const mockGetApi = vi.fn();
 vi.mock('../utils/api', () => ({ getApi: () => mockGetApi() }));
 vi.mock('../utils/wailsTopic', () => ({ onAgentEvent: () => () => {} }));
 
-const { eventsWindow, WINDOW_RANGES, PAGE_LIMIT } = await import('./eventsWindow.svelte');
+const { eventsWindow, WINDOW_RANGES, PAGE_LIMIT, shortEnvelopeId } =
+  await import('./eventsWindow.svelte');
 
 /** A never-resolving promise, to prove a caller did not wait on it. */
 function pending<T>(): Promise<T> {
@@ -284,6 +285,58 @@ describe('filters', () => {
     expect(eventsWindow.q).toBe('');
     expect(eventsWindow.typePrefix).toBe('');
     expect(eventsWindow.filtered).toBe(false);
+  });
+});
+
+describe('correlating related events', () => {
+  it('shortens only the opaque segments of an id', () => {
+    // The id IS the correlation key: a session's created/stopped/deleted all
+    // share `session:<name>`, and a task's queued/started/completed all share
+    // `hub-task:<uuid>`. Shortening must keep the human-meaningful prefixes and
+    // cut only the hex, or the key stops being recognisable.
+    expect(shortEnvelopeId('session:bypass-repro')).toBe('session:bypass-repro');
+    expect(shortEnvelopeId('rule-exec:227')).toBe('rule-exec:227');
+    expect(shortEnvelopeId('hub-task:3b7ad79c-f98d-4156-9631-5c7ef3892122'))
+      .toBe('hub-task:3b7ad79c');
+    expect(shortEnvelopeId('runner-work:m3-64:a89bbcc26f410d2985006e09'))
+      .toBe('runner-work:m3-64:a89bbcc2');
+    // Nested ids are real: an action carries the hub-task it acted on.
+    expect(shortEnvelopeId('action:hub-task:eed6e0e0-ec6a-409c-8b18-67ab100552ba:dismiss:1793534580074'))
+      .toBe('action:hub-task:eed6e0e0:dismiss:17935345');
+  });
+
+  it('leaves a short host-like segment alone', () => {
+    // m3-64 is hex-ish and dashed but only 5 chars; truncating it would be
+    // worse than leaving it.
+    expect(shortEnvelopeId('runner:m3-64')).toBe('runner:m3-64');
+  });
+
+  it('handles an empty id without throwing', () => {
+    expect(shortEnvelopeId('')).toBe('');
+  });
+
+  it('correlates on the FULL id, not the shortened one', async () => {
+    const { calls } = apiReturning({ items: [], backend: 'opensearch' });
+    const full = 'hub-task:3b7ad79c-f98d-4156-9631-5c7ef3892122';
+    await eventsWindow.correlate(full);
+    // The display form is lossy; querying with it would match the wrong rows
+    // or none.
+    expect(calls[0].q).toBe(full);
+  });
+
+  it('clears the type prefix when correlating', async () => {
+    const { calls } = apiReturning(
+      { items: [], backend: 'opensearch' },
+      { items: [], backend: 'opensearch' },
+    );
+    await eventsWindow.setFilters({ typePrefix: 'task.' });
+    await eventsWindow.correlate('session:bypass-repro');
+
+    // Correlating means "show me this whole lifecycle". Keeping a type prefix
+    // would hide most of it — click a session id under a `task.` filter and
+    // you would see nothing at all.
+    expect(calls[1].type).toBe('');
+    expect(eventsWindow.typePrefix).toBe('');
   });
 });
 
