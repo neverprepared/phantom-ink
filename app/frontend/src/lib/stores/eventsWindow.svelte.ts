@@ -47,6 +47,33 @@ export const WINDOW_RANGES = [
 /** The endpoint's hard cap (phantom-router api.py, `limit: int = Query(100, ge=1, le=1000)`). */
 export const PAGE_LIMIT = 1000;
 
+/**
+ * Display form of an envelope id, with the opaque parts cut.
+ *
+ * The id IS the correlation key, and it is a SEMANTIC repeating key rather
+ * than a row identity: a session's created/stopped/deleted events all carry
+ * `session:<name>`, and a task's queued/started/completed all carry
+ * `hub-task:<uuid>`. Showing it is what makes a lifecycle legible in a flat
+ * list — and the real shapes are long enough to need trimming:
+ *
+ *   session:bypass-repro                             (keep whole)
+ *   rule-exec:227                                    (keep whole)
+ *   hub-task:3b7ad79c-f98d-4156-9631-5c7ef3892122    -> hub-task:3b7ad79c
+ *   runner-work:m3-64:a89bbcc26f410d2985006e09       -> runner-work:m3-64:a89bbcc2
+ *   action:hub-task:<uuid>:dismiss:<epoch-ms>        -> action:hub-task:eed6e0e0:dismiss:17935345
+ *
+ * Only segments that are BOTH long and opaque (hex, dashes or digits) are cut,
+ * so the meaningful prefixes and short host names like `m3-64` survive. This
+ * is display only — correlation always queries the full id.
+ */
+export function shortEnvelopeId(id: string): string {
+  if (!id) return '';
+  return id
+    .split(':')
+    .map((seg) => (seg.length >= 12 && /^[0-9a-f-]+$/i.test(seg) ? seg.slice(0, 8) : seg))
+    .join(':');
+}
+
 const DEFAULT_RANGE_MS = 86_400_000;
 
 /** How many `load older` pages to allow before telling the reader to narrow the window. */
@@ -185,6 +212,25 @@ export const eventsWindow = {
   async setFilters(next: { q?: string; typePrefix?: string }): Promise<void> {
     if (next.q !== undefined) _q = next.q;
     if (next.typePrefix !== undefined) _typePrefix = next.typePrefix;
+    await this.load();
+  },
+
+  /**
+   * Show every event sharing one envelope id — the lifecycle behind a row.
+   *
+   * Queries the FULL id: the shortened display form is lossy and would match
+   * the wrong rows or none. The type prefix is CLEARED on purpose, because
+   * correlating means "show me all of this", and clicking a session id while a
+   * `task.` prefix was set would otherwise return nothing at all.
+   *
+   * `q` rather than a dedicated id filter because the search endpoint has no
+   * id parameter; the id appears verbatim in the envelope JSON, so the
+   * substring match on Postgres and the simple_query_string on OpenSearch both
+   * find it.
+   */
+  async correlate(id: string): Promise<void> {
+    _typePrefix = '';
+    _q = id;
     await this.load();
   },
 
