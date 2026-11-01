@@ -30,8 +30,8 @@ Contract (all optional; each server is written only if its inputs are present):
     CLAUDE_JSON            path to the config to patch (required)
     PHANTOM_GATEWAY_URL    gateway endpoint      } both required for
     PHANTOM_GATEWAY_TOKEN  session bearer        } phantom-gateway
-    BRAINBOX_HUB_URL_PUBLIC / BRAINBOX_HUB_URL  } both required for
-    BRAINBOX_TOKEN                               } brainbox
+    BRAINBOX_URL (or BRAINBOX_HUB_URL_PUBLIC/BRAINBOX_HUB_URL)  } both
+    BRAINBOX_TOKEN_ID (or BRAINBOX_TOKEN)                       } for brainbox
 
 Values arrive through the environment, never argv, so tokens cannot appear in
 ``ps`` output. Exit 0 if at least one server was written, 3 if none could be,
@@ -58,33 +58,53 @@ def gateway_entry(url: str, token: str) -> dict:
     }
 
 
-def brainbox_entry(hub_url: str, token: str) -> dict:
+# Absolute path, not a bare name: the uv tool shim lives here, and an MCP server
+# is spawned with whatever PATH the agent process happened to inherit.
+BRAINBOX_MCP_BIN = "/home/developer/.local/bin/brainbox-mcp"
+
+
+def brainbox_entry(hub_url: str, token: str, profile: str = "") -> dict:
     """The stdio MCP entry for this session's own hub tools.
 
-    `brainbox-mcp` is installed in the image as a uv tool and lands on PATH at
-    ~/.local/bin/brainbox-mcp. It reads its hub URL and bearer from the
-    environment, which is why they are passed in `env` rather than argv.
+    The variable NAMES matter. The guest brainbox-mcp reads ``BRAINBOX_URL`` and
+    ``BRAINBOX_TOKEN_ID`` — NOT the ``BRAINBOX_HUB_URL`` / ``BRAINBOX_TOKEN``
+    pair that the session environment also carries. Passing the wrong pair makes
+    the server exit on startup, and Claude Code reports only
+    ``CONNECTION_CLOSED``, which says nothing about why.
     """
+    vars_ = {"BRAINBOX_URL": hub_url, "BRAINBOX_TOKEN_ID": token}
+    if profile:
+        vars_["CL_WORKSPACE_PROFILE"] = profile
     return {
         "type": "stdio",
-        "command": "brainbox-mcp",
+        "command": BRAINBOX_MCP_BIN,
         "args": [],
-        "env": {"BRAINBOX_HUB_URL": hub_url, "BRAINBOX_TOKEN": token},
+        "env": vars_,
     }
 
 
-def build_servers(env: dict) -> dict:
+def build_servers(src: dict) -> dict:
     """The MCP entries this session can actually use, from its environment."""
     servers: dict = {}
 
-    gw_url, gw_token = env.get("PHANTOM_GATEWAY_URL"), env.get("PHANTOM_GATEWAY_TOKEN")
+    gw_url, gw_token = src.get("PHANTOM_GATEWAY_URL"), src.get("PHANTOM_GATEWAY_TOKEN")
     if gw_url and gw_token:
         servers["phantom-gateway"] = gateway_entry(gw_url, gw_token)
 
-    hub = env.get("BRAINBOX_HUB_URL_PUBLIC") or env.get("BRAINBOX_HUB_URL")
-    hub_token = env.get("BRAINBOX_TOKEN")
+    # Accept either spelling from the session environment, but emit the names
+    # the guest server actually reads (see brainbox_entry).
+    hub = (
+        src.get("BRAINBOX_URL")
+        or src.get("BRAINBOX_HUB_URL_PUBLIC")
+        or src.get("BRAINBOX_HUB_URL")
+    )
+    hub_token = src.get("BRAINBOX_TOKEN_ID") or src.get("BRAINBOX_TOKEN")
     if hub and hub_token:
-        servers["brainbox"] = brainbox_entry(hub, hub_token)
+        servers["brainbox"] = brainbox_entry(
+            hub,
+            hub_token,
+            src.get("CL_WORKSPACE_PROFILE") or src.get("BRAINBOX_PROFILE", ""),
+        )
 
     return servers
 
