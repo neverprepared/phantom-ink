@@ -100,8 +100,8 @@ class TestMaterialize:
         env = {
             "PHANTOM_GATEWAY_URL": self.URL,
             "PHANTOM_GATEWAY_TOKEN": self.TOKEN,
-            "BRAINBOX_HUB_URL": self.HUB,
-            "BRAINBOX_TOKEN": self.HUB_TOKEN,
+            "BRAINBOX_URL": self.HUB,
+            "BRAINBOX_TOKEN_ID": self.HUB_TOKEN,
         }
         env.update(over)
         return {k: v for k, v in env.items() if v is not None}
@@ -117,21 +117,26 @@ class TestMaterialize:
         assert "${" not in blob
         s = json.loads(blob)["mcpServers"]
         assert s["phantom-gateway"]["headers"]["Authorization"] == f"Bearer {self.TOKEN}"
-        assert s["brainbox"]["env"]["BRAINBOX_TOKEN"] == self.HUB_TOKEN
+        # The guest reads BRAINBOX_TOKEN_ID, not BRAINBOX_TOKEN. Both exist in
+        # the session env, which is what made wiring the wrong one easy.
+        assert s["brainbox"]["env"]["BRAINBOX_TOKEN_ID"] == self.HUB_TOKEN
 
     def test_brainbox_is_stdio_not_http(self, mod):
         """It runs as a child process with the session's own bearer; it is not a
         gateway-reachable endpoint."""
         b = mod.build_servers(self._env())["brainbox"]
         assert b["type"] == "stdio"
-        assert b["command"] == "brainbox-mcp"
+        # Absolute path: an MCP server is spawned with whatever PATH the agent
+        # inherited, and the uv tool shim is not guaranteed to be on it.
+        assert b["command"] == mod.BRAINBOX_MCP_BIN
+        assert b["command"].startswith("/")
 
     def test_public_hub_url_wins(self, mod):
         """Runner sessions reach the hub by its public name."""
-        env = self._env()
+        env = self._env(BRAINBOX_URL=None)
         env["BRAINBOX_HUB_URL_PUBLIC"] = "https://public.example.com"
         assert (
-            mod.build_servers(env)["brainbox"]["env"]["BRAINBOX_HUB_URL"]
+            mod.build_servers(env)["brainbox"]["env"]["BRAINBOX_URL"]
             == "https://public.example.com"
         )
 
@@ -139,7 +144,7 @@ class TestMaterialize:
         """A session with only hub credentials still gets its channel tools."""
         only_hub = mod.build_servers(self._env(PHANTOM_GATEWAY_URL=None, PHANTOM_GATEWAY_TOKEN=None))
         assert sorted(only_hub) == ["brainbox"]
-        only_gw = mod.build_servers(self._env(BRAINBOX_HUB_URL=None, BRAINBOX_TOKEN=None))
+        only_gw = mod.build_servers(self._env(BRAINBOX_URL=None, BRAINBOX_TOKEN_ID=None))
         assert sorted(only_gw) == ["phantom-gateway"]
 
     def test_preserves_the_rest_of_the_config(self, mod, tmp_path):
