@@ -1,0 +1,10 @@
+{
+  "env": {
+    "DISABLE_AUTOUPDATER": "1"
+  },
+  "bypassPermissions": true,
+  "promptSuggestionEnabled": false,
+  "sandbox": {
+    "allowUnsandboxedCommands": false
+  }
+}
