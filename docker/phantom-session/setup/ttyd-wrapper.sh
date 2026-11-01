@@ -262,7 +262,36 @@ else
     # and runner-dispatched sessions — no exec-injection race. On local
     # sessions the env contract arrives via ~/.env; on runner sessions it
     # is already in the container env.
+    # --- Session-scoped env WINS over the baked profile env ------------
+    #
+    # ~/.env is decrypted from the profile image's .env.enc, which is baked
+    # from the PROFILE env store. That store has historically contained
+    # PHANTOM_GATEWAY_TOKEN — a credential the daemon mints PER SESSION — so
+    # sourcing ~/.env overwrote the live token with a long-dead one and the
+    # gateway answered 401 invalid_token. The URL was not baked, so the
+    # session ended up with a correct endpoint and a stale bearer, which is
+    # a particularly confusing pair to debug.
+    #
+    # The daemon is authoritative for per-session identity and endpoints, so
+    # snapshot those before sourcing and restore them after. This keeps the
+    # session correct no matter what a profile env store happens to hold.
+    _SESSION_SCOPED_VARS="PHANTOM_GATEWAY_URL PHANTOM_GATEWAY_TOKEN
+BRAINBOX_URL BRAINBOX_HUB_URL BRAINBOX_HUB_URL_PUBLIC
+BRAINBOX_TOKEN BRAINBOX_TOKEN_ID BRAINBOX_TASK_ID BRAINBOX_SESSION_NAME"
+    for _v in $_SESSION_SCOPED_VARS; do
+        eval "_snap_${_v}=\${${_v}:-}"
+    done
+
     [ -f "${HOME}/.env" ] && . "${HOME}/.env" 2>/dev/null
+
+    for _v in $_SESSION_SCOPED_VARS; do
+        eval "_snap_val=\${_snap_${_v}:-}"
+        if [ -n "$_snap_val" ]; then
+            eval "${_v}=\$_snap_val"
+            eval "export ${_v}"
+        fi
+        unset _snap_val
+    done
 
     # --- Gateway MCP: substitute REAL values into the baked entry --------
     # The image bakes url/Authorization as ${PHANTOM_GATEWAY_URL} /

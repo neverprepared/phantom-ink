@@ -237,3 +237,43 @@ class TestMcpVersionPin:
         """`command -v brainbox-mcp` passed while the server was unstartable."""
         dockerfile = (_ROOT / "Dockerfile").read_text()
         assert "import mcp.server.fastmcp" in dockerfile
+
+
+class TestSessionEnvPrecedence:
+    """Per-session credentials must survive sourcing the baked profile env.
+
+    ~/.env is decrypted from the profile image's .env.enc, baked from the
+    PROFILE env store. That store contained PHANTOM_GATEWAY_TOKEN — which the
+    daemon mints PER SESSION — so sourcing ~/.env replaced the live bearer with
+    a dead one and the gateway answered 401 invalid_token. PHANTOM_GATEWAY_URL
+    was not baked, so a session ended up with a correct endpoint and a stale
+    token: a pair that looks like a gateway fault rather than an env-precedence
+    bug.
+    """
+
+    def test_session_scoped_vars_are_snapshotted(self, wrapper):
+        assert "_SESSION_SCOPED_VARS" in wrapper
+
+    def test_the_gateway_pair_is_protected(self, wrapper):
+        block = wrapper[wrapper.index("_SESSION_SCOPED_VARS"):][:400]
+        for var in ("PHANTOM_GATEWAY_URL", "PHANTOM_GATEWAY_TOKEN"):
+            assert var in block, f"{var} must be protected from the baked env"
+
+    def test_the_hub_pair_is_protected(self, wrapper):
+        """brainbox-mcp reads these; a baked BRAINBOX_URL would point the
+        session's channel tools at the wrong hub."""
+        block = wrapper[wrapper.index("_SESSION_SCOPED_VARS"):][:400]
+        for var in ("BRAINBOX_URL", "BRAINBOX_TOKEN_ID"):
+            assert var in block
+
+    def test_snapshot_happens_before_the_source(self, wrapper):
+        """Snapshotting after the source would capture the stale value."""
+        assert wrapper.index("_SESSION_SCOPED_VARS") < wrapper.index('. "${HOME}/.env"')
+
+    def test_restore_happens_after_the_source(self, wrapper):
+        src = wrapper.index('. "${HOME}/.env"')
+        assert wrapper.index("_snap_val", src) > src
+
+    def test_materialize_still_runs_after_the_restore(self, wrapper):
+        """Otherwise it would write the stale values it was meant to avoid."""
+        assert wrapper.index("_snap_val") < wrapper.index("materialize-mcp.py")
