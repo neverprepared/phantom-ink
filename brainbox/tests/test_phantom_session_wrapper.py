@@ -266,14 +266,36 @@ class TestSessionEnvPrecedence:
         for var in ("BRAINBOX_URL", "BRAINBOX_TOKEN_ID"):
             assert var in block
 
-    def test_snapshot_happens_before_the_source(self, wrapper):
-        """Snapshotting after the source would capture the stale value."""
-        assert wrapper.index("_SESSION_SCOPED_VARS") < wrapper.index('. "${HOME}/.env"')
+    def test_values_come_from_pid1_not_the_shell(self, wrapper):
+        """Snapshotting the shell's own variables CANNOT work.
 
-    def test_restore_happens_after_the_source(self, wrapper):
+        BASH_ENV=/home/developer/.env makes bash source the baked profile env
+        before the wrapper's first line runs, so the "pre-source" value is
+        already stale and restoring it is a no-op. Measured in a live session:
+        pid 1 carried a 348-char token while the shell carried the stale
+        337-char one. /proc/1/environ is the only copy no shell has touched.
+        """
+        assert "/proc/1/environ" in wrapper
+        assert "_snap_val" not in wrapper, (
+            "the shell-snapshot approach is ineffective under BASH_ENV; "
+            "read from /proc/1/environ instead"
+        )
+
+    def test_reassert_happens_after_the_source(self, wrapper):
+        """Re-asserting before the source would just be overwritten again."""
         src = wrapper.index('. "${HOME}/.env"')
-        assert wrapper.index("_snap_val", src) > src
+        assert wrapper.index("/proc/1/environ", src) > src
 
-    def test_materialize_still_runs_after_the_restore(self, wrapper):
-        """Otherwise it would write the stale values it was meant to avoid."""
-        assert wrapper.index("_snap_val") < wrapper.index("materialize-mcp.py")
+    def test_materialize_runs_after_the_reassert(self, wrapper):
+        """Otherwise it writes the stale values it was meant to avoid."""
+        assert wrapper.index("/proc/1/environ") < wrapper.index("materialize-mcp.py")
+
+    def test_unreadable_pid1_is_reported(self, wrapper):
+        """Silence here would reproduce the original three-hour debug."""
+        assert "/proc/1/environ unreadable" in wrapper
+
+    def test_absent_vars_are_not_fabricated(self, wrapper):
+        """Only non-empty pid-1 values are re-asserted."""
+        # Anchor on the guard itself, not the first prose mention of the path.
+        block = wrapper[wrapper.index("if [ -r /proc/1/environ ]"):][:700]
+        assert '-n "$_pid1_val"' in block

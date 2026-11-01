@@ -264,34 +264,41 @@ else
     # is already in the container env.
     # --- Session-scoped env WINS over the baked profile env ------------
     #
-    # ~/.env is decrypted from the profile image's .env.enc, which is baked
-    # from the PROFILE env store. That store has historically contained
-    # PHANTOM_GATEWAY_TOKEN — a credential the daemon mints PER SESSION — so
-    # sourcing ~/.env overwrote the live token with a long-dead one and the
-    # gateway answered 401 invalid_token. The URL was not baked, so the
-    # session ended up with a correct endpoint and a stale bearer, which is
-    # a particularly confusing pair to debug.
+    # ~/.env is decrypted from the profile image's .env.enc, baked from the
+    # PROFILE env store. That store has held PHANTOM_GATEWAY_TOKEN — a
+    # credential the daemon mints PER SESSION — so sourcing ~/.env replaces
+    # the live bearer with a dead one and the gateway answers 401
+    # invalid_token. PHANTOM_GATEWAY_URL is not baked, so the session ends up
+    # holding a correct endpoint and a stale token.
     #
-    # The daemon is authoritative for per-session identity and endpoints, so
-    # snapshot those before sourcing and restore them after. This keeps the
-    # session correct no matter what a profile env store happens to hold.
+    # Read the authoritative values from PID 1's environ, which is the
+    # daemon's delivery as the container was created. Snapshotting the
+    # shell's own variables CANNOT work here: BASH_ENV=~/.env makes bash
+    # source the baked env before this script's first line runs, so the
+    # 'pre-source' value is already the stale one. /proc/1/environ is the
+    # only copy no shell has touched.
+    #
+    # Values are moved via shell variables, never echoed, so no token
+    # reaches stdout or the process list.
     _SESSION_SCOPED_VARS="PHANTOM_GATEWAY_URL PHANTOM_GATEWAY_TOKEN
 BRAINBOX_URL BRAINBOX_HUB_URL BRAINBOX_HUB_URL_PUBLIC
 BRAINBOX_TOKEN BRAINBOX_TOKEN_ID BRAINBOX_TASK_ID BRAINBOX_SESSION_NAME"
-    for _v in $_SESSION_SCOPED_VARS; do
-        eval "_snap_${_v}=\${${_v}:-}"
-    done
 
     [ -f "${HOME}/.env" ] && . "${HOME}/.env" 2>/dev/null
 
-    for _v in $_SESSION_SCOPED_VARS; do
-        eval "_snap_val=\${_snap_${_v}:-}"
-        if [ -n "$_snap_val" ]; then
-            eval "${_v}=\$_snap_val"
-            eval "export ${_v}"
-        fi
-        unset _snap_val
-    done
+    if [ -r /proc/1/environ ]; then
+        for _v in $_SESSION_SCOPED_VARS; do
+            _pid1_val="$(tr '\0' '\n' < /proc/1/environ 2>/dev/null \
+                | sed -n "s/^${_v}=//p" | head -1)"
+            if [ -n "$_pid1_val" ]; then
+                eval "${_v}=\$_pid1_val"
+                eval "export ${_v}"
+            fi
+            unset _pid1_val
+        done
+    else
+        echo "ttyd-wrapper: WARNING /proc/1/environ unreadable — a baked profile env may shadow this session's credentials" >&2
+    fi
 
     # --- Gateway MCP: substitute REAL values into the baked entry --------
     # The image bakes url/Authorization as ${PHANTOM_GATEWAY_URL} /
