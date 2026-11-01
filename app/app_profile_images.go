@@ -224,7 +224,7 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 	// never needs a local copy — it pulls from the same registry it pushes to.
 	baseImage := req.BaseImage
 	if baseImage == "" {
-		baseImage = registryURL + "/brainbox:latest"
+		baseImage = profileimage.BaseImageRef(registryURL)
 	}
 
 	// Resolve registry credentials from DB settings.
@@ -265,6 +265,27 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 
 	result, buildErr := profileimage.Build(opts)
 	if buildErr != nil {
+		// The image and its PROFILE_ENV_KEY must land together or not at all.
+		//
+		// Every build mints a new key, and the image is encrypted with it
+		// before the push. If the push fails, the registry still serves the
+		// PREVIOUS image — so the previously published key is still the
+		// correct one, and publishing the new key here would break sessions
+		// that currently work.
+		//
+		// The matching hazard is pushing the built image by hand afterwards:
+		// that publishes an artifact whose key was never recorded anywhere,
+		// leaving it permanently undecryptable. That is exactly how
+		// brainbox-profile:personal was lost on 2026-10-31. Say so, loudly,
+		// because the local image looks perfectly good at that point.
+		if result.EnvKey != "" {
+			emit(
+				"Push failed — image NOT published. The previous image and its key remain "+
+					"active. Do NOT push this image manually: its key was not recorded, so a "+
+					"hand-pushed image can never be decrypted. Fix the push and re-run the build.",
+				false, nil, nil,
+			)
+		}
 		emit("Build failed", true, buildErr, nil)
 		return buildErr
 	}
@@ -317,7 +338,7 @@ func (a *App) BuildProfileImage(req ProfileImageBuildRequest) error {
 }
 
 // resolveRegistryURL derives the private registry base URL from the profile's
-// image status (the tag is "<registry>/brainbox-profile:<name>"). Returns ""
+// image status (the tag is "<registry>/phantom-session:<name>"). Returns ""
 // when no registry is configured.
 func (a *App) resolveRegistryURL(profile string) string {
 	// An explicit app setting wins — it's what the operator configured in
@@ -331,7 +352,11 @@ func (a *App) resolveRegistryURL(profile string) string {
 	if err != nil || !status.Configured || status.Tag == "" {
 		return ""
 	}
-	if idx := len(status.Tag) - len("/brainbox-profile:"+profile); idx > 0 {
+	// Find the suffix rather than computing its length: the old form was
+	// `len(status.Tag) - len("/brainbox-profile:"+profile)`, which silently
+	// returns a wrongly-truncated registry URL if the image name changes.
+	suffix := "/" + profileimage.ProfileImageName + ":" + profile
+	if idx := strings.LastIndex(status.Tag, suffix); idx > 0 {
 		return status.Tag[:idx]
 	}
 	return ""

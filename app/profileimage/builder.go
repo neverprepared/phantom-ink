@@ -75,9 +75,33 @@ func (o *BuildOptions) progress(msg string) {
 	}
 }
 
+// Image names. SINGLE SOURCE OF TRUTH: a rename must touch only these two
+// constants. They were previously string literals in five places, one of which
+// did length arithmetic on the name (see resolveRegistryURL), so a partial
+// rename computed a wrong offset instead of failing.
+//
+// The older brainbox / brainbox-profile images are deliberately left in the
+// registry untouched as the rollback path.
+const (
+	// BaseImageName is the shared base every profile image is built FROM.
+	BaseImageName = "phantom-session-base"
+	// ProfileImageName is the per-profile image a session actually runs.
+	ProfileImageName = "phantom-session"
+)
+
+// ProfileTag is the registry-qualified tag for a profile's session image.
+func ProfileTag(registryURL, profile string) string {
+	return fmt.Sprintf("%s/%s:%s", strings.TrimRight(registryURL, "/"), ProfileImageName, profile)
+}
+
+// BaseImageRef is the registry-qualified tag of the shared base image.
+func BaseImageRef(registryURL string) string {
+	return fmt.Sprintf("%s/%s:latest", strings.TrimRight(registryURL, "/"), BaseImageName)
+}
+
 // imageTag returns the full registry-qualified tag for this profile.
 func (o *BuildOptions) imageTag() string {
-	return fmt.Sprintf("%s/brainbox-profile:%s", strings.TrimRight(o.RegistryURL, "/"), o.Profile)
+	return ProfileTag(o.RegistryURL, o.Profile)
 }
 
 // Build runs the full pipeline and returns the pushed image digest.
@@ -172,7 +196,16 @@ func Build(opts BuildOptions) (BuildResult, error) {
 	opts.progress("Pushing image…")
 	digest, err := push(tag)
 	if err != nil {
-		return BuildResult{}, fmt.Errorf("push image: %w", err)
+		// Carry the tag and env key out WITH the error. The committed image is
+		// already encrypted with this key, so returning a zero BuildResult
+		// here is what made a push failure unrecoverable: the key vanished
+		// while the image survived, and any later hand-push published an
+		// artifact that no session could ever decrypt.
+		//
+		// The caller must NOT publish this key unless a push succeeds — on
+		// failure the registry still serves the PREVIOUS image, whose key is
+		// the one sessions need.
+		return BuildResult{Tag: tag, EnvKey: envKey}, fmt.Errorf("push image: %w", err)
 	}
 
 	opts.progress("Done.")
@@ -767,11 +800,11 @@ func dockerLogin(url, username, password string) error {
 // BaseBuildOptions controls a rebuild of the brainbox *base* image.
 type BaseBuildOptions struct {
 	// RepoRoot is the absolute path to the phantom-ink checkout containing
-	// brainbox/scripts/build.sh and docker/brainbox/Dockerfile.
+	// docker/phantom-session/Dockerfile.
 	RepoRoot string
 	// RegistryURL is the private registry to tag and push the base image to,
-	// as "<RegistryURL>/brainbox:latest". Required — the profile build pulls
-	// the base from here.
+	// as BaseImageRef(RegistryURL). Required — the profile build pulls the
+	// base from here.
 	RegistryURL string
 	// RegistryUsername and RegistryPassword authenticate the push.
 	RegistryUsername string

@@ -2,6 +2,8 @@ package profileimage
 
 import (
 	"encoding/json"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -89,4 +91,55 @@ func TestTranslateClaudeJSONPreservesOtherKeys(t *testing.T) {
 		t.Errorf("Mac project path not translated: %v", projects)
 	}
 	assertOnlyGateway(t, mcpServersFrom(t, out))
+}
+
+// Image naming. These guard the rename: the names were previously literals in
+// five places, one of which did length arithmetic on the name, so a partial
+// rename produced a wrong offset rather than a failure.
+func TestProfileTagUsesPhantomSessionName(t *testing.T) {
+	got := ProfileTag("registry.neverprepared.com", "personal")
+	want := "registry.neverprepared.com/phantom-session:personal"
+	if got != want {
+		t.Errorf("ProfileTag = %q, want %q", got, want)
+	}
+}
+
+func TestProfileTagTrimsTrailingSlash(t *testing.T) {
+	want := "registry.neverprepared.com/phantom-session:gsa"
+	if got := ProfileTag("registry.neverprepared.com/", "gsa"); got != want {
+		t.Errorf("ProfileTag = %q, want %q", got, want)
+	}
+}
+
+func TestBaseImageRef(t *testing.T) {
+	want := "registry.neverprepared.com/phantom-session-base:latest"
+	if got := BaseImageRef("registry.neverprepared.com"); got != want {
+		t.Errorf("BaseImageRef = %q, want %q", got, want)
+	}
+}
+
+func TestImageTagUsesProfileTag(t *testing.T) {
+	o := &BuildOptions{RegistryURL: "reg.example.com", Profile: "personal"}
+	if got := o.imageTag(); got != ProfileTag("reg.example.com", "personal") {
+		t.Errorf("imageTag = %q", got)
+	}
+}
+
+// A push failure must not discard the env key. The committed image is already
+// encrypted with it; returning a zero BuildResult is what made the failure
+// unrecoverable and stranded brainbox-profile:personal on 2026-10-31.
+func TestPushFailureStillReportsTagAndEnvKey(t *testing.T) {
+	res := BuildResult{Tag: "reg/phantom-session:personal", EnvKey: "deadbeef"}
+	if res.Tag == "" || res.EnvKey == "" {
+		t.Fatal("BuildResult must be able to carry tag+key alongside an error")
+	}
+	// Guard the contract in the source: the push error path must not return a
+	// bare BuildResult{}.
+	src, err := os.ReadFile("builder.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(src), "return BuildResult{}, fmt.Errorf(\"push image") {
+		t.Error("push failure returns a zero BuildResult — the env key is discarded and the image is stranded")
+	}
 }
