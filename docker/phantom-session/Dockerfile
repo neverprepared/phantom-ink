@@ -251,6 +251,14 @@ RUN --mount=type=cache,target=/home/developer/.npm,uid=1001,gid=1001 \
     # session's own bearer. If it is missing, sessions silently cannot talk to
     # each other, which is exactly the failure this image is meant to end.
     && bash -lc 'command -v brainbox-mcp' \
+    # `command -v` is NOT enough: the binary existed while the server could not
+    # start at all. mcp 2.x removed mcp.server.fastmcp, so an unpinned resolve
+    # yields a shim that exits 1 on import and Claude Code reports only
+    # CONNECTION_CLOSED. Import the module the server actually needs, inside
+    # the tool's own venv, so a bad resolve fails the BUILD instead of every
+    # session.
+    && /home/developer/.local/share/uv/tools/brainbox-mcp/bin/python -c \
+         'import mcp.server.fastmcp; print("brainbox-mcp imports OK")' \
     && bash -lc 'command -v mcp-server-git && command -v markitdown-mcp'
 
 # -----------------------------------------------------------------------------

@@ -4,7 +4,14 @@ version = "0.0.0"  # overridden at build time via --no-isolation + hatch version
 description = "Brainbox guest helpers — MCP server"
 requires-python = ">=3.11"
 dependencies = [
-    "mcp[cli]>=1.9",
+    # UPPER BOUND IS LOAD-BEARING. mcp 2.x removed mcp.server.fastmcp, so an
+    # unpinned build resolves 2.x and brainbox-mcp exits 1 with
+    # ModuleNotFoundError at startup — Claude Code then reports only
+    # CONNECTION_CLOSED, which names nothing. This went unnoticed for weeks
+    # because the session image was built when 1.x was current; the first
+    # fresh rebuild broke every session's channel_* tools. The MCP gateway
+    # carries the same pin for the same reason.
+    "mcp[cli]>=1.9,<2",
     "structlog>=24.4",
 ]
 
