@@ -23,6 +23,31 @@
   let expandedSeq = $state<number | null>(null);
   let off: (() => void) | null = null;
 
+  // Mirrors of the store's filters so typing stays responsive while the fetch
+  // is debounced behind it.
+  let qInput = $state('');
+  let typeInput = $state('');
+  let debounceHandle: ReturnType<typeof setTimeout> | null = null;
+
+  // 300ms, matching EventLogPanel's search box. The preset BUTTONS are not
+  // debounced — four of them produce one event each, so a delay there would be
+  // pure latency — but a text input emits per keystroke and every one of those
+  // is a full round trip against a 1000-row query.
+  function scheduleFilter() {
+    if (debounceHandle !== null) clearTimeout(debounceHandle);
+    debounceHandle = setTimeout(() => {
+      debounceHandle = null;
+      void eventsWindow.setFilters({ q: qInput, typePrefix: typeInput });
+    }, 300);
+  }
+
+  function clearFilters() {
+    if (debounceHandle !== null) clearTimeout(debounceHandle);
+    qInput = '';
+    typeInput = '';
+    void eventsWindow.setFilters({ q: '', typePrefix: '' });
+  }
+
   function toggleExpand(seq: number) {
     expandedSeq = expandedSeq === seq ? null : seq;
   }
@@ -56,7 +81,10 @@
     off = onAgentEvent(() => eventsWindow.noteLiveEvent());
   });
 
-  onDestroy(() => off?.());
+  onDestroy(() => {
+    off?.();
+    if (debounceHandle !== null) clearTimeout(debounceHandle);
+  });
 
   // The window is frozen at load time, so state what was actually queried —
   // the "1h" label drifts from the truth once the tab has been open a while.
@@ -97,6 +125,25 @@
       {/each}
     </div>
 
+    <input
+      class="filter"
+      type="search"
+      placeholder="search events…"
+      bind:value={qInput}
+      oninput={scheduleFilter} />
+
+    <input
+      class="filter filter-type"
+      type="search"
+      placeholder="type prefix, e.g. task."
+      title="Prefix match: `task.` selects every task.* event"
+      bind:value={typeInput}
+      oninput={scheduleFilter} />
+
+    {#if eventsWindow.filtered}
+      <button class="pill pill-quiet" onclick={clearFilters}>clear</button>
+    {/if}
+
     {#if eventsWindow.newSinceLoad > 0}
       <button class="pill" onclick={() => void eventsWindow.load()}>
         {eventsWindow.newSinceLoad} new · refresh
@@ -120,8 +167,10 @@
       <div class="empty">loading…</div>
     {:else if eventsWindow.items.length === 0}
       <EmptyState
-        title="No events in this window"
-        message="Nothing was recorded on the bus between {windowLabel}. Try a wider window." />
+        title={eventsWindow.filtered ? 'No matching events' : 'No events in this window'}
+        message={eventsWindow.filtered
+          ? `Nothing between ${windowLabel} matches this filter. Clear it, or widen the window.`
+          : `Nothing was recorded on the bus between ${windowLabel}. Try a wider window.`} />
     {:else}
       {#each eventsWindow.items as item (item.seq)}
         {@const isSummary = item.type === 'session.summary' && item.envelope}
@@ -197,6 +246,23 @@
   }
   .pill:hover:not(:disabled) { background: var(--color-surface-hover); }
   .pill-quiet { color: var(--color-text-muted); }
+
+  .filter {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-primary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 3px 8px;
+    min-width: 0;
+    width: 160px;
+  }
+  .filter:focus {
+    outline: none;
+    border-color: var(--color-accent);
+  }
+  .filter-type { width: 150px; }
 
   /* .seg / .seg-btn mirror AgentWorkPanel's range control. */
   .seg {
