@@ -9,6 +9,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import ContextMenu from '../components/ContextMenu.svelte';
   import EnvelopeHistory from '../components/EnvelopeHistory.svelte';
+  import EventsWindowTab from '../components/EventsWindowTab.svelte';
   import EnvelopePayload from '../components/EnvelopePayload.svelte';
   import AutomationsPanel from './AutomationsPanel.svelte';
   import EventLogPanel from './EventLogPanel.svelte';
@@ -314,6 +315,12 @@
       onclick={() => setTab('rules')}>
       rules
     </button>
+    <button
+      class="tab"
+      class:active={tab === 'window'}
+      onclick={() => setTab('window')}>
+      all
+    </button>
     {#if debugState.showEventLog}
       <button
         class="tab"
@@ -542,6 +549,10 @@
     <div class="tab-embed">
       <AutomationsPanel />
     </div>
+  {:else if tab === 'window'}
+    <!-- Every envelope in a time window, not just the ones still active.
+         Brings its own header and scroll region, like the embeds above. -->
+    <EventsWindowTab />
   {:else if tab === 'raw' && debugState.showEventLog}
     <div class="tab-embed">
       <EventLogPanel />
