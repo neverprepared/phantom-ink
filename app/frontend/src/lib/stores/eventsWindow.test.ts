@@ -210,6 +210,83 @@ describe('ordering and staleness', () => {
   });
 });
 
+describe('filters', () => {
+  it('sends the free-text query and the type prefix to the backend', async () => {
+    const { calls } = apiReturning({ items: [], backend: 'opensearch' });
+    await eventsWindow.setFilters({ q: 'orphan', typePrefix: 'task.' });
+
+    // Server-side on purpose: the 1000-row budget is spent by the backend, so
+    // filtering client-side would only sift the newest page.
+    expect(calls[0].q).toBe('orphan');
+    expect(calls[0].type).toBe('task.');
+  });
+
+  it('keeps the window while filtering', async () => {
+    const { calls } = apiReturning(
+      { items: [], backend: 'opensearch' },
+      { items: [], backend: 'opensearch' },
+    );
+    await eventsWindow.setRange(21_600_000);
+    await eventsWindow.setFilters({ q: 'x' });
+    // A filter narrows WHAT, not WHEN.
+    expect(calls[1].until_ms - calls[1].since_ms).toBe(21_600_000);
+  });
+
+  it('drops the previous results rather than merging into them', async () => {
+    apiReturning(
+      { items: [entry(2, 2000), entry(1, 1000)], backend: 'opensearch' },
+      { items: [entry(9, 9000)], backend: 'opensearch' },
+    );
+    await eventsWindow.load();
+    await eventsWindow.setFilters({ q: 'nine' });
+    // The cursor and the seen-set are only meaningful against one result set;
+    // merging would show rows that do not match the filter.
+    expect(eventsWindow.items.map((i) => i.seq)).toEqual([9]);
+  });
+
+  it('reports whether a filter is active, so the empty state can say which', async () => {
+    apiReturning({ items: [], backend: 'opensearch' }, { items: [], backend: 'opensearch' });
+    await eventsWindow.load();
+    expect(eventsWindow.filtered).toBe(false);
+    await eventsWindow.setFilters({ typePrefix: 'task.' });
+    // "No events in this window" and "no matches for this filter" are
+    // different facts; conflating them makes a working filter look broken.
+    expect(eventsWindow.filtered).toBe(true);
+  });
+
+  it('treats whitespace as no filter', async () => {
+    const { calls } = apiReturning({ items: [], backend: 'opensearch' });
+    await eventsWindow.setFilters({ q: '   ', typePrefix: '  ' });
+    expect(calls[0].q).toBe('');
+    expect(calls[0].type).toBe('');
+    expect(eventsWindow.filtered).toBe(false);
+  });
+
+  it('keeps filters applied when paging older', async () => {
+    const page1 = Array.from({ length: PAGE_LIMIT }, (_, i) =>
+      entry(PAGE_LIMIT - i, 10_000 - i),
+    );
+    const { calls } = apiReturning(
+      { items: page1, backend: 'opensearch' },
+      { items: [entry(0, 1)], backend: 'opensearch' },
+    );
+    await eventsWindow.setFilters({ q: 'keepme', typePrefix: 'task.' });
+    await eventsWindow.loadOlder();
+    // A second page that dropped the filter would pull in unrelated rows.
+    expect(calls[1].q).toBe('keepme');
+    expect(calls[1].type).toBe('task.');
+  });
+
+  it('clears filters on hardReset', async () => {
+    apiReturning({ items: [], backend: 'opensearch' });
+    await eventsWindow.setFilters({ q: 'x', typePrefix: 'y.' });
+    eventsWindow.hardReset();
+    expect(eventsWindow.q).toBe('');
+    expect(eventsWindow.typePrefix).toBe('');
+    expect(eventsWindow.filtered).toBe(false);
+  });
+});
+
 describe('honest reporting', () => {
   it('keeps the backend name and total when OpenSearch answered', async () => {
     apiReturning({ items: [entry(1, 1000)], backend: 'opensearch', total: 4321 });

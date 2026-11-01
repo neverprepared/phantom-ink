@@ -64,6 +64,11 @@ let _endMs = $state(0);
 let _hasMore = $state(false);
 let _newSinceLoad = $state(0);
 let _pages = $state(0);
+// Filters are applied SERVER-SIDE. The endpoint's 1000-row budget is spent by
+// the backend, so filtering the returned page client-side would only sift the
+// newest 1000 rows rather than the whole window.
+let _q = $state('');
+let _typePrefix = $state('');
 
 // Not reactive: bookkeeping, never rendered.
 let seen = new Set<number>();
@@ -79,8 +84,11 @@ let epoch = 0;
  */
 async function search(api: any, sinceMs: number, untilMs: number) {
   return (await api.SearchAgentEvents({
-    q: '',
-    type: '',
+    q: _q.trim(),
+    // A PREFIX match, not an exact one, on both backends: `type LIKE 'x%'` on
+    // Postgres and a `prefix` filter on OpenSearch. So `task.` selects every
+    // task.* event, which is the operation worth having.
+    type: _typePrefix.trim(),
     // ALL workspaces, deliberately. Scoping this to the active profile makes
     // the Postgres path filter on `envelope LIKE '%"workspace":"X"%'`
     // (agent_store.py:371), which silently excludes every envelope with no
@@ -153,6 +161,31 @@ export const eventsWindow = {
   /** True once `load older` has been used as many times as it is allowed. */
   get pageCapReached(): boolean {
     return _pages >= MAX_PAGES;
+  },
+
+  get q(): string {
+    return _q;
+  },
+  get typePrefix(): string {
+    return _typePrefix;
+  },
+  /** Whether anything is narrowing the result, so the empty state can say which. */
+  get filtered(): boolean {
+    return _q.trim() !== '' || _typePrefix.trim() !== '';
+  },
+
+  /**
+   * Apply filters and refetch.
+   *
+   * A full `load()` rather than an incremental narrow: the ts cursor and the
+   * seen-set are only meaningful against one result set, so keeping them would
+   * leave rows on screen that do not match. The window itself is untouched —
+   * a filter narrows WHAT, not WHEN.
+   */
+  async setFilters(next: { q?: string; typePrefix?: string }): Promise<void> {
+    if (next.q !== undefined) _q = next.q;
+    if (next.typePrefix !== undefined) _typePrefix = next.typePrefix;
+    await this.load();
   },
 
   async setRange(ms: number): Promise<void> {
@@ -261,5 +294,7 @@ export const eventsWindow = {
     _hasMore = false;
     _newSinceLoad = 0;
     _pages = 0;
+    _q = '';
+    _typePrefix = '';
   },
 };
