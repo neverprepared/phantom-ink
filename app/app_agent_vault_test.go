@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -152,5 +153,89 @@ func TestVaultGetJSONClassifiesErrors(t *testing.T) {
 	}
 	if _, err := vaultHistory(srv.URL, "skills", "tok", "  "); err == nil {
 		t.Errorf("want an error for an empty sha")
+	}
+}
+
+// A profile-to-profile copy or move must carry force. The destination can hold
+// a TOMBSTONE for the same sha — identity is content-addressed, so a forgotten
+// record keeps its row and its sha — and phantom-brain refuses an unforced
+// write onto one with a 409. Without force, moving a record back to a profile
+// it was previously moved out of fails and the panel has no way to recover.
+func TestLearnRecordSendsForce(t *testing.T) {
+	var gotForce any
+	var sawForceKey bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode learn payload: %v", err)
+		}
+		gotForce, sawForceKey = payload["force"]
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if err := learnRecord(srv.URL, "tok", "aaa", "t", "b", nil, true); err != nil {
+		t.Fatalf("learnRecord: %v", err)
+	}
+	if !sawForceKey {
+		t.Fatal("learn payload carried no force key; a write onto a tombstone will 409")
+	}
+	if gotForce != true {
+		t.Errorf("want force=true, got %#v", gotForce)
+	}
+}
+
+// force is opt-in: an unforced call must not send the key at all, so a plain
+// write keeps the daemon's refuse-on-tombstone behavior.
+func TestLearnRecordOmitsForceWhenNotRequested(t *testing.T) {
+	var sawForceKey bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		_, sawForceKey = payload["force"]
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if err := learnRecord(srv.URL, "tok", "aaa", "t", "b", nil, false); err != nil {
+		t.Fatalf("learnRecord: %v", err)
+	}
+	if sawForceKey {
+		t.Error("unforced learn must omit force entirely")
+	}
+}
+
+// A 409 that survives force must name the cause, not surface a bare status.
+func TestLearnRecordExplains409(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer srv.Close()
+
+	err := learnRecord(srv.URL, "tok", "aaa", "t", "b", nil, true)
+	if err == nil {
+		t.Fatal("want an error on 409")
+	}
+	if !strings.Contains(err.Error(), "forgotten record") {
+		t.Errorf("409 error should explain the tombstone, got: %v", err)
+	}
+}
+
+// The tests above prove learnRecord honors force; this one proves copyOrMove
+// ASKS for it. That is the call site the bug lives at, and it needs a mesh
+// integration plus a token database to exercise directly, so assert it against
+// the source. A future edit that drops the flag fails here instead of silently
+// reintroducing the 409 on move-back.
+func TestCopyOrMoveRequestsForce(t *testing.T) {
+	src, err := os.ReadFile("app_agent_vault.go")
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	const want = "a.learnWithToken(destTok, rec.SHA, rec.Title, rec.Body, rec.Tags, true)"
+	if !strings.Contains(string(src), want) {
+		t.Errorf("copyOrMove must pass force=true to learnWithToken.\n"+
+			"Looked for: %s\n"+
+			"Without it, moving a record back into a profile that still holds its "+
+			"tombstone fails with HTTP 409 and the panel offers no way out.", want)
 	}
 }

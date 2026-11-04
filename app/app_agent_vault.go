@@ -268,7 +268,15 @@ func (a *App) copyOrMove(srcProfile, vault, sha, destProfile string, move bool) 
 		return fmt.Errorf("record %s not found in %s's %s vault", sha, src, vault)
 	}
 
-	if err := a.learnWithToken(destTok, rec.SHA, rec.Title, rec.Body, rec.Tags); err != nil {
+	// force: the destination may hold a TOMBSTONE for this sha — most likely
+	// from an earlier move in the other direction. Identity is content-addressed,
+	// so a forgotten record keeps its row and its sha, and an unforced write onto
+	// it is refused (409). The operator is looking at this record in the source
+	// vault and asked for it to be placed here, which is the case force exists
+	// for. NOTE: a revive is NODE-LOCAL — the mesh carries inserts and deletes
+	// but has no update path, so peers keep their tombstone for a revived record
+	// until phantom-brain's sync protocol gains one.
+	if err := a.learnWithToken(destTok, rec.SHA, rec.Title, rec.Body, rec.Tags, true); err != nil {
 		return fmt.Errorf("write to %s failed: %w", destProfile, err)
 	}
 	if move {
@@ -283,13 +291,23 @@ func (a *App) copyOrMove(srcProfile, vault, sha, destProfile string, move bool) 
 // the source record's content hash — the daemon requires a well-formed SHA and
 // re-derives the canonical one itself (client SHA is advisory), but for a
 // verbatim record it matches, so the copy dedups to the same identity.
-func (a *App) learnWithToken(token, sha, title, body string, tags []string) error {
+func (a *App) learnWithToken(token, sha, title, body string, tags []string, force bool) error {
+	return learnRecord(a.meshURL(), token, sha, title, body, tags, force)
+}
+
+// learnRecord POSTs one record to a daemon's learn endpoint. Split out from the
+// method so it is testable without a configured mesh integration, matching
+// vaultHistory's shape.
+func learnRecord(baseURL, token, sha, title, body string, tags []string, force bool) error {
 	payload := map[string]any{"sha": sha, "title": title, "body": body}
 	if len(tags) > 0 {
 		payload["tags"] = tags
 	}
+	if force {
+		payload["force"] = true
+	}
 	buf, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, a.meshURL()+"/api/brain/learn", bytes.NewReader(buf))
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/brain/learn", bytes.NewReader(buf))
 	if err != nil {
 		return fmt.Errorf("build learn request: %w", err)
 	}
@@ -300,6 +318,13 @@ func (a *App) learnWithToken(token, sha, title, body string, tags []string) erro
 		return fmt.Errorf("mesh daemon unreachable: %w", err)
 	}
 	defer resp.Body.Close()
+	// A 409 here means the daemon refused a write onto a tombstone. We already
+	// send force, so this only happens against a daemon that predates force or
+	// one that declined it — say so instead of leaving a bare status code.
+	if resp.StatusCode == http.StatusConflict {
+		return fmt.Errorf("the destination vault holds a forgotten record at %s and the "+
+			"daemon refused to revive it (HTTP 409) — the daemon may predate force support", sha)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("learn returned HTTP %d", resp.StatusCode)
 	}
