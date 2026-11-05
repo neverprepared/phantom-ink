@@ -191,6 +191,51 @@ class Drive:
         self._folder_cache[key] = files[0]["id"]
         return files[0]["id"]
 
+    def _find_shared_folder(self, name: str) -> str | None:
+        """A folder SHARED with this account, which `'root' in parents` cannot see.
+
+        The alias `root` means the authenticated identity's own My Drive root. A
+        service account's root is its own -- empty -- Drive, so a folder the human
+        shared with it lives under THEIR root and is reachable only this way.
+        """
+        key = ("sharedWithMe", name)
+        if key in self._folder_cache:
+            return self._folder_cache[key]
+        q = (
+            f"name = '{q_escape(name)}' and mimeType = '{FOLDER_MIME}' "
+            "and sharedWithMe = true and trashed = false"
+        )
+        resp = (
+            self.svc.files()
+            .list(q=q, fields="files(id,name)", pageSize=2, supportsAllDrives=False)
+            .execute(num_retries=DRIVE_RETRIES)
+        )
+        files = resp.get("files", [])
+        if not files:
+            return None
+        self._folder_cache[key] = files[0]["id"]
+        return files[0]["id"]
+
+    def _resolve_root(self, *, create: bool) -> str:
+        """The configured root folder: owned by us, else shared with us.
+
+        Owned first, so the user-OAuth path costs exactly the round-trip it
+        always did and never asks about shared folders.
+        """
+        owned = self._find_child("root", self.root_name)
+        if owned:
+            return owned
+        shared = self._find_shared_folder(self.root_name)
+        if shared:
+            return shared
+        if create:
+            return self.ensure_folder("root", self.root_name)
+        raise ConfigError(
+            f"Drive folder {self.root_name!r} is neither in this account's My Drive "
+            "nor shared with it. Run the drain script with --init once to create the "
+            "tree, or share the existing folder with this account."
+        )
+
     def ensure_folder(self, parent: str, name: str) -> str:
         found = self._find_child(parent, name)
         if found:
@@ -232,7 +277,7 @@ class Drive:
         the stages make cost one round-trip each per run.
         """
         get = self.ensure_folder if create else self._require_folder
-        root = get("root", self.root_name)
+        root = self._resolve_root(create=create)
         prof = get(root, self.profile)
         ids = {stage: get(prof, stage) for stage in LIFECYCLE}
         ids["_root"] = prof
