@@ -95,13 +95,45 @@
     }
   }
 
-  function collectJobBase(): any {
+  // Scheduling a todo now creates a SERVER schedule rather than a local
+  // collect job, so it fires with this app closed — which is the whole point
+  // for "run the standup at 08:30". The local scheduler only runs dashboard
+  // widget jobs now and would never have picked this up.
+  //
+  // The action is submit_task, which is the right home for agent work: the hub
+  // already runs it with runners, retries and events. It also replaces shelling
+  // out to `claude --dangerously-skip-permissions -p <prompt>` on the host.
+  //
+  // agent_name comes from the role picker above (ensureAgentRoles, i.e. real
+  // dispatchable hub roles — not ListAgents, which returns local CLI binaries).
+  // That identity is exactly what the bulk importer could not supply for old
+  // runner jobs, which is why those are reported rather than converted.
+  function scheduleBase(cadence: Record<string, any>): any {
+    const action: Record<string, any> = {
+      type: 'submit_task',
+      description: prompt,
+      agent_name: agent,
+      workspace_profile: profile || undefined,
+      priority,
+      backend: 'docker',
+    };
+    if (target !== 'local') action.runner = target;
     return {
+      id: '',
       name: jobName,
       profile: profile || '',
-      target_type: 'runner',
-      target_prompt: prompt,
       enabled: true,
+      description: '',
+      schedule: cadence,
+      timezone: '', // Go fills in this machine's zone
+      actions: [action],
+      catch_up: 'skip',
+      next_run_at: null,
+      last_run_at: null,
+      last_status: '',
+      trigger_count: 0,
+      created_at: 0,
+      updated_at: 0,
     };
   }
 
@@ -111,14 +143,10 @@
     if (!a) return;
     busy = true;
     try {
-      const job = collectJobBase();
-      if (repeatMode === 'interval') {
-        job.interval_s = Math.max(60, Math.round(intervalMin * 60));
-      } else {
-        job.run_at = timeOfDay;
-        job.days = days;
-      }
-      await (a as any).SaveCollectJob(job);
+      const cadence = repeatMode === 'interval'
+        ? { kind: 'interval', every_s: Math.max(60, Math.round(intervalMin * 60)) }
+        : { kind: 'daily', at: timeOfDay, days };
+      await (a as any).SaveSchedule(scheduleBase(cadence));
       await forgetTodo(a);
       const when = repeatMode === 'interval' ? `every ${intervalMin}m` : `${timeOfDay} ${days}`;
       notifications.success(`Repeatable job “${jobName}” (${when}) created`);
@@ -141,9 +169,9 @@
     if (!a) return;
     busy = true;
     try {
-      const job = collectJobBase();
-      job.run_once_at_ms = at;
-      await (a as any).SaveCollectJob(job);
+      // A one-shot server schedule disables itself after firing, which is the
+      // same end state as the local scheduler deleting the job.
+      await (a as any).SaveSchedule(scheduleBase({ kind: 'at', fire_at_ms: at }));
       await forgetTodo(a);
       notifications.success(`Scheduled “${jobName}” for ${onceDate} ${onceTime} — removed from todos`);
       reset();

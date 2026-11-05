@@ -46,8 +46,8 @@ type PlannedItem struct {
 	Profile    string `json:"profile"`
 	FireAtMs   int64  `json:"fire_at_ms"`
 	Recurrence string `json:"recurrence"` // "once" | "interval" | "timeofday" | "cron"
-	Draggable  bool   `json:"draggable"`  // true only for one-shot collect jobs
-	Kind       string `json:"kind"`       // collect TargetType ("runner"|"loop"|"shell") or "loop" for schedules
+	Draggable  bool   `json:"draggable"`  // true only for LOCAL one-shot collect jobs
+	Kind       string `json:"kind"`       // collect TargetType, or the action type for a server schedule
 }
 
 // TimelineEvent is one executed item for the past side — a normalised
@@ -80,13 +80,23 @@ func (a *App) ListPlannedItems(profile string, sinceMs, untilMs int64) ([]Planne
 
 	out := []PlannedItem{}
 
-	// Collect jobs (one-shot / time-of-day / interval). Timed todos live here too.
-	// NOTE: the cron-schedule + sequences sources were removed when the app-local
-	// scheduler/sequences engine was retired (dead-code cleanup); collect jobs
-	// (which back the Collectors panel + timed todos) are the surviving planned source.
+	// Local collect jobs. Post-cutover these are dashboard-widget jobs plus any
+	// legacy user rows that have not been imported yet; user-created schedules
+	// live on the server and are added below under Source "schedule".
 	if jobs, err := a.db.ListCollectJobs(profile); err == nil {
 		for _, j := range jobs {
 			out = append(out, expandCollectJob(j, sinceMs, untilMs, now)...)
+		}
+	}
+
+	// Server schedules. Degrades to local-only when the bus is unreachable:
+	// a timeline missing its future rows is better than a timeline that errors,
+	// and the Collectors panel is where a bus outage is actually reported.
+	if a.client != nil {
+		if scheds, err := a.client.ListSchedules(profile); err == nil {
+			for _, sc := range scheds {
+				out = append(out, expandServerSchedule(sc, sinceMs, untilMs)...)
+			}
 		}
 	}
 
@@ -95,6 +105,54 @@ func (a *App) ListPlannedItems(profile string, sinceMs, untilMs int64) ([]Planne
 		out = out[:timelinePlannedCap]
 	}
 	return out, nil
+}
+
+// expandServerSchedule projects a server schedule onto the planned timeline.
+//
+// Exactly ONE item per schedule, never a fan-out of future occurrences: the
+// server materializes a single next_run_at rather than deriving fire times, so
+// one next fire is genuinely all that is known. Expanding further would mean
+// reimplementing cron and DST arithmetic client-side — the duplication the
+// server-side cadence exists to avoid — and the extra rows would be guesses.
+//
+// Never Draggable: dragging rewrites a one-shot's fire time, and that mutation
+// goes through the schedule API rather than a local row.
+func expandServerSchedule(s brainbox.Schedule, sinceMs, untilMs int64) []PlannedItem {
+	if !s.Enabled || s.NextRunAt == nil {
+		return nil
+	}
+	at := *s.NextRunAt
+	if at < sinceMs || at > untilMs {
+		return nil
+	}
+	recurrence := "cron"
+	if kind, ok := s.Schedule["kind"].(string); ok {
+		switch kind {
+		case "at":
+			recurrence = "once"
+		case "interval":
+			recurrence = "interval"
+		case "daily":
+			recurrence = "timeofday"
+		}
+	}
+	kind := "shell"
+	if len(s.Actions) > 0 {
+		if t, ok := s.Actions[0]["type"].(string); ok {
+			kind = t
+		}
+	}
+	return []PlannedItem{{
+		ID:         fmt.Sprintf("schedule:%s:%d", s.ID, at),
+		Source:     "schedule",
+		SourceID:   s.ID,
+		Title:      s.Name,
+		Profile:    s.Profile,
+		FireAtMs:   at,
+		Recurrence: recurrence,
+		Draggable:  false,
+		Kind:       kind,
+	}}
 }
 
 // RescheduleOneShot moves a one-shot collect job (incl. a schedule-once todo) to
