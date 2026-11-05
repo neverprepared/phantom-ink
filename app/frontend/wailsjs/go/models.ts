@@ -1881,6 +1881,100 @@ export namespace brainbox {
 	        this.host = source["host"];
 	    }
 	}
+	export class Schedule {
+	    id: string;
+	    name: string;
+	    profile: string;
+	    enabled: boolean;
+	    description: string;
+	    schedule: Record<string, any>;
+	    timezone: string;
+	    actions: any[];
+	    catch_up: string;
+	    next_run_at?: number;
+	    last_run_at?: number;
+	    last_status: string;
+	    trigger_count: number;
+	    created_at: number;
+	    updated_at: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Schedule(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.profile = source["profile"];
+	        this.enabled = source["enabled"];
+	        this.description = source["description"];
+	        this.schedule = source["schedule"];
+	        this.timezone = source["timezone"];
+	        this.actions = source["actions"];
+	        this.catch_up = source["catch_up"];
+	        this.next_run_at = source["next_run_at"];
+	        this.last_run_at = source["last_run_at"];
+	        this.last_status = source["last_status"];
+	        this.trigger_count = source["trigger_count"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	    }
+	}
+	export class ScheduleEnabledState {
+	    id: string;
+	    enabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ScheduleEnabledState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.enabled = source["enabled"];
+	    }
+	}
+	export class ScheduleRunResult {
+	    schedule_id: string;
+	    queued: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ScheduleRunResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.schedule_id = source["schedule_id"];
+	        this.queued = source["queued"];
+	    }
+	}
+	export class SchedulerStatus {
+	    enabled: boolean;
+	    poll_interval_s: number;
+	    batch_limit: number;
+	    misfire_grace_s: number;
+	    last_run_ms?: number;
+	    last_fired: number;
+	    total_fired: number;
+	    last_error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SchedulerStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.poll_interval_s = source["poll_interval_s"];
+	        this.batch_limit = source["batch_limit"];
+	        this.misfire_grace_s = source["misfire_grace_s"];
+	        this.last_run_ms = source["last_run_ms"];
+	        this.last_fired = source["last_fired"];
+	        this.total_fired = source["total_fired"];
+	        this.last_error = source["last_error"];
+	    }
+	}
 	export class SearchAgentEventsOptions {
 	    Q: string;
 	    Type: string;
@@ -2884,6 +2978,7 @@ export namespace main {
 	    run_once_at_ms?: number;
 	    source: string;
 	    owner_widget_id: string;
+	    imported_schedule_id: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CollectJob(source);
@@ -2909,6 +3004,7 @@ export namespace main {
 	        this.run_once_at_ms = source["run_once_at_ms"];
 	        this.source = source["source"];
 	        this.owner_widget_id = source["owner_widget_id"];
+	        this.imported_schedule_id = source["imported_schedule_id"];
 	    }
 	}
 	export class CollectedEntry {
@@ -4232,6 +4328,58 @@ export namespace main {
 		}
 	}
 	
+	export class ScheduleImportNote {
+	    job_id: string;
+	    name: string;
+	    reason: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ScheduleImportNote(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.job_id = source["job_id"];
+	        this.name = source["name"];
+	        this.reason = source["reason"];
+	    }
+	}
+	export class ScheduleImportResult {
+	    imported: string[];
+	    already_imported: string[];
+	    skipped: ScheduleImportNote[];
+	    failed: ScheduleImportNote[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ScheduleImportResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.imported = source["imported"];
+	        this.already_imported = source["already_imported"];
+	        this.skipped = this.convertValues(source["skipped"], ScheduleImportNote);
+	        this.failed = this.convertValues(source["failed"], ScheduleImportNote);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ServiceStatus {
 	    name: string;
 	    label: string;

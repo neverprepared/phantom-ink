@@ -166,6 +166,10 @@ export function DeleteRunner(arg1) {
   return window['go']['main']['App']['DeleteRunner'](arg1);
 }
 
+export function DeleteSchedule(arg1) {
+  return window['go']['main']['App']['DeleteSchedule'](arg1);
+}
+
 export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
 }
@@ -438,6 +442,14 @@ export function GetRulesStatus() {
   return window['go']['main']['App']['GetRulesStatus']();
 }
 
+export function GetSchedule(arg1) {
+  return window['go']['main']['App']['GetSchedule'](arg1);
+}
+
+export function GetSchedulerStatus() {
+  return window['go']['main']['App']['GetSchedulerStatus']();
+}
+
 export function GetSessionHistory(arg1, arg2) {
   return window['go']['main']['App']['GetSessionHistory'](arg1, arg2);
 }
@@ -496,6 +508,10 @@ export function ImportBrainVault(arg1, arg2) {
 
 export function ImportEnvFile() {
   return window['go']['main']['App']['ImportEnvFile']();
+}
+
+export function ImportLocalSchedules(arg1) {
+  return window['go']['main']['App']['ImportLocalSchedules'](arg1);
 }
 
 export function InitBrainProfile(arg1) {
@@ -686,6 +702,10 @@ export function ListRunners() {
   return window['go']['main']['App']['ListRunners']();
 }
 
+export function ListSchedules(arg1) {
+  return window['go']['main']['App']['ListSchedules'](arg1);
+}
+
 export function ListServices() {
   return window['go']['main']['App']['ListServices']();
 }
@@ -862,6 +882,10 @@ export function RunPreflightChecks() {
   return window['go']['main']['App']['RunPreflightChecks']();
 }
 
+export function RunScheduleNow(arg1) {
+  return window['go']['main']['App']['RunScheduleNow'](arg1);
+}
+
 export function RunnerMetrics() {
   return window['go']['main']['App']['RunnerMetrics']();
 }
@@ -880,6 +904,10 @@ export function SaveDashboardLayout(arg1, arg2) {
 
 export function SaveRule(arg1) {
   return window['go']['main']['App']['SaveRule'](arg1);
+}
+
+export function SaveSchedule(arg1) {
+  return window['go']['main']['App']['SaveSchedule'](arg1);
 }
 
 export function ScanDiskUsage() {
@@ -972,6 +1000,10 @@ export function SetRegistrySettings(arg1, arg2, arg3) {
 
 export function SetRuleEnabled(arg1, arg2) {
   return window['go']['main']['App']['SetRuleEnabled'](arg1, arg2);
+}
+
+export function SetScheduleEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetScheduleEnabled'](arg1, arg2);
 }
 
 export function SetServiceConfig(arg1, arg2, arg3, arg4, arg5) {

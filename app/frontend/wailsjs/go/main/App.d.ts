@@ -88,6 +88,8 @@ export function DeleteRule(arg1:string):Promise<void>;
 
 export function DeleteRunner(arg1:string):Promise<void>;
 
+export function DeleteSchedule(arg1:string):Promise<void>;
+
 export function DeleteSession(arg1:string):Promise<brainbox.SessionActionResponse>;
 
 export function DeleteTrustRule(arg1:string,arg2:string):Promise<void>;
@@ -224,6 +226,10 @@ export function GetRule(arg1:string):Promise<brainbox.Rule>;
 
 export function GetRulesStatus():Promise<brainbox.RulesStatus>;
 
+export function GetSchedule(arg1:string):Promise<brainbox.Schedule>;
+
+export function GetSchedulerStatus():Promise<brainbox.SchedulerStatus>;
+
 export function GetSessionHistory(arg1:number,arg2:number):Promise<Array<brainbox.SessionHistoryEntry>>;
 
 export function GetSessions(arg1:string):Promise<Array<brainbox.Session>>;
@@ -253,6 +259,8 @@ export function HeadArtifactObject(arg1:string,arg2:string):Promise<brainbox.Art
 export function ImportBrainVault(arg1:string,arg2:string):Promise<string>;
 
 export function ImportEnvFile():Promise<string>;
+
+export function ImportLocalSchedules(arg1:string):Promise<main.ScheduleImportResult>;
 
 export function InitBrainProfile(arg1:string):Promise<brainbox.BrainProfileInitResult>;
 
@@ -348,6 +356,8 @@ export function ListRules(arg1:string):Promise<Array<brainbox.Rule>>;
 
 export function ListRunners():Promise<Array<brainbox.Runner>>;
 
+export function ListSchedules(arg1:string):Promise<Array<brainbox.Schedule>>;
+
 export function ListServices():Promise<Array<main.ServiceStatus>>;
 
 export function MarkAllNotificationsRead(arg1:string):Promise<void>;
@@ -436,6 +446,8 @@ export function RunMetricScript(arg1:string,arg2:string):Promise<string>;
 
 export function RunPreflightChecks():Promise<Array<main.PreflightCheck>>;
 
+export function RunScheduleNow(arg1:string):Promise<brainbox.ScheduleRunResult>;
+
 export function RunnerMetrics():Promise<main.RunnerMetrics>;
 
 export function SaveCollectJob(arg1:main.CollectJob):Promise<main.CollectJob>;
@@ -445,6 +457,8 @@ export function SaveCustomBundleSource(arg1:string,arg2:string,arg3:string):Prom
 export function SaveDashboardLayout(arg1:string,arg2:string):Promise<void>;
 
 export function SaveRule(arg1:brainbox.Rule):Promise<brainbox.Rule>;
+
+export function SaveSchedule(arg1:brainbox.Schedule):Promise<brainbox.Schedule>;
 
 export function ScanDiskUsage():Promise<main.DiskOverview>;
 
@@ -491,6 +505,8 @@ export function SetProfileServerOverride(arg1:string,arg2:string,arg3:boolean):P
 export function SetRegistrySettings(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SetRuleEnabled(arg1:string,arg2:boolean):Promise<brainbox.RuleEnabledState>;
+
+export function SetScheduleEnabled(arg1:string,arg2:boolean):Promise<brainbox.ScheduleEnabledState>;
 
 export function SetServiceConfig(arg1:string,arg2:boolean,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 

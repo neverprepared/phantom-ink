@@ -1,172 +1,267 @@
 <script lang="ts">
-  import { getApi, safe } from '../utils/api';
+  import { getApi } from '../utils/api';
   import { timeAgoOrDate } from '../utils/format';
   import { onCollectUpdate } from '../utils/collectEvents';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { profileState, dashboardState } from '../stores.svelte';
   import { notifications } from '../notifications.svelte';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import { collectJobsRes } from '../stores/collectors.svelte';
+  import { schedulesRes, schedulerStatusRes } from '../stores/schedules.svelte';
+  import {
+    CADENCE_KINDS, cadenceFrom, cadenceToDraft, cadenceValid,
+    isLocalRow, isRemoteRow, parseScheduleError, rowFromCollectJob, rowFromSchedule,
+    type CadenceKind, type ScheduleRow,
+  } from '../schedules';
 
-  // ── Types ──────────────────────────────────────────────────────────────
-
-  interface CollectJob {
-    id: string;
-    profile: string;
-    name: string;
-    command: string;
-    interval_s: number;
-    enabled: boolean;
-    default_actions: string;
-    last_run_at?: number;
-    last_error: string;
-    created_at: number;
-    target_type: string;
-    target_id: string;
-    target_prompt: string;
-    run_at: string;
-    days: string;
-  }
-
-  type TargetType = 'shell' | 'runner';
-  type ScheduleMode = 'interval' | 'time';
-
-  // ── State ──────────────────────────────────────────────────────────────
+  // ── Two backends, one list ─────────────────────────────────────────────
+  //
+  // Scheduled work moved to the server (phantom-events owns the clock) so it
+  // fires with this app closed. Dashboard-widget jobs stayed local, because a
+  // widget polling a metric while the app is open is not an infrastructure
+  // concern. So this panel shows rows from both, and `row.isRemote` routes
+  // every mutation — run-now, toggle, delete — to the right backend.
+  //
+  // The two resources are deliberately separate rather than merged upstream:
+  // they have independent loading and error states, and the bus being
+  // unreachable must not blank the local widget rows.
+  //
+  // The local `CollectJob` interface that used to live here was deleted: it had
+  // drifted (no source / owner_widget_id / run_once_at_ms) and was already
+  // shadowed by the generated main.CollectJob from the store.
 
   const profile = $derived(profileState.active?.name ?? '');
 
-  // Module-scope store, so returning to this panel renders the retained rows
-  // rather than reloading from scratch (stores/collectors.svelte.ts). The
-  // failed-vs-empty distinction this panel already made correctly is now the
-  // resource's own `error`, available to every migrated panel.
-  const jobs = $derived(collectJobsRes.value);
-  const loading = $derived(collectJobsRes.loading);
-  const refreshing = $derived(collectJobsRes.refreshing);
-  const loadError = $derived(collectJobsRes.error);
-  let saving       = $state(false); // in-flight guard for save() — prevents double-submit
-  let editingId    = $state<string | null>(null); // null=none, 'new'=create, id=edit
-  let runningId    = $state<string | null>(null);
-  let statusMsg    = $state('');
+  const localJobs = $derived(collectJobsRes.value);
+  const remoteSchedules = $derived(schedulesRes.value);
+  const schedulerStatus = $derived(schedulerStatusRes.value);
+
+  const loading = $derived(collectJobsRes.loading || schedulesRes.loading);
+  const refreshing = $derived(collectJobsRes.refreshing || schedulesRes.refreshing);
+  // Surface either failure rather than letting one mask the other — "no rows"
+  // and "could not reach the bus" must never look the same.
+  const loadError = $derived(schedulesRes.error ?? collectJobsRes.error);
+
+  let saving = $state(false); // in-flight guard — a new schedule has id:'' and would insert twice
+  let editingId = $state<string | null>(null); // null=none, 'new'=create, id=edit
+  let runningId = $state<string | null>(null);
+  let importing = $state(false);
+  let statusMsg = $state('');
+  let statusIsError = $state(false);
   let filterProfile = $state('');
   $effect(() => { filterProfile = profile; });
 
-  // Edit form state
+  // Edit form state. Cadence is now a kind + its own fields, matching the
+  // server's discriminated cadence rather than the old inferred interval/time
+  // pair — which is also how cron and one-shot become reachable at all.
   let draft = $state({
     name: '',
-    targetType: 'shell' as TargetType,
     command: '',
-    targetPrompt: '',
-    scheduleMode: 'interval' as ScheduleMode,
-    interval_s: 300,
-    run_at: '08:30',
-    days: 'daily',
+    kind: 'interval' as CadenceKind,
+    intervalS: 300,
+    runAt: '08:30',
+    days: 'daily' as 'daily' | 'weekdays',
+    cronExpr: '0 * * * *',
+    fireAtMs: Date.now() + 3_600_000,
     enabled: true,
   });
 
   // ── Derived ────────────────────────────────────────────────────────────
 
-  let jobProfiles = $derived.by(() => {
+  const rows = $derived.by<ScheduleRow[]>(() => [
+    ...remoteSchedules.map(rowFromSchedule),
+    // Only widget-owned local jobs belong here now. A legacy source='' row is
+    // inert (the local scheduler skips it) and showing it would imply it still
+    // runs — the import banner is how those are surfaced instead.
+    ...localJobs.filter((j: any) => j.source === 'widget').map(rowFromCollectJob),
+  ]);
+
+  const jobProfiles = $derived.by(() => {
     const s = new Set<string>();
-    for (const j of jobs) if (j.profile) s.add(j.profile);
+    for (const r of rows) if (r.profile) s.add(r.profile);
     return [...s].sort();
   });
 
-  let visible = $derived(
-    filterProfile ? jobs.filter(j => j.profile === filterProfile) : jobs
+  const visible = $derived(
+    filterProfile ? rows.filter(r => r.profile === filterProfile) : rows
+  );
+
+  // Legacy local rows that have not been carried to the server yet. These no
+  // longer fire, so the panel has to say so rather than hide them.
+  const unimported = $derived(
+    localJobs.filter((j: any) => j.source !== 'widget' && !j.imported_schedule_id)
   );
 
   // ── Data loading ───────────────────────────────────────────────────────
 
   function load() {
-    return collectJobsRes.refresh();
+    return Promise.all([
+      collectJobsRes.refresh(),
+      schedulesRes.refresh(),
+      schedulerStatusRes.refresh(),
+    ]);
   }
 
-  // ── CRUD ───────────────────────────────────────────────────────────────
+  // A server-side run emits no Wails event, so the remote half needs polling.
+  // The local `collect:update` subscription stays for widget rows, which do
+  // emit it. POLL_MS matches ServerRulesTab.
+  const POLL_MS = 5000;
+  let poll: ReturnType<typeof setInterval> | null = null;
+
+  // ── CRUD, routed by backend ────────────────────────────────────────────
 
   async function save() {
-    if (saving) return; // guard against double-submit (a new job has id:'' and would insert twice)
+    if (saving) return;
     const a = await getApi();
     if (!a || !draft.name.trim()) return;
     const isNew = editingId === 'new';
-    const existing = jobs.find(j => j.id === editingId);
-    const payload: Partial<CollectJob> = {
-      id:           isNew ? '' : (editingId ?? ''),
-      profile:      isNew ? (filterProfile || profile) : (existing?.profile ?? profile),
-      name:         draft.name.trim(),
-      command:      draft.targetType === 'shell' ? draft.command.trim() : '',
-      interval_s:   draft.scheduleMode === 'interval' ? draft.interval_s : 0,
-      enabled:      draft.enabled,
-      default_actions: '[]',
-      last_error:   '',
-      created_at:   0,
-      target_type:  draft.targetType,
-      target_prompt: draft.targetPrompt.trim(),
-      run_at:       draft.scheduleMode === 'time' ? draft.run_at : '',
-      days:         draft.scheduleMode === 'time' ? draft.days : '',
-    };
-    // Validation
-    if (draft.targetType === 'shell' && !payload.command) return;
-    if (draft.targetType === 'runner' && !payload.target_prompt) return;
+    const existing = rows.find(r => r.id === editingId);
+
+    // Local widget rows are not editable here — a widget owns its own job and
+    // re-registers it, so editing it from this panel would be overwritten.
+    if (!isNew && existing && isLocalRow(existing)) {
+      flash('Widget-owned jobs are configured on their dashboard widget.', true);
+      return;
+    }
+
+    const cadence = cadenceFrom(draft.kind, draft);
+    if (!cadenceValid(cadence)) {
+      flash('That cadence is incomplete.', true);
+      return;
+    }
+    if (!draft.command.trim()) return;
+
     saving = true;
     try {
-      await (a.SaveCollectJob as any)(payload);
+      await (a.SaveSchedule as any)({
+        id: isNew ? '' : (editingId ?? ''),
+        name: draft.name.trim(),
+        profile: isNew ? (filterProfile || profile) : (existing?.profile ?? profile),
+        enabled: draft.enabled,
+        description: '',
+        schedule: cadence,
+        timezone: '', // Go fills in this machine's zone
+        actions: [{
+          type: 'run_profile_command',
+          command: draft.command.trim(),
+          workspace_profile: isNew ? (filterProfile || profile) : (existing?.profile ?? profile),
+          // It is a collector: its stdout entries publish onto the bus.
+          emit_entries: true,
+        }],
+        catch_up: 'skip',
+        next_run_at: null,
+        last_run_at: null,
+        last_status: '',
+        trigger_count: 0,
+        created_at: 0,
+        updated_at: 0,
+      });
       editingId = null;
       await load();
     } catch (e: any) {
-      flash(`Error: ${e?.message ?? 'save failed'}`, true);
+      flash(parseScheduleError(e), true);
     } finally {
       saving = false;
     }
   }
 
-  async function remove(id: string) {
+  async function remove(row: ScheduleRow) {
     const a = await getApi();
     if (!a) return;
     try {
-      await (a.DeleteCollectJob as any)(id);
-      // If any dashboard widget references this job, remove it from the
-      // layout and persist — otherwise the widget would auto-recreate
-      // the job on its next mount.
-      const layout = dashboardState.layout;
-      if (layout) {
-        const filtered = layout.widgets.filter(w => (w.config as any)?.jobId !== id);
-        if (filtered.length !== layout.widgets.length) {
-          dashboardState.updateWidgets(filtered);
-          try {
-            await (a as any).SaveDashboardLayout(
-              profileState.active?.name ?? '',
-              JSON.stringify({ version: 1, widgets: filtered }),
-            );
-          } catch {}
+      if (isRemoteRow(row)) {
+        await (a.DeleteSchedule as any)(row.id);
+      } else {
+        await (a.DeleteCollectJob as any)(row.id);
+        // A dashboard widget referencing this job would auto-recreate it on its
+        // next mount, so drop it from the layout too. Only meaningful for local
+        // rows — a remote schedule has no widget owner.
+        const layout = dashboardState.layout;
+        if (layout) {
+          const filtered = layout.widgets.filter(w => (w.config as any)?.jobId !== row.id);
+          if (filtered.length !== layout.widgets.length) {
+            dashboardState.updateWidgets(filtered);
+            try {
+              await (a as any).SaveDashboardLayout(
+                profileState.active?.name ?? '',
+                JSON.stringify({ version: 1, widgets: filtered }),
+              );
+            } catch {}
+          }
         }
       }
       await load();
     } catch (e: any) {
-      notifications.error(`Failed to delete job: ${e?.message ?? 'unknown error'}`);
+      notifications.error(`Failed to delete: ${parseScheduleErrorSafe(e)}`);
     }
   }
 
-  async function runNow(id: string) {
+  function parseScheduleErrorSafe(e: any): string {
+    try { return parseScheduleError(e); } catch { return 'unknown error'; }
+  }
+
+  async function runNow(row: ScheduleRow) {
     const a = await getApi();
     if (!a) return;
-    runningId = id;
+    runningId = row.id;
     try {
-      await (a.RunCollectJobNow as any)(id);
+      if (isRemoteRow(row)) {
+        const res = await (a.RunScheduleNow as any)(row.id);
+        flash(`queued ${res?.queued ?? 0} action(s)`);
+      } else {
+        await (a.RunCollectJobNow as any)(row.id);
+      }
       await load();
+    } catch (e: any) {
+      flash(parseScheduleError(e), true);
     } finally {
       runningId = null;
     }
   }
 
-  async function toggle(job: CollectJob) {
+  async function toggle(row: ScheduleRow) {
     const a = await getApi();
     if (!a) return;
     try {
-      await (a.SaveCollectJob as any)({ ...job, enabled: !job.enabled });
+      if (isLocalRow(row)) {
+        await (a.SaveCollectJob as any)({ ...row.job, enabled: !row.enabled });
+      } else {
+        // The dedicated endpoint, not a full save: a save would round-trip the
+        // server-managed run stats and clobber them, and re-enabling re-seeds
+        // next_run_at so a long-disabled schedule does not come back "missed".
+        await (a.SetScheduleEnabled as any)(row.id, !row.enabled);
+      }
       await load();
     } catch (e: any) {
-      notifications.error(`Failed to update job: ${e?.message ?? 'unknown error'}`);
+      notifications.error(`Failed to update: ${parseScheduleErrorSafe(e)}`);
+    }
+  }
+
+  async function importLegacy() {
+    const a = await getApi();
+    if (!a || importing) return;
+    importing = true;
+    try {
+      const res = await (a.ImportLocalSchedules as any)('');
+      const n = res?.imported?.length ?? 0;
+      const skipped = res?.skipped ?? [];
+      const failed = res?.failed ?? [];
+      if (n) notifications.info(`Carried ${n} job(s) over to the server.`);
+      for (const s of skipped) {
+        notifications.error(`"${s.name}" was not imported: ${s.reason}`);
+      }
+      for (const f of failed) {
+        notifications.error(`"${f.name}" failed to import: ${f.reason}`);
+      }
+      if (!n && !skipped.length && !failed.length) {
+        notifications.info('Nothing left to import.');
+      }
+      await load();
+    } catch (e: any) {
+      notifications.error(`Import failed: ${parseScheduleErrorSafe(e)}`);
+    } finally {
+      importing = false;
     }
   }
 
@@ -174,68 +269,63 @@
 
   function startNew() {
     editingId = 'new';
-    draft = { name: '', targetType: 'shell', command: '', targetPrompt: '',
-              scheduleMode: 'interval', interval_s: 300, run_at: '08:30', days: 'daily', enabled: true };
+    draft = {
+      name: '', command: '', kind: 'interval', intervalS: 300,
+      runAt: '08:30', days: 'daily', cronExpr: '0 * * * *',
+      fireAtMs: Date.now() + 3_600_000, enabled: true,
+    };
   }
 
-  function startEdit(job: CollectJob) {
-    editingId = job.id;
+  function startEdit(row: ScheduleRow) {
+    if (!isRemoteRow(row)) {
+      flash('Widget-owned jobs are configured on their dashboard widget.', true);
+      return;
+    }
+    editingId = row.id;
+    const c = cadenceToDraft(row.schedule.schedule);
+    const action = row.schedule.actions?.[0] ?? {};
     draft = {
-      name:         job.name,
-      targetType:   (job.target_type || 'shell') as TargetType,
-      command:      job.command,
-      targetPrompt: job.target_prompt,
-      scheduleMode: job.run_at ? 'time' : 'interval',
-      interval_s:   job.interval_s || 300,
-      run_at:       job.run_at || '08:30',
-      days:         job.days || 'daily',
-      enabled:      job.enabled,
+      name: row.name,
+      command: String(action.command ?? ''),
+      kind: c.kind,
+      intervalS: c.intervalS,
+      runAt: c.runAt,
+      days: c.days,
+      cronExpr: c.cronExpr,
+      fireAtMs: c.fireAtMs,
+      enabled: row.enabled,
     };
   }
 
   function cancelEdit() { editingId = null; }
 
-  function flash(msg: string, _err = false) {
+  // flash used to ignore its error flag and render every message in the
+  // success colour, including failures.
+  function flash(msg: string, err = false) {
     statusMsg = msg;
-    setTimeout(() => { statusMsg = ''; }, 3000);
+    statusIsError = err;
+    setTimeout(() => { statusMsg = ''; statusIsError = false; }, 4000);
   }
 
-  // ── Format helpers ─────────────────────────────────────────────────────
-
-  function fmtSchedule(job: CollectJob): string {
-    if (job.run_at) {
-      return job.days === 'weekdays' ? `${job.run_at} weekdays` : `${job.run_at} daily`;
-    }
-    const s = job.interval_s;
-    if (s >= 3600) return `every ${s / 3600}h`;
-    if (s >= 60)   return `every ${Math.floor(s / 60)}m`;
-    return `every ${s}s`;
-  }
-
-  function fmtLastRun(job: CollectJob): string {
-    return timeAgoOrDate(job.last_run_at);
-  }
-
-  function targetLabel(job: CollectJob): string {
-    switch (job.target_type) {
-      case 'runner':  return job.target_prompt.slice(0, 40) + (job.target_prompt.length > 40 ? '…' : '');
-      default:        return job.command.split('\n')[0].slice(0, 60) + (job.command.length > 60 ? '…' : '');
-    }
+  function fmtLastRun(row: ScheduleRow): string {
+    return timeAgoOrDate(row.lastRunAt ?? undefined);
   }
 
   function isFormValid(): boolean {
-    if (!draft.name.trim()) return false;
-    if (draft.targetType === 'shell' && !draft.command.trim()) return false;
-    if (draft.targetType === 'runner' && !draft.targetPrompt.trim()) return false;
-    return true;
+    if (!draft.name.trim() || !draft.command.trim()) return false;
+    return cadenceValid(cadenceFrom(draft.kind, draft));
   }
 
   onMount(() => {
     void load();
     const off = onCollectUpdate(() => void load());
+    poll = setInterval(() => void load(), POLL_MS);
     return () => off();
   });
+
+  onDestroy(() => { if (poll) clearInterval(poll); });
 </script>
+
 
 <div class="jobs">
   <div class="panel-header" style="margin-bottom:var(--spacing-sm);">
@@ -243,13 +333,36 @@
     <div style="display:flex;align-items:center;gap:var(--spacing-md);">
       {#if loading}<Spinner />{/if}
       {#if statusMsg}
-        <span class="status-msg">{statusMsg}</span>
+        <span class="status-msg" class:err={statusIsError}>{statusMsg}</span>
       {/if}
       {#if editingId !== 'new'}
         <button class="btn primary" onclick={startNew}>+ new job</button>
       {/if}
     </div>
   </div>
+
+  <!-- The clock lives on the server now, so say whether it is actually
+       running rather than leaving it to be inferred from rows changing. -->
+  {#if schedulerStatus && !schedulerStatus.enabled}
+    <div class="sched-note warn">
+      The server scheduler is disabled (PE_SCHEDULER__ENABLED), so nothing here will fire.
+    </div>
+  {:else if schedulerStatus?.last_error}
+    <div class="sched-note warn">Scheduler error: {schedulerStatus.last_error}</div>
+  {/if}
+
+  <!-- Legacy local jobs stopped firing when the local scheduler went
+       widget-only. Offer the one-way carry-over rather than letting them go
+       quiet unannounced. -->
+  {#if unimported.length > 0}
+    <div class="sched-note">
+      {unimported.length} local job{unimported.length === 1 ? '' : 's'} no longer run here.
+      Carry them over to the server to keep them firing.
+      <button class="btn sm primary" onclick={importLegacy} disabled={importing}>
+        {importing ? 'importing…' : 'import to server'}
+      </button>
+    </div>
+  {/if}
 
   <!-- Profile filter -->
   {#if jobProfiles.length > 1}
@@ -274,57 +387,58 @@
         <input class="form-input" bind:value={draft.name} placeholder="Morning standup" />
       </label>
 
-      <!-- Target type selector -->
+      <label class="form-row">
+        <span class="form-label">command</span>
+        <textarea class="form-textarea" bind:value={draft.command} placeholder="script that outputs a JSON array of entries" rows="4"></textarea>
+      </label>
+
+      <!-- Cadence -->
       <div class="form-row">
-        <span class="form-label">target</span>
+        <span class="form-label">cadence</span>
         <div class="seg-ctrl">
-          {#each (['shell', 'runner'] as TargetType[]) as t (t)}
-            <button class="seg-btn" class:active={draft.targetType === t} onclick={() => { draft.targetType = t; }}>{t}</button>
+          {#each CADENCE_KINDS as k (k)}
+            <button class="seg-btn" class:active={draft.kind === k} onclick={() => draft.kind = k}>{k}</button>
           {/each}
         </div>
       </div>
 
-      <!-- Conditional target fields -->
-      {#if draft.targetType === 'shell'}
-        <label class="form-row">
-          <span class="form-label">command</span>
-          <textarea class="form-textarea" bind:value={draft.command} placeholder="script that outputs JSON array" rows="4"></textarea>
-        </label>
-      {:else if draft.targetType === 'runner'}
-        <label class="form-row">
-          <span class="form-label">prompt</span>
-          <textarea class="form-textarea" bind:value={draft.targetPrompt} placeholder="Run the morning standup and write output to…" rows="4"></textarea>
-        </label>
-      {/if}
-
-      <!-- Schedule mode -->
-      <div class="form-row">
-        <span class="form-label">schedule</span>
-        <div class="seg-ctrl">
-          <button class="seg-btn" class:active={draft.scheduleMode === 'interval'} onclick={() => draft.scheduleMode = 'interval'}>interval</button>
-          <button class="seg-btn" class:active={draft.scheduleMode === 'time'}     onclick={() => draft.scheduleMode = 'time'}>time of day</button>
-        </div>
-      </div>
-
-      {#if draft.scheduleMode === 'interval'}
+      {#if draft.kind === 'interval'}
         <label class="form-row">
           <span class="form-label">every</span>
           <div class="interval-row">
-            <input class="form-input short" type="number" min="30" bind:value={draft.interval_s} />
+            <input class="form-input short" type="number" min="30" bind:value={draft.intervalS} />
             <span class="form-unit">seconds</span>
           </div>
         </label>
-      {:else}
+      {:else if draft.kind === 'daily'}
         <div class="form-row">
           <span class="form-label">time</span>
           <div class="time-row">
-            <input class="form-input short" type="time" bind:value={draft.run_at} />
+            <input class="form-input short" type="time" bind:value={draft.runAt} />
             <select class="form-select narrow" bind:value={draft.days}>
               <option value="daily">daily</option>
               <option value="weekdays">weekdays</option>
             </select>
           </div>
         </div>
+      {:else if draft.kind === 'cron'}
+        <label class="form-row">
+          <span class="form-label">expression</span>
+          <div class="interval-row">
+            <input class="form-input" bind:value={draft.cronExpr} placeholder="0 */4 * * *" />
+            <span class="form-unit">{draft.days === 'weekdays' ? '' : ''}resolved in this machine's timezone</span>
+          </div>
+        </label>
+      {:else}
+        <label class="form-row">
+          <span class="form-label">fires at</span>
+          <div class="interval-row">
+            <input class="form-input" type="datetime-local"
+              value={new Date(draft.fireAtMs - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
+              onchange={(e) => draft.fireAtMs = new Date((e.currentTarget as HTMLInputElement).value).getTime()} />
+            <span class="form-unit">once, then disables itself</span>
+          </div>
+        </label>
       {/if}
 
       <div class="form-actions">
@@ -335,19 +449,19 @@
   {/if}
 
   <!-- Job list -->
-  {#if loading && jobs.length === 0}
+  {#if loading && rows.length === 0}
     <div class="empty">loading…</div>
   {:else if loadError}
-    <EmptyState title="Failed to load jobs" message={loadError} />
-  {:else if jobs.length === 0 && editingId !== 'new'}
-    <EmptyState title="No jobs yet" message="Create one to schedule recurring work." />
+    <EmptyState title="Failed to load schedules" message={loadError} />
+  {:else if rows.length === 0 && editingId !== 'new'}
+    <EmptyState title="No schedules yet" message="Create one to run work on a schedule — it fires on the platform, with this app closed." />
   {:else if visible.length === 0 && editingId !== 'new'}
     <EmptyState title="No jobs for this profile" />
   {:else}
     <div class="job-list">
-      {#each visible as job (job.id)}
-        <div class="job-card" class:editing={editingId === job.id}>
-          {#if editingId === job.id}
+      {#each visible as row (row.id)}
+        <div class="job-card" class:editing={editingId === row.id}>
+          {#if editingId === row.id}
             <!-- Inline edit form -->
             <div class="job-form inline">
               <label class="form-row">
@@ -355,54 +469,58 @@
                 <input class="form-input" bind:value={draft.name} />
               </label>
 
+              <label class="form-row">
+                <span class="form-label">command</span>
+                <textarea class="form-textarea" bind:value={draft.command} rows="4"></textarea>
+              </label>
+
+              <!-- Cadence -->
               <div class="form-row">
-                <span class="form-label">target</span>
+                <span class="form-label">cadence</span>
                 <div class="seg-ctrl">
-                  {#each (['shell', 'runner'] as TargetType[]) as t (t)}
-                    <button class="seg-btn" class:active={draft.targetType === t} onclick={() => { draft.targetType = t; }}>{t}</button>
+                  {#each CADENCE_KINDS as k (k)}
+                            <button class="seg-btn" class:active={draft.kind === k} onclick={() => draft.kind = k}>{k}</button>
                   {/each}
                 </div>
               </div>
 
-              {#if draft.targetType === 'shell'}
-                <label class="form-row">
-                  <span class="form-label">command</span>
-                  <textarea class="form-textarea" bind:value={draft.command} rows="4"></textarea>
-                </label>
-              {:else if draft.targetType === 'runner'}
-                <label class="form-row">
-                  <span class="form-label">prompt</span>
-                  <textarea class="form-textarea" bind:value={draft.targetPrompt} rows="4"></textarea>
-                </label>
-              {/if}
-
-              <div class="form-row">
-                <span class="form-label">schedule</span>
-                <div class="seg-ctrl">
-                  <button class="seg-btn" class:active={draft.scheduleMode === 'interval'} onclick={() => draft.scheduleMode = 'interval'}>interval</button>
-                  <button class="seg-btn" class:active={draft.scheduleMode === 'time'}     onclick={() => draft.scheduleMode = 'time'}>time of day</button>
-                </div>
-              </div>
-
-              {#if draft.scheduleMode === 'interval'}
+              {#if draft.kind === 'interval'}
                 <label class="form-row">
                   <span class="form-label">every</span>
                   <div class="interval-row">
-                    <input class="form-input short" type="number" min="30" bind:value={draft.interval_s} />
-                    <span class="form-unit">seconds</span>
+                            <input class="form-input short" type="number" min="30" bind:value={draft.intervalS} />
+                            <span class="form-unit">seconds</span>
                   </div>
                 </label>
-              {:else}
+              {:else if draft.kind === 'daily'}
                 <div class="form-row">
                   <span class="form-label">time</span>
                   <div class="time-row">
-                    <input class="form-input short" type="time" bind:value={draft.run_at} />
-                    <select class="form-select narrow" bind:value={draft.days}>
-                      <option value="daily">daily</option>
-                      <option value="weekdays">weekdays</option>
-                    </select>
+                            <input class="form-input short" type="time" bind:value={draft.runAt} />
+                            <select class="form-select narrow" bind:value={draft.days}>
+                              <option value="daily">daily</option>
+                              <option value="weekdays">weekdays</option>
+                            </select>
                   </div>
                 </div>
+              {:else if draft.kind === 'cron'}
+                <label class="form-row">
+                  <span class="form-label">expression</span>
+                  <div class="interval-row">
+                            <input class="form-input" bind:value={draft.cronExpr} placeholder="0 */4 * * *" />
+                            <span class="form-unit">{draft.days === 'weekdays' ? '' : ''}resolved in this machine's timezone</span>
+                  </div>
+                </label>
+              {:else}
+                <label class="form-row">
+                  <span class="form-label">fires at</span>
+                  <div class="interval-row">
+                            <input class="form-input" type="datetime-local"
+                              value={new Date(draft.fireAtMs - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
+                              onchange={(e) => draft.fireAtMs = new Date((e.currentTarget as HTMLInputElement).value).getTime()} />
+                            <span class="form-unit">once, then disables itself</span>
+                  </div>
+                </label>
               {/if}
 
               <div class="form-actions">
@@ -412,35 +530,39 @@
             </div>
           {:else}
             <div class="job-row">
-              <button class="job-toggle" class:on={job.enabled} onclick={() => toggle(job)}
-                title={job.enabled ? 'disable' : 'enable'}>
-                {job.enabled ? '●' : '○'}
+              <button class="job-toggle" class:on={row.enabled} onclick={() => toggle(row)}
+                title={row.enabled ? 'disable' : 'enable'}>
+                {row.enabled ? '●' : '○'}
               </button>
               <div class="job-info" role="button" tabindex="0"
-                onclick={() => startEdit(job)}
-                onkeydown={(e) => e.key === 'Enter' && startEdit(job)}>
-                <span class="job-name">{job.name}</span>
-                <span class="job-cmd">{targetLabel(job)}</span>
+                onclick={() => startEdit(row)}
+                onkeydown={(e) => e.key === 'Enter' && startEdit(row)}>
+                <span class="job-name">{row.name}</span>
+                <span class="job-cmd">{row.target}</span>
                 <div class="job-meta-row">
-                  {#if job.profile}
-                    <span class="job-profile">{job.profile}</span>
+                  {#if row.profile}
+                    <span class="job-profile">{row.profile}</span>
                   {/if}
-                  <span class="job-type-badge type-{job.target_type || 'shell'}">{job.target_type || 'shell'}</span>
-                  {#if job.source === 'widget'}
-                    <span class="job-source-badge" title="created by a dashboard widget">widget</span>
+                  {#if row.isRemote}
+                    <span class="job-type-badge type-shell" title="runs on the platform, with this app closed">server</span>
+                  {:else}
+                    <span class="job-source-badge" title="created by a dashboard widget; runs locally while the app is open">widget</span>
                   {/if}
-                  <span class="job-meta">{fmtSchedule(job)}</span>
-                  <span class="job-meta">last run: {fmtLastRun(job)}</span>
-                  {#if job.last_error}
-                    <span class="job-err" title={job.last_error}>✗ error</span>
+                  <span class="job-meta">{row.cadence}</span>
+                  <span class="job-meta">last run: {fmtLastRun(row)}</span>
+                  {#if row.overdue}
+                    <span class="job-err" title="its next fire time has already passed">⚠ overdue</span>
+                  {/if}
+                  {#if row.lastError}
+                    <span class="job-err" title={row.lastError}>✗ error</span>
                   {/if}
                 </div>
               </div>
               <div class="job-btns">
-                <button class="job-btn" onclick={() => runNow(job.id)} disabled={runningId === job.id} title="run now">
-                  {runningId === job.id ? '…' : '▶'}
+                <button class="job-btn" onclick={() => runNow(row)} disabled={runningId === row.id} title="run now">
+                  {runningId === row.id ? '…' : '▶'}
                 </button>
-                <button class="job-btn danger" onclick={() => remove(job.id)} title="delete">✕</button>
+                <button class="job-btn danger" onclick={() => remove(row)} title="delete">✕</button>
               </div>
             </div>
           {/if}
@@ -522,8 +644,6 @@
     border: 1px solid var(--color-border-primary);
     color: var(--color-text-muted);
   }
-  .job-type-badge.type-loop    { color: #10b981; border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.06); }
-  .job-type-badge.type-runner   { color: #f59e0b; border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.06); }
 
   .job-source-badge {
     font-family: var(--font-mono); font-size: 10px;
@@ -602,4 +722,23 @@
   .form-unit { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-muted); }
 
   .form-actions { display: flex; gap: var(--spacing-sm); }
+
+  /* Added with the schedules cutover. */
+  .sched-note {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+    margin-bottom: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+  }
+  .sched-note.warn {
+    border-color: var(--color-warning, var(--color-border));
+    color: var(--color-text);
+  }
+  .status-msg.err { color: var(--color-danger, crimson); }
 </style>

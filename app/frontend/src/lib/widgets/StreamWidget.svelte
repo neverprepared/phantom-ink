@@ -89,16 +89,33 @@
       }
 
       if (sources.includes('event')) {
-        const entries: any[] = ((await (a.ListCollectedEntries as any)('', 'event', config.tag ?? '')) ?? [])
-          .filter((e: any) => !filterProfile || (e.profile ?? '').toLowerCase() === filterProfile.toLowerCase())
-          .filter((e: any) => !config.tag || e.tags?.includes(config.tag));
+        // Collector entries come off the BUS now, not local collected_entries.
+        // Scheduled collectors run on the platform and publish entry.collected
+        // envelopes; only dashboard metric widgets still write locally, and
+        // those are kind=metric, so this source would have silently emptied if
+        // it kept reading the local table.
+        const res: any = await (a.SearchAgentEvents as any)({
+          Q: '',
+          Type: 'entry.collected',
+          Workspace: filterProfile || '',
+          Status: '',
+          Source: '',
+          SinceMs: 0,
+          UntilMs: 0,
+          Limit: limit,
+        });
+        const entries: any[] = (res?.items ?? [])
+          // agent_state has no tag index, so the tag filter is client-side.
+          .filter((e: any) => !config.tag || (e.tags ?? []).includes(config.tag));
         for (const e of entries) {
           merged.push({
-            id: `entry:${e.job_id}:${e.entry_id}`,
+            // Already the upsert key the server assigns (entry:<rule>/<entry>),
+            // so re-collection updates a row instead of appending a duplicate.
+            id: e.id,
             source: 'event',
-            time: e.start_at ?? e.collected_at,
+            time: e.start_at ?? e.updated_at ?? e.created_at ?? 0,
             title: e.title,
-            subtitle: e.tags?.slice(0, 2).join(' · ') ?? '',
+            subtitle: (e.tags ?? []).filter((t: string) => t !== 'entry').slice(0, 2).join(' · '),
             status: e.status || 'active',
             url: e.url || undefined,
           });

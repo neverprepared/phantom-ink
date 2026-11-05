@@ -498,6 +498,80 @@ var migrations = []migration{
 	{version: 29, fn: func(conn migrationConn) error {
 		return addColumnIfMissing(conn, "integrations", "desired_running", "INTEGER NOT NULL DEFAULT 0")
 	}},
+	// v30: the scheduling cutover. User-created collect jobs now live on the
+	// server (phantom-events /api/schedules) so they fire with the app closed;
+	// only dashboard-widget jobs still run locally.
+	//
+	// `imported_schedule_id` records which server schedule a local row was
+	// copied to. That makes ImportLocalSchedules idempotent (a re-run skips
+	// rows already carried over) and keeps the local row as a reversible
+	// record rather than deleting user data on upgrade.
+	//
+	// It also retires four tables that no Go code has ever read or written:
+	// `schedules` (the only cron_expr column in this schema, zero queries
+	// against it in the history of the file), `tasks` (accessors existed in
+	// db_tasks.go with no callers at all), and `loops`/`loop_runs` (renamed
+	// from chains in v24, never given a storage layer).
+	//
+	// They are RENAMED rather than dropped. There is no `down` on a migration
+	// here, so a DROP is irreversible for every user who runs the build, and
+	// `tasks` could still hold rows written by an old version. A later
+	// migration can drop the _retired_v30 tables once they are confirmed empty
+	// in the wild. Renames are guarded by a table-exists check because a
+	// database created after those tables stopped being needed may not have
+	// them, and ALTER TABLE has no IF EXISTS in SQLite.
+	{version: 30, fn: func(conn migrationConn) error {
+		if err := addColumnIfMissing(
+			conn, "collect_jobs", "imported_schedule_id", "TEXT NOT NULL DEFAULT ''",
+		); err != nil {
+			return fmt.Errorf("v30 imported_schedule_id: %w", err)
+		}
+		// Indexes first: dropping them is safe either way and keeps the rename
+		// from carrying stale index names forward.
+		for _, s := range []string{
+			"DROP INDEX IF EXISTS idx_loop_runs_loop_id",
+			"DROP INDEX IF EXISTS idx_tasks_loop_id",
+			"DROP INDEX IF EXISTS idx_tasks_status",
+			"DROP INDEX IF EXISTS idx_schedules_loop_id",
+			"DROP INDEX IF EXISTS idx_schedules_enabled",
+		} {
+			if _, err := conn.Exec(s); err != nil {
+				return fmt.Errorf("v30 %q: %w", s, err)
+			}
+		}
+		// Children before parents, so a rename never leaves a dangling
+		// reference mid-migration.
+		for _, table := range []string{"loop_runs", "tasks", "schedules", "loops"} {
+			renamed, err := renameTableIfExists(conn, table, table+"_retired_v30")
+			if err != nil {
+				return fmt.Errorf("v30 retire %s: %w", table, err)
+			}
+			_ = renamed
+		}
+		return nil
+	}},
+}
+
+// renameTableIfExists renames a table when it is present, reporting whether it
+// did. SQLite has no ALTER TABLE ... IF EXISTS, and a database created after a
+// table stopped being needed will not have it — so an unguarded rename fails
+// the whole migration on a fresh install.
+func renameTableIfExists(conn migrationConn, from, to string) (bool, error) {
+	var name string
+	err := conn.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name=?", from,
+	).Scan(&name)
+	if err != nil {
+		// No row (or an unreadable catalog) — nothing to rename, not an error.
+		return false, nil
+	}
+	if _, err := conn.Exec("DROP TABLE IF EXISTS " + to); err != nil {
+		return false, err
+	}
+	if _, err := conn.Exec("ALTER TABLE " + from + " RENAME TO " + to); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (db *DB) migrate() error {
