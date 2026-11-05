@@ -1,6 +1,7 @@
 # ADR-006: A Drive inbox as the capture front door
 
-- **Status**: Accepted (revised 2026-10-19, same day — see *Revision*)
+- **Status**: Accepted (revised 2026-10-19, same day — see *Revision*; the
+  app-owned-schedule decision superseded 2026-11-04 by ADR-008)
 - **Date**: 2026-10-19
 - **Supersedes / relates to**: ADR-001 (orchestration), ADR-005 (capability scoping)
 
@@ -145,13 +146,21 @@ rather than by hoping a model behaves.
   mis-typed item is cheap to fix and the overrides exist for the cases that
   recur; if the rate is high the fix is marker-first habits, not `allow_paid`.
 - **The schedule lives in the app, and that is accepted rather than solved.**
-  The collect scheduler is a goroutine started from `app.go`, so capture stops
+  ~~The collect scheduler is a goroutine started from `app.go`, so capture stops
   whenever the app is closed or restarting; both jobs were observed ~10 minutes
   overdue after a `wails dev` rebuild. A per-profile LaunchAgent owning the
   schedule (the pattern `pbrainctl mart` already uses) with the app reduced to a
   status viewer was considered and rejected: it would take the jobs out of the
   Collectors panel and with them the per-job play button. The inbox is
-  therefore not a background service.
+  therefore not a background service.~~
+  **SUPERSEDED by [ADR-008](./ADR-008-server-side-scheduling.md) (2026-11-04).**
+  The rejection turned on a UI affordance, not on where execution belongs, and
+  that affordance was answerable: the Collectors panel keeps CRUD, the enable
+  toggle and the per-job play button against server state, the same way
+  `AutomationsPanel` already does for server-side rules. Schedules now live in
+  phantom-events, so the inbox *is* a background service — and because the
+  60-second collect-job cap is gone with it, the two-jobs-per-profile split
+  below is no longer necessary.
 - A successful collect job that emits no items is invisible — stdout is parsed
   and discarded, stderr only reaches `last_error` on a non-zero exit. Each
   stage therefore emits one status row with a stable `entry_id`, which upserts
