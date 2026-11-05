@@ -58,6 +58,17 @@ KIND_ALIASES = {
 # that its CONTENT could not be parsed into a valid item (stage B).
 LIFECYCLE = ("inbox", "processing", "quarantine", "rejected")
 
+# Terminal folder for a credential that cannot trash. In Drive only the OWNER
+# may trash or delete a file, so a service account -- which owns nothing of the
+# human's -- can never dispose of a capture and would strand it in processing/.
+# A move is the one terminal action a non-owner has.
+#
+# NOT part of LIFECYCLE on purpose: a service account cannot create folders
+# either (it would own them, and owning a file in a personal My Drive needs
+# quota it lacks), so requiring this folder would hard-fail every run against an
+# existing tree until a human created it. It is resolved optionally instead.
+COMPLETE = "complete"
+
 SCHEMA_VERSION = 1
 
 # Per-run caps. Both stages run as collect jobs under a hard 60s subprocess

@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from common import (
+    COMPLETE,
     LIFECYCLE,
     MIME_DOC,
     Config,
@@ -161,13 +162,25 @@ class InboxFolders:
 class Drive:
     """Thin wrapper over Drive v3 with just the operations this pipeline needs."""
 
-    def __init__(self, service, root_name: str, profile: str, *, can_create_files: bool = True):
+    def __init__(
+        self,
+        service,
+        root_name: str,
+        profile: str,
+        *,
+        can_create_files: bool = True,
+        can_dispose: bool = True,
+    ):
         self.svc = service
         self.root_name = root_name
         self.profile = profile
         # False under a service account, which cannot own a new file in a
         # personal My Drive. Only write_note creates anything.
         self.can_create_files = can_create_files
+        # False under a service account: trash and delete are OWNER-only in
+        # Drive, so an Editor gets 403 insufficientFilePermissions. Disposal
+        # becomes a move into COMPLETE instead.
+        self.can_dispose = can_dispose
         self._folder_cache: dict[tuple[str, str], str] = {}
 
     # -- folders ---------------------------------------------------------------
@@ -280,6 +293,11 @@ class Drive:
         root = self._resolve_root(create=create)
         prof = get(root, self.profile)
         ids = {stage: get(prof, stage) for stage in LIFECYCLE}
+        # Optional, and looked up with _find_child rather than `get`: a missing
+        # COMPLETE must not fail resolve() for everyone who does not need it.
+        complete = self._find_child(prof, COMPLETE)
+        if complete:
+            ids[COMPLETE] = complete
         ids["_root"] = prof
         return InboxFolders(profile=self.profile, ids=ids)
 
@@ -348,12 +366,56 @@ class Drive:
         """Permanently delete a filed item (opt-in via --hard-delete)."""
         self.svc.files().delete(fileId=file_id).execute(num_retries=DRIVE_RETRIES)
 
+    def move_to(self, file_id: str, *, to: str) -> None:
+        """Move a file to `to`, whatever it is currently parented by.
+
+        Reads the current parents rather than taking them as an argument: the
+        caller that disposes of an item knows the file id but not reliably which
+        lifecycle folder it is sitting in. Removing the old parent matters --
+        addParents alone leaves the file in BOTH folders and processing/ never
+        drains.
+        """
+        meta = (
+            self.svc.files()
+            .get(fileId=file_id, fields="id,parents")
+            .execute(num_retries=DRIVE_RETRIES)
+        )
+        parents = meta.get("parents") or []
+        self.svc.files().update(
+            fileId=file_id,
+            addParents=to,
+            removeParents=",".join(parents),
+            fields="id",
+        ).execute(num_retries=DRIVE_RETRIES)
+
     def dispose(self, file_id: str, *, hard_delete: bool = False) -> None:
-        """Get a filed item out of the inbox for good."""
-        if hard_delete:
-            self.delete_forever(file_id)
-        else:
-            self.trash(file_id)
+        """Get a filed item out of the inbox for good.
+
+        An owner trashes (or deletes). A non-owner CANNOT: both are owner-only
+        in Drive and return 403 insufficientFilePermissions even with the full
+        `drive` scope, so the item moves to COMPLETE instead. hard_delete is
+        deliberately downgraded rather than honoured -- a non-owner cannot
+        delete either, and failing loudly here would strand an item that has
+        already been filed.
+        """
+        if self.can_dispose:
+            if hard_delete:
+                self.delete_forever(file_id)
+            else:
+                self.trash(file_id)
+            return
+
+        folders = self.resolve()
+        target = folders.ids.get(COMPLETE)
+        if not target:
+            raise ConfigError(
+                f"these credentials cannot trash a file they do not own, and no "
+                f"{COMPLETE!r} folder exists to move it to. Create a folder named "
+                f"{COMPLETE!r} inside the Drive {self.root_name}/{self.profile} folder "
+                "-- a service account cannot create it itself (it would own it, and "
+                "owning a file in a personal My Drive needs quota it does not have)."
+            )
+        self.move_to(file_id, to=target)
 
     def write_note(self, parent: str, name: str, text: str) -> None:
         """Drop a small plain-text note beside a rejected/quarantined file.
@@ -413,4 +475,5 @@ def open_drive(cfg: Config) -> Drive:
         cfg.drive_root,
         cfg.profile,
         can_create_files=not cfg.google_sa_key,
+        can_dispose=not cfg.google_sa_key,
     )
