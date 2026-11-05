@@ -13,6 +13,8 @@
   import { profileColorStore } from '../stores.svelte';
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import MeshCensusTable from '../components/MeshCensusTable.svelte';
+  import type { Census } from '../components/MeshCensusTable.svelte';
   import VaultBrowser from './VaultBrowser.svelte';
 
   // One retained sync failure from the daemon's ring. Optional throughout:
@@ -71,6 +73,9 @@
   let loadError = $state<string | null>(null);
   let refreshing = $state(false);
   let vaultAuth = $state<VaultAuth[]>([]);
+  // The record census is a SEPARATE fetch from the status: it fans out to every
+  // peer daemon, so a slow or dead peer must not hold up the status card.
+  let census = $state<Census | null>(null);
 
   // Tabs: the mesh status view, plus a per-feature browser for each verbatim
   // p2p-synced vault. Each vault tab renders VaultBrowser, which scopes to the
@@ -105,6 +110,12 @@
     refreshing = true;
     try {
       status = (await (a as any).GetMeshStatus()) as MeshStatus;
+      // Deliberately not awaited together with the status: the census fans out
+      // across peers, and its failure must leave the rest of the panel intact.
+      void (a as any)
+        .GetMeshCensus()
+        .then((c: Census) => (census = c))
+        .catch(() => (census = null));
       loadError = null;
     } catch (e: any) {
       loadError = e?.message ?? String(e);
@@ -440,6 +451,10 @@
       message={`${loadError}\n\nConfigured URL: ${DEFAULT_URL}. Check the Phantom-Brain Mesh integration in Integrations.`}
     />
   {:else if status}
+    <!-- What this node HOLDS, and whether the peers agree. First because it is
+         the question an operator opens this panel to answer; the sync counters
+         below explain the mechanism, not the contents. -->
+    <MeshCensusTable {census} profile={profileState.active?.name ?? null} />
     <!-- Sync counters -->
     <section class="card counters">
       <h2>Sync counters</h2>

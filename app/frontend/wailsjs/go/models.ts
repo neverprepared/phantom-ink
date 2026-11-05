@@ -3683,6 +3683,100 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class MeshCountCell {
+	    node_id: string;
+	    known: boolean;
+	    live: number;
+	    tombstoned: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MeshCountCell(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.node_id = source["node_id"];
+	        this.known = source["known"];
+	        this.live = source["live"];
+	        this.tombstoned = source["tombstoned"];
+	    }
+	}
+	export class MeshCountRow {
+	    profile: string;
+	    vault: string;
+	    live: number;
+	    diverged: boolean;
+	    cells: MeshCountCell[];
+	
+	    static createFrom(source: any = {}) {
+	        return new MeshCountRow(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.vault = source["vault"];
+	        this.live = source["live"];
+	        this.diverged = source["diverged"];
+	        this.cells = this.convertValues(source["cells"], MeshCountCell);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class MeshCensus {
+	    local_node_id: string;
+	    nodes: string[];
+	    rows: MeshCountRow[];
+	    unreachable?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new MeshCensus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.local_node_id = source["local_node_id"];
+	        this.nodes = source["nodes"];
+	        this.rows = this.convertValues(source["rows"], MeshCountRow);
+	        this.unreachable = source["unreachable"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
 	export class MeshMetrics {
 	    pb_sync_rounds_total: string;
 	    pb_sync_rows_merged_total: string;
@@ -3753,11 +3847,30 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class MeshVaultCount {
+	    profile: string;
+	    vault: string;
+	    live: number;
+	    tombstoned: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MeshVaultCount(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.vault = source["vault"];
+	        this.live = source["live"];
+	        this.tombstoned = source["tombstoned"];
+	    }
+	}
 	export class MeshStatus {
 	    node_id: string;
 	    sync_enabled: boolean;
 	    peers: MeshPeer[];
 	    metrics: MeshMetrics;
+	    counts?: MeshVaultCount[];
 	    recent_errors?: SyncError[];
 	    errors_15m: number;
 	
@@ -3771,6 +3884,7 @@ export namespace main {
 	        this.sync_enabled = source["sync_enabled"];
 	        this.peers = this.convertValues(source["peers"], MeshPeer);
 	        this.metrics = this.convertValues(source["metrics"], MeshMetrics);
+	        this.counts = this.convertValues(source["counts"], MeshVaultCount);
 	        this.recent_errors = this.convertValues(source["recent_errors"], SyncError);
 	        this.errors_15m = source["errors_15m"];
 	    }
@@ -3793,6 +3907,7 @@ export namespace main {
 		    return a;
 		}
 	}
+	
 	export class OpenTarget {
 	    panel: string;
 	    ref: string;
