@@ -142,9 +142,43 @@ Set in the profile's `.env`; all have working defaults.
 | `CL_INBOX_DRIVE_ROOT` | `phantom-ink` |
 | `CL_INBOX_REMINDERS_LIST` | `phantom-<profile>` |
 | `CL_INBOX_MACOS_MCP` | `macos-mcp` on `PATH` |
+| `CL_INBOX_GOOGLE_SA_KEY` | unset (use user OAuth) |
 
-Google credentials are reused from the `google-workspace` MCP server's own OAuth
-store (`~/.google_workspace_mcp/credentials/`), so there is no second auth flow.
+### Google credentials
+
+Two shapes, chosen by whether `CL_INBOX_GOOGLE_SA_KEY` is set.
+
+**Unset — user OAuth (default).** Credentials are reused from the
+`google-workspace` MCP server's own store
+(`~/.google_workspace_mcp/credentials/<account>.json`), so there is no second
+auth flow. Right for interactive runs on a workstation.
+
+**Set — a service-account key.** Required for unattended runs on a host where
+nobody can re-authorise, because an OAuth consent screen whose publishing
+status is **Testing** is issued refresh tokens that expire after **7 days**:
+the drain works for a week after each authorisation and then fails with
+`invalid_grant: Token has been expired or revoked`. A key file never expires.
+
+Setup, once:
+
+1. Create a service account in Google Cloud and download its key JSON.
+2. Share the Drive `<root>/<profile>` folder with the service account's
+   `client_email`, as **Editor**. Domain-wide delegation is not an option —
+   impersonating a user needs a Workspace admin console, which a `gmail.com`
+   account does not have.
+3. Point `CL_INBOX_GOOGLE_SA_KEY` at the key file.
+
+**A service account cannot create files in a personal My Drive.** It becomes
+the owner on create, and owning a file there needs storage quota it does not
+have, so `files.create` returns `403 storageQuotaExceeded` even when the
+service account's own Drive is empty. Two consequences:
+
+- `write_note` (the `.rejected.txt` / `.quarantine.txt` note left beside a
+  refused file) is **skipped and logged**. The reason still reaches the
+  returned entry and the obslog record, and the file still moves out of
+  `inbox/`, so nothing is left mid-queue.
+- `--init` **fails loudly**, because creating the folder tree is also a create.
+  Run `--init` once under user OAuth, then share the profile folder.
 
 ## Operational notes
 

@@ -1,11 +1,27 @@
 """Drive access for the inbox pipeline.
 
-Credentials are reused from the google-workspace MCP server's own OAuth store
-(~/.google_workspace_mcp/credentials/<account>.json). That store already holds
-refresh tokens with full `drive` scope for the authorised accounts, so this
-pipeline adds no new OAuth flow and no new consent screen. google-auth refreshes
-an expired access token in place and we write the refreshed token back, exactly
-as the MCP server would.
+Two credential shapes, chosen by whether CL_INBOX_GOOGLE_SA_KEY is set.
+
+**User OAuth** (the default) reuses the google-workspace MCP server's own store
+(~/.google_workspace_mcp/credentials/<account>.json), so this pipeline adds no
+new OAuth flow and no new consent screen. google-auth refreshes an expired
+access token in place and we write the refreshed token back, exactly as the MCP
+server would. Suitable for interactive runs on a workstation where a human can
+re-authorise.
+
+**A service-account key** suits unattended runs, and on a headless host it is
+the only shape that works: a consent screen whose publishing status is
+"Testing" is issued refresh tokens expiring in 7 DAYS, which turns a scheduled
+drain into a job that works for a week and then fails forever with
+`invalid_grant`. A key file never expires.
+
+A service account reaches a consumer account's Drive by having the inbox folder
+SHARED with its client_email -- domain-wide delegation needs a Workspace admin
+console and is unavailable for gmail.com. It can read, list, export, move,
+trash and delete the human's files, but it cannot CREATE one: it becomes the
+owner on create and owning a file in a personal My Drive requires quota it does
+not have there, so `files.create` returns 403 storageQuotaExceeded even when
+the service account's own Drive is empty. Hence `can_create_files`.
 """
 
 from __future__ import annotations
@@ -24,6 +40,7 @@ from common import (
     MIME_DOC,
     Config,
     ConfigError,
+    log,
 )
 
 CRED_DIR = Path.home() / ".google_workspace_mcp" / "credentials"
@@ -40,8 +57,41 @@ DRIVE_TIMEOUT_S = 15
 DRIVE_RETRIES = 3
 
 
-def load_credentials(account: str):
-    """Load and refresh the MCP server's stored OAuth credentials."""
+def load_service_account_credentials(sa_key_path: str):
+    """Build credentials from a service-account key file.
+
+    Validated eagerly and by shape, because the two credential files look alike
+    and live a directory apart: pointing this at a user-OAuth JSON otherwise
+    fails deep inside google-auth on a missing `private_key`, which reads as a
+    library bug rather than a misconfiguration.
+    """
+    from google.oauth2 import service_account
+
+    path = Path(sa_key_path)
+    if not path.is_file():
+        raise ConfigError(
+            f"no service-account key at {path} (from CL_INBOX_GOOGLE_SA_KEY). "
+            "Download the key JSON for the service account from Google Cloud, "
+            "and share the Drive inbox folder with its client_email."
+        )
+    try:
+        info = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise ConfigError(f"service-account key at {path} is not valid JSON: {exc}") from exc
+    if info.get("type") != "service_account":
+        raise ConfigError(
+            f'{path} is not a service-account key: expected type="service_account", '
+            f"found {info.get('type') or 'no type field'!r}. CL_INBOX_GOOGLE_SA_KEY "
+            "wants the key downloaded from Google Cloud, not a user OAuth credential."
+        )
+    return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+
+
+def load_credentials(account: str, sa_key_path: str | None = None):
+    """Credentials for Drive: a service-account key if configured, else user OAuth."""
+    if sa_key_path:
+        return load_service_account_credentials(sa_key_path)
+
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
@@ -75,13 +125,18 @@ def load_credentials(account: str):
     return creds
 
 
-def build_service(account: str):
+def build_service(account: str, sa_key_path: str | None = None):
     from googleapiclient.discovery import build
 
     # httplib2 honours the default socket timeout; there is no per-request knob
     # on the discovery client without hand-building an AuthorizedHttp.
     socket.setdefaulttimeout(DRIVE_TIMEOUT_S)
-    return build("drive", "v3", credentials=load_credentials(account), cache_discovery=False)
+    return build(
+        "drive",
+        "v3",
+        credentials=load_credentials(account, sa_key_path=sa_key_path),
+        cache_discovery=False,
+    )
 
 
 def q_escape(value: str) -> str:
@@ -106,10 +161,13 @@ class InboxFolders:
 class Drive:
     """Thin wrapper over Drive v3 with just the operations this pipeline needs."""
 
-    def __init__(self, service, root_name: str, profile: str):
+    def __init__(self, service, root_name: str, profile: str, *, can_create_files: bool = True):
         self.svc = service
         self.root_name = root_name
         self.profile = profile
+        # False under a service account, which cannot own a new file in a
+        # personal My Drive. Only write_note creates anything.
+        self.can_create_files = can_create_files
         self._folder_cache: dict[tuple[str, str], str] = {}
 
     # -- folders ---------------------------------------------------------------
@@ -137,6 +195,16 @@ class Drive:
         found = self._find_child(parent, name)
         if found:
             return found
+        # A folder is a file for quota purposes, so this is the second path a
+        # service account cannot take. Refused rather than attempted: unlike a
+        # note, a missing folder is not something the run can carry on without.
+        if not self.can_create_files:
+            raise ConfigError(
+                f"cannot create Drive folder {name!r}: these credentials cannot own "
+                "files (a service account has no quota in a personal My Drive). "
+                "Create the tree once with user OAuth (--init), then share the "
+                "profile folder with the service account."
+            )
         created = (
             self.svc.files()
             .create(
@@ -243,7 +311,20 @@ class Drive:
             self.trash(file_id)
 
     def write_note(self, parent: str, name: str, text: str) -> None:
-        """Drop a small plain-text note beside a rejected/quarantined file."""
+        """Drop a small plain-text note beside a rejected/quarantined file.
+
+        Skipped entirely when the credentials cannot own files, rather than
+        attempted and allowed to 403: the reason is already recorded in the
+        returned entry and shipped by obslog, and both callers move the file out
+        of the inbox BEFORE writing the note, so nothing is left mid-queue.
+        """
+        if not self.can_create_files:
+            log(
+                f"skipping Drive note {name!r}: these credentials cannot own files "
+                "(a service account has no quota in a personal My Drive)"
+            )
+            return
+
         from googleapiclient.http import MediaIoBaseUpload
 
         media = MediaIoBaseUpload(
@@ -282,4 +363,9 @@ class Drive:
 
 
 def open_drive(cfg: Config) -> Drive:
-    return Drive(build_service(cfg.google_account), cfg.drive_root, cfg.profile)
+    return Drive(
+        build_service(cfg.google_account, sa_key_path=cfg.google_sa_key or None),
+        cfg.drive_root,
+        cfg.profile,
+        can_create_files=not cfg.google_sa_key,
+    )

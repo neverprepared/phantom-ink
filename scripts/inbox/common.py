@@ -100,6 +100,9 @@ class Config:
     brain_api: str
     brain_token: str
     todo_token: str
+    # Path to a service-account key JSON. Set it and the pipeline stops
+    # using the per-user OAuth store entirely -- see drive.load_credentials.
+    google_sa_key: str = ""
 
     @property
     def spool_dir(self) -> Path:
@@ -136,6 +139,7 @@ def load_config(profile: str | None = None, env: dict[str, str] | None = None) -
         brain_api=e.get("CL_BRAIN_API", "").rstrip("/"),
         brain_token=e.get("CL_BRAIN_API_TOKEN", ""),
         todo_token=e.get("CL_TODO_API_TOKEN", ""),
+        google_sa_key=e.get("CL_INBOX_GOOGLE_SA_KEY", ""),
     )
 
 
