@@ -57,6 +57,11 @@ type MeshStatus struct {
 	Peers       []MeshPeer  `json:"peers"`
 	Metrics     MeshMetrics `json:"metrics"`
 
+	// Counts is this node's own per-(profile, vault) record census. Absent on a
+	// daemon predating the field, which reads as an empty census rather than an
+	// error.
+	Counts []MeshVaultCount `json:"counts,omitempty"`
+
 	RecentErrors []SyncError `json:"recent_errors,omitempty"`
 	Errors15m    int         `json:"errors_15m"`
 }

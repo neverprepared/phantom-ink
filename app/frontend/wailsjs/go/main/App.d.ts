@@ -184,6 +184,8 @@ export function GetLoopTemplateSchema():Promise<Record<string, any>>;
 
 export function GetMeshAdminKeySet():Promise<boolean>;
 
+export function GetMeshCensus():Promise<main.MeshCensus>;
+
 export function GetMeshStatus():Promise<main.MeshStatus>;
 
 export function GetMessageLog():Promise<Array<brainbox.Message>>;

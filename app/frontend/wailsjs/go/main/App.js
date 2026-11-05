@@ -358,6 +358,10 @@ export function GetMeshAdminKeySet() {
   return window['go']['main']['App']['GetMeshAdminKeySet']();
 }
 
+export function GetMeshCensus() {
+  return window['go']['main']['App']['GetMeshCensus']();
+}
+
 export function GetMeshStatus() {
   return window['go']['main']['App']['GetMeshStatus']();
 }
