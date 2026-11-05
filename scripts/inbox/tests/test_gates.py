@@ -212,3 +212,72 @@ def test_agent_instruction_files_are_skipped(name):
 )
 def test_real_captures_are_not_furniture(name):
     assert is_furniture(name) is False
+
+
+# -- owner, under a machine identity --------------------------------------------
+#
+# Drive's `me` flag means "owned by the AUTHENTICATING identity". A service
+# account owns nothing of the human's, so `me` is never true for a real capture
+# and every one of them reads as foreign. Found in production: a genuine test
+# file was rejected as "foreign-owner -- owned by neuralcolony@gmail.com, not
+# the authorised account", which is the ONE account that should have passed.
+#
+# The gate still has to reject what a stranger shared in -- that is the primary
+# injection vector into a pipeline with vault- and calendar-write authority --
+# so the expected owner becomes explicit rather than implied by the credential.
+
+
+def test_accepts_the_expected_owner_when_me_is_false():
+    """The service-account case: correct owner, but not the authenticating one."""
+    gate_owner(
+        meta(owners=[{"emailAddress": "neuralcolony@gmail.com", "me": False}]),
+        expected_owner="neuralcolony@gmail.com",
+    )
+
+
+def test_still_rejects_a_stranger_when_an_expected_owner_is_given():
+    """The gate must not become a no-op in exchange for working."""
+    with pytest.raises(Rejected) as exc:
+        gate_owner(
+            meta(owners=[{"emailAddress": "stranger@example.com", "me": False}]),
+            expected_owner="neuralcolony@gmail.com",
+        )
+    assert exc.value.reason == "foreign-owner"
+    assert "stranger@example.com" in exc.value.detail
+
+
+def test_the_owner_match_ignores_case():
+    """Drive and config can disagree on capitalisation; the address is the same."""
+    gate_owner(
+        meta(owners=[{"emailAddress": "NeuralColony@Gmail.com", "me": False}]),
+        expected_owner="neuralcolony@gmail.com",
+    )
+
+
+def test_surrounding_whitespace_in_config_does_not_break_the_match():
+    """A trailing space in a .env value must not reject every capture."""
+    gate_owner(
+        meta(owners=[{"emailAddress": "neuralcolony@gmail.com", "me": False}]),
+        expected_owner=" neuralcolony@gmail.com ",
+    )
+
+
+def test_me_still_passes_without_an_expected_owner():
+    """The user-OAuth path keeps working with no configuration at all."""
+    gate_owner(meta(), expected_owner=None)
+
+
+def test_an_empty_expected_owner_is_not_a_wildcard():
+    """An unset env var arrives as "" and must not match a blank-ish owner."""
+    with pytest.raises(Rejected) as exc:
+        gate_owner(
+            meta(owners=[{"emailAddress": "", "me": False}]),
+            expected_owner="",
+        )
+    assert exc.value.reason == "foreign-owner"
+
+
+def test_no_owner_is_still_rejected_even_with_an_expected_owner():
+    with pytest.raises(Rejected) as exc:
+        gate_owner(meta(owners=[]), expected_owner="neuralcolony@gmail.com")
+    assert exc.value.reason == "no-owner"

@@ -106,20 +106,33 @@ class Rejected(Exception):
 # -- the gates -----------------------------------------------------------------
 
 
-def gate_owner(meta: dict[str, Any]) -> None:
+def gate_owner(meta: dict[str, Any], expected_owner: str | None = None) -> None:
     """The file must be owned by the authorised account.
 
     This is the primary prompt-injection vector: a document shared into the
     folder by someone else is content we never asked for, aimed at a pipeline
     with vault-write and calendar-write authority downstream. Ownership is a
     fact, not a judgement, so the check is exact and needs no model.
+
+    Two ways to be the authorised account, because the credential may not be a
+    person. Drive's `me` flag means "owned by the AUTHENTICATING identity",
+    which holds under user OAuth but is never true under a service account --
+    it owns nothing of the human's, so every real capture would read as
+    foreign. `expected_owner` states the address instead of inferring it from
+    whoever authenticated. It widens nothing: a stranger's file still fails
+    both tests.
     """
     owners = meta.get("owners") or []
     if not owners:
         raise Rejected("no-owner", "Drive returned no owner for this file")
-    if not owners[0].get("me"):
-        who = owners[0].get("emailAddress", "unknown")
-        raise Rejected("foreign-owner", f"owned by {who}, not the authorised account")
+    if owners[0].get("me"):
+        return
+    who = owners[0].get("emailAddress", "unknown")
+    want = (expected_owner or "").strip().lower()
+    # An unset env var arrives as "", which must not match a blank owner.
+    if want and who.strip().lower() == want:
+        return
+    raise Rejected("foreign-owner", f"owned by {who}, not the authorised account")
 
 
 def gate_mime(meta: dict[str, Any]) -> None:
@@ -214,7 +227,7 @@ def drain(
             continue
 
         try:
-            gate_owner(meta)
+            gate_owner(meta, cfg.google_account)
             gate_mime(meta)
             gate_size(meta)
             try:
