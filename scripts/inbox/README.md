@@ -68,19 +68,30 @@ vault note or the reminder is the record. Trash rather than permanent delete so
 a mis-extracted capture is recoverable for ~30 days; `--hard-delete` makes it
 permanent if you'd rather.
 
-Two folders do persist, and files in them are **never deleted**:
+**Unless the credential doesn't own the file** — then it moves to `complete/`
+instead. In Drive only a file's OWNER may trash or delete it; an Editor cannot,
+even with the full `drive` scope. So under a service account (see *Google
+credentials*) disposal becomes a move into `complete/`, and `--hard-delete` is
+downgraded to the same move rather than honoured, since a non-owner cannot
+delete either. **Create that folder by hand once**, inside `<root>/<profile>/`:
+the credential that needs it cannot create it, for the same no-quota reason it
+cannot write a rejection note. Without it, disposal fails with a message naming
+the folder rather than a bare `403`.
+
+Three folders persist, and files in them are **never deleted**:
 
 | Folder | Meaning |
 |---|---|
 | `rejected/` | the file itself wasn't acceptable |
 | `quarantine/` | the content couldn't be parsed into a valid item |
+| `complete/` | filed successfully, but the credential couldn't trash it |
 
 Both get a `.txt` note next to them saying why. The split matters because the
 fixes differ: rejected is the wrong *kind* of file, quarantined is the wrong
 *content*.
 
-A file is rejected when it is **not owned by you** (anything shared in by
-someone else), is not an accepted format, is over 256 KB, is empty, or contains
+A file is rejected when it is **not owned by the configured account**
+(`CL_INBOX_GOOGLE_ACCOUNT` — anything shared in by someone else), is not an accepted format, is over 256 KB, is empty, or contains
 **credential-shaped text** — the last because a vault note is durable,
 synthesised and recallable forever, so a leaked key there is not a transient
 mistake. The rejection note names the matched *pattern*, never the value.
