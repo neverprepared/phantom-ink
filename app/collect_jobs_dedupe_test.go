@@ -7,28 +7,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const collectJobsTestSchema = `
-CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE collect_jobs (
-  id TEXT PRIMARY KEY,
-  profile TEXT NOT NULL DEFAULT '',
-  name TEXT NOT NULL,
-  command TEXT NOT NULL DEFAULT '',
-  interval_s INTEGER NOT NULL DEFAULT 300,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  default_actions TEXT NOT NULL DEFAULT '[]',
-  last_run_at INTEGER,
-  last_error TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL,
-  target_type TEXT NOT NULL DEFAULT 'shell',
-  target_id TEXT NOT NULL DEFAULT '',
-  target_prompt TEXT NOT NULL DEFAULT '',
-  run_at TEXT NOT NULL DEFAULT '',
-  days TEXT NOT NULL DEFAULT '',
-  source TEXT NOT NULL DEFAULT '',
-  owner_widget_id TEXT NOT NULL DEFAULT '',
-  run_once_at_ms INTEGER
-);`
+// The schema here used to be a hand-written copy of the collect_jobs DDL, which
+// silently drifted from db_migrations.go every time a column was added (it broke
+// on imported_schedule_id in v30). Run the real migrations instead, so these
+// tests exercise the schema the app actually ships.
 
 func newTestDB(t *testing.T) *DB {
 	t.Helper()
@@ -37,11 +19,12 @@ func newTestDB(t *testing.T) *DB {
 		t.Fatalf("open: %v", err)
 	}
 	conn.SetMaxOpenConns(1)
-	if _, err := conn.Exec(collectJobsTestSchema); err != nil {
-		t.Fatalf("schema: %v", err)
-	}
 	t.Cleanup(func() { conn.Close() })
-	return &DB{conn: conn}
+	db := &DB{conn: conn}
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	return db
 }
 
 func insertJob(t *testing.T, db *DB, id, profile, name, owner string, createdAt int64) {

@@ -47,6 +47,14 @@ type CollectJob struct {
 	// OwnerWidgetID links a widget-sourced job to the dashboard widget that
 	// owns it. Empty when source != "widget" or for legacy jobs.
 	OwnerWidgetID string `json:"owner_widget_id"`
+	// ImportedScheduleID is the server schedule this job was copied to by
+	// ImportLocalSchedules, or "" when it has not been carried over.
+	//
+	// Read-only through this struct: it is deliberately ABSENT from
+	// UpsertCollectJob's column list, so editing a job through the panel
+	// cannot blank the marker and cause a duplicate import. Only
+	// MarkCollectJobImported writes it.
+	ImportedScheduleID string `json:"imported_schedule_id"`
 }
 
 type CollectedEntry struct {
@@ -96,7 +104,8 @@ type scriptEntry struct {
 
 const collectJobCols = `id, profile, name, command, interval_s, enabled, default_actions,
 	last_run_at, last_error, created_at,
-	target_type, target_id, target_prompt, run_at, days, source, owner_widget_id, run_once_at_ms`
+	target_type, target_id, target_prompt, run_at, days, source, owner_widget_id, run_once_at_ms,
+	imported_schedule_id`
 
 func scanCollectJob(s rowScanner) (CollectJob, error) {
 	var j CollectJob
@@ -104,7 +113,8 @@ func scanCollectJob(s rowScanner) (CollectJob, error) {
 	var runOnceAtMs sql.NullInt64
 	err := s.Scan(&j.ID, &j.Profile, &j.Name, &j.Command, &j.IntervalS,
 		&j.Enabled, &j.DefaultActions, &lastRunAt, &j.LastError, &j.CreatedAt,
-		&j.TargetType, &j.TargetID, &j.TargetPrompt, &j.RunAt, &j.Days, &j.Source, &j.OwnerWidgetID, &runOnceAtMs)
+		&j.TargetType, &j.TargetID, &j.TargetPrompt, &j.RunAt, &j.Days, &j.Source, &j.OwnerWidgetID, &runOnceAtMs,
+		&j.ImportedScheduleID)
 	if lastRunAt.Valid {
 		j.LastRunAt = &lastRunAt.Int64
 	}
@@ -176,6 +186,16 @@ func (db *DB) UpsertCollectJob(j CollectJob) error {
 		j.ID, j.Profile, j.Name, j.Command, j.IntervalS, boolToInt(j.Enabled),
 		j.DefaultActions, j.CreatedAt,
 		j.TargetType, j.TargetID, j.TargetPrompt, j.RunAt, j.Days, j.Source, j.OwnerWidgetID, j.RunOnceAtMs)
+	return err
+}
+
+// MarkCollectJobImported records which server schedule a local job was copied
+// to. Separate from UpsertCollectJob on purpose: the upsert overwrites every
+// column it lists from `excluded`, so including this marker there would let a
+// panel save blank it and make the next import create a duplicate.
+func (db *DB) MarkCollectJobImported(id, scheduleID string) error {
+	_, err := db.conn.Exec(
+		"UPDATE collect_jobs SET imported_schedule_id = ? WHERE id = ?", scheduleID, id)
 	return err
 }
 
@@ -643,6 +663,9 @@ func (s *collectScheduler) tick() {
 		if !job.Enabled {
 			continue
 		}
+		if !collectSchedulerOwns(job) {
+			continue
+		}
 		if !collectJobIsDue(job, now) {
 			continue
 		}
@@ -655,6 +678,23 @@ func (s *collectScheduler) tick() {
 			s.runJob(j)
 		}()
 	}
+}
+
+// collectSchedulerOwns reports whether the LOCAL scheduler is responsible for a
+// job. Only dashboard-widget jobs are: a widget polling a metric while the app
+// is open is not an infrastructure concern, and nothing needs it to fire when
+// the app is closed.
+//
+// Everything else (source "") is a user-created schedule, which now lives on
+// the server (phantom-events /api/schedules) so it survives the laptop sleeping
+// and cannot be double-fired by a second running app instance. Running such a
+// job here too would mean two executions racing to write the same entries.
+//
+// Note existing source="" rows stay in the local table after the cutover and go
+// inert — ImportLocalSchedules copies them to the server, and they are listed
+// in the panel as remote rows afterwards.
+func collectSchedulerOwns(job CollectJob) bool {
+	return job.Source == "widget"
 }
 
 // collectJobIsDue returns true when a job should fire at the given moment.
@@ -925,6 +965,14 @@ func (a *App) RunCollectJobNow(id string) error {
 	job, ok := a.db.GetCollectJob(id)
 	if !ok {
 		return fmt.Errorf("job %s not found", id)
+	}
+	// A binding is a trust boundary. The panel routes server schedules to
+	// RunScheduleNow, but it must not be the only thing preventing a local run
+	// of a job the server owns — that would execute it twice, with different
+	// environments, racing to write the same entries.
+	if !collectSchedulerOwns(job) {
+		return fmt.Errorf(
+			"job %s is a server-side schedule; run it with RunScheduleNow", id)
 	}
 	go a.collectScheduler.runJob(job)
 	return nil
