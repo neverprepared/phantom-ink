@@ -166,6 +166,37 @@
     }
   }
 
+  // Two-step inline delete confirmation. Native window.confirm() is an
+  // unreliable no-op in the Wails webview (it returns undefined, so a
+  // `!confirm()` guard bails silently and "nothing happens"), so the ✕ arms and
+  // a second click commits — the pattern TokensPanel and ConversationsPanel
+  // already use.
+  //
+  // This existed as a one-click delete, and an inbox schedule was lost to a
+  // stray click. An ENABLED schedule is the costlier mistake, so its armed
+  // label says so.
+  let confirmDeleteId = $state<string | null>(null);
+  let confirmTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function armDelete(row: ScheduleRow) {
+    if (confirmTimer) clearTimeout(confirmTimer);
+    confirmDeleteId = row.id;
+    // Disarm on its own, so a forgotten armed button cannot be committed by a
+    // later unrelated click.
+    confirmTimer = setTimeout(() => { confirmDeleteId = null; }, 5000);
+  }
+
+  function disarmDelete() {
+    if (confirmTimer) clearTimeout(confirmTimer);
+    confirmTimer = null;
+    confirmDeleteId = null;
+  }
+
+  async function confirmRemove(row: ScheduleRow) {
+    disarmDelete();
+    await remove(row);
+  }
+
   async function remove(row: ScheduleRow) {
     const a = await getApi();
     if (!a) return;
@@ -562,7 +593,18 @@
                 <button class="job-btn" onclick={() => runNow(row)} disabled={runningId === row.id} title="run now">
                   {runningId === row.id ? '…' : '▶'}
                 </button>
-                <button class="job-btn danger" onclick={() => remove(row)} title="delete">✕</button>
+                {#if confirmDeleteId === row.id}
+                  <button
+                    class="job-btn danger armed"
+                    onclick={() => confirmRemove(row)}
+                    title={row.enabled
+                      ? 'Delete this ENABLED schedule — click again to confirm'
+                      : 'Delete this schedule — click again to confirm'}
+                  >{row.enabled ? 'delete enabled?' : 'delete?'}</button>
+                  <button class="job-btn" onclick={disarmDelete} title="cancel">↩</button>
+                {:else}
+                  <button class="job-btn danger" onclick={() => armDelete(row)} title="delete">✕</button>
+                {/if}
               </div>
             </div>
           {/if}
@@ -664,6 +706,18 @@
   .job-btn:hover:not(:disabled) { border-color: var(--color-accent); color: var(--color-accent); }
   .job-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .job-btn.danger:hover:not(:disabled) { border-color: var(--color-error); color: var(--color-error); }
+  /* Armed delete: filled rather than outlined, so the committing click never
+     looks like the arming one. Width is free-form because the label is words,
+     not a glyph. */
+  .job-btn.danger.armed {
+    border-color: var(--color-error);
+    background: var(--color-error);
+    color: var(--color-bg);
+    width: auto;
+    padding: 0 8px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
 
   /* Form */
   .job-form {
