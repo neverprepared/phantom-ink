@@ -18,9 +18,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
-mcp = FastMCP("brainbox")
+mcp = MCPServer("brainbox")
 
 
 def _api_url() -> str:
