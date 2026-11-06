@@ -1,13 +1,22 @@
 name: Build brainbox-mcp package
 
 on:
+  # `tags` and `paths` under one `push` are ANDed, and there was no `branches`
+  # at all — so this could only fire on a brainbox/v* tag whose diff also
+  # touched those paths, and never on main. Its only successful run ever was
+  # the brainbox/v0.18.0 tag. A change to the package therefore shipped with
+  # no build and no check of any kind.
+  #
+  # Split by intent instead: a release tag always builds and publishes, and a
+  # PR that touches the package builds it (the release step is gated on the
+  # tag ref, so a PR run cannot publish).
   push:
     tags:
       - "brainbox/v*"
+  pull_request:
     paths:
-      - "brainbox/src/brainbox/mcp_server.py"
-      - "brainbox/src/brainbox/log.py"
       - "packages/brainbox-mcp/**"
+      - ".github/workflows/build-brainbox-mcp-pkg.yml"
   workflow_dispatch:
 
 concurrency:
@@ -33,13 +42,6 @@ jobs:
             VERSION="dev-${GITHUB_SHA::7}"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Sync source files from brainbox package
-        run: |
-          cp brainbox/src/brainbox/mcp_server.py \
-             packages/brainbox-mcp/src/brainbox_mcp/mcp_server.py
-          cp brainbox/src/brainbox/log.py \
-             packages/brainbox-mcp/src/brainbox_mcp/log.py
 
       - name: Install fpm
         run: |
@@ -73,11 +75,17 @@ jobs:
           #!/bin/bash
           set -e
           # Install PyPI dependencies that have no apt equivalents.
+          # NOTE: this restates packages/brainbox-mcp/pyproject.toml's
+          # dependencies because the .deb ships source plus a `python3 -m
+          # brainbox_mcp` wrapper, so there is no wheel whose own metadata
+          # could be resolved here. Keep it in step by hand: it sat at
+          # "mcp[cli]>=1.9" through the move to mcp 2.x, which would have
+          # installed an SDK the code no longer imports against.
           # Prefer uv (available in brainbox containers) for speed; fall back to pip3.
           if command -v uv &>/dev/null; then
-              uv pip install --system "mcp[cli]>=1.9" "structlog>=24.4" --quiet
+              uv pip install --system "mcp[cli]>=2.3,<3" "structlog>=24.4" --quiet
           else
-              pip3 install --quiet "mcp[cli]>=1.9" "structlog>=24.4"
+              pip3 install --quiet "mcp[cli]>=2.3,<3" "structlog>=24.4"
           fi
           EOF
           chmod 0755 postinst.sh

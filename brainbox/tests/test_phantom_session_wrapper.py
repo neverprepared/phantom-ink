@@ -216,27 +216,76 @@ class TestDockerfileContract:
 
 
 class TestMcpVersionPin:
-    """mcp 2.x removed `mcp.server.fastmcp`.
+    """The SDK constraint and every place that restates it must agree.
 
-    The session image was built when 1.x was current, so the unpinned
-    `mcp[cli]>=1.9` resolved fine for weeks. The first fresh rebuild resolved
-    2.3.0, brainbox-mcp exited 1 on import, and every session lost its
-    `channel_*` tools with Claude Code reporting only `CONNECTION_CLOSED`.
+    History, because the failure shape is the point: the session image was
+    built when mcp 1.x was current, so an unpinned `mcp[cli]>=1.9` resolved
+    fine for weeks. The first fresh rebuild resolved 2.3.0, brainbox-mcp
+    exited 1 on import because mcp 2.x had removed `mcp.server.fastmcp`, and
+    every session lost its `channel_*` tools with Claude Code reporting only
+    `CONNECTION_CLOSED`.
+
+    brainbox-mcp has since migrated to mcp 2.x (`MCPServer`), so what holds it
+    together is now a FLOOR. These tests guard the two things that actually
+    broke: a drifting constraint, and an install site that restates it.
     """
 
-    def test_brainbox_mcp_pins_mcp_below_2(self):
-        pyproject = (
+    def _pkg_pyproject(self):
+        return (
             pathlib.Path(__file__).resolve().parents[2]
             / "packages" / "brainbox-mcp" / "pyproject.toml"
         ).read_text()
-        assert '"mcp[cli]>=1.9,<2"' in pyproject, (
-            "the upper bound is load-bearing: mcp 2.x removes mcp.server.fastmcp"
+
+    def test_brainbox_mcp_requires_mcp_2x(self):
+        """A floor, not a ceiling: the code imports mcp.server.mcpserver."""
+        assert '"mcp[cli]>=2.3,<3"' in self._pkg_pyproject(), (
+            "brainbox-mcp imports mcp.server.mcpserver, which only exists in "
+            "mcp 2.x; an older resolve exits 1 at import"
+        )
+
+    def test_the_deb_postinst_matches_the_declared_constraint(self):
+        """The .deb restates the dependency, and drifted once already.
+
+        It ships source plus a `python3 -m brainbox_mcp` wrapper, so there is
+        no wheel whose metadata could be resolved at install time. That
+        duplication is structural, so pin the two together with a test rather
+        than a comment: the postinst sat at `mcp[cli]>=1.9` through the move
+        to 2.x, which would have installed an SDK the code cannot import
+        against while the repo looked migrated.
+        """
+        workflow = (
+            pathlib.Path(__file__).resolve().parents[2]
+            / ".github" / "workflows" / "build-brainbox-mcp-pkg.yml"
+        ).read_text()
+        assert '"mcp[cli]>=2.3,<3"' in workflow, (
+            "the .deb postinst must install the same constraint "
+            "packages/brainbox-mcp/pyproject.toml declares"
+        )
+
+    def test_brainbox_itself_stays_below_mcp_2(self):
+        """The asymmetry is deliberate — do not 'helpfully' unify these.
+
+        gateway_server.py and gateway_http.py use mcp.server.lowlevel.Server,
+        which mcp 2.0 removed, so brainbox needs the ceiling that brainbox-mcp
+        no longer does. Lifting it means migrating off the low-level Server
+        API, which is not a rename.
+        """
+        pyproject = (
+            pathlib.Path(__file__).resolve().parents[1] / "pyproject.toml"
+        ).read_text()
+        assert '"mcp>=1.9,<2"' in pyproject, (
+            "brainbox still imports mcp.server.lowlevel; an unbounded mcp "
+            "resolves 2.x and breaks `brainbox mcp` and the gateway fork"
         )
 
     def test_image_verifies_the_import_not_just_the_binary(self):
-        """`command -v brainbox-mcp` passed while the server was unstartable."""
+        """`command -v brainbox-mcp` passed while the server was unstartable.
+
+        The check imports the server MODULE rather than an SDK path, so it
+        survives an SDK rename and catches any import-time break.
+        """
         dockerfile = (_ROOT / "Dockerfile").read_text()
-        assert "import mcp.server.fastmcp" in dockerfile
+        assert "import brainbox_mcp.mcp_server" in dockerfile
 
 
 class TestSessionEnvPrecedence:
