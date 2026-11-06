@@ -166,15 +166,15 @@ export const settingsState = {
 };
 
 // ---------------------------------------------------------------------------
-// "Automations" hub sub-tabs — Loops (iterate + judge), Collectors (scheduled
-// ingest), and Rules (server rules engine) are folded in alongside the fleet
+// "Automations" hub sub-tabs — Loops (iterate + judge), Schedules (run a
+// command/prompt on a cadence), and Rules (server rules engine) are folded in alongside the fleet
 // fan-out jobs view. The panel id is still 'jobs' internally (label-only rename
 // to "Automations"). Same pattern as the Settings tabs above: callers that used
 // to navigate to those panels directly (or via legacy deep-links) are
 // redirected to the hub with the matching tab pre-selected.
 // ---------------------------------------------------------------------------
 
-export type JobsTab = 'jobs' | 'loops' | 'collectors' | 'timeline';
+export type JobsTab = 'jobs' | 'loops' | 'schedules' | 'timeline';
 
 // Legacy panel ids that are now hub tabs → their tab. Used by AppShell to
 // redirect stale navigation/#hash deep-links and by the command palette.
@@ -183,7 +183,10 @@ export type JobsTab = 'jobs' | 'loops' | 'collectors' | 'timeline';
 // belongs beside the things that run on a schedule).
 export const JOBS_TAB_PANELS: Record<string, JobsTab> = {
   loops: 'loops',
-  collectors: 'collectors',
+  // 'collectors' was the tab's name before it outgrew stdout ingest; keep the
+  // stale key so old #hash deep-links still resolve.
+  collectors: 'schedules',
+  schedules: 'schedules',
   timeline: 'timeline',
 };
 

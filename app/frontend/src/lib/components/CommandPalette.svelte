@@ -14,7 +14,7 @@
   // Automations-hub tabs that used to be top-level panels — same treatment.
   const jobsTabCommands: { tab: JobsTab; label: string }[] = [
     { tab: 'loops', label: 'Loops' },
-    { tab: 'collectors', label: 'Collectors' },
+    { tab: 'schedules', label: 'Schedules' },
     { tab: 'timeline', label: 'Timeline' },
   ];
 
