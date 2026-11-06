@@ -130,7 +130,7 @@
       flash('That cadence is incomplete.', true);
       return;
     }
-    if (!draft.command.trim()) return;
+    if (!actionsLocked && !draft.command.trim()) return;
 
     saving = true;
     try {
@@ -142,13 +142,17 @@
         description: '',
         schedule: cadence,
         timezone: '', // Go fills in this machine's zone
-        actions: [{
-          type: 'run_profile_command',
-          command: draft.command.trim(),
-          workspace_profile: isNew ? (filterProfile || profile) : (existing?.profile ?? profile),
-          // It is a collector: its stdout entries publish onto the bus.
-          emit_entries: true,
-        }],
+        // Passed through untouched for a locked action — rebuilding it would
+        // change its type and drop every field this form cannot express.
+        actions: actionsLocked && existing && isRemoteRow(existing)
+          ? (existing.schedule.actions ?? [])
+          : [{
+              type: 'run_profile_command',
+              command: draft.command.trim(),
+              workspace_profile: isNew ? (filterProfile || profile) : (existing?.profile ?? profile),
+              // It is a collector: its stdout entries publish onto the bus.
+              emit_entries: true,
+            }],
         catch_up: 'skip',
         next_run_at: null,
         last_run_at: null,
@@ -300,11 +304,39 @@
 
   function startNew() {
     editingId = 'new';
+    actionsLocked = false;
+    lockedActionLabel = '';
     draft = {
       name: '', command: '', kind: 'interval', intervalS: 300,
       runAt: '08:30', days: 'daily', cronExpr: '0 * * * *',
       fireAtMs: Date.now() + 3_600_000, enabled: true,
     };
+  }
+
+  // This form only knows how to author ONE action shape: run_profile_command,
+  // which carries a `command` string. A schedule whose action is anything else
+  // — run_host_command carries `argv`, a runner and a timeout — cannot be
+  // represented here. Editing one used to be impossible AND dangerous:
+  // isFormValid() required a command, so Save stayed dead with no explanation,
+  // and the save path hardcoded run_profile_command, so a save that did get
+  // through would have silently converted a working host-exec job into a
+  // container one and dropped its argv/runner/timeout.
+  //
+  // So when the action is not a command action we LOCK it: the cadence, name
+  // and enabled flag stay editable (changing the times is the common need),
+  // and the actions array is passed back through untouched. Go models actions
+  // as []map[string]interface{}, so a round-trip preserves every field this
+  // panel has no concept of.
+  let actionsLocked = $state(false);
+  let lockedActionLabel = $state('');
+
+  function describeAction(action: Record<string, any>): string {
+    const type = String(action.type ?? 'unknown');
+    if (Array.isArray(action.argv)) {
+      const where = action.runner ? ` on ${action.runner}` : '';
+      return `${type}${where}: ${action.argv.join(' ')}`;
+    }
+    return type;
   }
 
   function startEdit(row: ScheduleRow) {
@@ -315,6 +347,8 @@
     editingId = row.id;
     const c = cadenceToDraft(row.schedule.schedule);
     const action = row.schedule.actions?.[0] ?? {};
+    actionsLocked = action.type !== 'run_profile_command';
+    lockedActionLabel = actionsLocked ? describeAction(action) : '';
     draft = {
       name: row.name,
       command: String(action.command ?? ''),
@@ -343,7 +377,9 @@
   }
 
   function isFormValid(): boolean {
-    if (!draft.name.trim() || !draft.command.trim()) return false;
+    if (!draft.name.trim()) return false;
+    // A locked action is not authored here, so there is no command to require.
+    if (!actionsLocked && !draft.command.trim()) return false;
     return cadenceValid(cadenceFrom(draft.kind, draft));
   }
 
@@ -500,10 +536,24 @@
                 <input class="form-input" bind:value={draft.name} />
               </label>
 
-              <label class="form-row">
-                <span class="form-label">command</span>
-                <textarea class="form-textarea" bind:value={draft.command} rows="4"></textarea>
-              </label>
+              {#if actionsLocked}
+                <div class="form-row">
+                  <span class="form-label">action</span>
+                  <div class="action-locked">
+                    <code>{lockedActionLabel}</code>
+                    <span class="action-locked-note">
+                      Not editable here — this panel only authors shell collectors.
+                      Name, cadence and enabled can still be changed; the action is
+                      kept as-is.
+                    </span>
+                  </div>
+                </div>
+              {:else}
+                <label class="form-row">
+                  <span class="form-label">command</span>
+                  <textarea class="form-textarea" bind:value={draft.command} rows="4"></textarea>
+                </label>
+              {/if}
 
               <!-- Cadence -->
               <div class="form-row">
@@ -696,6 +746,12 @@
   }
 
 
+  .action-locked { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .action-locked code {
+    font-size: 11px; opacity: 0.85; word-break: break-all;
+    background: var(--color-bg-alt); padding: 4px 6px; border-radius: 3px;
+  }
+  .action-locked-note { font-size: 10px; opacity: 0.6; line-height: 1.4; }
   .job-btns { display: flex; gap: 4px; flex-shrink: 0; }
   .job-btn {
     background: none; border: 1px solid var(--color-border-primary);
