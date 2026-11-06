@@ -193,12 +193,18 @@ service account's own Drive is empty. Two consequences:
 
 ## Operational notes
 
-- **The scheduler only runs while the app does.** It is a goroutine inside the
-  Wails app, not a daemon or a LaunchAgent. Close the app — or let `wails dev`
-  restart it — and nothing drains; captures simply sit in `inbox/` until it is
-  running again. This is a deliberate trade (the jobs stay manageable in the
-  Collectors panel, with a per-job play button) and not a bug, but it does mean
-  the inbox is not a background service.
+- **The schedule lives on the platform, not in the app.** This used to be a
+  goroutine inside the Wails app, so closing the app stopped the inbox. Since
+  ADR-008 the schedules are server-side records in phantom-events, fired by its
+  scheduler and executed as `run_host_command` on a named runner — so the inbox
+  drains with the app closed, the laptop asleep, or the Mac rebooted, provided
+  the target machine's runner is up. The Collectors panel still manages them
+  (CRUD, enable, per-job play button) as calls against server state.
+
+  What it DOES still depend on: the runner process on the target Mac, which is a
+  plain `.app` started from Login Items — not a LaunchAgent — so it needs a GUI
+  login to be running at all. That same login is what unlocks the keychain the
+  host's `claude` credential lives in, and what makes a TCC prompt possible.
 - **Seeing the runs in the app.** Two surfaces, and neither is automatic:
   - The **Collectors panel** shows each job's last run as a relative time and
     an `✗ error` badge (`CollectorsPanel.svelte:216`, `:434`). That is the
@@ -220,9 +226,32 @@ service account's own Drive is empty. Two consequences:
   stayed at `upcoming` forever, one stale row per item ever captured. The
   drain's status row carries the counts; apply emits the durable per-item
   record.
-- **Prime the EventKit grant once** by running `macos-mcp` from a terminal before
-  registering the apply job. Launched as a subprocess of the Wails app the TCC
-  prompt may not be attributable, and Stage C will fail.
+- **The EventKit grant belongs to the LAUNCHING APP, and priming from a terminal
+  does not help.** This note used to advise running `macos-mcp` from a terminal
+  once. That is actively misleading for the server-side schedule: a macOS TCC
+  grant attaches to the **responsible process** — the top-level app of the
+  subprocess chain — not to the binary making the request. Measured on m3, same
+  machine and same binary, varying only the parent:
+
+  | Launched by | Result |
+  |---|---|
+  | `Terminal.app` | reminder lists visible |
+  | `BrainboxRunner.app` | `No reminder lists found.` |
+  | plain SSH | empty — `sshd` cannot show a dialog, so it auto-denies |
+
+  So priming from a terminal grants **Terminal**. For the host-exec path the
+  runner needs its own grant, and it cannot acquire one passively: a request
+  originating deep in the chain is not promptable and is denied with no dialog
+  at all. Grant it in **BrainboxRunner → Settings → Capabilities → Reminders
+  access** (runner ≥ 0.1.23), which asks in the app's own process.
+
+  **A denial is invisible, which is why this cost a day.** EventKit returns
+  **empty collections** rather than erroring when access is absent, and
+  `macos-mcp` logs `EventKit permissions granted` regardless — so the symptom is
+  "the inbox found nothing", not anything resembling a permission problem. The
+  runner's Capabilities tab shows the real status; check it there first.
+  Note also that the grant is per-service: Reminders and Calendars are separate,
+  and only Reminders is needed here.
 - **An unknown Reminders list does not error.** `reminders_add` silently falls
   back to your default list (`EventKitManager.swift:145`), so the per-profile
   list is created up front and the list name in the server's confirmation is
