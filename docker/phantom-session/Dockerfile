@@ -252,13 +252,17 @@ RUN --mount=type=cache,target=/home/developer/.npm,uid=1001,gid=1001 \
     # each other, which is exactly the failure this image is meant to end.
     && bash -lc 'command -v brainbox-mcp' \
     # `command -v` is NOT enough: the binary existed while the server could not
-    # start at all. mcp 2.x removed mcp.server.fastmcp, so an unpinned resolve
-    # yields a shim that exits 1 on import and Claude Code reports only
-    # CONNECTION_CLOSED. Import the module the server actually needs, inside
-    # the tool's own venv, so a bad resolve fails the BUILD instead of every
-    # session.
+    # start at all. A bad SDK resolve yields a module that exits 1 on import
+    # and Claude Code reports only CONNECTION_CLOSED, naming nothing.
+    #
+    # Import brainbox_mcp.mcp_server ITSELF rather than an SDK path: that
+    # constructs the server at module scope, so it catches any import-time
+    # break, not just the one SDK rename we happen to be thinking about. The
+    # old check named mcp.server.fastmcp, which stopped existing when the
+    # package moved to mcp 2.x — a check pinned to a specific internal path
+    # goes stale exactly when the thing it guards changes.
     && /home/developer/.local/share/uv/tools/brainbox-mcp/bin/python -c \
-         'import mcp.server.fastmcp; print("brainbox-mcp imports OK")' \
+         'import brainbox_mcp.mcp_server; print("brainbox-mcp imports OK")' \
     && bash -lc 'command -v mcp-server-git && command -v markitdown-mcp'
 
 # -----------------------------------------------------------------------------
