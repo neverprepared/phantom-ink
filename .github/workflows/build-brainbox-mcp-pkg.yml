@@ -78,9 +78,12 @@ jobs:
           # NOTE: this restates packages/brainbox-mcp/pyproject.toml's
           # dependencies because the .deb ships source plus a `python3 -m
           # brainbox_mcp` wrapper, so there is no wheel whose own metadata
-          # could be resolved here. Keep it in step by hand: it sat at
-          # "mcp[cli]>=1.9" through the move to mcp 2.x, which would have
-          # installed an SDK the code no longer imports against.
+          # could be resolved here. Keep it in step by hand: it was left a
+          # major behind during the move to mcp 2.x, which would have installed
+          # an SDK the code no longer imports against. Deliberately no stale
+          # constraint quoted here — this comment ships inside the .deb, and a
+          # second version string in the file defeats grepping for the real one.
+          # tests/test_phantom_session_wrapper.py pins it to the pyproject.
           # Prefer uv (available in brainbox containers) for speed; fall back to pip3.
           if command -v uv &>/dev/null; then
               uv pip install --system "mcp[cli]>=2.3,<3" "structlog>=24.4" --quiet

@@ -25,6 +25,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import pathlib
+import re
 import stat
 
 import pytest
@@ -257,9 +258,15 @@ class TestMcpVersionPin:
             pathlib.Path(__file__).resolve().parents[2]
             / ".github" / "workflows" / "build-brainbox-mcp-pkg.yml"
         ).read_text()
-        assert '"mcp[cli]>=2.3,<3"' in workflow, (
-            "the .deb postinst must install the same constraint "
-            "packages/brainbox-mcp/pyproject.toml declares"
+        declared = re.findall(r'"mcp\[cli\][^"]*"', self._pkg_pyproject())
+        found = set(re.findall(r'"mcp\[cli\][^"]*"', workflow))
+        assert declared, "could not find an mcp[cli] constraint in the pyproject"
+        # Exactly one, so a leftover version elsewhere in the file cannot hide
+        # behind the right one — including in a comment, which ships inside the
+        # .deb's postinst.
+        assert found == {declared[0]}, (
+            f"the .deb postinst must install exactly the constraint the "
+            f"pyproject declares ({declared[0]}); found {sorted(found)}"
         )
 
     def test_brainbox_itself_stays_below_mcp_2(self):
