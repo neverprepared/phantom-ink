@@ -2,24 +2,25 @@
   import { jobsState, type JobsTab } from '../stores.svelte';
   import JobsPanel from './JobsPanel.svelte';
   import LoopsPanel from './LoopsPanel.svelte';
-  import CollectorsPanel from './CollectorsPanel.svelte';
+  import SchedulesPanel from './SchedulesPanel.svelte';
   import TimelinePanel from './TimelinePanel.svelte';
 
   // The "Automations" hub — every way to run agent work unattended. Tabs:
   //   jobs    — fleet fan-out (dispatch once across N machines)
   //   loops   — iterate a step with an LLM judge until a condition
-  //   collectors — scheduled command/prompt ingest
+  //   schedules — scheduled commands/prompts (the tab was called
+  //               'collectors' until it grew past stdout ingest)
   //   timeline — the planned-vs-executed schedule axis
   // Rules moved OUT to the Events panel: a rule matches on the agent bus, so
   // it belongs beside the bus, not beside the work it triggers.
-  // Jobs, Loops, Collectors, and the rules panel each used to be top-level
+  // Jobs, Loops, Schedules, and the rules panel each used to be top-level
   // sidebar entries. Each brings its own header/padding, like the Settings tabs.
   // NOTE: the panel id is still 'jobs' internally (jobsState, redirects) — this
   // is a label-only rename; a full id migration is a separate change.
   const TABS: { id: JobsTab; label: string }[] = [
     { id: 'jobs', label: 'jobs' },
     { id: 'loops', label: 'loops' },
-    { id: 'collectors', label: 'collectors' },
+    { id: 'schedules', label: 'schedules' },
     { id: 'timeline', label: 'timeline' },
   ];
 
@@ -44,8 +45,8 @@
       <JobsPanel />
     {:else if activeTab === 'loops'}
       <LoopsPanel />
-    {:else if activeTab === 'collectors'}
-      <CollectorsPanel />
+    {:else if activeTab === 'schedules'}
+      <SchedulesPanel />
     {:else if activeTab === 'timeline'}
       <TimelinePanel />
     {/if}

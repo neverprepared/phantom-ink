@@ -396,14 +396,14 @@
 
 <div class="jobs">
   <div class="panel-header" style="margin-bottom:var(--spacing-sm);">
-    <h1 class="page-title">jobs</h1>
+    <h1 class="page-title">schedules</h1>
     <div style="display:flex;align-items:center;gap:var(--spacing-md);">
       {#if loading}<Spinner />{/if}
       {#if statusMsg}
         <span class="status-msg" class:err={statusIsError}>{statusMsg}</span>
       {/if}
       {#if editingId !== 'new'}
-        <button class="btn primary" onclick={startNew}>+ new job</button>
+        <button class="btn primary" onclick={startNew}>+ new schedule</button>
       {/if}
     </div>
   </div>
@@ -447,7 +447,7 @@
   <!-- Create form -->
   {#if editingId === 'new'}
     <div class="job-form">
-      <div class="form-title">new job</div>
+      <div class="form-title">new schedule</div>
 
       <label class="form-row">
         <span class="form-label">name</span>
@@ -523,7 +523,7 @@
   {:else if rows.length === 0 && editingId !== 'new'}
     <EmptyState title="No schedules yet" message="Create one to run work on a schedule — it fires on the platform, with this app closed." />
   {:else if visible.length === 0 && editingId !== 'new'}
-    <EmptyState title="No jobs for this profile" />
+    <EmptyState title="No schedules for this profile" />
   {:else}
     <div class="job-list">
       {#each visible as row (row.id)}
@@ -542,7 +542,7 @@
                   <div class="action-locked">
                     <code>{lockedActionLabel}</code>
                     <span class="action-locked-note">
-                      Not editable here — this panel only authors shell collectors.
+                      Not editable here — this panel only authors shell-command schedules.
                       Name, cadence and enabled can still be changed; the action is
                       kept as-is.
                     </span>

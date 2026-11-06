@@ -44,7 +44,7 @@ export interface Schedule {
   updated_at: number;
 }
 
-/** A row in the Collectors panel, from either backend.
+/** A row in the Schedules panel, from either backend.
  *
  * Deliberately a discriminated union rather than a merged shape: run-now,
  * toggle and delete all have to dispatch to a different backend per row, and a

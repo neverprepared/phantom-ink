@@ -60,7 +60,7 @@
     }
   });
 
-  // Loops, Collectors, and the rules panel are now tabs under the Automations
+  // Loops, Schedules, and the rules panel are now tabs under the Automations
   // hub (panel id still 'jobs'). Redirect any stale navigation or legacy
   // deep-link to the hub with the matching tab active.
   $effect(() => {
