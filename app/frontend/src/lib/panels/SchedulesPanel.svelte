@@ -10,10 +10,12 @@
   import { collectJobsRes } from '../stores/collectors.svelte';
   import { schedulesRes, schedulerStatusRes } from '../stores/schedules.svelte';
   import {
-    CADENCE_KINDS, cadenceFrom, cadenceToDraft, cadenceValid,
+    CADENCE_KINDS, authoredActionKind, cadenceFrom, cadenceToDraft, cadenceValid,
     isLocalRow, isRemoteRow, parseScheduleError, rowFromCollectJob, rowFromSchedule,
-    type CadenceKind, type ScheduleRow,
+    type CadenceKind, type ScheduleActionKind, type ScheduleRow,
   } from '../schedules';
+  import { draftFromAction, draftToAction, newActionDraft, type ActionDraft } from '../rules';
+  import { agentRoleNames, ensureAgentRoles } from '../stores/catalog.svelte';
 
   // ── Two backends, one list ─────────────────────────────────────────────
   //
@@ -55,6 +57,15 @@
   // Edit form state. Cadence is now a kind + its own fields, matching the
   // server's discriminated cadence rather than the old inferred interval/time
   // pair — which is also how cron and one-shot become reachable at all.
+  // `actionKind` picks which action shape the form authors. The command half
+  // lives in `draft.command`; the task half is a rules-editor ActionDraft, so
+  // submit_task is serialized by the one model that already knows it (and its
+  // `extra` bag carries fields this form has no input for through an edit).
+  let actionKind = $state<ScheduleActionKind>('command');
+  let taskDraft = $state<ActionDraft>(newActionDraft('submit_task'));
+
+  const agents = $derived(agentRoleNames([]));
+
   let draft = $state({
     name: '',
     command: '',
@@ -130,7 +141,7 @@
       flash('That cadence is incomplete.', true);
       return;
     }
-    if (!actionsLocked && !draft.command.trim()) return;
+    if (!actionsLocked && !authoredActionValid()) return;
 
     saving = true;
     try {
@@ -146,13 +157,7 @@
         // change its type and drop every field this form cannot express.
         actions: actionsLocked && existing && isRemoteRow(existing)
           ? (existing.schedule.actions ?? [])
-          : [{
-              type: 'run_profile_command',
-              command: draft.command.trim(),
-              workspace_profile: isNew ? (filterProfile || profile) : (existing?.profile ?? profile),
-              // It is a collector: its stdout entries publish onto the bus.
-              emit_entries: true,
-            }],
+          : [authoredAction(isNew ? (filterProfile || profile) : (existing?.profile ?? profile))],
         catch_up: 'skip',
         next_run_at: null,
         last_run_at: null,
@@ -302,10 +307,37 @@
 
   // ── Form helpers ───────────────────────────────────────────────────────
 
+  /** Build the action the form is currently authoring, scoped to `prof`. */
+  function authoredAction(prof: string): Record<string, any> {
+    if (actionKind === 'task') {
+      // workspace_profile is explicit rather than left to inherit: a schedule
+      // fires a synthetic envelope, and a task that lands in the wrong
+      // profile gets the wrong credentials.
+      return { ...draftToAction({ ...taskDraft, workspaceProfile: prof }) };
+    }
+    return {
+      type: 'run_profile_command',
+      command: draft.command.trim(),
+      workspace_profile: prof,
+      // It is a collector: its stdout entries publish onto the bus.
+      emit_entries: true,
+    };
+  }
+
+  /** Is the authored half of the form filled in? Cadence is checked separately. */
+  function authoredActionValid(): boolean {
+    if (actionKind === 'task') {
+      return taskDraft.agentName.trim() !== '' && taskDraft.description.trim() !== '';
+    }
+    return draft.command.trim() !== '';
+  }
+
   function startNew() {
     editingId = 'new';
     actionsLocked = false;
     lockedActionLabel = '';
+    actionKind = 'command';
+    taskDraft = newActionDraft('submit_task');
     draft = {
       name: '', command: '', kind: 'interval', intervalS: 300,
       runAt: '08:30', days: 'daily', cronExpr: '0 * * * *',
@@ -313,10 +345,11 @@
     };
   }
 
-  // This form only knows how to author ONE action shape: run_profile_command,
-  // which carries a `command` string. A schedule whose action is anything else
-  // — run_host_command carries `argv`, a runner and a timeout — cannot be
-  // represented here. Editing one used to be impossible AND dangerous:
+  // This form authors TWO of the server's action shapes: run_profile_command
+  // (a `command` string) and submit_task (an agent plus a prompt). A schedule
+  // whose action is anything else — run_host_command carries `argv`, a runner
+  // and a timeout — cannot be represented here. Editing one used to be
+  // impossible AND dangerous:
   // isFormValid() required a command, so Save stayed dead with no explanation,
   // and the save path hardcoded run_profile_command, so a save that did get
   // through would have silently converted a working host-exec job into a
@@ -347,7 +380,12 @@
     editingId = row.id;
     const c = cadenceToDraft(row.schedule.schedule);
     const action = row.schedule.actions?.[0] ?? {};
-    actionsLocked = action.type !== 'run_profile_command';
+    const kind = authoredActionKind(row.schedule.actions);
+    actionsLocked = kind === null;
+    actionKind = kind ?? 'command';
+    // draftFromAction stashes every unmanaged key in `extra`, so a round trip
+    // keeps fields this form cannot show (model_target, runner).
+    taskDraft = kind === 'task' ? draftFromAction(action) : newActionDraft('submit_task');
     lockedActionLabel = actionsLocked ? describeAction(action) : '';
     draft = {
       name: row.name,
@@ -378,13 +416,14 @@
 
   function isFormValid(): boolean {
     if (!draft.name.trim()) return false;
-    // A locked action is not authored here, so there is no command to require.
-    if (!actionsLocked && !draft.command.trim()) return false;
+    // A locked action is not authored here, so there is nothing to require.
+    if (!actionsLocked && !authoredActionValid()) return false;
     return cadenceValid(cadenceFrom(draft.kind, draft));
   }
 
   onMount(() => {
     void load();
+    void ensureAgentRoles();
     const off = onCollectUpdate(() => void load());
     poll = setInterval(() => void load(), POLL_MS);
     return () => off();
@@ -393,6 +432,60 @@
   onDestroy(() => { if (poll) clearInterval(poll); });
 </script>
 
+
+<!-- The authored half of the form. Identical in the create and inline-edit
+     forms, so it lives in one snippet — the cadence block below it predates
+     snippets and is still duplicated. -->
+{#snippet actionFields()}
+  <div class="form-row">
+    <span class="form-label">action</span>
+    <div class="seg-ctrl">
+      <button class="seg-btn" class:active={actionKind === 'command'}
+        onclick={() => (actionKind = 'command')}>command</button>
+      <button class="seg-btn" class:active={actionKind === 'task'}
+        onclick={() => (actionKind = 'task')}>agent task</button>
+    </div>
+  </div>
+
+  {#if actionKind === 'task'}
+    <label class="form-row">
+      <span class="form-label">agent</span>
+      <select class="form-select narrow" bind:value={taskDraft.agentName}>
+        <option value="">— select —</option>
+        {#each agents as a (a)}<option value={a}>{a}</option>{/each}
+      </select>
+    </label>
+
+    <label class="form-row">
+      <span class="form-label">prompt</span>
+      <textarea class="form-textarea" rows="4" bind:value={taskDraft.description}
+        placeholder="what the agent should do each time this fires"></textarea>
+    </label>
+
+    <label class="form-row">
+      <span class="form-label">repo</span>
+      <div class="interval-row">
+        <input class="form-input" bind:value={taskDraft.repoUrl}
+          placeholder="optional — https://github.com/org/repo" />
+        <span class="form-unit">cloned into the agent's workspace</span>
+      </div>
+    </label>
+
+    <label class="form-row">
+      <span class="form-label">priority</span>
+      <div class="interval-row">
+        <input class="form-input short" bind:value={taskDraft.priority} />
+        <span class="form-unit">higher runs first in the hub queue</span>
+      </div>
+    </label>
+  {:else}
+    <label class="form-row">
+      <span class="form-label">command</span>
+      <textarea class="form-textarea" rows="4" bind:value={draft.command}
+        placeholder="script that outputs a JSON array of entries"></textarea>
+    </label>
+  {/if}
+{/snippet}
 
 <div class="jobs">
   <div class="panel-header" style="margin-bottom:var(--spacing-sm);">
@@ -454,10 +547,7 @@
         <input class="form-input" bind:value={draft.name} placeholder="Morning standup" />
       </label>
 
-      <label class="form-row">
-        <span class="form-label">command</span>
-        <textarea class="form-textarea" bind:value={draft.command} placeholder="script that outputs a JSON array of entries" rows="4"></textarea>
-      </label>
+      {@render actionFields()}
 
       <!-- Cadence -->
       <div class="form-row">
@@ -542,17 +632,15 @@
                   <div class="action-locked">
                     <code>{lockedActionLabel}</code>
                     <span class="action-locked-note">
-                      Not editable here — this panel only authors shell-command schedules.
+                      Not editable here — this panel authors shell commands and
+                      agent tasks only.
                       Name, cadence and enabled can still be changed; the action is
                       kept as-is.
                     </span>
                   </div>
                 </div>
               {:else}
-                <label class="form-row">
-                  <span class="form-label">command</span>
-                  <textarea class="form-textarea" bind:value={draft.command} rows="4"></textarea>
-                </label>
+                {@render actionFields()}
               {/if}
 
               <!-- Cadence -->
@@ -626,6 +714,9 @@
                   {/if}
                   {#if row.isRemote}
                     <span class="job-type-badge type-shell" title="runs on the platform, with this app closed">server</span>
+                    {#if authoredActionKind(row.schedule.actions) === 'task'}
+                      <span class="job-type-badge type-task" title="submits a task to the agent hub">task</span>
+                    {/if}
                   {:else}
                     <span class="job-source-badge" title="created by a dashboard widget; runs locally while the app is open">widget</span>
                   {/if}
@@ -735,6 +826,13 @@
     padding: 1px 6px; border-radius: 999px;
     border: 1px solid var(--color-border-primary);
     color: var(--color-text-muted);
+  }
+
+  /* An agent task is the one row kind whose effect is not a shell command. */
+  .job-type-badge.type-task {
+    color: var(--color-accent);
+    border-color: rgba(234, 179, 8, 0.3);
+    background: rgba(234, 179, 8, 0.06);
   }
 
   .job-source-badge {
