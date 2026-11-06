@@ -150,6 +150,32 @@ export function fmtCadence(schedule: Record<string, any> | null | undefined): st
   }
 }
 
+/** The two action shapes this panel can author.
+ *
+ * The server accepts ten (phantom-events `RuleAction`); a schedule carries the
+ * same union a rule does. This form knows how to edit two of them, and
+ * `authoredActionKind` returning null is what puts the rest into pass-through
+ * mode — a `run_host_command` rewritten as a container command would lose its
+ * runner, argv and timeout.
+ */
+export type ScheduleActionKind = 'command' | 'task';
+
+const AUTHORED: Record<string, ScheduleActionKind> = {
+  run_profile_command: 'command',
+  submit_task: 'task',
+};
+
+/** Which shape this schedule's action is, or null when the form must pass it
+ * through untouched. A multi-action schedule is always pass-through: the form
+ * authors exactly one action and saving would drop the rest. */
+export function authoredActionKind(
+  actions: Record<string, any>[] | null | undefined,
+): ScheduleActionKind | null {
+  const list = actions ?? [];
+  if (list.length !== 1) return null;
+  return AUTHORED[String(list[0]?.type ?? '')] ?? null;
+}
+
 /** Short label for what a schedule actually does. */
 export function fmtTarget(actions: Record<string, any>[] | null | undefined): string {
   const list = actions ?? [];
