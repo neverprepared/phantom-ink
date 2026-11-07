@@ -66,6 +66,16 @@
     detail: string;
   }
 
+  // One vault's head-record count, for the tab badge. `known` false means we
+  // could not read it (no token, 401, dead daemon) — the badge is then hidden
+  // rather than showing 0, which would read as "this vault is empty".
+  interface VaultCount {
+    vault: string;
+    count: number;
+    known: boolean;
+    truncated: boolean;
+  }
+
   const DEFAULT_URL = 'http://127.0.0.1:9998';
 
   let status = $state<MeshStatus | null>(null);
@@ -76,6 +86,12 @@
   // The record census is a SEPARATE fetch from the status: it fans out to every
   // peer daemon, so a slow or dead peer must not hold up the status card.
   let census = $state<Census | null>(null);
+  // Badge counts. Deliberately NOT read from the census: that counts every
+  // non-tombstoned row, superseded versions included, so it runs far ahead of
+  // the head-only lists the tabs show (151 skill rows vs 87 skills on this
+  // node). Also deliberately not on the 10s status poll — the skills listing
+  // is ~2 MB on the wire because the daemon has no count endpoint.
+  let vaultCounts = $state<VaultCount[]>([]);
 
   // Tabs: the mesh status view, plus a per-feature browser for each verbatim
   // p2p-synced vault. Each vault tab renders VaultBrowser, which scopes to the
@@ -91,6 +107,45 @@
   let activeTab = $state<MeshTab>('mesh');
 
   let pollHandle: number | undefined;
+
+  // Counts refresh on open, on a profile switch, and on an explicit refresh —
+  // plus whenever the active tab's browser reports its own list, which is both
+  // free and immediate after a delete or a move.
+  async function refreshCounts() {
+    const profile = profileState.active?.name ?? '';
+    const a = await getApi();
+    if (!a) return;
+    try {
+      const got = ((await (a as any).GetVaultCounts(profile)) as VaultCount[]) ?? [];
+      // Drop a reply that landed after a profile switch rather than badging one
+      // profile's tabs with another's totals.
+      if (profile !== (profileState.active?.name ?? '')) return;
+      vaultCounts = got;
+    } catch {
+      /* keep the previous snapshot: a failed count must not blank the badges */
+    }
+  }
+
+  // A profile switch invalidates every count, so clear before re-reading —
+  // otherwise the old profile's numbers sit on the tabs during the fetch.
+  $effect(() => {
+    profileState.active?.name; // dependency
+    vaultCounts = [];
+    void refreshCounts();
+  });
+
+  const countFor = (vault: string): VaultCount | undefined =>
+    vaultCounts.find((c) => c.vault === vault);
+
+  // The active tab's browser knows the real number for the list it just drew.
+  // Ignored at the daemon's 500-row page cap, where that length is a cap rather
+  // than a count and would contradict the properly-paged figure.
+  function noteVaultCount(vault: string, n: number) {
+    if (n >= 500) return;
+    const next = vaultCounts.filter((c) => c.vault !== vault);
+    next.push({ vault, count: n, known: true, truncated: false });
+    vaultCounts = next;
+  }
 
   onMount(() => {
     void refresh();
@@ -405,7 +460,14 @@
             {/each}
           </span>
         {/if}
-        <button class="btn" onclick={() => void refresh()} disabled={refreshing}>
+        <button
+          class="btn"
+          onclick={() => {
+            void refresh();
+            void refreshCounts();
+          }}
+          disabled={refreshing}
+        >
           {refreshing ? 'refreshing…' : 'refresh'}
         </button>
       {/if}
@@ -423,7 +485,13 @@
           activeTab = t.id;
           actionNote = null;
         }}
-      >{t.label}{#if t.id !== 'mesh' && authFor(t.id)}<span
+      >{t.label}{#if t.id !== 'mesh' && countFor(t.id)?.known}<span
+            class="tab-count"
+            title={countFor(t.id)!.truncated
+              ? `at least ${countFor(t.id)!.count} ${t.id} records (count capped)`
+              : `${countFor(t.id)!.count} ${t.id} records in this profile`}
+          >{countFor(t.id)!.count}{countFor(t.id)!.truncated ? '+' : ''}</span
+          >{/if}{#if t.id !== 'mesh' && authFor(t.id)}<span
             class="auth-dot {authClass(t.id)}"
             title={authTitle(t.id)}
             aria-hidden="true"
@@ -686,7 +754,7 @@
   {/if}
   {:else}
     {#key activeTab}
-      <VaultBrowser vault={activeTab} />
+      <VaultBrowser vault={activeTab} onCount={(n) => noteVaultCount(activeTab, n)} />
     {/key}
   {/if}
 </div>
@@ -729,6 +797,17 @@
   }
   .tab:hover { color: var(--color-text-secondary); }
   .tab.active { color: var(--color-text-primary); border-bottom-color: var(--color-text-primary); }
+  /* Head-record count per vault tab. Tabular numerals so the tab row does not
+     jitter as a count ticks over a digit boundary. */
+  .tab-count {
+    display: inline-block; margin-left: 6px; padding: 0 5px;
+    border-radius: 999px; background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-secondary);
+    color: var(--color-text-muted);
+    font-family: var(--font-mono); font-size: 0.64rem; line-height: 1.5;
+    font-variant-numeric: tabular-nums; vertical-align: middle;
+  }
+  .tab.active .tab-count { color: var(--color-text-secondary); border-color: var(--color-border-primary); }
   /* Per-vault auth-reachability dot on each vault tab. */
   .auth-dot {
     display: inline-block; width: 7px; height: 7px; border-radius: 50%;

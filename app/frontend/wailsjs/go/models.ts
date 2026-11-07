@@ -4475,6 +4475,24 @@ export namespace main {
 	        this.detail = source["detail"];
 	    }
 	}
+	export class VaultCount {
+	    vault: string;
+	    count: number;
+	    known: boolean;
+	    truncated: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new VaultCount(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.vault = source["vault"];
+	        this.count = source["count"];
+	        this.known = source["known"];
+	        this.truncated = source["truncated"];
+	    }
+	}
 	export class VaultRecord {
 	    sha: string;
 	    title: string;

@@ -32,6 +32,10 @@ type VaultRecord struct {
 
 type vaultListResponse struct {
 	Records []VaultRecord `json:"records"`
+	// Cursor for the next page, 0 when the page just read was the last one.
+	// The daemon CLAMPS limit to 500 regardless of what we ask for, so any
+	// total has to be paged — see countVaultRecords.
+	NextAfterID int64 `json:"next_after_id"`
 }
 
 // vaultKind maps a vault to the record kind it stores (the ?kind= list filter).
@@ -172,6 +176,118 @@ func (a *App) probeVaultAuth(vault, token string) (bool, string) {
 	default:
 		return false, fmt.Sprintf("HTTP %d", resp.StatusCode)
 	}
+}
+
+// VaultCount is one vault's head-record total for the active profile — the
+// figure behind a tab badge.
+//
+// Known is what keeps the badge honest: a vault with no token, a rejected
+// token, or an unreachable daemon tells us NOTHING, and rendering that as 0
+// would read as "this vault is empty". The panel shows no badge instead.
+//
+// Truncated says the page cap was hit before the cursor ran out, so Count is a
+// floor rather than a total (rendered "500+").
+type VaultCount struct {
+	Vault     string `json:"vault"`
+	Count     int    `json:"count"`
+	Known     bool   `json:"known"`
+	Truncated bool   `json:"truncated"`
+}
+
+// countVaultHeadPages bounds the paging loop. The browsable vaults hold
+// hundreds of records, not hundreds of thousands; a cap keeps a daemon that
+// returns a non-advancing cursor from spinning forever.
+const countVaultHeadPages = 20
+
+// GetVaultCounts returns the head-record count for each browsable vault in one
+// profile.
+//
+// This counts HEADS, matching what VaultBrowser lists — deliberately NOT the
+// mesh census's `live`, which counts every non-tombstoned row and so includes
+// superseded versions (on this node: 151 skill rows vs 87 actual skills). A
+// badge that disagrees with the list under it is worse than no badge.
+//
+// Each vault is counted concurrently: the skills listing is ~2 MB on the wire
+// (the daemon has no count endpoint and will not trim bodies), so serializing
+// the three would make this three times the slowest one.
+func (a *App) GetVaultCounts(profile string) []VaultCount {
+	vaults := []string{"skills", "agents", "todo"}
+	profile = strings.TrimSpace(profile)
+	out := make([]VaultCount, len(vaults))
+
+	var wg sync.WaitGroup
+	for i, v := range vaults {
+		out[i] = VaultCount{Vault: v}
+		token := a.tokenFor(v, profile)
+		if token == "" {
+			continue // Known stays false: unknown, not zero
+		}
+		wg.Add(1)
+		go func(i int, vault, token string) {
+			defer wg.Done()
+			n, truncated, err := countVaultHeadRecords(a.meshURL(), vault, token)
+			if err != nil {
+				return
+			}
+			out[i].Count = n
+			out[i].Truncated = truncated
+			out[i].Known = true
+		}(i, v, token)
+	}
+	wg.Wait()
+	return out
+}
+
+// countVaultHeadRecords pages the head listing and counts it. Free function
+// over its dependencies so it is testable without an App, matching vaultHistory
+// and fetchNodeCensus.
+//
+// Pages rather than trusting one request: the daemon clamps limit to 500 and
+// hands back a next_after_id cursor, so a single call would silently cap the
+// badge at 500 once a vault outgrew it.
+func countVaultHeadRecords(baseURL, vault, token string) (int, bool, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	base := baseURL + "/api/brain/records?head=true&limit=500"
+	if k := vaultKind(vault); k != "" {
+		base += "&kind=" + k
+	}
+
+	total := 0
+	var after int64
+	for page := 0; page < countVaultHeadPages; page++ {
+		endpoint := base
+		if after > 0 {
+			endpoint += fmt.Sprintf("&after_id=%d", after)
+		}
+		req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+		if err != nil {
+			return 0, false, fmt.Errorf("build %s count request: %w", vault, err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return 0, false, fmt.Errorf("mesh daemon unreachable: %w", err)
+		}
+		var body vaultListResponse
+		decErr := json.NewDecoder(resp.Body).Decode(&body)
+		status := resp.StatusCode
+		resp.Body.Close()
+		if status < 200 || status >= 300 {
+			return 0, false, fmt.Errorf("mesh daemon returned HTTP %d", status)
+		}
+		if decErr != nil {
+			return 0, false, fmt.Errorf("decode %s count: %w", vault, decErr)
+		}
+
+		total += len(body.Records)
+		// A cursor that does not advance would loop forever on the same page.
+		if body.NextAfterID <= after || len(body.Records) == 0 {
+			return total, false, nil
+		}
+		after = body.NextAfterID
+	}
+	return total, true, nil
 }
 
 func (a *App) listVaultRecords(vault, token string) ([]VaultRecord, error) {

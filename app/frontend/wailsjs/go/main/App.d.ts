@@ -242,6 +242,8 @@ export function GetTaskLineage(arg1:string):Promise<Array<main.HubTask>>;
 
 export function GetTrust(arg1:string):Promise<brainbox.TrustConfig>;
 
+export function GetVaultCounts(arg1:string):Promise<Array<main.VaultCount>>;
+
 export function GetVaultProfiles(arg1:string):Promise<Array<string>>;
 
 export function GetVaultRecordHistory(arg1:string,arg2:string,arg3:string):Promise<Array<main.VaultVersion>>;

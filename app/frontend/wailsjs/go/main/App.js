@@ -474,6 +474,10 @@ export function GetTrust(arg1) {
   return window['go']['main']['App']['GetTrust'](arg1);
 }
 
+export function GetVaultCounts(arg1) {
+  return window['go']['main']['App']['GetVaultCounts'](arg1);
+}
+
 export function GetVaultProfiles(arg1) {
   return window['go']['main']['App']['GetVaultProfiles'](arg1);
 }
