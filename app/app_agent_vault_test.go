@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -237,5 +239,134 @@ func TestCopyOrMoveRequestsForce(t *testing.T) {
 			"Looked for: %s\n"+
 			"Without it, moving a record back into a profile that still holds its "+
 			"tombstone fails with HTTP 409 and the panel offers no way out.", want)
+	}
+}
+
+// pagedRecordsStub serves /api/brain/records in pages of `pageSize` out of
+// `total` records, with the daemon's cursor convention: next_after_id is the id
+// to resume from, and 0 on the last page.
+func pagedRecordsStub(t *testing.T, total, pageSize int, wantKind string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path != "/api/brain/records" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		q := r.URL.Query()
+		if q.Get("head") != "true" {
+			t.Errorf("count must list heads only, got head=%q", q.Get("head"))
+		}
+		if wantKind != "" && q.Get("kind") != wantKind {
+			t.Errorf("want kind=%q, got %q", wantKind, q.Get("kind"))
+		}
+		after, _ := strconv.Atoi(q.Get("after_id"))
+		n := total - after
+		if n > pageSize {
+			n = pageSize
+		}
+		if n < 0 {
+			n = 0
+		}
+		recs := make([]map[string]any, 0, n)
+		for i := 0; i < n; i++ {
+			recs = append(recs, map[string]any{"sha": fmt.Sprintf("s%d", after+i)})
+		}
+		next := 0
+		if after+n < total {
+			next = after + n
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"records": recs, "next_after_id": next,
+		})
+	}))
+}
+
+// The badge must survive a vault outgrowing one page: the daemon clamps limit
+// to 500, so a single request would silently cap the count.
+func TestCountVaultHeadRecordsPagesPastTheServerCap(t *testing.T) {
+	srv := pagedRecordsStub(t, 1203, 500, "skill")
+	defer srv.Close()
+
+	got, truncated, err := countVaultHeadRecords(srv.URL, "skills", "tok")
+	if err != nil {
+		t.Fatalf("countVaultHeadRecords: %v", err)
+	}
+	if got != 1203 {
+		t.Errorf("want 1203 records, got %d", got)
+	}
+	if truncated {
+		t.Errorf("a count that ran the cursor to the end is not truncated")
+	}
+}
+
+func TestCountVaultHeadRecordsSinglePage(t *testing.T) {
+	srv := pagedRecordsStub(t, 87, 500, "skill")
+	defer srv.Close()
+
+	got, truncated, err := countVaultHeadRecords(srv.URL, "skills", "tok")
+	if err != nil {
+		t.Fatalf("countVaultHeadRecords: %v", err)
+	}
+	if got != 87 || truncated {
+		t.Errorf("want 87 not truncated, got %d truncated=%v", got, truncated)
+	}
+}
+
+// A daemon that keeps handing back the same cursor must not spin forever.
+func TestCountVaultHeadRecordsStopsOnNonAdvancingCursor(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"records":       []map[string]any{{"sha": "a"}, {"sha": "b"}},
+			"next_after_id": 0, // never advances past the first page's start
+		})
+	}))
+	defer srv.Close()
+
+	got, truncated, err := countVaultHeadRecords(srv.URL, "skills", "tok")
+	if err != nil {
+		t.Fatalf("countVaultHeadRecords: %v", err)
+	}
+	if hits != 1 {
+		t.Errorf("want one request against a non-advancing cursor, got %d", hits)
+	}
+	if got != 2 || truncated {
+		t.Errorf("want 2 not truncated, got %d truncated=%v", got, truncated)
+	}
+}
+
+// Truncated is the honest answer when the page cap is reached: Count is a floor
+// and the panel renders it "N+", never as a total.
+func TestCountVaultHeadRecordsReportsTruncationAtThePageCap(t *testing.T) {
+	srv := pagedRecordsStub(t, 500*countVaultHeadPages+10, 500, "skill")
+	defer srv.Close()
+
+	got, truncated, err := countVaultHeadRecords(srv.URL, "skills", "tok")
+	if err != nil {
+		t.Fatalf("countVaultHeadRecords: %v", err)
+	}
+	if !truncated {
+		t.Errorf("want truncated at the page cap")
+	}
+	if got != 500*countVaultHeadPages {
+		t.Errorf("want the floor %d, got %d", 500*countVaultHeadPages, got)
+	}
+}
+
+// A rejected token must error, not count zero: a badge reading 0 would say the
+// vault is empty when we simply could not read it.
+func TestCountVaultHeadRecordsErrorsOn401(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	if _, _, err := countVaultHeadRecords(srv.URL, "skills", "bad"); err == nil {
+		t.Fatalf("want an error for a rejected token, got none")
 	}
 }

@@ -41,7 +41,13 @@
     updated_at: string;
   }
 
-  let { vault }: { vault: string } = $props();
+  // onCount lets the panel badge this tab with the number actually listed —
+  // free, since this component has already fetched the list, and immediate
+  // after a delete or a move.
+  let {
+    vault,
+    onCount = undefined,
+  }: { vault: string; onCount?: (n: number) => void } = $props();
 
   const DEFAULT_URL = 'http://127.0.0.1:9998';
   const noun = $derived(vault.replace(/s$/, '')); // agents→agent, skills→skill
@@ -153,6 +159,7 @@
       tokenRejected = false;
       if (selectedSha && !records.some((r) => r.sha === selectedSha)) selectedSha = null;
       if (!selectedSha && records.length > 0) selectedSha = records[0].sha;
+      onCount?.(records.length);
     } catch (e: any) {
       const msg = e?.message ?? String(e);
       const noToken = msg.includes('vault token for profile'); // nothing stored yet
