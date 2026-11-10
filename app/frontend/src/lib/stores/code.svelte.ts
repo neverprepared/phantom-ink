@@ -25,6 +25,7 @@ import { getApi } from '../utils/api';
 import { notifications } from '../notifications.svelte';
 import { keyedResource, type Resource } from './resource.svelte';
 import { agentRoleNames, ensureAgentRoles } from './catalog.svelte';
+import { tokenize, matchesAll } from '../utils/search';
 
 export interface Repo {
   provider: 'github' | 'ado';
@@ -444,8 +445,13 @@ class CodeStore {
   issuesError = $derived(this.ov?.issues_error ?? '');
   notificationsError = $derived(this.ov?.notifications_error ?? '');
 
-  /** Client-side filter over the repositories list. */
-  repoFilter = $state('');
+  /**
+   * One search query across every overview section. This used to be
+   * `repoFilter`, a box inside the repositories card; it is panel-level now
+   * because the operator's question ("where is the phantom-router work?") spans
+   * the sections, and two boxes filtering the same rows only confuses.
+   */
+  searchQuery = $state('');
 
   /** Provider filter across every section: 'all' | 'github' | 'ado'. */
   providerFilter = $state<'all' | 'github' | 'ado'>('all');
@@ -516,16 +522,19 @@ class CodeStore {
   );
   showProviderFilter = $derived(this.hasGitHub && this.hasADO);
 
-  /** Repos narrowed by the provider filter and the text filter box. */
+  /** The query as match terms. Whitespace-only is no query at all. */
+  searchTerms = $derived(tokenize(this.searchQuery));
+  /** Whether a query is narrowing the sections — drives the header counts. */
+  searching = $derived(this.searchTerms.length > 0);
+
+  /** Repos narrowed by the provider filter and the search box. */
   filteredRepos = $derived.by(() => {
-    const q = this.repoFilter.trim().toLowerCase();
+    const terms = this.searchTerms;
     const pf = this.providerFilter;
     return this.repos.filter(
       (r) =>
         (pf === 'all' || r.provider === pf) &&
-        (!q ||
-          r.full_name.toLowerCase().includes(q) ||
-          (r.description ?? '').toLowerCase().includes(q))
+        matchesAll(terms, [r.full_name, r.description])
     );
   });
 
@@ -540,21 +549,38 @@ class CodeStore {
     return [...set];
   });
 
-  /** Attention rows after the provider + reason filters. */
+  /**
+   * Everything a search term may match on one attention row. The linked Jira
+   * key and summary are in here on purpose: `PLAT-42` is often the only handle
+   * the operator remembers for a PR whose title never mentions it.
+   */
+  private attentionFields(i: Issue): string[] {
+    const jira = this.jiraFor(i).flatMap((j) => [j.key, j.summary]);
+    return [i.repo_full_name, `#${i.number}`, i.title, i.user, i.reason, i.state, ...jira];
+  }
+
+  /** Attention rows after the provider + reason filters and the search box. */
   filteredAttention = $derived.by(() => {
     const pf = this.providerFilter;
     const rf = this.reasonFilter;
+    const terms = this.searchTerms;
     return this.attention.filter(
       (i) =>
         (pf === 'all' || i.provider === pf) &&
-        (rf === 'all' || splitReasons(i.reason).includes(rf))
+        (rf === 'all' || splitReasons(i.reason).includes(rf)) &&
+        matchesAll(terms, this.attentionFields(i))
     );
   });
 
-  /** Notifications after the provider filter (GitHub-only, so ADO hides them). */
-  filteredNotifications = $derived.by(() =>
-    this.providerFilter === 'ado' ? [] : this.notifications
-  );
+  /** Notifications after the provider filter (GitHub-only, so ADO hides them)
+   *  and the search box. */
+  filteredNotifications = $derived.by(() => {
+    if (this.providerFilter === 'ado') return [];
+    const terms = this.searchTerms;
+    return this.notifications.filter((n) =>
+      matchesAll(terms, [n.repo_full_name, n.subject_title, n.subject_type, n.reason])
+    );
+  });
 
   /** Total rows the operator is on the hook for (unfiltered), for the header. */
   attentionCount = $derived(this.pullRequests.length + this.issues.length);
@@ -639,6 +665,7 @@ class CodeStore {
     // GitHub-only profile would blank every section confusingly.
     this.providerFilter = 'all';
     this.reasonFilter = 'all';
+    this.searchQuery = '';
   }
 
   /** reset() plus EVERY profile's rows — for "no profile at all" and for tests. */

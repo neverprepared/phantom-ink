@@ -19,6 +19,7 @@
   import DispatchModal from '../components/DispatchModal.svelte';
   import MarkdownRenderer from '../components/MarkdownRenderer.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import Highlight from '../components/Highlight.svelte';
   import Spinner from '../components/Spinner.svelte';
 
   const activeProfile = $derived(profileState.active?.name ?? '');
@@ -133,6 +134,18 @@
   // rows still resolve to a real repo and keep the begin-work lane.
   function canBeginWork(row: Issue): boolean {
     return !(row.provider === 'ado' && !row.is_pull_request);
+  }
+
+  // ── Search ───────────────────────────────────────────────────────────────
+  //
+  // The matching itself lives in the store (one query, all three sections);
+  // this is only what the markup needs: the terms to highlight with, and a
+  // header count that admits a filter is on.
+  const terms = $derived(codeState.searchTerms);
+
+  /** `3/27` while a query narrows the section, the bare total otherwise. */
+  function sectionCount(matches: number, total: number): string {
+    return codeState.searching ? `${matches}/${total}` : String(total);
   }
 </script>
 
@@ -336,7 +349,7 @@
               <li class="row">
                 <div class="row-main">
                   <span class="num">#{row.number}</span>
-                  <span class="title">{row.title}</span>
+                  <span class="title"><Highlight text={row.title} {terms} /></span>
                 </div>
                 <div class="row-meta">
                   {#if row.draft}<span class="badge muted">draft</span>{/if}
@@ -407,6 +420,27 @@
     <Spinner />
   {/if}
 
+  <!-- One box over every section. It filters rows ALREADY cached in the store,
+       so typing never touches the network, and it lives here rather than inside
+       the repositories card because the question it answers ("where is the
+       phantom-router work?") spans the sections. -->
+  <div class="search-bar">
+    <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input
+      class="search-input"
+      type="search"
+      placeholder="Search PRs, issues, notifications, repositories…"
+      aria-label="Search this profile's code"
+      bind:value={codeState.searchQuery}
+    />
+    {#if codeState.searching}
+      <span class="search-count">
+        {codeState.filteredAttention.length + codeState.filteredNotifications.length + codeState.filteredRepos.length} matching
+      </span>
+      <button class="search-clear" title="Clear the search" onclick={() => (codeState.searchQuery = '')}>clear</button>
+    {/if}
+  </div>
+
   {#if codeState.showProviderFilter}
     <div class="provider-filter" role="group" aria-label="Filter by provider">
       <button class="pf-btn" class:active={codeState.providerFilter === 'all'} onclick={() => (codeState.providerFilter = 'all')}>All</button>
@@ -423,7 +457,7 @@
   <section class="card">
     <CardExpander
       label="needs attention"
-      count={String(codeState.attentionCount)}
+      count={sectionCount(codeState.filteredAttention.length, codeState.attentionCount)}
       hint="open PRs and assigned issues"
       bind:open={attentionOpen}
     >
@@ -447,7 +481,9 @@
       {#if codeState.attentionCount === 0}
         <p class="muted-note">Nothing open against you. Enjoy it.</p>
       {:else if codeState.filteredAttention.length === 0}
-        <p class="muted-note">No items match these filters.</p>
+        <p class="muted-note">
+          {#if codeState.searching}No item matches “{codeState.searchQuery.trim()}”.{:else}No items match these filters.{/if}
+        </p>
       {:else}
         <ul class="rows">
           {#each codeState.filteredAttention as row (row.html_url)}
@@ -474,7 +510,7 @@
                     {/each}
                   </div>
                 {/if}
-                <code class="repo">{row.repo_full_name}</code>
+                <code class="repo"><Highlight text={row.repo_full_name} {terms} /></code>
                 <div class="row-meta">
                   <span class="badge">{row.is_pull_request ? 'pr' : (row.provider === 'ado' ? 'work item' : 'issue')}</span>
                   {#if row.draft}<span class="badge muted">draft</span>{/if}
@@ -498,14 +534,16 @@
   <section class="card">
     <CardExpander
       label="notifications"
-      count={String(codeState.notifications.length)}
+      count={sectionCount(codeState.filteredNotifications.length, codeState.notifications.length)}
       bind:open={notificationsOpen}
     >
       {#if codeState.notificationsError}
         <p class="section-error">{codeState.notificationsError}</p>
       {/if}
       {#if codeState.filteredNotifications.length === 0}
-        <p class="muted-note">Inbox clear.</p>
+        <p class="muted-note">
+          {#if codeState.searching && codeState.notifications.length > 0}No notification matches “{codeState.searchQuery.trim()}”.{:else}Inbox clear.{/if}
+        </p>
       {:else}
         <div class="card-actions">
           <button class="link" onclick={() => codeState.markAllNotificationsRead()}>mark all read</button>
@@ -516,9 +554,9 @@
               {@render providerLogo('github')}
               <div class="row-body">
                 <div class="row-main">
-                  <span class="title">{n.subject_title}</span>
+                  <span class="title"><Highlight text={n.subject_title} {terms} /></span>
                 </div>
-                <code class="repo">{n.repo_full_name}</code>
+                <code class="repo"><Highlight text={n.repo_full_name} {terms} /></code>
                 <div class="row-meta">
                   <span class="badge">{n.subject_type}</span>
                   <span class="badge why">{n.reason}</span>
@@ -540,7 +578,7 @@
   <section class="card">
     <CardExpander
       label="repositories"
-      count={String(codeState.repos.length)}
+      count={sectionCount(codeState.filteredRepos.length, codeState.repos.length)}
       hint="most recently pushed first"
       bind:open={reposOpen}
     >
@@ -550,7 +588,6 @@
       {#if codeState.repos.length === 0}
         <p class="muted-note">No repositories visible to this token.</p>
       {:else}
-        <input class="filter" placeholder="Filter repositories…" bind:value={codeState.repoFilter} />
         <ul class="rows">
           {#each codeState.filteredRepos as r (r.full_name)}
             <li class="row with-logo">
@@ -560,9 +597,9 @@
                   <!-- The repo name IS the link into the detail view; the row's
                        existing actions keep working alongside it. -->
                   <button class="repo-link" title="Open this repository" onclick={() => openDetail(r)}>
-                    <code class="repo">{r.full_name}</code>
+                    <code class="repo"><Highlight text={r.full_name} {terms} /></code>
                   </button>
-                  {#if r.description}<span class="desc">{r.description}</span>{/if}
+                  {#if r.description}<span class="desc"><Highlight text={r.description} {terms} /></span>{/if}
                 </div>
                 <div class="row-meta">
                 <span class="badge">{r.default_branch}</span>
@@ -586,7 +623,7 @@
           {/each}
         </ul>
         {#if codeState.filteredRepos.length === 0}
-          <p class="muted-note">No repository matches “{codeState.repoFilter}”.</p>
+          <p class="muted-note">No repository matches these filters.</p>
         {/if}
       {/if}
     </CardExpander>
@@ -694,15 +731,43 @@
   .muted-note { color: var(--color-text-muted); font-size: 0.82rem; margin: 0; }
   .muted-small { color: var(--color-text-muted); font-size: 0.72rem; }
 
-  .filter {
-    width: 100%;
+  .search-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     background: var(--color-bg-primary);
     border: 1px solid var(--color-border-secondary);
     border-radius: var(--radius-sm);
-    color: var(--color-text-primary);
-    padding: 6px 8px; font-size: 0.82rem; font-family: inherit;
+    padding: 0 8px;
     margin-bottom: var(--spacing-sm);
   }
+  .search-bar:focus-within { border-color: var(--color-accent, var(--color-info)); }
+  .search-icon { color: var(--color-text-tertiary); flex: 0 0 auto; }
+  .search-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: none;
+    border: none;
+    color: var(--color-text-primary);
+    padding: 7px 0; font-size: 0.82rem; font-family: inherit;
+  }
+  .search-input:focus { outline: none; }
+  /* Safari paints its own clear affordance on type=search; we have our own. */
+  .search-input::-webkit-search-cancel-button { display: none; }
+  .search-count {
+    flex: 0 0 auto;
+    font-size: 0.72rem;
+    color: var(--color-text-tertiary);
+    white-space: nowrap;
+  }
+  .search-clear {
+    flex: 0 0 auto;
+    background: none; border: none; cursor: pointer;
+    color: var(--color-text-secondary);
+    font-size: 0.72rem; font-family: inherit;
+    padding: 2px 4px;
+  }
+  .search-clear:hover { color: var(--color-text-primary); }
 
   .rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   .row {

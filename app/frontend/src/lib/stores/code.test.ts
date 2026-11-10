@@ -313,3 +313,176 @@ describe('jira dispatch kind', () => {
     codeState.closeDispatch();
   });
 });
+
+/**
+ * One search box narrows all three overview sections. The rule is tokenized
+ * AND over every searchable field of a row (see utils/search.ts), so a query
+ * made of fragments from different fields still matches.
+ */
+describe('search', () => {
+  const searchable = {
+    repos: [
+      {
+        provider: 'github',
+        full_name: 'neverprepared/phantom-router',
+        description: 'the orchestrator',
+      },
+      { provider: 'github', full_name: 'neverprepared/phantom-ink', description: 'the app' },
+      { provider: 'ado', full_name: 'acme/billing', description: 'invoices' },
+    ],
+    pull_requests: [
+      {
+        provider: 'github',
+        repo_full_name: 'neverprepared/phantom-router',
+        number: 443,
+        title: 'badge the vault tabs',
+        state: 'open',
+        user: 'mindmorass',
+        reason: 'authored',
+        html_url: 'https://github.com/neverprepared/phantom-router/pull/443',
+        is_pull_request: true,
+      },
+    ],
+    issues: [
+      {
+        provider: 'github',
+        repo_full_name: 'neverprepared/phantom-ink',
+        number: 12,
+        title: 'runner never finds releases',
+        state: 'open',
+        user: 'someone',
+        reason: 'assigned',
+        html_url: 'https://github.com/neverprepared/phantom-ink/issues/12',
+        is_pull_request: false,
+      },
+    ],
+    notifications: [
+      {
+        id: 'n1',
+        repo_full_name: 'neverprepared/phantom-router',
+        subject_title: 'badge the vault tabs',
+        subject_type: 'PullRequest',
+        reason: 'review_requested',
+        updated_at: '2026-10-20T12:00:00Z',
+        url: '',
+      },
+      {
+        id: 'n2',
+        repo_full_name: 'acme/billing',
+        subject_title: 'invoice export',
+        subject_type: 'Issue',
+        reason: 'mention',
+        updated_at: '2026-10-20T12:00:00Z',
+        url: '',
+      },
+    ],
+    issue_keys: {
+      'github:neverprepared/phantom-router#443': [{ key: 'PLAT-42', manual: false }],
+    },
+    jira_issues: {
+      'PLAT-42': {
+        key: 'PLAT-42',
+        summary: 'mesh vault badges',
+        status: 'In Progress',
+        status_category: 'indeterminate',
+        assignee: 'me',
+        url: 'https://jira/PLAT-42',
+      },
+    },
+  };
+
+  beforeEach(async () => {
+    CodeOverview = vi.fn(async (profile: string) => overview(profile, searchable));
+    mockGetApi.mockResolvedValue({ CodeOverview, ListAgentRoles: vi.fn(async () => []) });
+    codeState.hardReset();
+    await codeState.refresh('work');
+  });
+
+  it('an empty query leaves every section whole', () => {
+    expect(codeState.searchQuery).toBe('');
+    expect(codeState.filteredRepos).toHaveLength(3);
+    expect(codeState.filteredAttention).toHaveLength(2);
+    expect(codeState.filteredNotifications).toHaveLength(2);
+  });
+
+  it('narrows all three sections at once', () => {
+    codeState.searchQuery = 'router';
+    expect(codeState.filteredRepos.map((r) => r.full_name)).toEqual([
+      'neverprepared/phantom-router',
+    ]);
+    expect(codeState.filteredAttention.map((i) => i.number)).toEqual([443]);
+    expect(codeState.filteredNotifications.map((n) => n.id)).toEqual(['n1']);
+  });
+
+  it('is case-insensitive and matches on a fragment', () => {
+    codeState.searchQuery = 'PHAN ROUT';
+    expect(codeState.filteredRepos.map((r) => r.full_name)).toEqual([
+      'neverprepared/phantom-router',
+    ]);
+  });
+
+  it('requires every term to match somewhere (AND, not OR)', () => {
+    codeState.searchQuery = 'router billing';
+    expect(codeState.filteredRepos).toHaveLength(0);
+    expect(codeState.filteredAttention).toHaveLength(0);
+    expect(codeState.filteredNotifications).toHaveLength(0);
+  });
+
+  it('spans fields: a repo fragment plus a PR number', () => {
+    codeState.searchQuery = 'router 443';
+    expect(codeState.filteredAttention.map((i) => i.number)).toEqual([443]);
+  });
+
+  it('finds a row by its PR number written with a hash', () => {
+    codeState.searchQuery = '#443';
+    expect(codeState.filteredAttention.map((i) => i.number)).toEqual([443]);
+  });
+
+  it('finds an attention row by its linked jira key and summary', () => {
+    codeState.searchQuery = 'plat-42';
+    expect(codeState.filteredAttention.map((i) => i.number)).toEqual([443]);
+    codeState.searchQuery = 'mesh badges';
+    expect(codeState.filteredAttention.map((i) => i.number)).toEqual([443]);
+  });
+
+  it('matches an attention row on its reason and author', () => {
+    codeState.searchQuery = 'assigned';
+    expect(codeState.filteredAttention.map((i) => i.number)).toEqual([12]);
+    codeState.searchQuery = 'mindmorass';
+    expect(codeState.filteredAttention.map((i) => i.number)).toEqual([443]);
+  });
+
+  it('composes with the provider filter rather than replacing it', () => {
+    codeState.searchQuery = 'phantom';
+    codeState.providerFilter = 'ado';
+    expect(codeState.filteredRepos).toHaveLength(0);
+    codeState.providerFilter = 'github';
+    expect(codeState.filteredRepos).toHaveLength(2);
+  });
+
+  it('composes with the reason filter', () => {
+    codeState.searchQuery = 'phantom';
+    codeState.reasonFilter = 'authored';
+    expect(codeState.filteredAttention.map((i) => i.number)).toEqual([443]);
+  });
+
+  it('exposes match counts for the section headers', () => {
+    expect(codeState.searching).toBe(false);
+    codeState.searchQuery = 'router';
+    expect(codeState.searching).toBe(true);
+    expect(codeState.attentionCount).toBe(2); // the header's total stays whole
+    expect(codeState.filteredAttention).toHaveLength(1);
+  });
+
+  it('a query of only whitespace is not a search', () => {
+    codeState.searchQuery = '   ';
+    expect(codeState.searching).toBe(false);
+    expect(codeState.filteredRepos).toHaveLength(3);
+  });
+
+  it('a profile switch clears the query', async () => {
+    codeState.searchQuery = 'router';
+    await codeState.refresh('other');
+    expect(codeState.searchQuery).toBe('');
+  });
+});
